@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f9fafb;
+  --foreground: #111827;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+}
+
+/* Mobile-friendly: prevent overscroll bounce, smoother scrolling */
+html, body {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+}
+
+/* Add padding to bottom of page content so it's not hidden behind fixed nav */
+body {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Larger, finger-friendly tap targets by default */
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+/* Smooth scrolling */
+html { scroll-behavior: smooth; }

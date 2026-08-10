@@ -1,0 +1,1 @@
+create or replace function public.approve_quote(p_quote_id uuid) returns uuid language plpgsql security definer set search_path = public as $$ declare v_customer_id uuid; v_job_id uuid; v_invoice_id uuid; begin select q.customer_id, q.job_id into v_customer_id, v_job_id from public.quotes q where q.id = p_quote_id;

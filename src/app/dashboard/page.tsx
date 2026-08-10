@@ -1,0 +1,286 @@
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import TopBar from "@/components/TopBar";
+import BottomNav from "@/components/BottomNav";
+import ClientPullToRefresh from "@/components/ClientPullToRefresh";
+import EmptyState, { EmptyIcons } from "@/components/EmptyState";
+import StatusBadge from "@/components/StatusBadge";
+import { formatMoney, computeTotal } from "@/components/LineItemEditor";
+import Link from "next/link";
+import { Plus, Camera, Receipt } from "lucide-react";
+
+export default async function DashboardPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const role = profile?.role ?? "crew";
+
+  const { data: jobs } = await supabase
+    .from("jobs")
+    .select("id, name, status, customers(name)")
+    .order("created_at", { ascending: false });
+
+  const { data: photos } = await supabase
+    .from("photos")
+    .select("id, storage_path, caption, created_at, jobs(name)")
+    .order("created_at", { ascending: false })
+    .limit(12);
+
+  // RFIs only visible to office (superintendent)
+  const { data: rfis } = role === "office"
+    ? await supabase
+        .from("rfis")
+        .select("id, question, status, created_at, jobs(name)")
+        .order("created_at", { ascending: false })
+        .limit(10)
+    : { data: [] };
+
+  // Unpaid invoices — office only
+  const { data: unpaidInvoices } = role === "office"
+    ? await supabase
+        .from("invoices")
+        .select(
+          "id, status, paid_at, created_at, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
+        )
+        .eq("status", "sent")
+        .order("created_at", { ascending: false })
+        .limit(5)
+    : { data: [] };
+
+  const unpaidRows = (unpaidInvoices ?? []).map((inv) => {
+    const items =
+      (inv.invoice_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+    return {
+      id: inv.id,
+      jobName: (inv.jobs as unknown as { name: string } | null)?.name ?? "—",
+      customerName: (inv.customers as unknown as { name: string } | null)?.name ?? "—",
+      createdAt: inv.created_at,
+      total: computeTotal(items),
+    };
+  });
+
+  const unpaidTotal = unpaidRows.reduce((sum, r) => sum + r.total, 0);
+
+  const photoBase =
+    process.env.NEXT_PUBLIC_SUPABASE_URL +
+    "/storage/v1/object/public/job-photos/";
+
+  const statusColor = (s: string) =>
+    s === "in_progress"
+      ? "bg-amber-100 text-amber-800"
+      : s === "completed"
+      ? "bg-green-100 text-green-800"
+      : s === "on_hold"
+      ? "bg-red-100 text-red-800"
+      : "bg-gray-100 text-gray-800";
+
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24">
+      <TopBar title="Construction Management App" subtitle={`Signed in as ${role}`} />
+
+      <main className="max-w-md mx-auto p-4 space-y-6">
+        <ClientPullToRefresh>
+        {/* Office only: create new project button */}
+        {role === "office" && (
+          <div className="grid grid-cols-2 gap-2">
+            <Link
+              href="/admin/projects/new"
+              className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              New Project
+            </Link>
+            <Link
+              href="/invoices/new"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Receipt className="w-5 h-5" />
+              New Invoice
+            </Link>
+          </div>
+        )}
+
+        {/* Jobs as cards — tap to view detail */}
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+            Your Jobs
+          </h2>
+          <div className="space-y-2">
+            {jobs?.map((job) => (
+              <Link
+                key={job.id}
+                href={`/jobs/${job.id}`}
+                className="block bg-white rounded-lg p-4 shadow-sm active:bg-gray-50"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-gray-900 truncate">
+                      {job.name}
+                    </p>
+                    <p className="text-sm text-gray-500 truncate">
+                      {(job.customers as unknown as { name: string } | null)?.name ?? "—"}
+                    </p>
+                  </div>
+                  <span
+                    className={`text-xs px-2 py-1 rounded ${statusColor(job.status)}`}
+                  >
+                    {job.status.replace("_", " ")}
+                  </span>
+                </div>
+              </Link>
+            ))}
+            {(!jobs || jobs.length === 0) && (
+              <div className="bg-white rounded-lg">
+                <EmptyState
+                  icon={EmptyIcons.Briefcase}
+                  title="No jobs yet"
+                  description={
+                    role === "office"
+                      ? "Tap “New Project” above to create your first job."
+                      : "Your assigned jobs will show up here once the office assigns them."
+                  }
+                />
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Recent photos as thumbnails */}
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+            Recent Photos
+          </h2>
+          {photos && photos.length > 0 ? (
+            <div className="grid grid-cols-3 gap-2">
+              {photos.map((p) => (
+                <a
+                  key={p.id}
+                  href={photoBase + p.storage_path}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="aspect-square bg-gray-200 rounded-lg overflow-hidden block"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photoBase + p.storage_path}
+                    alt={p.caption ?? ""}
+                    className="w-full h-full object-cover"
+                  />
+                </a>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg">
+              <EmptyState
+                icon={EmptyIcons.Camera}
+                title="No photos yet"
+                description="Field photos uploaded by your crew will show up here."
+              />
+            </div>
+          )}
+        </section>
+
+        {/* Unpaid invoices — office only */}
+        {role === "office" && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase flex items-center gap-1">
+                <Receipt className="w-4 h-4" />
+                Unpaid Invoices
+              </h2>
+              <Link
+                href="/invoices?status=sent"
+                className="text-xs text-blue-600 font-medium"
+              >
+                View all
+              </Link>
+            </div>
+            {unpaidRows.length > 0 ? (
+              <>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2 flex justify-between items-center">
+                  <span className="text-sm text-amber-800 font-medium">
+                    {unpaidRows.length} invoice{unpaidRows.length === 1 ? "" : "s"} outstanding
+                  </span>
+                  <span className="text-base font-bold text-amber-900">
+                    {formatMoney(unpaidTotal)}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {unpaidRows.map((inv) => (
+                    <Link
+                      key={inv.id}
+                      href={`/invoices/${inv.id}`}
+                      className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
+                    >
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-gray-900 truncate">
+                            {inv.customerName}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate">
+                            {inv.jobName} ·{" "}
+                            {new Date(inv.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <span className="text-sm font-bold text-gray-900">
+                          {formatMoney(inv.total)}
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="bg-white rounded-lg">
+                <EmptyState
+                  icon={EmptyIcons.FileText}
+                  title="All paid up"
+                  description="No outstanding invoices right now."
+                />
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* RFIs — only shown to office */}
+        {role === "office" && (
+          <section>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+              Recent RFIs
+            </h2>
+            <div className="bg-white rounded-lg shadow-sm divide-y">
+              {rfis?.map((r) => (
+                <div key={r.id} className="p-3">
+                  <p className="text-sm text-gray-900">{r.question}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {(r.jobs as unknown as { name: string } | null)?.name ?? "—"} ·{" "}
+                    <span className="font-medium">{r.status}</span>
+                  </p>
+                </div>
+              ))}
+              {(!rfis || rfis.length === 0) && (
+                <EmptyState
+                  icon={EmptyIcons.Inbox}
+                  title="No RFIs yet"
+                  description="Submitted RFIs from your crew will appear here."
+                />
+              )}
+            </div>
+          </section>
+        )}
+        </ClientPullToRefresh>
+      </main>
+
+      <BottomNav />
+    </div>
+  );
+}

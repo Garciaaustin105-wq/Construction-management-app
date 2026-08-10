@@ -1,0 +1,154 @@
+"use client";
+
+import { Plus, Trash2 } from "lucide-react";
+
+export type LineItem = {
+  description: string;
+  quantity: number;
+  unit_price: number;
+};
+
+export default function LineItemEditor({
+  items,
+  onChange,
+  disabled = false,
+}: {
+  items: LineItem[];
+  onChange: (next: LineItem[]) => void;
+  disabled?: boolean;
+}) {
+  function update(idx: number, patch: Partial<LineItem>) {
+    onChange(
+      items.map((item, i) => (i === idx ? { ...item, ...patch } : item))
+    );
+  }
+
+  function add() {
+    onChange([...items, { description: "", quantity: 1, unit_price: 0 }]);
+  }
+
+  function remove(idx: number) {
+    onChange(items.filter((_, i) => i !== idx));
+  }
+
+  const total = items.reduce(
+    (sum, item) => sum + (item.quantity || 0) * (item.unit_price || 0),
+    0
+  );
+
+  return (
+    <div className="space-y-2">
+      {items.length === 0 && (
+        <div className="text-center py-6 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg">
+          No line items. Tap &ldquo;Add line&rdquo; below.
+        </div>
+      )}
+
+      {items.map((item, idx) => {
+        const lineTotal = (item.quantity || 0) * (item.unit_price || 0);
+        return (
+          <div
+            key={idx}
+            className="bg-white border border-gray-200 rounded-lg p-3 space-y-2"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-500">
+                Item {idx + 1}
+              </span>
+              <button
+                type="button"
+                onClick={() => remove(idx)}
+                disabled={disabled}
+                className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-30"
+                title="Remove item"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={item.description}
+              onChange={(e) => update(idx, { description: e.target.value })}
+              disabled={disabled}
+              placeholder="Description (e.g. Cat6 cable, labor hour)"
+              className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+
+            <div className="grid grid-cols-3 gap-2">
+              <label className="block">
+                <span className="text-xs text-gray-500">Qty</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={item.quantity}
+                  onChange={(e) =>
+                    update(idx, {
+                      quantity: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  disabled={disabled}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-gray-500">Unit price</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={item.unit_price}
+                  onChange={(e) =>
+                    update(idx, {
+                      unit_price: parseFloat(e.target.value) || 0,
+                    })
+                  }
+                  disabled={disabled}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </label>
+              <div className="block">
+                <span className="text-xs text-gray-500">Line total</span>
+                <div className="mt-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-semibold text-right">
+                  {formatMoney(lineTotal)}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      <button
+        type="button"
+        onClick={add}
+        disabled={disabled}
+        className="w-full text-blue-600 bg-blue-50 border border-blue-200 py-2 rounded-lg text-sm font-semibold active:bg-blue-100 disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        <Plus className="w-4 h-4" />
+        Add line
+      </button>
+
+      {items.length > 0 && (
+        <div className="bg-gray-900 text-white rounded-lg p-4 flex items-center justify-between">
+          <span className="text-sm font-medium">Total</span>
+          <span className="text-lg font-bold">{formatMoney(total)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function formatMoney(amount: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(amount || 0);
+}
+
+export function computeTotal(items: { quantity: number; unit_price: number }[]) {
+  return items.reduce(
+    (sum, item) => sum + (item.quantity || 0) * (item.unit_price || 0),
+    0
+  );
+}

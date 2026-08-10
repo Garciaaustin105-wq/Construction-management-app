@@ -1,0 +1,16 @@
+{
+  "name": "Low Voltage Manager",
+  "short_name": "LV Manager",
+  "description": "Field-to-office updates for low voltage crews",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

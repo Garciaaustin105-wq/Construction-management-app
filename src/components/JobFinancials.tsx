@@ -1,0 +1,163 @@
+import { createClient } from "@/lib/supabase/server";
+import { formatMoney, computeTotal } from "@/components/LineItemEditor";
+import StatusBadge from "@/components/StatusBadge";
+import { FileText, Receipt } from "lucide-react";
+import Link from "next/link";
+
+export default async function JobFinancials({
+  jobId,
+  role,
+}: {
+  jobId: string;
+  role: string;
+}) {
+  const supabase = await createClient();
+
+  const [{ data: quotes }, { data: invoices }] = await Promise.all([
+    supabase
+      .from("quotes")
+      .select(
+        "id, status, created_at, quote_line_items(quantity, unit_price)"
+      )
+      .eq("job_id", jobId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("invoices")
+      .select(
+        "id, status, paid_at, created_at, invoice_line_items(quantity, unit_price)"
+      )
+      .eq("job_id", jobId)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const quoteRows = (quotes ?? []).map((q) => {
+    const items =
+      (q.quote_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+    return {
+      id: q.id,
+      status: q.status,
+      createdAt: q.created_at,
+      total: computeTotal(items),
+    };
+  });
+
+  const invoiceRows = (invoices ?? []).map((inv) => {
+    const items =
+      (inv.invoice_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+    return {
+      id: inv.id,
+      status: inv.status,
+      paidAt: inv.paid_at,
+      createdAt: inv.created_at,
+      total: computeTotal(items),
+    };
+  });
+
+  const unpaidTotal = invoiceRows
+    .filter((i) => i.status === "sent")
+    .reduce((sum, i) => sum + i.total, 0);
+
+  if (role !== "office" && quoteRows.length === 0 && invoiceRows.length === 0) {
+    return null;
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
+        <Receipt className="w-4 h-4" />
+        Quotes & Invoices
+      </h2>
+
+      {role === "office" && (
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <Link
+            href={`/quotes/new?job=${jobId}`}
+            className="bg-blue-600 text-white text-center py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 flex items-center justify-center gap-2"
+          >
+            <FileText className="w-4 h-4" />
+            New Quote
+          </Link>
+          <Link
+            href={`/invoices/new?job=${jobId}`}
+            className="bg-white border border-gray-300 text-gray-900 text-center py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-2"
+          >
+            <Receipt className="w-4 h-4" />
+            New Invoice
+          </Link>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {quoteRows.map((q) => (
+          <Link
+            key={q.id}
+            href={`/quotes/${q.id}`}
+            className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
+          >
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-gray-500 uppercase flex items-center gap-1">
+                  <FileText className="w-3 h-3" />
+                  Quote
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {new Date(q.createdAt).toLocaleDateString()}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge status={q.status} />
+                <span className="text-sm font-semibold text-gray-900">
+                  {formatMoney(q.total)}
+                </span>
+              </div>
+            </div>
+          </Link>
+        ))}
+
+        {invoiceRows.map((inv) => (
+          <Link
+            key={inv.id}
+            href={`/invoices/${inv.id}`}
+            className={`block rounded-lg p-3 shadow-sm active:opacity-80 ${
+              inv.status === "sent"
+                ? "bg-amber-50 border border-amber-200"
+                : "bg-white"
+            }`}
+          >
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-gray-500 uppercase flex items-center gap-1">
+                  <Receipt className="w-3 h-3" />
+                  Invoice
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {inv.paidAt
+                    ? `Paid ${new Date(inv.paidAt).toLocaleDateString()}`
+                    : `Issued ${new Date(inv.createdAt).toLocaleDateString()}`}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge status={inv.status} />
+                <span className="text-sm font-semibold text-gray-900">
+                  {formatMoney(inv.total)}
+                </span>
+              </div>
+            </div>
+          </Link>
+        ))}
+
+        {quoteRows.length === 0 && invoiceRows.length === 0 && (
+          <div className="bg-white rounded-lg p-4 text-center text-sm text-gray-500">
+            No quotes or invoices yet for this job.
+          </div>
+        )}
+      </div>
+
+      {role === "office" && unpaidTotal > 0 && (
+        <p className="text-xs text-amber-700 mt-2 bg-amber-50 border border-amber-200 rounded p-2">
+          Outstanding: {formatMoney(unpaidTotal)}
+        </p>
+      )}
+    </section>
+  );
+}
