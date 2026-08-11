@@ -119,6 +119,7 @@ export default async function CustomerPortal() {
       <TopBar
         title={profile?.full_name ?? "Project Portal"}
         subtitle={user.email ?? ""}
+        showSignOut
       />
 
       <main className="max-w-md mx-auto p-4 space-y-4">

@@ -33,6 +33,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
+  // Vendor + amount are required so the office has complete tax records.
+  const vendorTrim = (vendor ?? "").trim();
+  if (!vendorTrim) {
+    return NextResponse.json(
+      { error: "Vendor is required before sharing" },
+      { status: 400 }
+    );
+  }
+  if (typeof amount !== "number" || Number.isNaN(amount) || amount <= 0) {
+    return NextResponse.json(
+      { error: "Amount is required before sharing" },
+      { status: 400 }
+    );
+  }
+
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -81,7 +96,7 @@ export async function POST(request: Request) {
       uploaded_by: user.id,
       uploaded_by_name: profile?.full_name ?? null,
       storage_path: path,
-      vendor,
+      vendor: vendorTrim,
       amount: typeof amount === "number" && !Number.isNaN(amount) ? amount : null,
       notes,
       captured_at: capturedAt,

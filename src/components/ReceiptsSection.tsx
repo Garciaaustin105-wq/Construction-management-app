@@ -177,6 +177,15 @@ export default function ReceiptsSection({
       toast.error("Not signed in");
       return;
     }
+    // Vendor + amount are required so the office has complete tax records.
+    if (!rec.vendor?.trim()) {
+      toast.warning("Add a vendor before sharing with the office");
+      return;
+    }
+    if (typeof rec.amount !== "number" || Number.isNaN(rec.amount) || rec.amount <= 0) {
+      toast.warning("Add an amount before sharing with the office");
+      return;
+    }
     const key = `local-${rec.localId}`;
     setBusyId(key);
     try {
@@ -486,7 +495,7 @@ export default function ReceiptsSection({
                     <div className="mt-2 space-y-1.5">
                       <input
                         type="text"
-                        placeholder="Vendor (optional)"
+                        placeholder="Vendor (required)"
                         value={rec.vendor ?? ""}
                         onChange={(e) => patchLocal(rec, { vendor: e.target.value })}
                         className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs"
@@ -497,7 +506,7 @@ export default function ReceiptsSection({
                           type="number"
                           inputMode="decimal"
                           step="0.01"
-                          placeholder="Amount"
+                          placeholder="Amount (required)"
                           value={rec.amount ?? ""}
                           onChange={(e) =>
                             patchLocal(rec, {
@@ -516,6 +525,13 @@ export default function ReceiptsSection({
                           className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded text-xs"
                         />
                       </div>
+                      {(!rec.vendor?.trim() ||
+                        typeof rec.amount !== "number" ||
+                        rec.amount <= 0) && (
+                        <p className="text-[10px] text-amber-600">
+                          Vendor &amp; amount required to share with office
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="mt-1 text-xs text-gray-600 space-y-0.5">

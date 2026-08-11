@@ -8,6 +8,7 @@ import {
   Camera,
   Users,
   LogOut,
+  Receipt,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
@@ -17,6 +18,7 @@ export default function BottomNav() {
   const router = useRouter();
   const supabase = createClient();
   const [role, setRole] = useState<string | null>(null);
+  const [hidden, setHidden] = useState(false);
   const unread = useUnreadCount();
 
   useEffect(() => {
@@ -32,6 +34,24 @@ export default function BottomNav() {
     })();
   }, [supabase]);
 
+  // Auto-hide on scroll down, reveal on scroll up (Facebook-style).
+  useEffect(() => {
+    let lastY = window.scrollY;
+    function onScroll() {
+      const y = window.scrollY;
+      if (y <= 8) {
+        setHidden(false);
+      } else if (y > lastY + 4) {
+        setHidden(true);
+      } else if (y < lastY - 4) {
+        setHidden(false);
+      }
+      lastY = y;
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     router.push("/login");
@@ -43,11 +63,16 @@ export default function BottomNav() {
     { href: "/crew/photo", label: "Photo", Icon: Camera },
   ];
   if (role === "office") {
+    items.push({ href: "/receipts", label: "Receipts", Icon: Receipt });
     items.push({ href: "/admin/users", label: "Admin", Icon: Users });
   }
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50">
+    <nav
+      className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 transition-transform duration-200 ${
+        hidden ? "translate-y-full" : "translate-y-0"
+      }`}
+    >
       <div className="max-w-md mx-auto flex">
         {items.map(({ href, label, Icon }) => {
           const active = pathname === href;

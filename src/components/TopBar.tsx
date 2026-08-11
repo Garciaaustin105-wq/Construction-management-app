@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 export default function TopBar({
   title,
   subtitle,
-  showSignOut = true,
+  showSignOut = false,
 }: {
   title: string;
   subtitle?: string;
