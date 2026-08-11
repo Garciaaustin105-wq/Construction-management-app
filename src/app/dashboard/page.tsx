@@ -7,7 +7,7 @@ import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import Link from "next/link";
-import { Plus, Camera, Receipt } from "lucide-react";
+import { Plus, Receipt } from "lucide-react";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -74,15 +74,6 @@ export default async function DashboardPage() {
     process.env.NEXT_PUBLIC_SUPABASE_URL +
     "/storage/v1/object/public/job-photos/";
 
-  const statusColor = (s: string) =>
-    s === "in_progress"
-      ? "bg-amber-100 text-amber-800"
-      : s === "completed"
-      ? "bg-green-100 text-green-800"
-      : s === "on_hold"
-      ? "bg-red-100 text-red-800"
-      : "bg-gray-100 text-gray-800";
-
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar title="Terra Vista" subtitle={`Signed in as ${role}`} />
@@ -130,11 +121,7 @@ export default async function DashboardPage() {
                       {(job.customers as unknown as { name: string } | null)?.name ?? "—"}
                     </p>
                   </div>
-                  <span
-                    className={`text-xs px-2 py-1 rounded ${statusColor(job.status)}`}
-                  >
-                    {job.status.replace("_", " ")}
-                  </span>
+                  <StatusBadge status={job.status} />
                 </div>
               </Link>
             ))}

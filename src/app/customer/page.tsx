@@ -79,15 +79,6 @@ export default async function CustomerPortal() {
     process.env.NEXT_PUBLIC_SUPABASE_URL +
     "/storage/v1/object/public/blueprints/";
 
-  const statusColor = (s: string) =>
-    s === "in_progress"
-      ? "bg-amber-100 text-amber-800"
-      : s === "completed"
-      ? "bg-green-100 text-green-800"
-      : s === "on_hold"
-      ? "bg-red-100 text-red-800"
-      : "bg-gray-100 text-gray-800";
-
   const quoteRows = (pendingQuotes ?? []).map((q) => {
     const items =
       (q.quote_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
@@ -260,11 +251,7 @@ export default async function CustomerPortal() {
                     <h2 className="text-base font-semibold text-gray-900">
                       {job.name}
                     </h2>
-                    <span
-                      className={`text-xs px-2 py-1 rounded ${statusColor(job.status)}`}
-                    >
-                      {job.status.replace("_", " ")}
-                    </span>
+                    <StatusBadge status={job.status} />
                   </div>
                   {job.address && (
                     <p className="text-sm text-gray-600 flex items-center gap-1">

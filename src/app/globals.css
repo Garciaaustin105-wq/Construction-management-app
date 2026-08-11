@@ -29,3 +29,14 @@ button, a, input, select, textarea {
 
 /* Smooth scrolling */
 html { scroll-behavior: smooth; }
+
+/* Visible keyboard focus on custom-styled controls (brand blueprint blue).
+   :focus-visible only fires for keyboard/AT navigation, not mouse clicks. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}

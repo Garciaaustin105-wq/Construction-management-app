@@ -13,6 +13,7 @@ import ActivityTimeline from "@/components/ActivityTimeline";
 import DeleteJobButton from "@/components/DeleteJobButton";
 import JobFinancials from "@/components/JobFinancials";
 import ReceiptsSection from "@/components/ReceiptsSection";
+import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
 
 export default async function JobDetailPage({
@@ -90,26 +91,15 @@ export default async function JobDetailPage({
     process.env.NEXT_PUBLIC_SUPABASE_URL +
     "/storage/v1/object/public/job-photos/";
 
-  const statusColor = (s: string) =>
-    s === "in_progress"
-      ? "bg-amber-100 text-amber-800"
-      : s === "completed"
-      ? "bg-green-100 text-green-800"
-      : s === "on_hold"
-      ? "bg-red-100 text-red-800"
-      : "bg-gray-100 text-gray-800";
-
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar title={job.name} subtitle={(job.customers as unknown as { name: string } | null)?.name ?? ""} />
 
       <main className="max-w-md mx-auto p-4 space-y-6">
         <section className="bg-white rounded-lg p-4 shadow-sm">
-          <span
-            className={`inline-block text-xs px-2 py-1 rounded ${statusColor(job.status)} mb-2`}
-          >
-            {job.status.replace("_", " ")}
-          </span>
+          <div className="mb-2">
+            <StatusBadge status={job.status} />
+          </div>
           {job.address && <MapLink address={job.address} />}
           {job.description && (
             <p className="text-sm text-gray-600 mt-2">{job.description}</p>

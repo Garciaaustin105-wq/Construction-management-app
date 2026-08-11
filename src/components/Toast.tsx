@@ -101,7 +101,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
 
   return (
     <div
-      role="status"
+      role={toast.variant === "error" || toast.variant === "warning" ? "alert" : "status"}
       onClick={onDismiss}
       className={`pointer-events-auto max-w-sm w-full shadow-lg rounded-lg px-4 py-3 flex items-center gap-2 text-sm transition-all duration-200 ${
         visible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
