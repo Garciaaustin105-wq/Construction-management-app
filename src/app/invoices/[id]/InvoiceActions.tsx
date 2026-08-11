@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import { CheckCircle2, XCircle, RotateCcw, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, RotateCcw, Loader2, Trash2 } from "lucide-react";
 
 export default function InvoiceActions({
   invoiceId,
@@ -29,6 +29,19 @@ export default function InvoiceActions({
     } else {
       toast.success(`Invoice marked ${newStatus}`);
       router.refresh();
+    }
+    setBusy(false);
+  }
+
+  async function deleteInvoice() {
+    if (!confirm("Delete this invoice? This can't be undone.")) return;
+    setBusy(true);
+    const { error } = await supabase.from("invoices").delete().eq("id", invoiceId);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+    } else {
+      toast.success("Invoice deleted");
+      router.push("/invoices");
     }
     setBusy(false);
   }
@@ -93,6 +106,21 @@ export default function InvoiceActions({
           Restore as Unpaid
         </button>
       )}
+
+      <div className="pt-2 mt-2 border-t border-gray-200">
+        <button
+          onClick={deleteInvoice}
+          disabled={busy}
+          className="w-full bg-red-50 border border-red-200 text-red-700 py-3 rounded-lg font-semibold text-sm active:bg-red-100 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {busy ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4" />
+          )}
+          Delete Invoice
+        </button>
+      </div>
     </div>
   );
 }
