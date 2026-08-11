@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Plug, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 export default function LoginPage() {
@@ -43,30 +43,46 @@ export default function LoginPage() {
         className="w-full max-w-sm bg-white p-6 rounded-lg shadow-sm space-y-4"
       >
         <div className="text-center mb-2">
-          <Plug className="w-8 h-8 text-blue-600 mx-auto mb-2" />
-          <h1 className="text-xl font-bold text-gray-900">
-            Terra Vista Construction
-          </h1>
-          <p className="text-xs text-gray-500">Sign in to continue</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/terra-vista-logo.svg"
+            alt="Terra Vista Construction Management"
+            width={260}
+            height={72}
+            className="mx-auto mb-1"
+          />
+          <p className="text-xs text-gray-500 mt-1">Sign in to continue</p>
         </div>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
-          autoComplete="email"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
-          autoComplete="current-password"
-        />
+        <div>
+          <label htmlFor="email" className="sr-only">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+            autoComplete="email"
+          />
+        </div>
+        <div>
+          <label htmlFor="password" className="sr-only">
+            Password
+          </label>
+          <input
+            id="password"
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+            autoComplete="current-password"
+          />
+        </div>
         <button
           type="submit"
           disabled={loading}

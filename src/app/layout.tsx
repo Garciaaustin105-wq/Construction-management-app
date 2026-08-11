@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   title: "Terra Vista Construction Management App",
   description: "Field-to-office construction management",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/terra-vista-icon.svg",
+    shortcut: "/terra-vista-icon.svg",
+    apple: "/terra-vista-icon.svg",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

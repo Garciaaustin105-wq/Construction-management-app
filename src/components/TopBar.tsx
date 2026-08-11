@@ -24,11 +24,21 @@ export default function TopBar({
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-      <div className="min-w-0">
-        <h1 className="text-lg font-bold text-gray-900 truncate">{title}</h1>
-        {subtitle && (
-          <p className="text-xs text-gray-500 truncate">{subtitle}</p>
-        )}
+      <div className="flex items-center gap-2 min-w-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/terra-vista-icon.svg"
+          alt="Terra Vista"
+          width={28}
+          height={28}
+          className="shrink-0 rounded-md"
+        />
+        <div className="min-w-0">
+          <h1 className="text-lg font-bold text-gray-900 truncate">{title}</h1>
+          {subtitle && (
+            <p className="text-xs text-gray-500 truncate">{subtitle}</p>
+          )}
+        </div>
       </div>
       {showSignOut && (
         <button
