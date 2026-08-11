@@ -31,14 +31,22 @@ export default function PullToRefresh({
     if (!el) return;
 
     function onTouchStart(e: TouchEvent) {
-      // Only start if scrolled to top
-      if ((el?.scrollTop ?? 0) > 0) return;
+      // Only start a pull when the page is actually scrolled to the top.
+      // The wrapper div isn't a scroll container, so check window.scrollY
+      // (not el.scrollTop, which is always 0 and hijacks normal scrolling).
+      if (window.scrollY > 0) return;
       startY.current = e.touches[0].clientY;
       pulling.current = true;
     }
 
     function onTouchMove(e: TouchEvent) {
       if (!pulling.current || startY.current === null) return;
+      // Abort if the page scrolled away from the top mid-gesture
+      if (window.scrollY > 0) {
+        setPull(0);
+        pulling.current = false;
+        return;
+      }
       const dy = e.touches[0].clientY - startY.current;
       if (dy > 0) {
         e.preventDefault();

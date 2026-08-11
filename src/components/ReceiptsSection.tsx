@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import {
@@ -12,6 +13,8 @@ import {
   CheckCircle2,
   Receipt as ReceiptIcon,
   X,
+  DollarSign,
+  RotateCcw,
 } from "lucide-react";
 import {
   addReceipt,
@@ -30,6 +33,9 @@ export type RemoteReceipt = {
   notes: string | null;
   captured_at: string;
   uploaded_by: string;
+  uploaded_by_name: string | null;
+  reimbursed: boolean;
+  reimbursed_at: string | null;
 };
 
 type ViewReceipt =
@@ -49,9 +55,11 @@ export default function ReceiptsSection({
 }) {
   const supabase = createClient();
   const toast = useToast();
+  const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string>("");
   const [locals, setLocals] = useState<LocalReceipt[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [capturing, setCapturing] = useState(false);
@@ -71,9 +79,25 @@ export default function ReceiptsSection({
   }, [jobId]);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      const id = data.user?.id ?? null;
+      setUserId(id);
+      if (id) {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", id)
+          .single();
+        if (prof?.full_name) setUserName(prof.full_name);
+      }
+    })();
     refreshLocal();
   }, [supabase, refreshLocal]);
+
+  // Look up remote records by id so shared local receipts can read
+  // reimbursed / uploader info that lives on the server row.
+  const remoteById = new Map(remoteReceipts.map((r) => [r.id, r]));
 
   // Signed URLs for remote receipts that aren't mirrored locally
   const remoteOnly = remoteReceipts.filter(
@@ -111,6 +135,7 @@ export default function ReceiptsSection({
   });
 
   const notShared = locals.filter((l) => !l.shared).length;
+  const owedCount = remoteReceipts.filter((r) => !r.reimbursed).length;
 
   // --- Capture (camera) ---------------------------------------------------
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -168,6 +193,7 @@ export default function ReceiptsSection({
         .insert({
           job_id: jobId,
           uploaded_by: userId,
+          uploaded_by_name: userName || null,
           storage_path: path,
           vendor: rec.vendor || null,
           amount: rec.amount ?? null,
@@ -220,6 +246,30 @@ export default function ReceiptsSection({
       const obj = URL.createObjectURL(blob);
       triggerDownload(obj, fileName(r.captured_at, jobName, r.vendor ?? undefined));
       setTimeout(() => URL.revokeObjectURL(obj), 4000);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // --- Toggle paid-back (office only) -------------------------------------
+  async function toggleReimbursed(remoteId: string, currently: boolean) {
+    const key = `reimburse-${remoteId}`;
+    setBusyId(key);
+    try {
+      const reimbursed = !currently;
+      const { error } = await supabase
+        .from("receipts")
+        .update({
+          reimbursed,
+          reimbursed_at: reimbursed ? new Date().toISOString() : null,
+        })
+        .eq("id", remoteId);
+      if (error) {
+        toast.error(`Failed: ${error.message}`);
+      } else {
+        toast.success(reimbursed ? "Marked paid back" : "Marked unpaid");
+        router.refresh();
+      }
     } finally {
       setBusyId(null);
     }
@@ -310,7 +360,8 @@ export default function ReceiptsSection({
       <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-2">
         <ReceiptIcon className="w-4 h-4" />
         Receipts ({views.length}
-        {notShared > 0 ? ` · ${notShared} not shared` : ""})
+        {notShared > 0 ? ` · ${notShared} not shared` : ""}
+        {owedCount > 0 ? ` · ${owedCount} owed` : ""})
       </h2>
 
       {/* Capture button */}
@@ -367,6 +418,22 @@ export default function ReceiptsSection({
           const canDeleteRemote =
             !isLocal && (role === "office" || r.uploaded_by === userId);
 
+          // Reconcile server-side fields (reimbursed) for shared local receipts
+          const remoteRow = isLocal
+            ? rec.shared && rec.remoteId
+              ? remoteById.get(rec.remoteId)
+              : undefined
+            : r;
+          const reimbursed = remoteRow?.reimbursed ?? false;
+          const uploader = isLocal
+            ? userName || "You"
+            : r.uploaded_by_name ?? "—";
+          const toggleId = isLocal
+            ? rec.shared
+              ? rec.remoteId
+              : null
+            : r.id;
+
           return (
             <div key={id} className="p-3">
               <div className="flex gap-3">
@@ -397,7 +464,7 @@ export default function ReceiptsSection({
 
                 {/* Meta + actions */}
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${
                         shared
@@ -413,6 +480,17 @@ export default function ReceiptsSection({
                         "On phone"
                       )}
                     </span>
+                    {shared && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${
+                          reimbursed
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-orange-100 text-orange-700"
+                        }`}
+                      >
+                        {reimbursed ? "Paid back" : "Owed"}
+                      </span>
+                    )}
                     <span className="text-xs text-gray-400 truncate">
                       {new Date(capturedAt).toLocaleDateString()}
                     </span>
@@ -460,6 +538,9 @@ export default function ReceiptsSection({
                       {typeof amount === "number" && amount > 0 && (
                         <p>Amount: ${amount.toFixed(2)}</p>
                       )}
+                      <p className="truncate text-gray-500">
+                        Uploaded by {uploader}
+                      </p>
                       {notes && <p className="truncate">Notes: {notes}</p>}
                     </div>
                   )}
@@ -480,6 +561,26 @@ export default function ReceiptsSection({
                       <Send className="w-3.5 h-3.5" />
                     )}
                     Send to office
+                  </button>
+                )}
+                {role === "office" && shared && toggleId && (
+                  <button
+                    onClick={() => toggleReimbursed(toggleId, reimbursed)}
+                    disabled={busy}
+                    className={`flex-1 py-2 rounded text-xs font-semibold disabled:opacity-50 flex items-center justify-center gap-1 ${
+                      reimbursed
+                        ? "bg-white border border-gray-300 text-gray-700 active:bg-gray-50"
+                        : "bg-emerald-600 text-white active:bg-emerald-700"
+                    }`}
+                  >
+                    {busyId === `reimburse-${toggleId}` ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : reimbursed ? (
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    ) : (
+                      <DollarSign className="w-3.5 h-3.5" />
+                    )}
+                    {reimbursed ? "Mark unpaid" : "Mark paid back"}
                   </button>
                 )}
                 <button

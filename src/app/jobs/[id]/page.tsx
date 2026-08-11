@@ -72,7 +72,7 @@ export default async function JobDetailPage({
   const { data: receipts } = await supabase
     .from("receipts")
     .select(
-      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by"
+      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at"
     )
     .eq("job_id", id)
     .order("captured_at", { ascending: false });
