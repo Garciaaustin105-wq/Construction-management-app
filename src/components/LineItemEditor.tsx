@@ -1,12 +1,9 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
+import { formatMoney, computeTotal, type LineItem } from "@/lib/money";
 
-export type LineItem = {
-  description: string;
-  quantity: number;
-  unit_price: number;
-};
+export type { LineItem };
 
 export default function LineItemEditor({
   items,
@@ -136,19 +133,5 @@ export default function LineItemEditor({
         </div>
       )}
     </div>
-  );
-}
-
-export function formatMoney(amount: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(amount || 0);
-}
-
-export function computeTotal(items: { quantity: number; unit_price: number }[]) {
-  return items.reduce(
-    (sum, item) => sum + (item.quantity || 0) * (item.unit_price || 0),
-    0
   );
 }

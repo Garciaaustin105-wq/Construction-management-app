@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import BottomNav from "@/components/BottomNav";
 import StatusBadge from "@/components/StatusBadge";
-import LineItemEditor, { formatMoney, computeTotal } from "@/components/LineItemEditor";
+import { formatMoney, computeTotal } from "@/lib/money";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import QuoteActions from "./QuoteActions";
 import CustomerQuoteActions from "./CustomerQuoteActions";

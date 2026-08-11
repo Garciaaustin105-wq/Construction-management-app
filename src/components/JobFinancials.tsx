@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { formatMoney, computeTotal } from "@/components/LineItemEditor";
+import { formatMoney, computeTotal } from "@/lib/money";
 import StatusBadge from "@/components/StatusBadge";
 import { FileText, Receipt } from "lucide-react";
 import Link from "next/link";

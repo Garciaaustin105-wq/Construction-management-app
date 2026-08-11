@@ -5,7 +5,7 @@ import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import CustomerBlueprints from "@/components/CustomerBlueprints";
 import StatusBadge from "@/components/StatusBadge";
-import { formatMoney, computeTotal } from "@/components/LineItemEditor";
+import { formatMoney, computeTotal } from "@/lib/money";
 import { MapPin, FileText, Receipt } from "lucide-react";
 import Link from "next/link";
 

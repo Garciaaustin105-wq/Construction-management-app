@@ -5,7 +5,7 @@ import BottomNav from "@/components/BottomNav";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
-import { formatMoney, computeTotal } from "@/components/LineItemEditor";
+import { formatMoney, computeTotal } from "@/lib/money";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
