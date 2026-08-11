@@ -12,6 +12,7 @@ import PhotoLightbox from "@/components/PhotoLightbox";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import DeleteJobButton from "@/components/DeleteJobButton";
 import JobFinancials from "@/components/JobFinancials";
+import ReceiptsSection from "@/components/ReceiptsSection";
 import { Camera, CornerDownRight } from "lucide-react";
 
 export default async function JobDetailPage({
@@ -66,6 +67,15 @@ export default async function JobDetailPage({
     .select("id, storage_path, filename, caption, created_at")
     .eq("job_id", id)
     .order("created_at", { ascending: false });
+
+  // Shared receipts (RLS: office sees all, crew sees their assigned jobs)
+  const { data: receipts } = await supabase
+    .from("receipts")
+    .select(
+      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by"
+    )
+    .eq("job_id", id)
+    .order("captured_at", { ascending: false });
 
   // For office: fetch all crew members
   const { data: crewMembers } = role === "office"
@@ -150,6 +160,16 @@ export default async function JobDetailPage({
             </div>
           )}
         </section>
+
+        {/* Receipts — office and assigned crew */}
+        {(role === "office" || (job.assigned_crew ?? []).includes(user.id)) && (
+          <ReceiptsSection
+            jobId={job.id}
+            jobName={job.name}
+            role={role}
+            remoteReceipts={receipts ?? []}
+          />
+        )}
 
         {/* Blueprints — visible to office, crew, and customer */}
         <BlueprintsSection
