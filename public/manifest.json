@@ -1,7 +1,7 @@
 {
-  "name": "Low Voltage Manager",
-  "short_name": "LV Manager",
-  "description": "Field-to-office updates for low voltage crews",
+  "name": "Terra Vista Construction Management App",
+  "short_name": "Terra Vista",
+  "description": "Field-to-office construction management",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#f9fafb",

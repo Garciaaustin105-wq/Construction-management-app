@@ -45,7 +45,7 @@ export default function LoginPage() {
         <div className="text-center mb-2">
           <Plug className="w-8 h-8 text-blue-600 mx-auto mb-2" />
           <h1 className="text-xl font-bold text-gray-900">
-            Construction Management App
+            Terra Vista Construction
           </h1>
           <p className="text-xs text-gray-500">Sign in to continue</p>
         </div>

@@ -3,13 +3,13 @@ import "./globals.css";
 import Providers from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "Construction Management App",
-  description: "Field-to-office updates for low voltage crews",
+  title: "Terra Vista Construction Management App",
+  description: "Field-to-office construction management",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "LV Manager",
+    title: "Terra Vista",
   },
 };
 

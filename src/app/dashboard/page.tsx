@@ -85,7 +85,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title="Construction Management App" subtitle={`Signed in as ${role}`} />
+      <TopBar title="Terra Vista" subtitle={`Signed in as ${role}`} />
 
       <main className="max-w-md mx-auto p-4 space-y-6">
         <ClientPullToRefresh>
