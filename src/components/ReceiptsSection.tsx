@@ -180,38 +180,26 @@ export default function ReceiptsSection({
     const key = `local-${rec.localId}`;
     setBusyId(key);
     try {
-      const path = `${jobId}/${Date.now()}.jpg`;
-      const { error: upErr } = await supabase.storage
-        .from("receipts")
-        .upload(path, rec.blob, { contentType: "image/jpeg" });
-      if (upErr) {
-        toast.error(`Upload failed: ${upErr.message}`);
-        return;
-      }
-      const { data, error: dbErr } = await supabase
-        .from("receipts")
-        .insert({
-          job_id: jobId,
-          uploaded_by: userId,
-          uploaded_by_name: userName || null,
-          storage_path: path,
-          vendor: rec.vendor || null,
-          amount: rec.amount ?? null,
-          notes: rec.notes || null,
-          captured_at: rec.capturedAt,
-        })
-        .select("id")
-        .single();
-      if (dbErr || !data) {
-        toast.error(`Save failed: ${dbErr?.message ?? "error"}`);
-        // Clean up the orphaned storage object
-        void supabase.storage.from("receipts").remove([path]);
+      // Route through our server API (service role) so crew uploads don't
+      // depend on per-crew storage RLS policies.
+      const form = new FormData();
+      form.append("jobId", jobId);
+      form.append("capturedAt", rec.capturedAt);
+      if (rec.vendor) form.append("vendor", rec.vendor);
+      if (typeof rec.amount === "number") form.append("amount", String(rec.amount));
+      if (rec.notes) form.append("notes", rec.notes);
+      form.append("file", rec.blob, "receipt.jpg");
+
+      const res = await fetch("/api/receipts/share", { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data?.error ?? `Share failed (${res.status})`);
         return;
       }
       await updateReceipt(rec.localId!, {
         shared: true,
         remoteId: data.id,
-        storagePath: path,
+        storagePath: data.storagePath,
       });
       await refreshLocal();
       toast.success("Shared with office");
@@ -281,12 +269,10 @@ export default function ReceiptsSection({
     const key = `local-${rec.localId}`;
     setBusyId(key);
     try {
-      // If it was shared, also remove from cloud (this user owns it)
-      if (rec.shared && rec.storagePath) {
-        await supabase.storage.from("receipts").remove([rec.storagePath]);
-        if (rec.remoteId) {
-          await supabase.from("receipts").delete().eq("id", rec.remoteId);
-        }
+      // If it was shared, remove the cloud copy via the server API (service
+      // role) so crew deletes don't depend on storage RLS.
+      if (rec.shared && rec.remoteId) {
+        await fetch(`/api/receipts/${rec.remoteId}`, { method: "DELETE" });
       }
       await deleteReceipt(rec.localId!);
       await refreshLocal();
@@ -300,14 +286,13 @@ export default function ReceiptsSection({
     const key = `remote-${r.id}`;
     setBusyId(key);
     try {
-      await supabase.storage.from("receipts").remove([r.storage_path]);
-      const { error } = await supabase.from("receipts").delete().eq("id", r.id);
-      if (error) {
-        toast.error(`Failed: ${error.message}`);
+      const res = await fetch(`/api/receipts/${r.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error ?? `Failed (${res.status})`);
       } else {
         toast.success("Receipt deleted");
-        // Best-effort: reload the page so the server-fetched list updates
-        window.location.reload();
+        router.refresh();
       }
     } finally {
       setBusyId(null);
