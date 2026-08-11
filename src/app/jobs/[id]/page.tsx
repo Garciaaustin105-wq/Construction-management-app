@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import BottomNav from "@/components/BottomNav";
 import Link from "next/link";
 import MapLink from "@/components/MapLink";
 import JobAssignment from "@/components/JobAssignment";
@@ -215,7 +214,6 @@ export default async function JobDetailPage({
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 }

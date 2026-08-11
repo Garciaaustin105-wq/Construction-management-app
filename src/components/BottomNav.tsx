@@ -67,6 +67,12 @@ export default function BottomNav() {
     items.push({ href: "/admin/users", label: "Admin", Icon: Users });
   }
 
+  // The bottom nav is persistent (rendered from the root layout) but should
+  // not appear on public/portal routes that have their own chrome.
+  if (pathname === "/" || pathname === "/login" || pathname === "/customer") {
+    return null;
+  }
+
   return (
     <nav
       className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 transition-transform duration-200 ${

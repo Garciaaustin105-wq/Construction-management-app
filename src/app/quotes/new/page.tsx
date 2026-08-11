@@ -2,7 +2,6 @@
 
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import BottomNav from "@/components/BottomNav";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import LineItemEditor, { LineItem } from "@/components/LineItemEditor";
@@ -188,7 +187,6 @@ function NewQuoteForm() {
         </form>
       </main>
 
-      <BottomNav />
     </div>
   );
 }

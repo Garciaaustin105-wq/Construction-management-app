@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import BottomNav from "@/components/BottomNav";
 import LineItemEditor, { LineItem } from "@/components/LineItemEditor";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
@@ -226,7 +225,6 @@ export default function NewInvoiceForm({
         </form>
       </main>
 
-      <BottomNav />
     </div>
   );
 }

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 export function useUnreadCount() {
   const [unread, setUnread] = useState(0);
+  const pathname = usePathname();
 
   useEffect(() => {
     let active = true;
@@ -25,7 +27,7 @@ export function useUnreadCount() {
       active = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [pathname]);
 
   return unread;
 }

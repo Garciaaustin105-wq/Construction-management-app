@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import BottomNav from "@/components/BottomNav";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import ReceiptsExportButton, {
   type ExportReceipt,
@@ -173,7 +172,6 @@ export default async function ReceiptsOverviewPage() {
         </section>
       </main>
 
-      <BottomNav />
     </div>
   );
 }

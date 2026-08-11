@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import BottomNav from "@/components/BottomNav";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
@@ -28,6 +27,20 @@ export default async function DashboardPage() {
     .from("jobs")
     .select("id, name, status, customers(name)")
     .order("created_at", { ascending: false });
+
+  // Visiting Home marks every visible job as "seen" so the notification
+  // badge only counts activity that happens AFTER this visit (not old
+  // photos/RFIs on jobs the user simply hasn't opened individually).
+  if (jobs && jobs.length > 0) {
+    await supabase.from("job_views").upsert(
+      jobs.map((j) => ({
+        user_id: user.id,
+        job_id: j.id,
+        last_seen_at: new Date().toISOString(),
+      })),
+      { onConflict: "user_id,job_id" }
+    );
+  }
 
   const { data: photos } = await supabase
     .from("photos")
@@ -267,7 +280,6 @@ export default async function DashboardPage() {
         </ClientPullToRefresh>
       </main>
 
-      <BottomNav />
     </div>
   );
 }

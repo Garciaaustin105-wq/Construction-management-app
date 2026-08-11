@@ -4,7 +4,6 @@ import { Suspense, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
-import BottomNav from "@/components/BottomNav";
 import { HelpCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -138,7 +137,6 @@ function RfiForm() {
           </button>
         </form>
       </main>
-      <BottomNav />
     </div>
   );
 }

@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import BottomNav from "@/components/BottomNav";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
@@ -138,7 +137,6 @@ export default async function QuotesPage({
         </ClientPullToRefresh>
       </main>
 
-      <BottomNav />
     </div>
   );
 }

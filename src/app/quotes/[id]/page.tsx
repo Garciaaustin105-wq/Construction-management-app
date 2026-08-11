@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import BottomNav from "@/components/BottomNav";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
@@ -171,7 +170,6 @@ export default async function QuoteDetailPage({
         )}
       </main>
 
-      <BottomNav />
     </div>
   );
 }

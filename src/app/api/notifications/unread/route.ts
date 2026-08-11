@@ -13,7 +13,8 @@ export async function GET() {
   // Get last seen time per job (default = epoch for jobs never seen)
   const { data: views } = await supabase
     .from("job_views")
-    .select("job_id, last_seen_at");
+    .select("job_id, last_seen_at")
+    .eq("user_id", user.id);
 
   const lastSeen: Record<string, string> = {};
   for (const v of views ?? []) {

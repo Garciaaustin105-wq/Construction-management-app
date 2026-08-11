@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import BottomNav from "@/components/BottomNav";
 import { HardHat, Building2, ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -165,7 +164,6 @@ export default function NewUserPage() {
         </form>
       </main>
 
-      <BottomNav />
     </div>
   );
 }
