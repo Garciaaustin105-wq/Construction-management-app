@@ -9,6 +9,7 @@ import {
   Users,
   LogOut,
   Receipt,
+  Clock,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
@@ -61,6 +62,7 @@ export default function BottomNav() {
   const items = [
     { href: "/dashboard", label: "Home", Icon: Home },
     { href: "/crew/photo", label: "Photo", Icon: Camera },
+    { href: "/crew/time", label: "Time", Icon: Clock },
   ];
   if (role === "office") {
     items.push({ href: "/receipts", label: "Receipts", Icon: Receipt });

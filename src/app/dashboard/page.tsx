@@ -6,7 +6,7 @@ import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import Link from "next/link";
-import { Plus, Receipt } from "lucide-react";
+import { Plus, Receipt, Clock, Tag } from "lucide-react";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -109,6 +109,20 @@ export default async function DashboardPage() {
             >
               <Receipt className="w-5 h-5" />
               New Invoice
+            </Link>
+            <Link
+              href="/time"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Clock className="w-5 h-5" />
+              Time
+            </Link>
+            <Link
+              href="/admin/cost-codes"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Tag className="w-5 h-5" />
+              Cost Codes
             </Link>
           </div>
         )}
