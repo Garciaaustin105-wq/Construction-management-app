@@ -41,6 +41,7 @@ export type RemoteReceipt = {
   tax: number | null;
   payment_method: string | null;
   receipt_no: string | null;
+  cost_code_id: string | null;
 };
 
 // Shared option lists for the receipt editor + display.
@@ -83,6 +84,7 @@ export default function ReceiptsSection({
   const [userId, setUserId] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>("");
   const [locals, setLocals] = useState<LocalReceipt[]>([]);
+  const [costCodes, setCostCodes] = useState<{ id: string; code: string; name: string }[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [capturing, setCapturing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null); // id of receipt mid-action
@@ -113,6 +115,11 @@ export default function ReceiptsSection({
           .single();
         if (prof?.full_name) setUserName(prof.full_name);
       }
+      const { data: codes } = await supabase
+        .from("cost_codes")
+        .select("id, code, name")
+        .order("code");
+      setCostCodes(codes ?? []);
     })();
     refreshLocal();
   }, [supabase, refreshLocal]);
@@ -229,6 +236,7 @@ export default function ReceiptsSection({
       if (typeof rec.tax === "number") form.append("tax", String(rec.tax));
       if (rec.paymentMethod) form.append("paymentMethod", rec.paymentMethod);
       if (rec.receiptNo) form.append("receiptNo", rec.receiptNo);
+      if (rec.costCodeId) form.append("costCodeId", rec.costCodeId);
       form.append("file", rec.blob, "receipt.jpg");
 
       const res = await fetch("/api/receipts/share", { method: "POST", body: form });
@@ -440,6 +448,10 @@ export default function ReceiptsSection({
           const tax = isLocal ? rec.tax : r.tax;
           const paymentMethod = isLocal ? rec.paymentMethod : r.payment_method;
           const receiptNo = isLocal ? rec.receiptNo : r.receipt_no;
+          const costCodeId = isLocal ? rec.costCodeId : r.cost_code_id;
+          const costCode = costCodeId
+            ? costCodes.find((c) => c.id === costCodeId)
+            : undefined;
           const thumb = isLocal
             ? rec.thumb
             : signedUrls[(v as { kind: "remote"; rec: RemoteReceipt }).rec.id];
@@ -597,6 +609,18 @@ export default function ReceiptsSection({
                         onChange={(e) => patchLocal(rec, { receiptNo: e.target.value || undefined })}
                         className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs"
                       />
+                      <select
+                        value={rec.costCodeId ?? ""}
+                        onChange={(e) => patchLocal(rec, { costCodeId: e.target.value || null })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">Cost code (optional)…</option>
+                        {costCodes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.code} · {c.name}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         type="text"
                         placeholder="Notes (optional)"
@@ -632,6 +656,11 @@ export default function ReceiptsSection({
                         {paymentMethod && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
                             {paymentMethod}
+                          </span>
+                        )}
+                        {costCode && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium font-mono">
+                            {costCode.code}
                           </span>
                         )}
                       </div>

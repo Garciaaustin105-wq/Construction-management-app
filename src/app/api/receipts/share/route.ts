@@ -36,6 +36,7 @@ export async function POST(request: Request) {
       : Number(taxRaw);
   const paymentMethod = (form.get("paymentMethod") as string | null) || null;
   const receiptNo = (form.get("receiptNo") as string | null) || null;
+  const costCodeId = (form.get("costCodeId") as string | null) || null;
   const file = form.get("file") as File | null;
 
   if (!jobId || !capturedAt || !file) {
@@ -119,6 +120,7 @@ export async function POST(request: Request) {
       tax: typeof tax === "number" && !Number.isNaN(tax) ? tax : null,
       payment_method: paymentMethod,
       receipt_no: receiptNo,
+      cost_code_id: costCodeId || null,
     })
     .select("id")
     .single();

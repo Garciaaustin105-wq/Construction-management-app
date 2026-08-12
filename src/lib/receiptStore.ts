@@ -22,6 +22,7 @@ export type LocalReceipt = {
   tax?: number; // dollars
   paymentMethod?: string; // Cash / Personal Card / Company Card / Account
   receiptNo?: string; // vendor receipt / reference number
+  costCodeId?: string | null; // tag against a cost code for budget-vs-actual
 };
 
 const DB_NAME = "cmapp";

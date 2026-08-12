@@ -11,6 +11,7 @@ import PhotoLightbox from "@/components/PhotoLightbox";
 import ActivityTimeline from "@/components/ActivityTimeline";
 import DeleteJobButton from "@/components/DeleteJobButton";
 import JobFinancials from "@/components/JobFinancials";
+import JobBudget from "@/components/JobBudget";
 import ReceiptsSection from "@/components/ReceiptsSection";
 import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
@@ -89,7 +90,7 @@ export default async function JobDetailPage({
   const { data: receipts } = await supabase
     .from("receipts")
     .select(
-      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no"
+      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no, cost_code_id"
     )
     .eq("job_id", id)
     .order("captured_at", { ascending: false });
@@ -186,6 +187,9 @@ export default async function JobDetailPage({
 
         {/* Quotes & Invoices — office sees all, customer sees only their own */}
         <JobFinancials jobId={job.id} role={role} />
+
+        {/* Budget vs Actual — office only */}
+        {role === "office" && <JobBudget jobId={job.id} />}
 
         {/* RFIs — office and assigned crew */}
         {(role === "office" || (job.assigned_crew ?? []).includes(user.id)) && (
