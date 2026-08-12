@@ -7,7 +7,6 @@ import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin } from "lucid
 
 export default function PhotoLightbox({
   photos,
-  baseUrl,
   canDelete = false,
 }: {
   photos: {
@@ -19,7 +18,6 @@ export default function PhotoLightbox({
     lat?: number | null;
     lng?: number | null;
   }[];
-  baseUrl: string;
   canDelete?: boolean;
 }) {
   const router = useRouter();
@@ -27,10 +25,37 @@ export default function PhotoLightbox({
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
   const [photos_, setPhotos] = useState(photos);
+  // job-photos is a PRIVATE bucket — mint a signed URL per photo (1h) instead
+  // of using a public URL. Keyed by photo id so survivors stay valid after a
+  // delete (we just drop the deleted id from photos_).
+  const [urls, setUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setPhotos(photos);
   }, [photos]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function mint() {
+      const entries = await Promise.all(
+        photos.map(async (p) => {
+          const { data } = await supabase.storage
+            .from("job-photos")
+            .createSignedUrl(p.storage_path, 3600);
+          return [p.id, data?.signedUrl ?? null] as const;
+        })
+      );
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const [id, url] of entries) if (url) map[id] = url;
+      setUrls(map);
+    }
+    if (photos.length > 0) mint();
+    else setUrls({});
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, supabase]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,7 +98,7 @@ export default function PhotoLightbox({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={baseUrl + p.storage_path}
+              src={urls[p.id] ?? ""}
               alt={p.caption ?? ""}
               className="w-full h-full object-cover"
             />
@@ -128,7 +153,7 @@ export default function PhotoLightbox({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={baseUrl + current.storage_path}
+              src={urls[current.id] ?? ""}
               alt={current.caption ?? ""}
               className="max-w-full max-h-full object-contain"
             />

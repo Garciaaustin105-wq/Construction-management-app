@@ -103,10 +103,6 @@ export default async function JobDetailPage({
         .order("full_name")
     : { data: [] };
 
-  const photoBase =
-    process.env.NEXT_PUBLIC_SUPABASE_URL +
-    "/storage/v1/object/public/job-photos/";
-
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar title={job.name} subtitle={(job.customers as unknown as { name: string } | null)?.name ?? ""} />
@@ -155,7 +151,7 @@ export default async function JobDetailPage({
             Photos ({photos?.length ?? 0})
           </h2>
           {photos && photos.length > 0 ? (
-            <PhotoLightbox photos={photosForLightbox} baseUrl={photoBase} canDelete={role === "office"} />
+            <PhotoLightbox photos={photosForLightbox} canDelete={role === "office"} />
           ) : (
             <div className="bg-white rounded-lg py-8 flex flex-col items-center text-center">
               <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mb-2">

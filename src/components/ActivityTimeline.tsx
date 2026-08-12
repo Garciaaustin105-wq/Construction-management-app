@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { FileImage, Sparkles, CornerDownRight, HelpCircle } from "lucide-react";
 
 type Photo = {
@@ -23,9 +27,6 @@ type Job = {
   created_at: string;
 };
 
-const photoBase =
-  process.env.NEXT_PUBLIC_SUPABASE_URL + "/storage/v1/object/public/job-photos/";
-
 export default function ActivityTimeline({
   job,
   photos,
@@ -35,6 +36,33 @@ export default function ActivityTimeline({
   photos: Photo[];
   rfis: Rfi[];
 }) {
+  const supabase = createClient();
+  // job-photos is a PRIVATE bucket — mint signed URLs (1h) instead of public URLs.
+  const [urls, setUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function mint() {
+      const entries = await Promise.all(
+        photos.map(async (p) => {
+          const { data } = await supabase.storage
+            .from("job-photos")
+            .createSignedUrl(p.storage_path, 3600);
+          return [p.id, data?.signedUrl ?? null] as const;
+        })
+      );
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const [id, url] of entries) if (url) map[id] = url;
+      setUrls(map);
+    }
+    if (photos.length > 0) mint();
+    else setUrls({});
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, supabase]);
+
   type Event = {
     type: "photo" | "rfi" | "status" | "created";
     timestamp: string;
@@ -84,17 +112,19 @@ export default function ActivityTimeline({
             return (
               <div key={i} className="p-3 flex gap-3">
                 <a
-                  href={photoBase + p.storage_path}
+                  href={urls[p.id] ?? "#"}
                   target="_blank"
                   rel="noreferrer"
                   className="w-12 h-12 bg-gray-200 rounded overflow-hidden flex-shrink-0"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photoBase + p.storage_path}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
+                  {urls[p.id] && (
+                    <img
+                      src={urls[p.id]}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  )}
                 </a>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-gray-900 flex items-center gap-1">

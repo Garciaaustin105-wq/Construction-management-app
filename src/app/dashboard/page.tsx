@@ -5,6 +5,7 @@ import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
+import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
 import { Plus, Receipt, Clock, Tag } from "lucide-react";
 
@@ -82,10 +83,6 @@ export default async function DashboardPage() {
   });
 
   const unpaidTotal = unpaidRows.reduce((sum, r) => sum + r.total, 0);
-
-  const photoBase =
-    process.env.NEXT_PUBLIC_SUPABASE_URL +
-    "/storage/v1/object/public/job-photos/";
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -174,24 +171,13 @@ export default async function DashboardPage() {
             Recent Photos
           </h2>
           {photos && photos.length > 0 ? (
-            <div className="grid grid-cols-3 gap-2">
-              {photos.map((p) => (
-                <a
-                  key={p.id}
-                  href={photoBase + p.storage_path}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="aspect-square bg-gray-200 rounded-lg overflow-hidden block"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photoBase + p.storage_path}
-                    alt={p.caption ?? ""}
-                    className="w-full h-full object-cover"
-                  />
-                </a>
-              ))}
-            </div>
+            <SignedPhotoGrid
+              photos={photos.map((p) => ({
+                id: p.id,
+                storage_path: p.storage_path,
+                caption: p.caption,
+              }))}
+            />
           ) : (
             <div className="bg-white rounded-lg">
               <EmptyState

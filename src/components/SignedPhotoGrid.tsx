@@ -1,0 +1,71 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+
+// job-photos is a PRIVATE bucket. Thumbnails can't use a public URL, so we mint
+// a signed URL per photo on demand (the receipts/blueprints pattern). The
+// signed URL is good for 1 hour; this grid is rendered fresh on each navigation.
+type Photo = {
+  id: string;
+  storage_path: string;
+  caption?: string | null;
+};
+
+export default function SignedPhotoGrid({ photos }: { photos: Photo[] }) {
+  const supabase = createClient();
+  const [urls, setUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function mint() {
+      const entries = await Promise.all(
+        photos.map(async (p) => {
+          const { data } = await supabase.storage
+            .from("job-photos")
+            .createSignedUrl(p.storage_path, 3600);
+          return [p.id, data?.signedUrl ?? null] as const;
+        })
+      );
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const [id, url] of entries) if (url) map[id] = url;
+      setUrls(map);
+    }
+    if (photos.length > 0) mint();
+    else setUrls({});
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, supabase]);
+
+  if (photos.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {photos.map((p) =>
+        urls[p.id] ? (
+          <a
+            key={p.id}
+            href={urls[p.id]}
+            target="_blank"
+            rel="noreferrer"
+            className="aspect-square bg-gray-200 rounded-lg overflow-hidden block"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={urls[p.id]}
+              alt={p.caption ?? ""}
+              className="w-full h-full object-cover"
+            />
+          </a>
+        ) : (
+          <div
+            key={p.id}
+            className="aspect-square bg-gray-200 rounded-lg animate-pulse"
+          />
+        )
+      )}
+    </div>
+  );
+}

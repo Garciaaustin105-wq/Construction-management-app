@@ -4,6 +4,7 @@ import TopBar from "@/components/TopBar";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import CustomerBlueprints from "@/components/CustomerBlueprints";
+import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import { MapPin, FileText, Receipt } from "lucide-react";
@@ -71,10 +72,6 @@ export default async function CustomerPortal() {
         .eq("customer_id", customerId)
         .order("created_at", { ascending: false })
     : { data: [] };
-
-  const photoBase =
-    process.env.NEXT_PUBLIC_SUPABASE_URL +
-    "/storage/v1/object/public/job-photos/";
 
   const quoteRows = (pendingQuotes ?? []).map((q) => {
     const items =
@@ -275,24 +272,7 @@ export default async function CustomerPortal() {
                     <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
                       Latest Photos
                     </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {job.photos.map((p) => (
-                        <a
-                          key={p.id}
-                          href={photoBase + p.storage_path}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="aspect-square bg-gray-200 rounded overflow-hidden block"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={photoBase + p.storage_path}
-                            alt={p.caption ?? ""}
-                            className="w-full h-full object-cover"
-                          />
-                        </a>
-                      ))}
-                    </div>
+                    <SignedPhotoGrid photos={job.photos} />
                   </div>
                 )}
               </article>
