@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator } from "lucide-react";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -92,20 +92,27 @@ export default async function DashboardPage() {
         <ClientPullToRefresh>
         {/* Office only: create new project button */}
         {role === "office" && (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <Link
               href="/admin/projects/new"
               className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
             >
               <Plus className="w-5 h-5" />
-              New Project
+              New
+            </Link>
+            <Link
+              href="/estimates"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Calculator className="w-5 h-5" />
+              Estimates
             </Link>
             <Link
               href="/invoices/new"
               className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
             >
               <Receipt className="w-5 h-5" />
-              New Invoice
+              Invoice
             </Link>
             <Link
               href="/time"
@@ -119,7 +126,7 @@ export default async function DashboardPage() {
               className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
             >
               <Tag className="w-5 h-5" />
-              Cost Codes
+              Codes
             </Link>
           </div>
         )}

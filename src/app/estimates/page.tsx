@@ -1,0 +1,118 @@
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import TopBar from "@/components/TopBar";
+import { formatMoney } from "@/lib/money";
+import Link from "next/link";
+import { FileText, Plus } from "lucide-react";
+
+type EstimateRow = {
+  id: string;
+  status: string;
+  title: string | null;
+  created_at: string;
+  jobs: { name: string } | null;
+  estimate_line_items: { quantity: number; unit_price: number }[];
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: "Draft",
+  sent: "Sent",
+  approved: "Approved",
+  converted: "Converted",
+  rejected: "Rejected",
+};
+
+export default async function EstimatesPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+
+  const { data: estimates } = await supabase
+    .from("estimates")
+    .select(
+      "id, status, title, created_at, jobs(name), estimate_line_items(quantity, unit_price)"
+    )
+    .order("created_at", { ascending: false });
+
+  const rows = (estimates as EstimateRow[] | null ?? []).map((e) => {
+    const items = (e.estimate_line_items as { quantity: number; unit_price: number }[]) ?? [];
+    const total = items.reduce(
+      (sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
+      0
+    );
+    return {
+      id: e.id,
+      status: e.status,
+      title: e.title,
+      jobName: e.jobs?.name ?? "—",
+      createdAt: e.created_at,
+      total,
+    };
+  });
+
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24">
+      <TopBar title="Estimates" subtitle="Cost-coded job pricing" />
+
+      <main className="max-w-md mx-auto p-4 space-y-4">
+        <Link
+          href="/estimates/new"
+          className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+        >
+          <Plus className="w-5 h-5" />
+          New Estimate
+        </Link>
+
+        {rows.length === 0 ? (
+          <div className="bg-white rounded-lg p-6 text-center">
+            <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm font-medium text-gray-700">No estimates yet</p>
+            <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
+              Build a cost-coded estimate for a job, then convert it to a quote
+              to send to the customer.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((r) => (
+              <Link
+                key={r.id}
+                href={`/estimates/${r.id}`}
+                className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-gray-900 truncate">
+                      {r.title || r.jobName}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {r.title ? `${r.jobName} · ` : ""}
+                      {new Date(r.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                      {STATUS_LABEL[r.status] ?? r.status}
+                    </span>
+                    <span className="text-sm font-semibold text-gray-900">
+                      {formatMoney(r.total)}
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
