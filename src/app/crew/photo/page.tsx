@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import { Camera, Loader2, MapPin } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import FieldCamera from "@/components/FieldCamera";
 import { validateUpload } from "@/lib/uploadValidate";
 
 type GPS = { lat: number; lng: number };
@@ -129,30 +130,29 @@ function PhotoUploadForm() {
             </select>
           </label>
 
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">Photo</span>
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                if (f) {
-                  const v = validateUpload(f, "image");
-                  if (!v.ok) {
-                    toast.error(v.error);
-                    setFile(null);
-                    if (e.target) e.target.value = "";
-                    return;
-                  }
+          <FieldCamera
+            onCapture={(f) => {
+              if (f) {
+                const v = validateUpload(f, "image");
+                if (!v.ok) {
+                  toast.error(v.error);
+                  setFile(null);
+                  return;
                 }
                 setFile(f);
-                if (f && gpsStatus === "idle") getLocation();
-              }}
-              required
-              className="mt-1 block w-full text-sm text-gray-900 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold"
-            />
-          </label>
+                if (gpsStatus === "idle") getLocation();
+              } else {
+                setFile(null);
+              }
+            }}
+          />
+
+          {file && (
+            <p className="text-xs text-green-700 flex items-center gap-1">
+              <Camera className="w-3.5 h-3.5" />
+              Photo ready to upload{gps ? " · location tagged" : ""}
+            </p>
+          )}
 
           {/* GPS status */}
           <div className="flex items-center gap-2 text-xs">
