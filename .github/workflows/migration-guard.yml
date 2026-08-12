@@ -1,0 +1,33 @@
+# Blocks a push that introduces a destructive SQL statement (DROP TABLE /
+# DROP COLUMN / TRUNCATE / DROP SCHEMA / DROP DATABASE) into a .sql migration,
+# so a data-killing migration can't land without a human noticing. The guard
+# runs scripts/check-migrations.mjs against every .sql file in the repo root.
+#
+# This is advisory-on-main and blocking-on-PRs: pushes to main are already
+# deployed by Vercel before CI completes, so the real value is catching a
+# destructive migration in a pull request (or running it locally before push:
+#   node scripts/check-migrations.mjs
+# ). On main it surfaces a loud CI failure after the fact, which still beats
+# silent data loss.
+name: migration-guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.sql"
+  pull_request:
+    paths:
+      - "**.sql"
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Scan migrations for destructive statements
+        run: node scripts/check-migrations.mjs .
