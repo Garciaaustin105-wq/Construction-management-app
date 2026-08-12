@@ -51,10 +51,6 @@ function PhotoUploadForm() {
       .then(({ data }) => setJobs(data ?? []));
   }, []);
 
-  useEffect(() => {
-    if (preselectedJob && !jobId) setJobId(preselectedJob);
-  }, [preselectedJob, jobId]);
-
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
     if (!file || !jobId) {

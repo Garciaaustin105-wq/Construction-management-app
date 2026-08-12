@@ -117,8 +117,8 @@ export default function ActivityTimeline({
                   rel="noreferrer"
                   className="w-12 h-12 bg-gray-200 rounded overflow-hidden flex-shrink-0"
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   {urls[p.id] && (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={urls[p.id]}
                       alt=""

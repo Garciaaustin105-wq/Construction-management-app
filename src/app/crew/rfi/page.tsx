@@ -46,10 +46,6 @@ function RfiForm() {
     })();
   }, [router, supabase]);
 
-  useEffect(() => {
-    if (preselectedJob && !jobId) setJobId(preselectedJob);
-  }, [preselectedJob, jobId]);
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!jobId || !question.trim()) {

@@ -58,7 +58,7 @@ export default function DeleteJobButton({
 
       toast.success(`Deleted project "${jobName}"`);
       router.push("/dashboard");
-    } catch (err) {
+    } catch {
       toast.error("Something went wrong deleting the project");
       setDeleting(false);
       setConfirming(false);

@@ -24,16 +24,48 @@ export default async function DashboardPage() {
 
   const role = profile?.role ?? "crew";
 
-  const { data: jobs } = await supabase
-    .from("jobs")
-    .select("id, name, status, customers(name)")
-    .order("created_at", { ascending: false });
+  // Fan out the independent reads in parallel (was sequential awaits, so the
+  // dashboard waited on jobs → photos → rfis → invoices one after another).
+  const [jobsRes, photosRes, rfisRes, invoicesRes] = await Promise.all([
+    supabase
+      .from("jobs")
+      .select("id, name, status, customers(name)")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("photos")
+      .select("id, storage_path, caption, created_at, jobs(name)")
+      .order("created_at", { ascending: false })
+      .limit(12),
+    role === "office"
+      ? supabase
+          .from("rfis")
+          .select("id, question, status, created_at, jobs(name)")
+          .order("created_at", { ascending: false })
+          .limit(10)
+      : Promise.resolve({ data: [] }),
+    role === "office"
+      ? supabase
+          .from("invoices")
+          .select(
+            "id, status, paid_at, created_at, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
+          )
+          .eq("status", "sent")
+          .order("created_at", { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: [] }),
+  ]);
 
-  // Visiting Home marks every visible job as "seen" so the notification
-  // badge only counts activity that happens AFTER this visit (not old
-  // photos/RFIs on jobs the user simply hasn't opened individually).
+  const jobs = jobsRes.data;
+  const photos = photosRes.data;
+  const rfis = rfisRes.data;
+  const unpaidInvoices = invoicesRes.data;
+
+  // Visiting Home marks every visible job as "seen" so the notification badge
+  // only counts activity that happens AFTER this visit (not old photos/RFIs on
+  // jobs the user simply hasn't opened individually). Fire-and-forget so it
+  // doesn't block the render.
   if (jobs && jobs.length > 0) {
-    await supabase.from("job_views").upsert(
+    void supabase.from("job_views").upsert(
       jobs.map((j) => ({
         user_id: user.id,
         job_id: j.id,
@@ -42,33 +74,6 @@ export default async function DashboardPage() {
       { onConflict: "user_id,job_id" }
     );
   }
-
-  const { data: photos } = await supabase
-    .from("photos")
-    .select("id, storage_path, caption, created_at, jobs(name)")
-    .order("created_at", { ascending: false })
-    .limit(12);
-
-  // RFIs only visible to office (superintendent)
-  const { data: rfis } = role === "office"
-    ? await supabase
-        .from("rfis")
-        .select("id, question, status, created_at, jobs(name)")
-        .order("created_at", { ascending: false })
-        .limit(10)
-    : { data: [] };
-
-  // Unpaid invoices — office only
-  const { data: unpaidInvoices } = role === "office"
-    ? await supabase
-        .from("invoices")
-        .select(
-          "id, status, paid_at, created_at, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
-        )
-        .eq("status", "sent")
-        .order("created_at", { ascending: false })
-        .limit(5)
-    : { data: [] };
 
   const unpaidRows = (unpaidInvoices ?? []).map((inv) => {
     const items =

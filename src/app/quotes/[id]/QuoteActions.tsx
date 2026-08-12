@@ -5,19 +5,14 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { Send, Pencil, Trash2, Loader2, Receipt, X } from "lucide-react";
-import DeleteJobButton from "@/components/DeleteJobButton";
 
 export default function QuoteActions({
   quoteId,
   status,
-  jobId,
-  customerId,
   invoiceId,
 }: {
   quoteId: string;
   status: string;
-  jobId: string;
-  customerId: string | null;
   invoiceId: string | null;
 }) {
   const router = useRouter();

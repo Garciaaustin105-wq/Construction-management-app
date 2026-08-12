@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Camera, RefreshCw, SwitchCamera, Loader2, ImageIcon, Check, X } from "lucide-react";
+import { Camera, RefreshCw, SwitchCamera, Loader2, ImageIcon, Check } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 // In-page camera: opens the device camera automatically (getUserMedia), shows a
@@ -142,7 +142,7 @@ export default function FieldCamera({
     startCamera(next);
   }
 
-  function useFallbackFile(file: File | null) {
+  function pickFallbackFile(file: File | null) {
     if (!file) return;
     const url = URL.createObjectURL(file);
     setPreviewUrl((old) => {
@@ -166,7 +166,7 @@ export default function FieldCamera({
             capture="environment"
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
-              if (f) useFallbackFile(f);
+              if (f) pickFallbackFile(f);
             }}
             required
             className="mt-1 block w-full text-sm text-gray-900 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold"

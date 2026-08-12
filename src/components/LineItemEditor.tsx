@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
-import { formatMoney, computeTotal, type LineItem } from "@/lib/money";
+import { formatMoney, type LineItem } from "@/lib/money";
 
 export type { LineItem };
 

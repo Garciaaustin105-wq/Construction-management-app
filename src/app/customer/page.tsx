@@ -25,11 +25,36 @@ export default async function CustomerPortal() {
 
   const customerId = profile?.customer_id;
 
-  // Jobs
-  const { data: jobs } = await supabase
-    .from("jobs")
-    .select("id, name, address, description, status, scheduled_start, scheduled_end")
-    .order("created_at", { ascending: false });
+  // Fan out the independent reads (jobs, pending quotes, invoices) in parallel.
+  const [jobsRes, quotesRes, invoicesRes] = await Promise.all([
+    supabase
+      .from("jobs")
+      .select("id, name, address, description, status, scheduled_start, scheduled_end")
+      .order("created_at", { ascending: false }),
+    customerId
+      ? supabase
+          .from("quotes")
+          .select(
+            "id, status, created_at, sent_at, jobs(name), quote_line_items(quantity, unit_price)"
+          )
+          .eq("customer_id", customerId)
+          .eq("status", "sent")
+          .order("sent_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    customerId
+      ? supabase
+          .from("invoices")
+          .select(
+            "id, status, paid_at, created_at, jobs(name), invoice_line_items(quantity, unit_price)"
+          )
+          .eq("customer_id", customerId)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const jobs = jobsRes.data;
+  const pendingQuotes = quotesRes.data;
+  const invoices = invoicesRes.data;
 
   const jobsWithFiles = await Promise.all(
     (jobs ?? []).map(async (job) => {
@@ -49,29 +74,6 @@ export default async function CustomerPortal() {
       return { ...job, photos: photos ?? [], blueprints: blueprints ?? [] };
     })
   );
-
-  // Quotes awaiting action (sent)
-  const { data: pendingQuotes } = customerId
-    ? await supabase
-        .from("quotes")
-        .select(
-          "id, status, created_at, sent_at, jobs(name), quote_line_items(quantity, unit_price)"
-        )
-        .eq("customer_id", customerId)
-        .eq("status", "sent")
-        .order("sent_at", { ascending: false })
-    : { data: [] };
-
-  // Invoices for this customer
-  const { data: invoices } = customerId
-    ? await supabase
-        .from("invoices")
-        .select(
-          "id, status, paid_at, created_at, jobs(name), invoice_line_items(quantity, unit_price)"
-        )
-        .eq("customer_id", customerId)
-        .order("created_at", { ascending: false })
-    : { data: [] };
 
   const quoteRows = (pendingQuotes ?? []).map((q) => {
     const items =

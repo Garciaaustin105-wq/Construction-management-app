@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { CheckCircle2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { Spinner } from "@/components/Skeleton";
 

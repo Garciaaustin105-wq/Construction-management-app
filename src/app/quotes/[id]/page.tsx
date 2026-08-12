@@ -159,8 +159,6 @@ export default async function QuoteDetailPage({
           <QuoteActions
             quoteId={quote.id}
             status={quote.status}
-            jobId={quote.job_id}
-            customerId={quote.customer_id}
             invoiceId={invoice?.id ?? null}
           />
         )}

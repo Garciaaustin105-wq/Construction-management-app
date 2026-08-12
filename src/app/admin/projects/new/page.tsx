@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { createClient } from "@/lib/supabase/client";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -17,11 +18,10 @@ export default function NewProjectPage() {
   const [scheduledEnd, setScheduledEnd] = useState("");
   const [assigned, setAssigned] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const supabaseMod = require("@/lib/supabase/client");
   const toast = useToast();
 
   useEffect(() => {
-    const supabase = supabaseMod.createClient();
+    const supabase = createClient();
     (async () => {
       // Verify office role
       const { data: { user } } = await supabase.auth.getUser();
@@ -53,7 +53,7 @@ export default function NewProjectPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const supabase = supabaseMod.createClient();
+    const supabase = createClient();
     const { data, error } = await supabase.from("jobs").insert({
       customer_id: customerId || null,
       name,

@@ -35,13 +35,54 @@ export default async function JobDetailPage({
     .single();
   const role = profile?.role ?? "crew";
 
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("id, name, address, description, status, created_at, assigned_crew, customers(name)")
-    .eq("id", id)
-    .single();
+  // Fan out all per-job reads in parallel (was sequential awaits, so the job
+  // page waited on job → photos → rfis → blueprints → receipts → crew).
+  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes] = await Promise.all([
+    supabase
+      .from("jobs")
+      .select("id, name, address, description, status, created_at, assigned_crew, customers(name)")
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("photos")
+      .select(
+        "id, storage_path, caption, created_at, uploaded_by, lat, lng, uploader:profiles(full_name)"
+      )
+      .eq("job_id", id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("rfis")
+      .select("id, question, answer, status, created_at, answered_at")
+      .eq("job_id", id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("blueprints")
+      .select("id, storage_path, filename, caption, created_at")
+      .eq("job_id", id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("receipts")
+      .select(
+        "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no, cost_code_id"
+      )
+      .eq("job_id", id)
+      .order("captured_at", { ascending: false }),
+    role === "office"
+      ? supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .eq("role", "crew")
+          .order("full_name")
+      : Promise.resolve({ data: [] }),
+  ]);
 
+  const job = jobRes.data;
   if (!job) notFound();
+  const photos = photosRes.data;
+  const rfis = rfisRes.data;
+  const blueprints = blueprintsRes.data;
+  const receipts = receiptsRes.data;
+  const crewMembers = crewRes.data;
 
   // Mark this job as viewed (fire-and-forget; doesn't block render)
   void supabase
@@ -50,14 +91,6 @@ export default async function JobDetailPage({
       { user_id: user.id, job_id: id, last_seen_at: new Date().toISOString() },
       { onConflict: "user_id,job_id" }
     );
-
-  const { data: photos } = await supabase
-    .from("photos")
-    .select(
-      "id, storage_path, caption, created_at, uploaded_by, lat, lng, uploader:profiles(full_name)"
-    )
-    .eq("job_id", id)
-    .order("created_at", { ascending: false });
 
   // Flatten the joined uploader name for the lightbox. Office can read all
   // profiles (RLS), so this resolves for office; crew RLS only returns their
@@ -73,36 +106,6 @@ export default async function JobDetailPage({
       (p.uploader as unknown as { full_name: string | null } | null)?.full_name ??
       null,
   }));
-
-  const { data: rfis } = await supabase
-    .from("rfis")
-    .select("id, question, answer, status, created_at, answered_at")
-    .eq("job_id", id)
-    .order("created_at", { ascending: false });
-
-  const { data: blueprints } = await supabase
-    .from("blueprints")
-    .select("id, storage_path, filename, caption, created_at")
-    .eq("job_id", id)
-    .order("created_at", { ascending: false });
-
-  // Shared receipts (RLS: office sees all, crew sees their assigned jobs)
-  const { data: receipts } = await supabase
-    .from("receipts")
-    .select(
-      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no, cost_code_id"
-    )
-    .eq("job_id", id)
-    .order("captured_at", { ascending: false });
-
-  // For office: fetch all crew members
-  const { data: crewMembers } = role === "office"
-    ? await supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .eq("role", "crew")
-        .order("full_name")
-    : { data: [] };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
