@@ -3,14 +3,20 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { X, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Trash2, User, Clock } from "lucide-react";
 
 export default function PhotoLightbox({
   photos,
   baseUrl,
   canDelete = false,
 }: {
-  photos: { id: string; storage_path: string; caption: string | null; created_at: string }[];
+  photos: {
+    id: string;
+    storage_path: string;
+    caption: string | null;
+    created_at: string;
+    uploaded_by_name?: string | null;
+  }[];
   baseUrl: string;
   canDelete?: boolean;
 }) {
@@ -126,25 +132,37 @@ export default function PhotoLightbox({
             />
           </div>
 
-          <div className="flex justify-between p-4 text-white">
+          <div className="flex justify-between items-center p-4 text-white">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setIndex((i) => Math.max(0, i - 1));
               }}
               disabled={index === 0}
-              className="disabled:opacity-30 p-2"
+              className="disabled:opacity-30 p-2 self-start"
               title="Previous"
             >
               <ChevronLeft className="w-7 h-7" />
             </button>
-            <div className="flex-1 px-4">
+            <div className="flex-1 px-2 max-w-md">
               {current.caption && (
-                <p className="text-sm text-center truncate">{current.caption}</p>
+                <p className="text-sm text-center mb-2">{current.caption}</p>
               )}
-              <p className="text-xs text-center text-gray-400">
-                {new Date(current.created_at).toLocaleString()}
-              </p>
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-300">
+                {current.uploaded_by_name && (
+                  <span className="inline-flex items-center gap-1">
+                    <User className="w-3.5 h-3.5" />
+                    {current.uploaded_by_name}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  {new Date(current.created_at).toLocaleString(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}
+                </span>
+              </div>
             </div>
             <button
               onClick={(e) => {
@@ -152,7 +170,7 @@ export default function PhotoLightbox({
                 setIndex((i) => Math.min(photos_.length - 1, i + 1));
               }}
               disabled={index === photos_.length - 1}
-              className="disabled:opacity-30 p-2"
+              className="disabled:opacity-30 p-2 self-start"
               title="Next"
             >
               <ChevronRight className="w-7 h-7" />

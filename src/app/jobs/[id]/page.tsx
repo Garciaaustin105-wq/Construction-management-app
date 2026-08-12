@@ -52,9 +52,24 @@ export default async function JobDetailPage({
 
   const { data: photos } = await supabase
     .from("photos")
-    .select("id, storage_path, caption, created_at, uploaded_by")
+    .select(
+      "id, storage_path, caption, created_at, uploaded_by, uploader:profiles(full_name)"
+    )
     .eq("job_id", id)
     .order("created_at", { ascending: false });
+
+  // Flatten the joined uploader name for the lightbox. Office can read all
+  // profiles (RLS), so this resolves for office; crew RLS only returns their
+  // own profile, so coworker names come back null — the lightbox handles that.
+  const photosForLightbox = (photos ?? []).map((p) => ({
+    id: p.id,
+    storage_path: p.storage_path,
+    caption: p.caption,
+    created_at: p.created_at,
+    uploaded_by_name:
+      (p.uploader as unknown as { full_name: string | null } | null)?.full_name ??
+      null,
+  }));
 
   const { data: rfis } = await supabase
     .from("rfis")
@@ -119,16 +134,18 @@ export default async function JobDetailPage({
           <JobStatusControl jobId={job.id} currentStatus={job.status} />
         )}
 
-        {/* Crew (superintendent-style too): upload photo button */}
-        <div className="grid grid-cols-1 gap-2">
-          <Link
-            href={`/crew/photo?job=${job.id}`}
-            className="bg-blue-600 text-white text-center py-4 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-          >
-            <Camera className="w-5 h-5" />
-            Upload Photo
-          </Link>
-        </div>
+        {/* Crew + office: upload photo button (customers have no upload policy -> hide) */}
+        {role !== "customer" && (
+          <div className="grid grid-cols-1 gap-2">
+            <Link
+              href={`/crew/photo?job=${job.id}`}
+              className="bg-blue-600 text-white text-center py-4 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+            >
+              <Camera className="w-5 h-5" />
+              Upload Photo
+            </Link>
+          </div>
+        )}
 
         {/* Photos */}
         <section>
@@ -136,7 +153,7 @@ export default async function JobDetailPage({
             Photos ({photos?.length ?? 0})
           </h2>
           {photos && photos.length > 0 ? (
-            <PhotoLightbox photos={photos} baseUrl={photoBase} canDelete={role === "office"} />
+            <PhotoLightbox photos={photosForLightbox} baseUrl={photoBase} canDelete={role === "office"} />
           ) : (
             <div className="bg-white rounded-lg py-8 flex flex-col items-center text-center">
               <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mb-2">
