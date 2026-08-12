@@ -24,6 +24,7 @@ import {
   type LocalReceipt,
 } from "@/lib/receiptStore";
 import { stampImage } from "@/lib/stampImage";
+import { validateUpload } from "@/lib/uploadValidate";
 
 export type RemoteReceipt = {
   id: string;
@@ -36,7 +37,28 @@ export type RemoteReceipt = {
   uploaded_by_name: string | null;
   reimbursed: boolean;
   reimbursed_at: string | null;
+  category: string | null;
+  tax: number | null;
+  payment_method: string | null;
+  receipt_no: string | null;
 };
+
+// Shared option lists for the receipt editor + display.
+export const RECEIPT_CATEGORIES = [
+  "Materials",
+  "Fuel",
+  "Tools / Equipment",
+  "Travel / Mileage",
+  "Meals",
+  "Permits / Fees",
+  "Other",
+];
+export const PAYMENT_METHODS = [
+  "Cash",
+  "Personal Card",
+  "Company Card",
+  "Account",
+];
 
 type ViewReceipt =
   | { kind: "local"; rec: LocalReceipt }
@@ -141,6 +163,12 @@ export default function ReceiptsSection({
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    const v = validateUpload(file, "image");
+    if (!v.ok) {
+      toast.error(v.error);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     setCapturing(true);
     try {
       const { blob, thumb } = await stampImage(file, {
@@ -197,6 +225,10 @@ export default function ReceiptsSection({
       if (rec.vendor) form.append("vendor", rec.vendor);
       if (typeof rec.amount === "number") form.append("amount", String(rec.amount));
       if (rec.notes) form.append("notes", rec.notes);
+      if (rec.category) form.append("category", rec.category);
+      if (typeof rec.tax === "number") form.append("tax", String(rec.tax));
+      if (rec.paymentMethod) form.append("paymentMethod", rec.paymentMethod);
+      if (rec.receiptNo) form.append("receiptNo", rec.receiptNo);
       form.append("file", rec.blob, "receipt.jpg");
 
       const res = await fetch("/api/receipts/share", { method: "POST", body: form });
@@ -404,6 +436,10 @@ export default function ReceiptsSection({
           const vendor = isLocal ? rec.vendor : r.vendor;
           const amount = isLocal ? rec.amount : r.amount;
           const notes = isLocal ? rec.notes : r.notes;
+          const category = isLocal ? rec.category : r.category;
+          const tax = isLocal ? rec.tax : r.tax;
+          const paymentMethod = isLocal ? rec.paymentMethod : r.payment_method;
+          const receiptNo = isLocal ? rec.receiptNo : r.receipt_no;
           const thumb = isLocal
             ? rec.thumb
             : signedUrls[(v as { kind: "remote"; rec: RemoteReceipt }).rec.id];
@@ -517,14 +553,57 @@ export default function ReceiptsSection({
                           }
                           className="w-24 px-2 py-1.5 border border-gray-300 rounded text-xs"
                         />
+                        <span className="text-gray-400 text-xs self-center">tax $</span>
                         <input
-                          type="text"
-                          placeholder="Notes (optional)"
-                          value={rec.notes ?? ""}
-                          onChange={(e) => patchLocal(rec, { notes: e.target.value })}
-                          className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded text-xs"
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          placeholder="Tax"
+                          value={rec.tax ?? ""}
+                          onChange={(e) =>
+                            patchLocal(rec, {
+                              tax: e.target.value ? Number(e.target.value) : undefined,
+                            })
+                          }
+                          className="w-20 px-2 py-1.5 border border-gray-300 rounded text-xs"
                         />
                       </div>
+                      <div className="flex gap-1.5">
+                        <select
+                          value={rec.category ?? ""}
+                          onChange={(e) => patchLocal(rec, { category: e.target.value || undefined })}
+                          className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded text-xs bg-white"
+                        >
+                          <option value="">Category…</option>
+                          {RECEIPT_CATEGORIES.map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={rec.paymentMethod ?? ""}
+                          onChange={(e) => patchLocal(rec, { paymentMethod: e.target.value || undefined })}
+                          className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded text-xs bg-white"
+                        >
+                          <option value="">Paid with…</option>
+                          {PAYMENT_METHODS.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Receipt # (optional)"
+                        value={rec.receiptNo ?? ""}
+                        onChange={(e) => patchLocal(rec, { receiptNo: e.target.value || undefined })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Notes (optional)"
+                        value={rec.notes ?? ""}
+                        onChange={(e) => patchLocal(rec, { notes: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs"
+                      />
                       {(!rec.vendor?.trim() ||
                         typeof rec.amount !== "number" ||
                         rec.amount <= 0) && (
@@ -536,8 +615,28 @@ export default function ReceiptsSection({
                   ) : (
                     <div className="mt-1 text-xs text-gray-600 space-y-0.5">
                       {vendor && <p className="truncate">Vendor: {vendor}</p>}
-                      {typeof amount === "number" && amount > 0 && (
-                        <p>Amount: ${amount.toFixed(2)}</p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                        {typeof amount === "number" && amount > 0 && (
+                          <span>Amount: ${amount.toFixed(2)}</span>
+                        )}
+                        {typeof tax === "number" && tax > 0 && (
+                          <span className="text-gray-500">Tax: ${tax.toFixed(2)}</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {category && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
+                            {category}
+                          </span>
+                        )}
+                        {paymentMethod && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
+                            {paymentMethod}
+                          </span>
+                        )}
+                      </div>
+                      {receiptNo && (
+                        <p className="truncate text-gray-500">Receipt #: {receiptNo}</p>
                       )}
                       <p className="truncate text-gray-500">
                         Uploaded by {uploader}

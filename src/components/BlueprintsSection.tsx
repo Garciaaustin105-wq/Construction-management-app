@@ -7,6 +7,7 @@ import { FileText, Upload, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { Spinner } from "@/components/Skeleton";
 import BlueprintPreview from "@/components/BlueprintPreview";
+import { validateUpload } from "@/lib/uploadValidate";
 
 type Blueprint = {
   id: string;
@@ -54,6 +55,11 @@ export default function BlueprintsSection({
     const file = fileRef.current?.files?.[0];
     if (!file) {
       toast.warning("Pick a file first");
+      return;
+    }
+    const v = validateUpload(file, "blueprint");
+    if (!v.ok) {
+      toast.error(v.error);
       return;
     }
     setUploading(true);

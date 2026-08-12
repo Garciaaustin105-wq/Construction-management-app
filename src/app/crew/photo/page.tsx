@@ -4,8 +4,12 @@ import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
-import { Camera, Loader2 } from "lucide-react";
+import { Camera, Loader2, MapPin } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { validateUpload } from "@/lib/uploadValidate";
+
+type GPS = { lat: number; lng: number };
+type GpsStatus = "idle" | "getting" | "ok" | "denied" | "unavailable";
 
 function PhotoUploadForm() {
   const search = useSearchParams();
@@ -16,8 +20,28 @@ function PhotoUploadForm() {
   const [file, setFile] = useState<File | null>(null);
   const [caption, setCaption] = useState("");
   const [loading, setLoading] = useState(false);
+  const [gps, setGps] = useState<GPS | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const supabase = createClient();
   const toast = useToast();
+
+  function getLocation() {
+    if (!("geolocation" in navigator)) {
+      setGpsStatus("unavailable");
+      return;
+    }
+    setGpsStatus("getting");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGpsStatus("ok");
+      },
+      (err) => {
+        setGpsStatus(err.code === err.PERMISSION_DENIED ? "denied" : "unavailable");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  }
 
   useEffect(() => {
     supabase
@@ -34,6 +58,11 @@ function PhotoUploadForm() {
     e.preventDefault();
     if (!file || !jobId) {
       toast.warning("Pick a job and a file");
+      return;
+    }
+    const v = validateUpload(file, "image");
+    if (!v.ok) {
+      toast.error(v.error);
       return;
     }
     setLoading(true);
@@ -63,6 +92,8 @@ function PhotoUploadForm() {
       uploaded_by: user.id,
       storage_path: path,
       caption: caption || null,
+      lat: gps?.lat ?? null,
+      lng: gps?.lng ?? null,
     });
     if (dbError) {
       toast.error(`Save failed: ${dbError.message}`);
@@ -70,6 +101,8 @@ function PhotoUploadForm() {
       toast.success("Photo uploaded");
       setFile(null);
       setCaption("");
+      setGps(null);
+      setGpsStatus("idle");
     }
     setLoading(false);
   }
@@ -102,11 +135,57 @@ function PhotoUploadForm() {
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                if (f) {
+                  const v = validateUpload(f, "image");
+                  if (!v.ok) {
+                    toast.error(v.error);
+                    setFile(null);
+                    if (e.target) e.target.value = "";
+                    return;
+                  }
+                }
+                setFile(f);
+                if (f && gpsStatus === "idle") getLocation();
+              }}
               required
               className="mt-1 block w-full text-sm text-gray-900 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold"
             />
           </label>
+
+          {/* GPS status */}
+          <div className="flex items-center gap-2 text-xs">
+            {gpsStatus === "ok" && gps ? (
+              <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded">
+                <MapPin className="w-3.5 h-3.5" />
+                Location tagged · {gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}
+              </span>
+            ) : gpsStatus === "getting" ? (
+              <span className="inline-flex items-center gap-1 text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Getting location…
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={getLocation}
+                className="inline-flex items-center gap-1 text-blue-600 active:opacity-70 px-2 py-1 rounded"
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                {gpsStatus === "denied"
+                  ? "Location denied — tap to retry"
+                  : gpsStatus === "unavailable"
+                    ? "Location unavailable"
+                    : "Tag my location"}
+              </button>
+            )}
+            {gpsStatus !== "ok" && (
+              <span className="text-gray-400">
+                Optional — adds a map pin to this photo
+              </span>
+            )}
+          </div>
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Caption (optional)</span>

@@ -17,6 +17,11 @@ export type LocalReceipt = {
   shared: boolean;
   remoteId?: string | null; // receipts.id once shared
   storagePath?: string | null; // bucket path once shared
+  // Extra accounting rows (optional; only required by the office at share time)
+  category?: string; // Materials / Fuel / Tools / Travel / Meals / Permits / Other
+  tax?: number; // dollars
+  paymentMethod?: string; // Cash / Personal Card / Company Card / Account
+  receiptNo?: string; // vendor receipt / reference number
 };
 
 const DB_NAME = "cmapp";

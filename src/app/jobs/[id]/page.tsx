@@ -53,7 +53,7 @@ export default async function JobDetailPage({
   const { data: photos } = await supabase
     .from("photos")
     .select(
-      "id, storage_path, caption, created_at, uploaded_by, uploader:profiles(full_name)"
+      "id, storage_path, caption, created_at, uploaded_by, lat, lng, uploader:profiles(full_name)"
     )
     .eq("job_id", id)
     .order("created_at", { ascending: false });
@@ -66,6 +66,8 @@ export default async function JobDetailPage({
     storage_path: p.storage_path,
     caption: p.caption,
     created_at: p.created_at,
+    lat: p.lat ?? null,
+    lng: p.lng ?? null,
     uploaded_by_name:
       (p.uploader as unknown as { full_name: string | null } | null)?.full_name ??
       null,
@@ -87,7 +89,7 @@ export default async function JobDetailPage({
   const { data: receipts } = await supabase
     .from("receipts")
     .select(
-      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at"
+      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no"
     )
     .eq("job_id", id)
     .order("captured_at", { ascending: false });

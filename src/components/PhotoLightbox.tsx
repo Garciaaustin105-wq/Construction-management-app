@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { X, ChevronLeft, ChevronRight, Trash2, User, Clock } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin } from "lucide-react";
 
 export default function PhotoLightbox({
   photos,
@@ -16,6 +16,8 @@ export default function PhotoLightbox({
     caption: string | null;
     created_at: string;
     uploaded_by_name?: string | null;
+    lat?: number | null;
+    lng?: number | null;
   }[];
   baseUrl: string;
   canDelete?: boolean;
@@ -162,6 +164,19 @@ export default function PhotoLightbox({
                     timeStyle: "short",
                   })}
                 </span>
+                {typeof current.lat === "number" &&
+                  typeof current.lng === "number" && (
+                    <a
+                      href={`https://www.google.com/maps?q=${current.lat},${current.lng}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 underline"
+                    >
+                      <MapPin className="w-3.5 h-3.5" />
+                      {current.lat.toFixed(4)}, {current.lng.toFixed(4)}
+                    </a>
+                  )}
               </div>
             </div>
             <button

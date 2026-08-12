@@ -27,7 +27,7 @@ export default async function ReceiptsOverviewPage() {
   const { data: receipts } = await supabase
     .from("receipts")
     .select(
-      "id, vendor, amount, notes, captured_at, uploaded_by_name, reimbursed, reimbursed_at, jobs(name)"
+      "id, vendor, amount, notes, captured_at, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no, jobs(name)"
     )
     .order("captured_at", { ascending: false });
 
@@ -40,6 +40,10 @@ export default async function ReceiptsOverviewPage() {
     uploaded_by_name: string | null;
     reimbursed: boolean;
     reimbursed_at: string | null;
+    category: string | null;
+    tax: number | null;
+    payment_method: string | null;
+    receipt_no: string | null;
     jobs: { name: string } | null;
   };
 
@@ -55,6 +59,10 @@ export default async function ReceiptsOverviewPage() {
     reimbursed: r.reimbursed,
     reimbursedAt: r.reimbursed_at,
     notes: r.notes,
+    category: r.category,
+    tax: r.tax,
+    paymentMethod: r.payment_method,
+    receiptNo: r.receipt_no,
   }));
 
   const totalAmount = rows.reduce(
@@ -144,6 +152,20 @@ export default async function ReceiptsOverviewPage() {
                         {new Date(r.captured_at).toLocaleDateString()} ·{" "}
                         {r.uploaded_by_name ?? "—"}
                       </p>
+                      {(r.category || r.payment_method) && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {r.category && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
+                              {r.category}
+                            </span>
+                          )}
+                          {r.payment_method && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
+                              {r.payment_method}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {r.notes && (
                         <p className="text-xs text-gray-500 mt-1 truncate">
                           {r.notes}

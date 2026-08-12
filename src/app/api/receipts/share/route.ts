@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { validateUpload, MAX_IMAGE_SIZE } from "@/lib/uploadValidate";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +28,24 @@ export async function POST(request: Request) {
       ? null
       : Number(amountRaw);
   const notes = (form.get("notes") as string | null) || null;
+  const category = (form.get("category") as string | null) || null;
+  const taxRaw = form.get("tax");
+  const tax =
+    taxRaw === null || taxRaw === "" || taxRaw === "null"
+      ? null
+      : Number(taxRaw);
+  const paymentMethod = (form.get("paymentMethod") as string | null) || null;
+  const receiptNo = (form.get("receiptNo") as string | null) || null;
   const file = form.get("file") as File | null;
 
   if (!jobId || !capturedAt || !file) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  }
+
+  // Server-side defense in depth: re-check type + size on the uploaded blob.
+  const v = validateUpload(file, "image", MAX_IMAGE_SIZE);
+  if (!v.ok) {
+    return NextResponse.json({ error: v.error }, { status: 400 });
   }
 
   // Vendor + amount are required so the office has complete tax records.
@@ -100,6 +115,10 @@ export async function POST(request: Request) {
       amount: typeof amount === "number" && !Number.isNaN(amount) ? amount : null,
       notes,
       captured_at: capturedAt,
+      category,
+      tax: typeof tax === "number" && !Number.isNaN(tax) ? tax : null,
+      payment_method: paymentMethod,
+      receipt_no: receiptNo,
     })
     .select("id")
     .single();

@@ -13,6 +13,10 @@ export type ExportReceipt = {
   reimbursed: boolean;
   reimbursedAt: string | null;
   notes: string | null;
+  category: string | null;
+  tax: number | null;
+  paymentMethod: string | null;
+  receiptNo: string | null;
 };
 
 function csvEscape(value: string): string {
@@ -27,7 +31,11 @@ function buildCsv(rows: ExportReceipt[]): string {
     "Project",
     "Vendor",
     "Amount",
+    "Tax",
     "Date",
+    "Category",
+    "Payment Method",
+    "Receipt #",
     "Uploader",
     "Paid Back",
     "Paid Back At",
@@ -38,7 +46,11 @@ function buildCsv(rows: ExportReceipt[]): string {
       r.jobName,
       r.vendor ?? "",
       r.amount != null ? r.amount.toFixed(2) : "",
+      r.tax != null ? r.tax.toFixed(2) : "",
       new Date(r.capturedAt).toLocaleDateString(),
+      r.category ?? "",
+      r.paymentMethod ?? "",
+      r.receiptNo ?? "",
       r.uploader ?? "",
       r.reimbursed ? "Yes" : "No",
       r.reimbursedAt ? new Date(r.reimbursedAt).toLocaleDateString() : "",
