@@ -77,15 +77,28 @@ export async function POST(request: Request) {
     );
   }
 
-  // If creating a customer, also create the customer record
-  if (role === "customer" && customer_name) {
-    const { error: custError } = await admin.from("customers").insert({
-      name: customer_name,
-      contact_email: email,
-      contact_name: full_name || null,
-    });
+  // If creating a customer, also create the customer record and LINK the
+  // profile to it. Without this link (profiles.customer_id), the new customer
+  // sees an empty portal — the customer RLS policies all key off customer_id.
+  if (role === "customer") {
+    const customerName = customer_name || full_name || email;
+    const { data: custData, error: custError } = await admin
+      .from("customers")
+      .insert({
+        name: customerName,
+        contact_email: email,
+        contact_name: full_name || null,
+      })
+      .select()
+      .single();
     if (custError) {
       // Don't roll back - customer record is optional metadata
+    } else if (custData) {
+      // Link the new profile to the new customer record
+      await admin
+        .from("profiles")
+        .update({ customer_id: custData.id })
+        .eq("id", newUserId);
     }
   }
 

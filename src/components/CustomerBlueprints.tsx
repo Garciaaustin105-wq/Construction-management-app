@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { FileText } from "lucide-react";
 import BlueprintPreview from "./BlueprintPreview";
+import { createClient } from "@/lib/supabase/client";
+import { useToast } from "@/components/Toast";
 
 type Blueprint = {
   id: string;
@@ -14,14 +16,29 @@ type Blueprint = {
 
 export default function CustomerBlueprints({
   blueprints,
-  baseUrl,
 }: {
   blueprints: Blueprint[];
-  baseUrl: string;
 }) {
+  const supabase = createClient();
+  const toast = useToast();
   const [preview, setPreview] = useState<Blueprint | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   if (blueprints.length === 0) return null;
+
+  // Private bucket: mint a signed URL on demand (customer has a scoped
+  // storage SELECT policy on the blueprints bucket).
+  async function openPreview(b: Blueprint) {
+    const { data } = await supabase.storage
+      .from("blueprints")
+      .createSignedUrl(b.storage_path, 3600);
+    if (!data?.signedUrl) {
+      toast.error("Could not load blueprint");
+      return;
+    }
+    setPreview(b);
+    setPreviewUrl(data.signedUrl);
+  }
 
   return (
     <>
@@ -33,7 +50,7 @@ export default function CustomerBlueprints({
           {blueprints.map((b) => (
             <button
               key={b.id}
-              onClick={() => setPreview(b)}
+              onClick={() => openPreview(b)}
               className="block text-sm text-blue-600 underline truncate flex items-center gap-1 text-left w-full"
             >
               <FileText className="w-4 h-4 flex-shrink-0" />
@@ -42,11 +59,14 @@ export default function CustomerBlueprints({
           ))}
         </div>
       </div>
-      {preview && (
+      {preview && previewUrl && (
         <BlueprintPreview
-          url={baseUrl + preview.storage_path}
+          url={previewUrl}
           filename={preview.filename}
-          onClose={() => setPreview(null)}
+          onClose={() => {
+            setPreview(null);
+            setPreviewUrl(null);
+          }}
         />
       )}
     </>

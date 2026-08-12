@@ -28,14 +28,26 @@ export default function BlueprintsSection({
   const [uploading, setUploading] = useState(false);
   const [caption, setCaption] = useState("");
   const [preview, setPreview] = useState<Blueprint | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const supabase = createClient();
   const toast = useToast();
 
-  const base =
-    process.env.NEXT_PUBLIC_SUPABASE_URL +
-    "/storage/v1/object/public/blueprints/";
+  // Blueprints are in a PRIVATE bucket, so the preview is served via a signed
+  // URL minted on demand (the blueprints bucket RLS grants SELECT to office,
+  // assigned crew, and the owning customer — same model as receipts).
+  async function openPreview(b: Blueprint) {
+    const { data } = await supabase.storage
+      .from("blueprints")
+      .createSignedUrl(b.storage_path, 3600);
+    if (!data?.signedUrl) {
+      toast.error("Could not load blueprint");
+      return;
+    }
+    setPreview(b);
+    setPreviewUrl(data.signedUrl);
+  }
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -154,7 +166,7 @@ export default function BlueprintsSection({
           <div key={b.id} className="p-3 flex items-center justify-between">
             <div className="min-w-0 flex-1">
               <button
-                onClick={() => setPreview(b)}
+                onClick={() => openPreview(b)}
                 className="text-sm font-medium text-blue-600 underline truncate block flex items-center gap-1 text-left w-full"
               >
                 <FileText className="w-4 h-4 inline flex-shrink-0" />
@@ -180,11 +192,14 @@ export default function BlueprintsSection({
         ))}
       </div>
 
-      {preview && (
+      {preview && previewUrl && (
         <BlueprintPreview
-          url={base + preview.storage_path}
+          url={previewUrl}
           filename={preview.filename}
-          onClose={() => setPreview(null)}
+          onClose={() => {
+            setPreview(null);
+            setPreviewUrl(null);
+          }}
         />
       )}
     </section>

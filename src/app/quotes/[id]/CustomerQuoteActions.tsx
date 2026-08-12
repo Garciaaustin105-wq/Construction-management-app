@@ -30,10 +30,9 @@ export default function CustomerQuoteActions({ quoteId }: { quoteId: string }) {
   async function reject() {
     if (!confirm("Reject this quote?")) return;
     setBusy("reject");
-    const { error } = await supabase
-      .from("quotes")
-      .update({ status: "rejected", rejected_at: new Date().toISOString() })
-      .eq("id", quoteId);
+    const { error } = await supabase.rpc("reject_quote", {
+      p_quote_id: quoteId,
+    });
     if (error) {
       toast.error(`Failed: ${error.message}`);
     } else {

@@ -75,9 +75,6 @@ export default async function CustomerPortal() {
   const photoBase =
     process.env.NEXT_PUBLIC_SUPABASE_URL +
     "/storage/v1/object/public/job-photos/";
-  const blueprintBase =
-    process.env.NEXT_PUBLIC_SUPABASE_URL +
-    "/storage/v1/object/public/blueprints/";
 
   const quoteRows = (pendingQuotes ?? []).map((q) => {
     const items =
@@ -270,10 +267,7 @@ export default async function CustomerPortal() {
                 </div>
 
                 {job.blueprints.length > 0 && (
-                  <CustomerBlueprints
-                    blueprints={job.blueprints}
-                    baseUrl={blueprintBase}
-                  />
+                  <CustomerBlueprints blueprints={job.blueprints} />
                 )}
 
                 {job.photos.length > 0 && (
