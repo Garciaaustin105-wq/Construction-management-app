@@ -5,9 +5,10 @@ import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import ReceiptsExportButton, {
   type ExportReceipt,
 } from "@/components/ReceiptsExportButton";
+import OfficeReceiptsList, {
+  type ReceiptRow,
+} from "@/components/OfficeReceiptsList";
 import { formatMoney } from "@/lib/money";
-import { Receipt as ReceiptIcon } from "lucide-react";
-import Link from "next/link";
 
 export default async function ReceiptsOverviewPage() {
   const supabase = await createClient();
@@ -27,27 +28,11 @@ export default async function ReceiptsOverviewPage() {
   const { data: receipts } = await supabase
     .from("receipts")
     .select(
-      "id, vendor, amount, notes, captured_at, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no, jobs(name)"
+      "id, storage_path, vendor, amount, notes, captured_at, uploaded_by_name, reimbursed, reimbursed_at, category, tax, payment_method, receipt_no, jobs(name)"
     )
     .order("captured_at", { ascending: false });
 
-  type Row = {
-    id: string;
-    vendor: string | null;
-    amount: number | null;
-    notes: string | null;
-    captured_at: string;
-    uploaded_by_name: string | null;
-    reimbursed: boolean;
-    reimbursed_at: string | null;
-    category: string | null;
-    tax: number | null;
-    payment_method: string | null;
-    receipt_no: string | null;
-    jobs: { name: string } | null;
-  };
-
-  const rows = (receipts ?? []) as unknown as Row[];
+  const rows = (receipts ?? []) as unknown as ReceiptRow[];
 
   const exportRows: ExportReceipt[] = rows.map((r) => ({
     id: r.id,
@@ -117,81 +102,17 @@ export default async function ReceiptsOverviewPage() {
 
         <ReceiptsExportButton rows={exportRows} />
 
-        {/* List */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-2">
-            <ReceiptIcon className="w-4 h-4" />
-            Shared Receipts
-          </h2>
-          {rows.length === 0 ? (
-            <div className="bg-white rounded-lg">
-              <EmptyState
-                icon={EmptyIcons.Briefcase}
-                title="No shared receipts"
-                description="When crew share receipts from a job, they'll appear here with the project tag, vendor, and amount for your tax records."
-              />
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
-              {rows.map((r) => (
-                <div key={r.id} className="p-3">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-gray-900 truncate">
-                        {r.vendor ?? "No vendor"}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        <Link
-                          href="/dashboard"
-                          className="text-blue-600 hover:underline"
-                        >
-                          {r.jobs?.name ?? "—"}
-                        </Link>
-                      </p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {new Date(r.captured_at).toLocaleDateString()} ·{" "}
-                        {r.uploaded_by_name ?? "—"}
-                      </p>
-                      {(r.category || r.payment_method) && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {r.category && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
-                              {r.category}
-                            </span>
-                          )}
-                          {r.payment_method && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
-                              {r.payment_method}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {r.notes && (
-                        <p className="text-xs text-gray-500 mt-1 truncate">
-                          {r.notes}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span className="text-sm font-bold text-gray-900">
-                        {formatMoney(r.amount ?? 0)}
-                      </span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${
-                          r.reimbursed
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-orange-100 text-orange-700"
-                        }`}
-                      >
-                        {r.reimbursed ? "Paid back" : "Owed"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+        {rows.length === 0 ? (
+          <div className="bg-white rounded-lg">
+            <EmptyState
+              icon={EmptyIcons.Briefcase}
+              title="No shared receipts"
+              description="When crew share receipts from a job, they'll appear here with the project tag, vendor, and amount for your tax records."
+            />
+          </div>
+        ) : (
+          <OfficeReceiptsList rows={rows} />
+        )}
       </main>
 
     </div>
