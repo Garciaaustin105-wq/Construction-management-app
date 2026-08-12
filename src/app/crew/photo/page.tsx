@@ -4,13 +4,11 @@ import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
-import { Camera, Loader2, MapPin } from "lucide-react";
+import { Camera, Loader2, MapPin, AlertCircle } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import FieldCamera from "@/components/FieldCamera";
 import { validateUpload } from "@/lib/uploadValidate";
-
-type GPS = { lat: number; lng: number };
-type GpsStatus = "idle" | "getting" | "ok" | "denied" | "unavailable";
+import { resolveLocation, type GpsResult, type GpsStatus } from "@/lib/geo";
 
 function PhotoUploadForm() {
   const search = useSearchParams();
@@ -21,27 +19,19 @@ function PhotoUploadForm() {
   const [file, setFile] = useState<File | null>(null);
   const [caption, setCaption] = useState("");
   const [loading, setLoading] = useState(false);
-  const [gps, setGps] = useState<GPS | null>(null);
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
+  const [gps, setGps] = useState<GpsResult | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("getting");
   const supabase = createClient();
   const toast = useToast();
 
-  function getLocation() {
-    if (!("geolocation" in navigator)) {
-      setGpsStatus("unavailable");
-      return;
-    }
-    setGpsStatus("getting");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setGpsStatus("ok");
-      },
-      (err) => {
-        setGpsStatus(err.code === err.PERMISSION_DENIED ? "denied" : "unavailable");
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+  // Auto-grab location the moment the page opens so it's ready by the time the
+  // user takes a photo — no manual "tag my location" tap needed. Falls back to
+  // approximate IP location if GPS is denied. Initial status is "getting" so the
+  // spinner shows immediately without a synchronous setState in the effect.
+  async function getLocation() {
+    const { result, status } = await resolveLocation();
+    setGps(result);
+    setGpsStatus(status);
   }
 
   useEffect(() => {
@@ -49,6 +39,8 @@ function PhotoUploadForm() {
       .from("jobs")
       .select("id, name")
       .then(({ data }) => setJobs(data ?? []));
+    getLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleUpload(e: React.FormEvent) {
@@ -91,6 +83,8 @@ function PhotoUploadForm() {
       caption: caption || null,
       lat: gps?.lat ?? null,
       lng: gps?.lng ?? null,
+      location_source: gps?.source ?? null,
+      location_accuracy: gps?.accuracy ?? null,
     });
     if (dbError) {
       toast.error(`Save failed: ${dbError.message}`);
@@ -99,7 +93,8 @@ function PhotoUploadForm() {
       setFile(null);
       setCaption("");
       setGps(null);
-      setGpsStatus("idle");
+      setGpsStatus("getting");
+      getLocation();
     }
     setLoading(false);
   }
@@ -136,7 +131,10 @@ function PhotoUploadForm() {
                   return;
                 }
                 setFile(f);
-                if (gpsStatus === "idle") getLocation();
+                if (!gps && gpsStatus !== "getting") {
+                  setGpsStatus("getting");
+                  getLocation();
+                }
               } else {
                 setFile(null);
               }
@@ -146,41 +144,52 @@ function PhotoUploadForm() {
           {file && (
             <p className="text-xs text-green-700 flex items-center gap-1">
               <Camera className="w-3.5 h-3.5" />
-              Photo ready to upload{gps ? " · location tagged" : ""}
+              Photo ready to upload{gps ? (gps.source === "ip" ? " · approximate location" : " · location tagged") : ""}
             </p>
           )}
 
-          {/* GPS status */}
-          <div className="flex items-center gap-2 text-xs">
+          {/* Location status — auto-captured on page open */}
+          <div className="text-xs space-y-1.5">
             {gpsStatus === "ok" && gps ? (
               <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded">
                 <MapPin className="w-3.5 h-3.5" />
                 Location tagged · {gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}
+                {gps.accuracy ? ` (±${Math.round(gps.accuracy)}m)` : ""}
+              </span>
+            ) : gpsStatus === "ip" && gps ? (
+              <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                <MapPin className="w-3.5 h-3.5" />
+                Approximate location (network) · {gps.lat.toFixed(3)}, {gps.lng.toFixed(3)}
               </span>
             ) : gpsStatus === "getting" ? (
               <span className="inline-flex items-center gap-1 text-gray-500">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Getting location…
               </span>
-            ) : (
-              <button
-                type="button"
-                onClick={getLocation}
-                className="inline-flex items-center gap-1 text-blue-600 active:opacity-70 px-2 py-1 rounded"
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                {gpsStatus === "denied"
-                  ? "Location denied — tap to retry"
-                  : gpsStatus === "unavailable"
-                    ? "Location unavailable"
-                    : "Tag my location"}
-              </button>
-            )}
-            {gpsStatus !== "ok" && (
-              <span className="text-gray-400">
-                Optional — adds a map pin to this photo
-              </span>
-            )}
+            ) : gpsStatus === "denied" || gpsStatus === "unavailable" ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 space-y-1.5">
+                <p className="flex items-center gap-1.5 text-amber-800 font-medium">
+                  <AlertCircle className="w-4 h-4" />
+                  Location is off — no precise pin will be saved
+                </p>
+                <p className="text-amber-700">
+                  Enable location in your phone/browser settings to tag photos
+                  with an exact spot. A rough network estimate will be used if
+                  available.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGpsStatus("getting");
+                    getLocation();
+                  }}
+                  className="inline-flex items-center gap-1 text-amber-900 font-semibold underline"
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  Try again
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <label className="block">

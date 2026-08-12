@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import { useToast } from "@/components/Toast";
-import { Play, Square, Loader2, MapPin, Clock, Trash2 } from "lucide-react";
+import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucide-react";
+import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
 
 type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
@@ -17,10 +18,8 @@ type TimeEntry = {
   note: string | null;
   lat: number | null;
   lng: number | null;
+  location_source: GpsSource | null;
 };
-
-type GPS = { lat: number; lng: number };
-type GpsStatus = "idle" | "getting" | "ok" | "denied" | "unavailable";
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -49,8 +48,8 @@ export default function CrewTimePage() {
   const [jobId, setJobId] = useState("");
   const [costCodeId, setCostCodeId] = useState("");
   const [note, setNote] = useState("");
-  const [gps, setGps] = useState<GPS | null>(null);
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
+  const [gps, setGps] = useState<GpsResult | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("getting");
   const [busy, setBusy] = useState(false);
 
   // Ticking "now" for the live elapsed timer
@@ -67,7 +66,7 @@ export default function CrewTimePage() {
       user?.id
         ? supabase
             .from("time_entries")
-            .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng")
+            .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source")
             .eq("user_id", user.id)
             .order("clock_in_at", { ascending: false })
             .limit(50)
@@ -88,6 +87,9 @@ export default function CrewTimePage() {
 
   useEffect(() => {
     load();
+    // Auto-grab location on open so it's ready at clock-in — no manual tap.
+    getLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Tick every second while clocked in
@@ -97,20 +99,13 @@ export default function CrewTimePage() {
     return () => clearInterval(t);
   }, [openEntry]);
 
-  function getLocation() {
-    if (!("geolocation" in navigator)) {
-      setGpsStatus("unavailable");
-      return;
-    }
-    setGpsStatus("getting");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setGpsStatus("ok");
-      },
-      (err) => setGpsStatus(err.code === err.PERMISSION_DENIED ? "denied" : "unavailable"),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+  // High-accuracy GPS, falling back to approximate IP location if denied.
+  // Initial status is "getting" (set in useState) so we don't setState
+  // synchronously inside the mount effect.
+  async function getLocation() {
+    const { result, status } = await resolveLocation();
+    setGps(result);
+    setGpsStatus(status);
   }
 
   async function clockIn(e: React.FormEvent) {
@@ -137,8 +132,10 @@ export default function CrewTimePage() {
         note: note.trim() || null,
         lat: gps?.lat ?? null,
         lng: gps?.lng ?? null,
+        location_source: gps?.source ?? null,
+        location_accuracy: gps?.accuracy ?? null,
       })
-      .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng")
+      .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source")
       .single();
     if (error) {
       toast.error(
@@ -152,7 +149,8 @@ export default function CrewTimePage() {
       toast.success("Clocked in");
       setNote("");
       setGps(null);
-      setGpsStatus("idle");
+      setGpsStatus("getting");
+      getLocation();
     }
     setBusy(false);
   }
@@ -223,10 +221,14 @@ export default function CrewTimePage() {
                   href={`https://www.google.com/maps?q=${openEntry.lat},${openEntry.lng}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-1"
+                  className={`inline-flex items-center gap-1 text-xs hover:underline mt-1 ${
+                    openEntry.location_source === "ip" ? "text-amber-600" : "text-blue-600"
+                  }`}
                 >
                   <MapPin className="w-3 h-3" />
-                  Clocked in at {openEntry.lat.toFixed(4)}, {openEntry.lng.toFixed(4)}
+                  {openEntry.location_source === "ip"
+                    ? `Clocked in (approx) at ${openEntry.lat.toFixed(3)}, ${openEntry.lng.toFixed(3)}`
+                    : `Clocked in at ${openEntry.lat.toFixed(4)}, ${openEntry.lng.toFixed(4)}`}
                 </a>
               )}
             </div>
@@ -282,28 +284,46 @@ export default function CrewTimePage() {
               />
             </label>
 
-            {/* GPS */}
-            <div className="flex items-center gap-2 text-xs">
+            {/* Location — auto-captured on page open */}
+            <div className="text-xs space-y-1.5">
               {gpsStatus === "ok" && gps ? (
                 <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded">
                   <MapPin className="w-3.5 h-3.5" />
-                  Location tagged
+                  Location tagged · {gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}
+                  {gps.accuracy ? ` (±${Math.round(gps.accuracy)}m)` : ""}
+                </span>
+              ) : gpsStatus === "ip" && gps ? (
+                <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                  <MapPin className="w-3.5 h-3.5" />
+                  Approximate location (network) · {gps.lat.toFixed(3)}, {gps.lng.toFixed(3)}
                 </span>
               ) : gpsStatus === "getting" ? (
                 <span className="inline-flex items-center gap-1 text-gray-500">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Getting location…
                 </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={getLocation}
-                  className="inline-flex items-center gap-1 text-blue-600 active:opacity-70 px-2 py-1 rounded"
-                >
-                  <MapPin className="w-3.5 h-3.5" />
-                  {gpsStatus === "denied" ? "Location denied — tap to retry" : "Tag my location"}
-                </button>
-              )}
-              <span className="text-gray-400">Optional — records where you clocked in</span>
+              ) : gpsStatus === "denied" || gpsStatus === "unavailable" ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 space-y-1.5">
+                  <p className="flex items-center gap-1.5 text-amber-800 font-medium">
+                    <AlertCircle className="w-4 h-4" />
+                    Location is off — clock-in pin will be blank
+                  </p>
+                  <p className="text-amber-700">
+                    Enable location in your phone/browser settings to record
+                    exactly where you clocked in.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGpsStatus("getting");
+                      getLocation();
+                    }}
+                    className="inline-flex items-center gap-1 text-amber-900 font-semibold underline"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    Try again
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             <button
