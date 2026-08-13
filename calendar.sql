@@ -47,7 +47,7 @@ create table if not exists public.schedule_events (
   title           text not null,
   start_at        timestamptz not null,
   end_at          timestamptz,                 -- null = point-in-time event
-  kind            text not null default 'meeting',  -- meeting/inspection/delivery/milestone/other
+  kind            text not null,                     -- meeting/inspection/delivery/milestone/other (app always sends a value)
   notes           text,
   created_by      uuid references public.profiles(id) on delete set null,
   organization_id uuid not null references public.organizations(id) on delete cascade,
