@@ -7,9 +7,8 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet } from "lucide-react";
-
-const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building } from "lucide-react";
+import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -26,6 +25,13 @@ export default async function DashboardPage() {
 
   const role = profile?.role ?? "crew";
 
+  // admin supersetes office on the office surface (grid, weekly report,
+  // invoices, RFIs). super_admin does NOT get the office surface — they get a
+  // platform view instead (they have no org, so the office grid would query
+  // across all orgs).
+  const showOfficeSurface = role === "office" || role === "admin";
+  const showPlatform = isSuperAdmin(role);
+
   // Fan out the independent reads in parallel (was sequential awaits, so the
   // dashboard waited on jobs → photos → rfis → invoices one after another).
   const [jobsRes, photosRes, rfisRes, invoicesRes] = await Promise.all([
@@ -38,14 +44,14 @@ export default async function DashboardPage() {
       .select("id, storage_path, caption, created_at, jobs(name)")
       .order("created_at", { ascending: false })
       .limit(12),
-    role === "office"
+    showOfficeSurface
       ? supabase
           .from("rfis")
           .select("id, question, status, created_at, jobs(name)")
           .order("created_at", { ascending: false })
           .limit(10)
       : Promise.resolve({ data: [] }),
-    role === "office"
+    showOfficeSurface
       ? supabase
           .from("invoices")
           .select(
@@ -97,8 +103,28 @@ export default async function DashboardPage() {
 
       <main className="max-w-md mx-auto p-4 space-y-6">
         <ClientPullToRefresh>
-        {/* Office only: create new project button */}
-        {role === "office" && (
+        {/* Super admin: platform view (no org, so no office grid). */}
+        {showPlatform && (
+          <div className="space-y-2">
+            <Link
+              href="/admin/orgs"
+              className="block bg-blue-600 text-white text-center py-4 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+            >
+              <Building className="w-5 h-5" />
+              Platform · All Organizations
+            </Link>
+            <Link
+              href="/admin/users"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Users className="w-5 h-5" />
+              Users
+            </Link>
+          </div>
+        )}
+
+        {/* Office / admin: create new project button */}
+        {showOfficeSurface && (
           <div className="grid grid-cols-3 gap-2">
             <Link
               href="/admin/projects/new"
@@ -145,8 +171,8 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* Office: weekly per-worker report */}
-        {role === "office" && (
+        {/* Office / admin: weekly per-worker report */}
+        {showOfficeSurface && (
           <Link
             href="/admin/reports/weekly"
             className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
@@ -154,6 +180,26 @@ export default async function DashboardPage() {
             <FileSpreadsheet className="w-5 h-5" />
             Weekly Report
           </Link>
+        )}
+
+        {/* Admin only (superset of office): manage users + org settings */}
+        {role === "admin" && (
+          <div className="grid grid-cols-2 gap-2">
+            <Link
+              href="/admin/users"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Users className="w-5 h-5" />
+              Users
+            </Link>
+            <Link
+              href="/admin/org"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Building className="w-5 h-5" />
+              Org Settings
+            </Link>
+          </div>
         )}
 
         {/* Project manager: invoice creation (crew/super assignment is on the
@@ -228,7 +274,7 @@ export default async function DashboardPage() {
                   icon={EmptyIcons.Briefcase}
                   title="No jobs yet"
                   description={
-                    role === "office"
+                    showOfficeSurface
                       ? "Tap “New Project” above to create your first job."
                       : "Your assigned jobs will show up here once the office assigns them."
                   }
@@ -244,7 +290,7 @@ export default async function DashboardPage() {
             <h2 className="text-sm font-semibold text-gray-500 uppercase">
               Recent Photos
             </h2>
-            {role === "office" && photos && photos.length > 0 && (
+            {showOfficeSurface && photos && photos.length > 0 && (
               <Link href="/photos" className="text-xs text-blue-600 font-medium">
                 View all
               </Link>
@@ -269,8 +315,8 @@ export default async function DashboardPage() {
           )}
         </section>
 
-        {/* Unpaid invoices — office only */}
-        {role === "office" && (
+        {/* Unpaid invoices — office / admin */}
+        {showOfficeSurface && (
           <section>
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-semibold text-gray-500 uppercase flex items-center gap-1">
@@ -331,8 +377,8 @@ export default async function DashboardPage() {
           </section>
         )}
 
-        {/* RFIs — only shown to office */}
-        {role === "office" && (
+        {/* RFIs — shown to office / admin */}
+        {showOfficeSurface && (
           <section>
             <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
               Recent RFIs

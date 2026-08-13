@@ -10,6 +10,7 @@ import {
   LogOut,
   Receipt,
   Clock,
+  Building,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
@@ -64,14 +65,22 @@ export default function BottomNav() {
     { href: "/crew/photo", label: "Photos", Icon: Camera },
     { href: "/crew/time", label: "Time", Icon: Clock },
   ];
-  if (role === "office") {
+  if (role === "office" || role === "admin" || role === "super_admin") {
     items.push({ href: "/receipts", label: "Receipts", Icon: Receipt });
     items.push({ href: "/admin/users", label: "Admin", Icon: Users });
+  }
+  if (role === "super_admin") {
+    items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
   }
 
   // The bottom nav is persistent (rendered from the root layout) but should
   // not appear on public/portal routes that have their own chrome.
-  if (pathname === "/" || pathname === "/login" || pathname === "/customer") {
+  if (
+    pathname === "/" ||
+    pathname === "/login" ||
+    pathname === "/signup" ||
+    pathname === "/customer"
+  ) {
     return null;
   }
 

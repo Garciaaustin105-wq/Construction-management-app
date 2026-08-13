@@ -18,9 +18,11 @@ export type Subcontractor = {
 export default function SubcontractorsManager({
   initial,
   canEdit = true,
+  orgId,
 }: {
   initial: Subcontractor[];
   canEdit?: boolean;
+  orgId: string;
 }) {
   const supabase = createClient();
   const toast = useToast();
@@ -59,6 +61,7 @@ export default function SubcontractorsManager({
       phone: phone.trim() || null,
       email: email.trim() || null,
       created_by: user?.id ?? null,
+      organization_id: orgId,
     });
     setAdding(false);
     if (error) {

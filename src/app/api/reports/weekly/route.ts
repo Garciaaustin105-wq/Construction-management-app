@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "office") {
+  if (profile?.role !== "office" && profile?.role !== "admin") {
     return NextResponse.json({ error: "Office only" }, { status: 403 });
   }
 

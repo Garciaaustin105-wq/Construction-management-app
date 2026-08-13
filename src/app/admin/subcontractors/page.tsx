@@ -4,8 +4,8 @@ import TopBar from "@/components/TopBar";
 import SubcontractorsManager, {
   type Subcontractor,
 } from "@/components/SubcontractorsManager";
-
-const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
+import { MANAGEMENT } from "@/lib/roles";
+import { isSuperAdmin } from "@/lib/roles";
 
 export default async function SubcontractorsPage() {
   const supabase = await createClient();
@@ -16,11 +16,13 @@ export default async function SubcontractorsPage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, organization_id")
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
-  if (!MANAGEMENT.has(role)) redirect("/dashboard");
+  // super_admin (no org) manages via the platform view, not here.
+  if (isSuperAdmin(role) || !MANAGEMENT.has(role)) redirect("/dashboard");
+  const orgId = (profile?.organization_id as string | null) ?? "";
 
   const { data } = await supabase
     .from("subcontractors")
@@ -33,7 +35,8 @@ export default async function SubcontractorsPage() {
       <main className="max-w-md mx-auto p-4">
         <SubcontractorsManager
           initial={(data as Subcontractor[]) ?? []}
-          canEdit={role === "office" || role === "project_manager"}
+          canEdit={role === "office" || role === "admin" || role === "project_manager"}
+          orgId={orgId}
         />
       </main>
     </div>

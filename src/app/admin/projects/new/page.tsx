@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { createClient } from "@/lib/supabase/client";
+import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -18,26 +19,30 @@ export default function NewProjectPage() {
   const [scheduledEnd, setScheduledEnd] = useState("");
   const [assigned, setAssigned] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [orgId, setOrgId] = useState<string>("");
   const toast = useToast();
 
   useEffect(() => {
     const supabase = createClient();
     (async () => {
-      // Verify office role
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.push("/login");
         return;
       }
       const { data: profile } = await supabase
-        .from("profiles").select("role").eq("id", user.id).single();
-      if (profile?.role !== "office") {
+        .from("profiles").select("role, organization_id").eq("id", user.id).single();
+      const role = profile?.role ?? "crew";
+      // office + admin create jobs in their own org; super_admin (no org) uses
+      // the platform view instead.
+      if (isSuperAdmin(role) || !isOfficeLike(role) || !profile?.organization_id) {
         router.push("/dashboard");
         return;
       }
+      setOrgId(profile.organization_id as string);
       const [{ data: custs }, { data: crews }] = await Promise.all([
         supabase.from("customers").select("id, name").order("name"),
-        supabase.from("profiles").select("id, full_name, email").eq("role", "crew").order("full_name"),
+        supabase.from("profiles").select("id, full_name, email").in("role", ["crew", "superintendent"]).order("full_name"),
       ]);
       setCustomers(custs ?? []);
       setCrew(crews ?? []);
@@ -63,6 +68,7 @@ export default function NewProjectPage() {
       scheduled_start: scheduledStart || null,
       scheduled_end: scheduledEnd || null,
       assigned_crew: assigned,
+      organization_id: orgId,
     }).select().single();
     if (error) {
       toast.error(`Failed to create: ${error.message}`);

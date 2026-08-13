@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import Link from "next/link";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -91,6 +92,13 @@ export default function LoginPage() {
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
           {loading ? "Signing in..." : "Sign In"}
         </button>
+
+        <Link
+          href="/signup"
+          className="block text-center text-sm text-blue-600 active:text-blue-700"
+        >
+          Sign up your business
+        </Link>
       </form>
     </main>
   );

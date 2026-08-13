@@ -6,8 +6,7 @@ import SubcontractorDetail, {
   type SubAttachment,
   type AttachedJob,
 } from "@/components/SubcontractorDetail";
-
-const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
+import { MANAGEMENT } from "@/lib/roles";
 
 export default async function SubcontractorDetailPage({
   params,
@@ -71,7 +70,7 @@ export default async function SubcontractorDetailPage({
           attachments={(atts as SubAttachment[]) ?? []}
           attachedJobs={attachedJobs}
           allJobs={(allJobs as { id: string; name: string }[]) ?? []}
-          canEdit={role === "office" || role === "project_manager"}
+          canEdit={role === "office" || role === "admin" || role === "project_manager"}
         />
       </main>
     </div>

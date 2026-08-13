@@ -32,7 +32,7 @@ export default function EditQuotePage({
       }
       const { data: profile } = await supabase
         .from("profiles").select("role").eq("id", user.id).single();
-      if (profile?.role !== "office") {
+      if (profile?.role !== "office" && profile?.role !== "admin") {
         router.push("/dashboard");
         return;
       }

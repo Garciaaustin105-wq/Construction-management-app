@@ -14,7 +14,7 @@ type CostCode = {
 
 const CATEGORIES = ["Labor", "Material", "Equipment", "Subcontract", "Other"];
 
-export default function CostCodesManager() {
+export default function CostCodesManager({ orgId }: { orgId: string }) {
   const supabase = createClient();
   const toast = useToast();
   const [codes, setCodes] = useState<CostCode[]>([]);
@@ -53,6 +53,7 @@ export default function CostCodesManager() {
         code: c,
         name: n,
         category: category || null,
+        organization_id: orgId,
       })
       .select("id, code, name, category")
       .single();

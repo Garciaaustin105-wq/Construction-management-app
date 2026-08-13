@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export async function DELETE(
 
   const { data: receipt } = await admin
     .from("receipts")
-    .select("storage_path, uploaded_by")
+    .select("storage_path, uploaded_by, organization_id")
     .eq("id", id)
     .single();
   if (!receipt) {
@@ -37,13 +38,23 @@ export async function DELETE(
 
   const { data: profile } = await admin
     .from("profiles")
-    .select("role")
+    .select("role, organization_id")
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
+  const callerOrg = (profile?.organization_id as string | null) ?? null;
+  const receiptOrg = (receipt.organization_id as string | null) ?? null;
 
-  if (role !== "office" && receipt.uploaded_by !== user.id) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  // Service-role delete bypasses RLS, so enforce the org boundary here:
+  // only same-org office/admin or the original uploader (same org) may delete.
+  // super_admin bypasses.
+  if (!isSuperAdmin(role)) {
+    if (!callerOrg || callerOrg !== receiptOrg) {
+      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+    }
+    if (!isOfficeLike(role) && receipt.uploaded_by !== user.id) {
+      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+    }
   }
 
   await admin.storage.from("receipts").remove([receipt.storage_path]);

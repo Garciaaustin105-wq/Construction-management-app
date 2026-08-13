@@ -6,8 +6,7 @@ import CustomerDetail, {
   type CustomerJob,
   type CustomerSub,
 } from "@/components/CustomerDetail";
-
-const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
+import { MANAGEMENT } from "@/lib/roles";
 
 export default async function CustomerDetailPage({
   params,
@@ -94,7 +93,7 @@ export default async function CustomerDetailPage({
           customer={cust as unknown as CustomerDetailRow}
           jobs={jobs}
           subs={subs}
-          canEdit={role === "office"}
+          canEdit={role === "office" || role === "admin"}
         />
       </main>
     </div>

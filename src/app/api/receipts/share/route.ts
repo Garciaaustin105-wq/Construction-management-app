@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { validateUpload, MAX_IMAGE_SIZE } from "@/lib/uploadValidate";
+import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -70,26 +71,43 @@ export async function POST(request: Request) {
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  // Caller's profile (role + name)
+  // Caller's profile (role + name + org)
   const { data: profile } = await admin
     .from("profiles")
-    .select("role, full_name")
+    .select("role, full_name, organization_id")
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
+  const callerOrg = (profile?.organization_id as string | null) ?? null;
 
-  // Validate assignment
+  // Fetch the job's assigned crew AND its org.
   const { data: job } = await admin
     .from("jobs")
-    .select("assigned_crew")
+    .select("assigned_crew, organization_id")
     .eq("id", jobId)
     .single();
   if (!job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
   const assigned = (job.assigned_crew ?? []) as string[];
-  if (role !== "office" && !assigned.includes(user.id)) {
-    return NextResponse.json({ error: "Not assigned to this job" }, { status: 403 });
+  const jobOrg = (job.organization_id as string | null) ?? null;
+
+  // Service-role writes bypass RLS `with check`, so enforce the org boundary
+  // here: a caller may only file a receipt into a job in their OWN org
+  // (super_admin bypasses). Then the assignment/office check as before.
+  if (!isSuperAdmin(role)) {
+    if (!callerOrg || callerOrg !== jobOrg) {
+      return NextResponse.json(
+        { error: "Not authorized for this job" },
+        { status: 403 }
+      );
+    }
+    if (!isOfficeLike(role) && !assigned.includes(user.id)) {
+      return NextResponse.json(
+        { error: "Not assigned to this job" },
+        { status: 403 }
+      );
+    }
   }
 
   // Upload to the private receipts bucket (service role bypasses storage RLS)

@@ -28,7 +28,8 @@ export default async function WeeklyReportPage({
     .select("role")
     .eq("id", user.id)
     .single();
-  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+  const reportRole = profile?.role ?? "crew";
+  if (reportRole !== "office" && reportRole !== "admin") redirect("/dashboard");
 
   const sp = await searchParams;
   const weekStart = parseWeekStart(sp.weekStart);

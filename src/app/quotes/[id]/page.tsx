@@ -155,7 +155,7 @@ export default async function QuoteDetailPage({
           </Link>
         )}
 
-        {role === "office" && (
+        {(role === "office" || role === "admin") && (
           <QuoteActions
             quoteId={quote.id}
             status={quote.status}

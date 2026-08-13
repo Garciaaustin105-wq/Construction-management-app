@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import CostCodesManager from "@/components/CostCodesManager";
+import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
 export default async function CostCodesPage() {
   const supabase = await createClient();
@@ -12,16 +13,20 @@ export default async function CostCodesPage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, organization_id")
     .eq("id", user.id)
     .single();
-  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+  const role = profile?.role ?? "crew";
+  // office + admin manage the code library; super_admin (no org) uses the
+  // platform view instead.
+  if (isSuperAdmin(role) || !isOfficeLike(role)) redirect("/dashboard");
+  const orgId = (profile?.organization_id as string | null) ?? "";
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar title="Cost Codes" subtitle="The shared job-costing backbone" />
       <main className="max-w-md mx-auto p-4">
-        <CostCodesManager />
+        <CostCodesManager orgId={orgId} />
       </main>
     </div>
   );

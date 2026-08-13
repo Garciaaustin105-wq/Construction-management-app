@@ -26,7 +26,7 @@ export default async function QuotesPage({
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
-  if (role !== "office") redirect("/dashboard");
+  if (role !== "office" && role !== "admin") redirect("/dashboard");
 
   const statusFilter = params.status ?? "all";
 

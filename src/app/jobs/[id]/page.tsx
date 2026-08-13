@@ -18,8 +18,7 @@ import JobSubcontractors, {
 } from "@/components/JobSubcontractors";
 import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
-
-const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
+import { MANAGEMENT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
 
 export default async function JobDetailPage({
   params,
@@ -72,7 +71,7 @@ export default async function JobDetailPage({
       )
       .eq("job_id", id)
       .order("captured_at", { ascending: false }),
-    role === "office" || role === "project_manager"
+    OFFICE_OR_PM.has(role)
       ? supabase
           .from("profiles")
           .select("id, full_name, email, role")
@@ -168,7 +167,7 @@ export default async function JobDetailPage({
         </section>
 
         {/* Office + project manager: assign crew (PM has authority over crews) */}
-        {(role === "office" || role === "project_manager") && (
+        {(OFFICE_OR_PM.has(role)) && (
           <JobAssignment
             jobId={job.id}
             initialAssigned={job.assigned_crew ?? []}
@@ -177,7 +176,7 @@ export default async function JobDetailPage({
         )}
 
         {/* Office only: change job status */}
-        {role === "office" && (
+        {isOfficeLike(role) && (
           <JobStatusControl jobId={job.id} currentStatus={job.status} />
         )}
 
@@ -200,7 +199,7 @@ export default async function JobDetailPage({
             Photos ({photos?.length ?? 0})
           </h2>
           {photos && photos.length > 0 ? (
-            <PhotoLightbox photos={photosForLightbox} canDelete={role === "office"} />
+            <PhotoLightbox photos={photosForLightbox} canDelete={isOfficeLike(role)} />
           ) : (
             <div className="bg-white rounded-lg py-8 flex flex-col items-center text-center">
               <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mb-2">
@@ -215,7 +214,7 @@ export default async function JobDetailPage({
         </section>
 
         {/* Receipts — office and assigned crew */}
-        {(role === "office" || (job.assigned_crew ?? []).includes(user.id)) && (
+        {(isOfficeLike(role) || (job.assigned_crew ?? []).includes(user.id)) && (
           <ReceiptsSection
             jobId={job.id}
             jobName={job.name}
@@ -237,7 +236,7 @@ export default async function JobDetailPage({
             jobId={job.id}
             initial={jobSubs}
             allSubs={allSubs}
-            canEdit={role === "office"}
+            canEdit={isOfficeLike(role)}
           />
         )}
 
@@ -247,10 +246,10 @@ export default async function JobDetailPage({
         <JobFinancials jobId={job.id} role={role} />
 
         {/* Budget vs Actual — office only */}
-        {role === "office" && <JobBudget jobId={job.id} />}
+        {isOfficeLike(role) && <JobBudget jobId={job.id} />}
 
         {/* RFIs — office and assigned crew */}
-        {(role === "office" || (job.assigned_crew ?? []).includes(user.id)) && (
+        {(isOfficeLike(role) || (job.assigned_crew ?? []).includes(user.id)) && (
           <section>
             <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
               RFIs ({rfis?.length ?? 0})
@@ -286,7 +285,7 @@ export default async function JobDetailPage({
         )}
 
         {/* Office only: delete project */}
-        {role === "office" && (
+        {isOfficeLike(role) && (
           <DeleteJobButton jobId={job.id} jobName={job.name} />
         )}
       </main>

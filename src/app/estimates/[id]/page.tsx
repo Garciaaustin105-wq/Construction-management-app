@@ -73,7 +73,7 @@ export default function EstimateDetailPage({
         .select("role")
         .eq("id", user.id)
         .single();
-      if (profile?.role !== "office") {
+      if (profile?.role !== "office" && profile?.role !== "admin") {
         router.push("/dashboard");
         return;
       }

@@ -3,8 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { Building2, Phone, Mail } from "lucide-react";
-
-const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
+import { MANAGEMENT } from "@/lib/roles";
 
 export default async function CustomersPage() {
   const supabase = await createClient();
@@ -38,7 +37,7 @@ export default async function CustomersPage() {
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar
         title="Customers"
-        subtitle={role === "office" ? "Directory" : "Read-only"}
+        subtitle={role === "office" || role === "admin" ? "Directory" : "Read-only"}
       />
       <main className="max-w-md mx-auto p-4">
         <div className="space-y-2">
