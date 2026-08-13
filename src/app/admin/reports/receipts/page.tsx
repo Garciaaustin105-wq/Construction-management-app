@@ -5,6 +5,7 @@ import ReceiptReportFilters from "@/components/ReceiptReportFilters";
 import { fetchReceiptsReport, receiptTotals, type ReceiptReportFilters as Filters } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
 import Link from "next/link";
+import ReceiptReportPaidToggle from "@/components/ReceiptReportPaidToggle";
 import { Download, FileSpreadsheet, FileText } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -234,18 +235,11 @@ export default async function ReceiptsReportPage({
                         {r.cost_code_label ?? "—"}
                       </td>
                       <td className="px-2 py-2 whitespace-nowrap">
-                        {r.reimbursed ? (
-                          <span className="text-emerald-700 font-medium">
-                            Paid
-                            {r.reimbursed_at && (
-                              <span className="text-gray-400 ml-1">
-                                {new Date(r.reimbursed_at).toLocaleDateString()}
-                              </span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-orange-600 font-medium">Owed</span>
-                        )}
+                        <ReceiptReportPaidToggle
+                          receiptId={r.id}
+                          reimbursed={!!r.reimbursed}
+                          reimbursedAt={r.reimbursed_at}
+                        />
                       </td>
                       <td className="px-2 py-2 whitespace-nowrap">
                         {url ? (

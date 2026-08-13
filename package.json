@@ -12,9 +12,10 @@
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
     "ical-generator": "^11.1.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "lucide-react": "^1.31.0",
     "next": "16.3.0",
-    "pdfkit": "^0.19.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "xlsx": "^0.18.5"
@@ -22,7 +23,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

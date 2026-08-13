@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
+import type { RowInput } from "jspdf-autotable";
 import {
   fetchReceiptsReport,
   receiptTotals,
@@ -9,11 +9,16 @@ import {
 
 export const dynamic = "force-dynamic";
 
-// Receipts report PDF — office only. Builds a tabular PDF (pdfkit) of the
-// filtered receipts with a clickable "View" photo link per row and a totals
-// row. No embedded images — keeps the PDF small/fast and avoids image-fetch
-// timeouts (the on-screen table carries the actual thumbnails). RLS scopes the
-// query to the caller's org.
+// Receipts report PDF — office only. Builds a tabular PDF of the filtered
+// receipts with a clickable "View" photo link per row and a totals row.
+//
+// Uses jspdf + jspdf-autotable (pure JS, standard fonts embedded as data — no
+// filesystem reads). The previous pdfkit implementation crashed on Vercel:
+// pdfkit reads Helvetica.afm via `__dirname + '/data/...'` (string concat →
+// double-slash path) which doesn't exist in the serverless bundle → ENOENT →
+// 500 (foliojs/pdfkit issue #1516). jspdf has no such dependency. No embedded
+// images — keeps the PDF small/fast; the on-screen table carries thumbnails.
+// RLS scopes the query to the caller's org (user-scoped server client).
 export async function GET(request: Request) {
   const supabase = await createClient();
   const {
@@ -84,122 +89,89 @@ export async function GET(request: Request) {
       ? `${filters.from ?? "…"} → ${filters.to ?? "…"}`
       : "All dates";
 
-  // ── Build the PDF ───────────────────────────────────────────────────────
-  const margin = 36;
-  const doc = new PDFDocument({ size: "letter", layout: "landscape", margins: { top: margin, bottom: margin, left: margin, right: margin } });
+  // Dynamic import keeps jspdf out of the static bundle and avoids any
+  // browser-global references at module load on the server.
+  const { jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
 
-  const chunks: Buffer[] = [];
-  doc.on("data", (c: Buffer) => chunks.push(c));
-  const done = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
 
-  const pageW = 792;
-  const pageH = 612;
-  const usableW = pageW - margin * 2;
+  // Per-body-row photo URLs (parallel to `body`), used to color the "View"
+  // cell and to lay a clickable link region over it.
+  const photoUrls: (string | null)[] = rows.map((r) => urlByPath.get(r.storage_path) ?? null);
 
-  // Column definitions: x is absolute from left margin; w is column width.
-  const cols = [
-    { key: "date", label: "Date", x: margin, w: 58, align: "left" as const },
-    { key: "user", label: "User", x: margin + 58, w: 78, align: "left" as const },
-    { key: "job", label: "Job", x: margin + 136, w: 110, align: "left" as const },
-    { key: "loc", label: "Location", x: margin + 246, w: 120, align: "left" as const },
-    { key: "vendor", label: "Vendor", x: margin + 366, w: 90, align: "left" as const },
-    { key: "amount", label: "Amount", x: margin + 456, w: 64, align: "right" as const },
-    { key: "status", label: "Status", x: margin + 520, w: 78, align: "left" as const },
-    { key: "photo", label: "Photo", x: margin + 598, w: usableW - 562, align: "left" as const },
-  ];
+  const head = [["Date", "User", "Job", "Location", "Vendor", "Amount", "Status", "Photo"]];
 
-  const rowH = 16;
-  const headerH = 18;
-
-  function clip(s: string, max: number): string {
-    if (s.length <= max) return s;
-    return s.slice(0, max - 1) + "…";
-  }
-
-  function drawHeader(y: number): number {
-    doc.font("Helvetica-Bold").fontSize(8);
-    doc.rect(margin, y - 2, usableW, headerH).fill("#f3f4f6");
-    for (const c of cols) {
-      doc.fillColor("#6b7280").text(c.label, c.x, y, { width: c.w, align: c.align });
-    }
-    doc.fillColor("#000000");
-    return y + headerH;
-  }
-
-  // Title + filters summary.
-  let y = margin;
-  doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827").text("Receipts Report", margin, y);
-  y += 22;
-  doc.font("Helvetica").fontSize(9).fillColor("#6b7280");
-  doc.text(
-    `${jobLabel}  ·  ${workerLabel}  ·  ${codeLabel}  ·  ${dateLabel}`,
-    margin,
-    y,
-    { width: usableW }
-  );
-  y += 16;
-
-  // Table header.
-  y = drawHeader(y + 4);
-  doc.font("Helvetica").fontSize(8).fillColor("#111827");
-
-  const maxBottom = pageH - margin - rowH;
-
-  for (const r of rows) {
-    if (y > maxBottom) {
-      doc.addPage();
-      y = drawHeader(margin);
-      doc.font("Helvetica").fontSize(8).fillColor("#111827");
-    }
-
-    const url = urlByPath.get(r.storage_path);
+  const body = rows.map((r, i) => {
     const hasGps = typeof r.lat === "number" && typeof r.lng === "number";
-    const cells: Record<string, string> = {
-      date: new Date(r.captured_at).toLocaleDateString(),
-      user: clip(r.uploaded_by_name ?? "—", 14),
-      job: clip(r.job_name ?? "—", 20),
-      loc: hasGps ? `${r.lat!.toFixed(4)}, ${r.lng!.toFixed(4)}` : "—",
-      vendor: clip(r.vendor ?? "—", 16),
-      amount: `$${Number(r.amount ?? 0).toFixed(2)}`,
-      status: r.reimbursed ? "Paid" : "Owed",
-      photo: url ? "View" : "—",
-    };
+    return [
+      new Date(r.captured_at).toLocaleDateString(),
+      r.uploaded_by_name ?? "—",
+      r.job_name ?? "—",
+      hasGps ? `${r.lat!.toFixed(4)}, ${r.lng!.toFixed(4)}` : "—",
+      r.vendor ?? "—",
+      `$${Number(r.amount ?? 0).toFixed(2)}`,
+      r.reimbursed ? "Paid" : "Owed",
+      photoUrls[i] ? "View" : "—",
+    ];
+  });
 
-    for (const c of cols) {
-      if (c.key === "photo" && url) {
-        doc.fillColor("#2563eb").text("View", c.x, y, { width: c.w, align: "left", link: url, underline: true });
-        doc.fillColor("#111827");
-      } else if (c.key === "status") {
-        doc.fillColor(r.reimbursed ? "#047857" : "#ea580c").text(cells[c.key], c.x, y, { width: c.w, align: c.align });
-        doc.fillColor("#111827");
-      } else if (c.key === "amount") {
-        doc.text(cells[c.key], c.x, y, { width: c.w, align: "right" });
-      } else {
-        doc.text(cells[c.key], c.x, y, { width: c.w, align: c.align });
-      }
-    }
-    // Faint separator line.
-    doc.moveTo(margin, y + rowH - 2).lineTo(margin + usableW, y + rowH - 2).strokeColor("#f3f4f6").lineWidth(0.5).stroke();
-    y += rowH;
-  }
-
-  // Totals row.
-  if (y > maxBottom) {
-    doc.addPage();
-    y = margin;
-  }
   const t = receiptTotals(rows);
-  y += 4;
-  doc.rect(margin, y - 2, usableW, headerH).fill("#f3f4f6");
-  doc.font("Helvetica-Bold").fontSize(9).fillColor("#111827");
-  doc.text(`TOTAL (${t.count} receipt${t.count === 1 ? "" : "s"})`, cols[0].x, y, { width: cols[1].x - cols[0].x + cols[1].w });
-  doc.text(`$${t.amount.toFixed(2)}`, cols[5].x, y, { width: cols[5].w, align: "right" });
-  doc.fillColor("#ea580c").text(`Owed $${t.owed.toFixed(2)}`, cols[6].x, y, { width: cols[6].w });
-  doc.fillColor("#047857").text(`Paid $${t.paid.toFixed(2)}`, cols[7].x, y, { width: cols[7].w });
+  const foot: RowInput[] = [[
+    { content: `TOTAL (${t.count} receipt${t.count === 1 ? "" : "s"})`, colSpan: 5, styles: { halign: "left", fillColor: [243, 244, 246], fontStyle: "bold" } },
+    { content: `$${t.amount.toFixed(2)}`, styles: { halign: "right", fillColor: [243, 244, 246], fontStyle: "bold" } },
+    { content: `Owed $${t.owed.toFixed(2)}   Paid $${t.paid.toFixed(2)}`, colSpan: 2, styles: { halign: "left", fillColor: [243, 244, 246], fontStyle: "bold" } },
+  ]];
 
-  doc.end();
-  const buf = await done;
-  const blob = new Blob([new Uint8Array(buf)], { type: "application/pdf" });
+  const photoCol = 7;
+
+  // Title + filters summary above the table.
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.setTextColor(17, 24, 39);
+  doc.text("Receipts Report", 40, 40);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(107, 114, 128);
+  doc.text(`${jobLabel}  ·  ${workerLabel}  ·  ${codeLabel}  ·  ${dateLabel}`, 40, 56);
+
+  autoTable(doc, {
+    head,
+    body,
+    foot,
+    startY: 72,
+    margin: { left: 40, right: 40 },
+    styles: { font: "helvetica", fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+    headStyles: { fillColor: [243, 244, 246], textColor: [107, 114, 128], fontStyle: "bold" },
+    footStyles: { lineWidth: 0 },
+    columnStyles: {
+      5: { halign: "right" }, // Amount
+    },
+    didParseCell: (data) => {
+      // Color the "View" link cell blue when a URL exists.
+      if (data.section === "body" && data.column.index === photoCol) {
+        const url = photoUrls[data.row.index];
+        data.cell.styles.textColor = url ? [37, 99, 235] : [156, 163, 175];
+      }
+      // Status color.
+      if (data.section === "body" && data.column.index === 6) {
+        const paid = body[data.row.index][6] === "Paid";
+        data.cell.styles.textColor = paid ? [4, 120, 87] : [234, 88, 12];
+      }
+    },
+    didDrawCell: (data) => {
+      // Lay a clickable link region over the "View" cell.
+      if (data.section === "body" && data.column.index === photoCol) {
+        const url = photoUrls[data.row.index];
+        if (url) {
+          doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url });
+        }
+      }
+    },
+  });
+
+  const buf = doc.output("arraybuffer") as ArrayBuffer;
+  const blob = new Blob([buf], { type: "application/pdf" });
 
   const stamp = new Date().toISOString().slice(0, 10);
   return new NextResponse(blob, {
