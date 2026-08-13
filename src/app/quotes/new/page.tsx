@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Send } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import LineItemEditor, { LineItem } from "@/components/LineItemEditor";
 
@@ -20,7 +20,10 @@ function NewQuoteForm() {
     { description: "", quantity: 1, unit_price: 0 },
   ]);
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  // Which submit button was pressed — null = Save as Draft, true = Save & Send.
+  const sendRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -48,6 +51,7 @@ function NewQuoteForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // sendRef is set by whichever button was clicked (see onClick handlers).
     if (!jobId) {
       toast.warning("Pick a job");
       return;
@@ -109,7 +113,35 @@ function NewQuoteForm() {
       return;
     }
 
-    toast.success("Quote created");
+    // Draft saved. If the office chose "Save & Send", email the customer now.
+    // On email failure the draft still exists — toast the error and stay on the
+    // form so they can fix the customer email and resend from the detail page.
+    if (sendRef.current) {
+      setSending(true);
+      try {
+        const res = await fetch(`/api/quotes/${quote.id}/send`, {
+          method: "POST",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast.error(
+            data?.error ??
+              "Saved as draft, but send failed — open the quote to resend."
+          );
+          router.push(`/quotes/${quote.id}`);
+          return;
+        }
+        toast.success(`Sent to ${data.sentTo ?? "customer"}`);
+      } catch {
+        toast.error(
+          "Saved as draft, but send failed — open the quote to resend."
+        );
+      } finally {
+        setSending(false);
+      }
+    } else {
+      toast.success("Quote saved as draft");
+    }
     setTimeout(() => router.push(`/quotes/${quote.id}`), 600);
   }
 
@@ -189,14 +221,38 @@ function NewQuoteForm() {
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {loading && <Loader2 className="w-5 h-5 animate-spin" />}
-            {loading ? "Creating..." : "Save as Draft"}
-          </button>
+          <div className="space-y-2 pt-2">
+            <button
+              type="submit"
+              onClick={() => {
+                sendRef.current = true;
+              }}
+              disabled={loading || sending}
+              className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {(loading || sending) && <Loader2 className="w-5 h-5 animate-spin" />}
+              {sending ? (
+                "Sending..."
+              ) : loading ? (
+                "Creating..."
+              ) : (
+                <>
+                  <Send className="w-5 h-5" />
+                  Save &amp; Send to Customer
+                </>
+              )}
+            </button>
+            <button
+              type="submit"
+              onClick={() => {
+                sendRef.current = false;
+              }}
+              disabled={loading || sending}
+              className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-base active:bg-gray-50 disabled:opacity-50"
+            >
+              {loading ? "Creating..." : "Save as Draft"}
+            </button>
+          </div>
         </form>
       </main>
 

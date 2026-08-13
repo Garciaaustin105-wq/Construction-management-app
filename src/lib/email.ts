@@ -1,0 +1,113 @@
+// Transactional email via Resend. Server-only — the API key is a server secret
+// and must never reach the browser. Used today to deliver quotes to customers
+// (office hits Send → branded email with a frictionless /q/{token} link).
+//
+// Setup (user): create a Resend account, verify a sending domain, and set
+// RESEND_API_KEY + RESEND_FROM in Vercel + .env.local. The Resend onboarding
+// address (onboarding@resend.com) only delivers to the account owner's email —
+// fine for testing, not production.
+
+import { Resend } from "resend";
+
+function fromAddress(): string {
+  return (
+    process.env.RESEND_FROM ||
+    "Terra Vista Construction <onboarding@resend.com>"
+  );
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export type SendQuoteEmailInput = {
+  to: string;
+  customerName: string;
+  orgName: string;
+  jobName: string;
+  total: string; // pre-formatted money, e.g. "$1,234.50"
+  validUntil: string | null; // pre-formatted date or null
+  quoteUrl: string; // public /q/{token} link
+};
+
+// Sends the "you have a quote to review" email. Returns Resend's result
+// ({ data, error }); the caller decides how to surface a failure. Throws if
+// RESEND_API_KEY is unset so the route returns a clear 500 instead of a silent
+// no-op.
+export async function sendQuoteEmail(
+  input: SendQuoteEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
+    );
+  }
+
+  const resend = new Resend(apiKey);
+  const org = escapeHtml(input.orgName);
+  const job = escapeHtml(input.jobName);
+  const customer = escapeHtml(input.customerName || "there");
+  const total = escapeHtml(input.total);
+  const validLine = input.validUntil
+    ? `<p style="margin:0;color:#6b7280;font-size:14px;">This quote is valid until <strong style="color:#374151;">${escapeHtml(
+        input.validUntil
+      )}</strong>.</p>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Quote for your review</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${customer},</p>
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            You have a quote from <strong>${org}</strong> for
+            <strong>${job}</strong> ready for your review. Please open it below
+            to see the details and approve or decline.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:16px 20px;">
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Project</p>
+              <p style="margin:0 0 12px;color:#111827;font-size:15px;font-weight:600;">${job}</p>
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Quote total</p>
+              <p style="margin:0;color:#111827;font-size:28px;font-weight:700;">${total}</p>
+            </td></tr>
+          </table>
+          ${validLine}
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${input.quoteUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review &amp; Approve Quote</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This link is private — anyone with it can view and act on this quote.
+            If you weren't expecting a quote from ${org}, you can safely ignore
+            this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via Terra Vista Construction Management.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  return resend.emails.send({
+    from: fromAddress(),
+    to: input.to,
+    subject: `Quote from ${input.orgName} — ${input.jobName}`,
+    html,
+  });
+}

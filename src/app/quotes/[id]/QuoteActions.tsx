@@ -20,19 +20,28 @@ export default function QuoteActions({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
 
-  async function markSent() {
+  // Email the customer a frictionless /q/{token} link + mark the quote sent.
+  // The route emails first and only marks sent on success, so "sent" always
+  // means "delivered". On a draft this is Send; on a sent quote it's Resend
+  // (the route rotates the token, so the old link stops working).
+  async function sendToCustomer() {
     setBusy(true);
-    const { error } = await supabase
-      .from("quotes")
-      .update({ status: "sent", sent_at: new Date().toISOString() })
-      .eq("id", quoteId);
-    if (error) {
-      toast.error(`Failed: ${error.message}`);
-    } else {
-      toast.success("Quote marked as sent");
-      router.refresh();
+    try {
+      const res = await fetch(`/api/quotes/${quoteId}/send`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data?.error ?? `Send failed (${res.status})`);
+      } else {
+        toast.success(`Sent to ${data.sentTo ?? "customer"}`);
+        router.refresh();
+      }
+    } catch {
+      toast.error("Send failed — please try again.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   async function reject() {
@@ -68,7 +77,7 @@ export default function QuoteActions({
       {status === "draft" && (
         <>
           <button
-            onClick={markSent}
+            onClick={sendToCustomer}
             disabled={busy}
             className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
           >
@@ -77,7 +86,7 @@ export default function QuoteActions({
             ) : (
               <Send className="w-5 h-5" />
             )}
-            Mark as Sent
+            Send to Customer
           </button>
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -101,15 +110,18 @@ export default function QuoteActions({
 
       {status === "sent" && (
         <>
-          {invoiceId && (
-            <button
-              onClick={() => router.push(`/invoices/${invoiceId}`)}
-              className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-base active:bg-green-700 flex items-center justify-center gap-2"
-            >
-              <Receipt className="w-5 h-5" />
-              View Invoice
-            </button>
-          )}
+          <button
+            onClick={sendToCustomer}
+            disabled={busy}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {busy ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Send className="w-5 h-5" />
+            )}
+            Resend to Customer
+          </button>
           <button
             onClick={reject}
             disabled={busy}
@@ -123,6 +135,16 @@ export default function QuoteActions({
             Mark Rejected
           </button>
         </>
+      )}
+
+      {status === "approved" && invoiceId && (
+        <button
+          onClick={() => router.push(`/invoices/${invoiceId}`)}
+          className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-base active:bg-green-700 flex items-center justify-center gap-2"
+        >
+          <Receipt className="w-5 h-5" />
+          View Invoice
+        </button>
       )}
     </div>
   );
