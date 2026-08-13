@@ -1,17 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Loader2, ArrowLeft } from "lucide-react";
-import { useToast } from "@/components/Toast";
+import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 
 // Client form for the public self-serve signup. The org + admin creation
 // happens server-side in /api/signup (service role, env-gated by SAAS_OPEN).
 // Includes a hidden honeypot field ("company_website") that bots fill but real
 // users never see — the API silently drops honeypot-hit submissions.
+//
+// Both success and error states render as PERSISTENT inline panels (not brief
+// toasts) so the result is unambiguous: a successful signup shows a clear
+// "workspace created" screen the user clicks through to sign in, and any
+// error stays visible until the next submit.
 export default function SignupForm() {
-  const router = useRouter();
   const [businessName, setBusinessName] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -20,7 +22,7 @@ export default function SignupForm() {
   const [companyWebsite, setCompanyWebsite] = useState("");
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
-  const toast = useToast();
+  const [successEmail, setSuccessEmail] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,22 +42,42 @@ export default function SignupForm() {
     });
     const data = await res.json();
     if (!res.ok) {
-      // 503 (gate closed) and 429 (rate limited) get an inline banner so the
-      // state reads as intentional rather than a generic toast "failed".
-      if (res.status === 503 || res.status === 429) {
-        setInlineError(data.error ?? "Sign up failed");
-      } else {
-        toast.error(data.error ?? "Sign up failed");
-      }
+      // Every error shows inline (persistent) so the user can actually read it
+      // — 503 (closed), 429 (rate limited), 400 (validation), 409 (dup email),
+      // and 500 (server) all surface the exact API message.
+      setInlineError(data.error ?? "Sign up failed. Please try again.");
       setLoading(false);
       return;
     }
 
-    toast.success("Account created — sign in with your new credentials.");
+    setSuccessEmail(email.trim());
     setLoading(false);
-    setTimeout(() => router.push("/login"), 900);
   }
 
+  // ── Success state ───────────────────────────────────────────────────────
+  if (successEmail) {
+    return (
+      <div className="w-full max-w-sm bg-white p-6 rounded-lg shadow-sm space-y-4 text-center">
+        <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto" />
+        <h1 className="text-lg font-semibold text-gray-900">
+          Workspace created
+        </h1>
+        <p className="text-sm text-gray-600">
+          Your business workspace is ready. Sign in with your new credentials to
+          get started.
+        </p>
+        <p className="text-xs text-gray-400 break-all">{successEmail}</p>
+        <Link
+          href="/login"
+          className="block w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700"
+        >
+          Continue to sign in
+        </Link>
+      </div>
+    );
+  }
+
+  // ── Form ────────────────────────────────────────────────────────────────
   return (
     <form
       onSubmit={handleSubmit}
