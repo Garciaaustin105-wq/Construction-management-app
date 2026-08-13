@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images } from "lucide-react";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -133,6 +133,13 @@ export default async function DashboardPage() {
               <Tag className="w-5 h-5" />
               Codes
             </Link>
+            <Link
+              href="/photos"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Images className="w-5 h-5" />
+              Photos
+            </Link>
           </div>
         )}
 
@@ -179,9 +186,16 @@ export default async function DashboardPage() {
 
         {/* Recent photos as thumbnails */}
         <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-            Recent Photos
-          </h2>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase">
+              Recent Photos
+            </h2>
+            {role === "office" && photos && photos.length > 0 && (
+              <Link href="/photos" className="text-xs text-blue-600 font-medium">
+                View all
+              </Link>
+            )}
+          </div>
           {photos && photos.length > 0 ? (
             <SignedPhotoGrid
               photos={photos.map((p) => ({
