@@ -49,6 +49,10 @@ export default function OrgSettingsForm({
       return;
     }
     toast.success("Organization updated");
+    // Send the user back to the dashboard so the save is clearly confirmed
+    // (otherwise the form just sits there with the edited values still in the
+    // boxes, which reads as "nothing happened").
+    router.push("/dashboard");
   }
 
   return (

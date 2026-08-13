@@ -786,7 +786,7 @@ export default function ReceiptsSection({
             <span className="w-8" />
           </div>
           <div
-            className="flex-1 flex items-center justify-center p-4"
+            className="flex-1 min-h-0 flex items-center justify-center p-4"
             onClick={(e) => e.stopPropagation()}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
