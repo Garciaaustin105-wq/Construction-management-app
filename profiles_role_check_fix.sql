@@ -1,0 +1,33 @@
+-- ============================================================================
+-- profiles_role_check_fix.sql  —  run ONCE via Supabase SQL Editor
+-- ============================================================================
+-- PROBLEM: the base schema (not in repo) defines a CHECK constraint
+-- `profiles_role_check` that whitelists the original 5 roles
+-- (crew, superintendent, project_manager, office, customer) — but NOT `admin`
+-- or `super_admin`, which multi_tenancy_a.sql introduced. As a result every
+-- self-serve signup (which inserts role='admin') failed with:
+--   "new row for relation 'profiles' violates check constraint profiles_role_check"
+-- and the file-A promotion of the owner to `admin` failed the same way.
+--
+-- FIX: drop the whitelist. The app is the only thing that ever sets
+-- profiles.role, and it only ever uses one of the 7 valid values
+-- (crew, superintendent, project_manager, office, customer, admin,
+-- super_admin). The role↔org constraint `profiles_org_check` (added by
+-- multi_tenancy_b.sql, which ties super_admin to a null org and every other
+-- role to a non-null org) is the meaningful integrity rule and stays in
+-- place. This whitelist was an incomplete, actively-harmful backstop.
+--
+-- Idempotent + literal-free (no single-quoted strings) → safe to paste.
+-- ============================================================================
+
+alter table public.profiles drop constraint if exists profiles_role_check;
+
+-- After this runs:
+--   • /api/signup inserts role='admin' succeed → self-serve signup works.
+--   • Re-run the file-A owner promotion (section 4) to make yourself `admin`:
+--       update public.profiles
+--         set role = 'admin'
+--         where email = '<your-email>';
+--     (organization_id is already the owner org from file A's backfill, so you
+--      only set the role. Hand-type the email literal — pasted single quotes
+--      can get mangled to double quotes in the SQL Editor.)
