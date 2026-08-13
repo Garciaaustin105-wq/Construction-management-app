@@ -2,6 +2,15 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import SignupForm from "./SignupForm";
 
+// Force dynamic rendering so the SAAS_OPEN flag is read from the runtime
+// environment on every request, NOT baked in at build time. Without this the
+// page is statically prerendered and the open/closed state is frozen to
+// whatever SAAS_OPEN was when the build ran — so flipping the env var later
+// (or adding it just after a deploy) had no effect until a fresh rebuild.
+// Dynamic rendering reads the live Vercel runtime env, which always has the
+// current value regardless of build timing.
+export const dynamic = "force-dynamic";
+
 // Server component — reads the SAAS_OPEN env flag so the page reflects the
 // actual signup state. When closed, it shows an intentional "invitation-only"
 // panel instead of a functional-looking form that fails on submit (which read
