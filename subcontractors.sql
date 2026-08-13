@@ -4,13 +4,15 @@
 -- Access model:
 --   READ (subcontractors / customers / attachments / job_subcontractors / files):
 --       office + superintendent + project_manager  ("management")
---   WRITE (add/edit/delete subs + customers + attach + upload files):
+--   WRITE subcontractors + attachments + job_subcontractors + sub files:
+--       office + project_manager  (PM oversees subs)
+--   WRITE customers:
 --       office only
 --   crew + customer: NO access to subcontractor or customer info.
 
 -- ── management helper ─────────────────────────────────────────────────────
 -- Trusted supervisory/management roles that may VIEW subcontractor + customer
--- info (office, superintendent, project manager). Office alone may edit.
+-- info (office, superintendent, project manager).
 create or replace function public.is_management(uid uuid)
 returns boolean
 language sql
@@ -21,6 +23,20 @@ as $$
   select exists (
     select 1 from profiles
     where id = uid and role in ('office', 'superintendent', 'project_manager')
+  );
+$$;
+
+-- office + project manager (PM may add/edit subcontractors, per product decision).
+create or replace function public.is_office_or_pm(uid uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from profiles
+    where id = uid and role in ('office', 'project_manager')
   );
 $$;
 
@@ -63,13 +79,13 @@ alter table public.subcontractors enable row level security;
 drop policy if exists "Office all subcontractors" on public.subcontractors;
 create policy "Office all subcontractors" on public.subcontractors for all
   to authenticated
-  using (public.is_office(auth.uid()))
-  with check (public.is_office(auth.uid()));
+  using (public.is_office_or_pm(auth.uid()))
+  with check (public.is_office_or_pm(auth.uid()));
 
 drop policy if exists "Management read subcontractors" on public.subcontractors;
 create policy "Management read subcontractors" on public.subcontractors for select
   to authenticated
-  using (public.is_management(auth.uid()) and not public.is_office(auth.uid()));
+  using (public.is_management(auth.uid()) and not public.is_office_or_pm(auth.uid()));
 
 -- ── job_subcontractors (attach a sub to a job, optional role on that job) ─
 create table if not exists public.job_subcontractors (
@@ -84,13 +100,13 @@ alter table public.job_subcontractors enable row level security;
 drop policy if exists "Office all job_subcontractors" on public.job_subcontractors;
 create policy "Office all job_subcontractors" on public.job_subcontractors for all
   to authenticated
-  using (public.is_office(auth.uid()))
-  with check (public.is_office(auth.uid()));
+  using (public.is_office_or_pm(auth.uid()))
+  with check (public.is_office_or_pm(auth.uid()));
 
 drop policy if exists "Management read job_subcontractors" on public.job_subcontractors;
 create policy "Management read job_subcontractors" on public.job_subcontractors for select
   to authenticated
-  using (public.is_management(auth.uid()) and not public.is_office(auth.uid()));
+  using (public.is_management(auth.uid()) and not public.is_office_or_pm(auth.uid()));
 
 -- ── subcontractor_attachments (file metadata; file lives in storage) ──────
 create table if not exists public.subcontractor_attachments (
@@ -106,33 +122,33 @@ alter table public.subcontractor_attachments enable row level security;
 drop policy if exists "Office all sub attachments" on public.subcontractor_attachments;
 create policy "Office all sub attachments" on public.subcontractor_attachments for all
   to authenticated
-  using (public.is_office(auth.uid()))
-  with check (public.is_office(auth.uid()));
+  using (public.is_office_or_pm(auth.uid()))
+  with check (public.is_office_or_pm(auth.uid()));
 
 drop policy if exists "Management read sub attachments" on public.subcontractor_attachments;
 create policy "Management read sub attachments" on public.subcontractor_attachments for select
   to authenticated
-  using (public.is_management(auth.uid()) and not public.is_office(auth.uid()));
+  using (public.is_management(auth.uid()) and not public.is_office_or_pm(auth.uid()));
 
 -- ── private bucket for sub files ──────────────────────────────────────────
 insert into storage.buckets (id, name, public)
 values ('subcontractor-files', 'subcontractor-files', false)
 on conflict (id) do update set public = false;
 
--- Office: full access (upload + read + delete).
+-- Office + project manager: full access (upload + read + delete).
 drop policy if exists "Office all subcontractor-files storage" on storage.objects;
 create policy "Office all subcontractor-files storage" on storage.objects for all
   to authenticated
-  using (bucket_id = 'subcontractor-files' and public.is_office(auth.uid()))
-  with check (bucket_id = 'subcontractor-files' and public.is_office(auth.uid()));
+  using (bucket_id = 'subcontractor-files' and public.is_office_or_pm(auth.uid()))
+  with check (bucket_id = 'subcontractor-files' and public.is_office_or_pm(auth.uid()));
 
--- Superintendent + project manager: read-only (signed URLs bypass RLS, but
--- list/download go through here).
+-- Superintendent: read-only (signed URLs bypass RLS, but list/download go
+-- through here).
 drop policy if exists "Management read subcontractor-files storage" on storage.objects;
 create policy "Management read subcontractor-files storage" on storage.objects for select
   to authenticated
   using (
     bucket_id = 'subcontractor-files'
       and public.is_management(auth.uid())
-      and not public.is_office(auth.uid())
+      and not public.is_office_or_pm(auth.uid())
   );

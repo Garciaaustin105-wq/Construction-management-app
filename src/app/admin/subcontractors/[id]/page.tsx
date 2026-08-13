@@ -71,7 +71,7 @@ export default async function SubcontractorDetailPage({
           attachments={(atts as SubAttachment[]) ?? []}
           attachedJobs={attachedJobs}
           allJobs={(allJobs as { id: string; name: string }[]) ?? []}
-          canEdit={role === "office"}
+          canEdit={role === "office" || role === "project_manager"}
         />
       </main>
     </div>

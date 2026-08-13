@@ -145,6 +145,27 @@ export default async function DashboardPage() {
           </div>
         )}
 
+        {/* Project manager: invoice creation (crew/super assignment is on the
+            job page; subs + customers are in the management block below). */}
+        {role === "project_manager" && (
+          <div className="grid grid-cols-2 gap-2">
+            <Link
+              href="/invoices/new"
+              className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+            >
+              <Receipt className="w-5 h-5" />
+              Invoice
+            </Link>
+            <Link
+              href="/invoices"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Receipt className="w-5 h-5" />
+              All Invoices
+            </Link>
+          </div>
+        )}
+
         {/* Management (office / superintendent / project_manager): subs + customers */}
         {MANAGEMENT.has(role) && (
           <div className="grid grid-cols-2 gap-2">

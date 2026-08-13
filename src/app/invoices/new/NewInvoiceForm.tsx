@@ -44,7 +44,7 @@ export default function NewInvoiceForm({
         .select("role")
         .eq("id", user.id)
         .single();
-      if (profile?.role !== "office") {
+      if (profile?.role !== "office" && profile?.role !== "project_manager") {
         router.push("/dashboard");
         return;
       }

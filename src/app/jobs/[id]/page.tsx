@@ -72,11 +72,11 @@ export default async function JobDetailPage({
       )
       .eq("job_id", id)
       .order("captured_at", { ascending: false }),
-    role === "office"
+    role === "office" || role === "project_manager"
       ? supabase
           .from("profiles")
-          .select("id, full_name, email")
-          .eq("role", "crew")
+          .select("id, full_name, email, role")
+          .in("role", ["crew", "superintendent"])
           .order("full_name")
       : Promise.resolve({ data: [] }),
     // Subcontractors attached to this job — management only.
@@ -167,8 +167,8 @@ export default async function JobDetailPage({
           )}
         </section>
 
-        {/* Office only: assign crew */}
-        {role === "office" && (
+        {/* Office + project manager: assign crew (PM has authority over crews) */}
+        {(role === "office" || role === "project_manager") && (
           <JobAssignment
             jobId={job.id}
             initialAssigned={job.assigned_crew ?? []}

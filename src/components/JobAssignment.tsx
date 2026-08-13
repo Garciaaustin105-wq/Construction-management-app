@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { UserCheck } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
-type Crew = { id: string; full_name: string | null; email: string };
+type Crew = { id: string; full_name: string | null; email: string; role?: string };
 
 export default function JobAssignment({
   jobId,
@@ -31,10 +31,14 @@ export default function JobAssignment({
 
   async function handleSave() {
     setSaving(true);
-    const { error } = await supabase
-      .from("jobs")
-      .update({ assigned_crew: assigned })
-      .eq("id", jobId);
+    // Route through the assign_job_crew SECURITY DEFINER RPC so project
+    // managers (who don't have jobs update RLS) can also assign crew. The
+    // RPC re-checks the caller's role server-side and only touches
+    // assigned_crew — it cannot be used to change other job fields.
+    const { error } = await supabase.rpc("assign_job_crew", {
+      p_job_id: jobId,
+      p_crew: assigned,
+    });
     if (error) {
       toast.error(`Failed: ${error.message}`);
     } else {
@@ -48,10 +52,10 @@ export default function JobAssignment({
     <section className="bg-white rounded-lg p-4 shadow-sm">
       <h2 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
         <UserCheck className="w-5 h-5" />
-        Assigned Crew
+        Assigned Team
       </h2>
       <p className="text-xs text-gray-500 mb-3">
-        Check the crew members working this job, then save.
+        Check the crew members and superintendents on this job, then save.
       </p>
       <div className="space-y-2">
         {crewMembers.map((c) => (
@@ -68,6 +72,11 @@ export default function JobAssignment({
             <div className="min-w-0">
               <p className="text-sm font-medium text-gray-900">
                 {c.full_name ?? c.email}
+                {c.role === "superintendent" && (
+                  <span className="ml-2 text-[10px] font-semibold uppercase text-blue-600">
+                    Super
+                  </span>
+                )}
               </p>
               <p className="text-xs text-gray-500 truncate">{c.email}</p>
             </div>
@@ -75,8 +84,8 @@ export default function JobAssignment({
         ))}
         {crewMembers.length === 0 && (
           <p className="text-sm text-amber-700 bg-amber-50 p-3 rounded">
-            No crew members found. Add crew users in Supabase → Authentication → Users
-            and set their role to &ldquo;crew&rdquo; in the profiles table.
+            No crew members or superintendents found. Add users in Supabase →
+            Authentication → Users and set their role in the profiles table.
           </p>
         )}
       </div>

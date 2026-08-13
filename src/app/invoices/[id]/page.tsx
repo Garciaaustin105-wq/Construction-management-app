@@ -130,7 +130,7 @@ export default async function InvoiceDetailPage({
           )}
         </section>
 
-        {role === "office" && (
+        {(role === "office" || role === "project_manager") && (
           <InvoiceActions invoiceId={invoice.id} status={invoice.status} />
         )}
       </main>

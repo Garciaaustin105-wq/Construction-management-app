@@ -29,11 +29,11 @@ export default async function SubcontractorsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title="Subcontractors" subtitle={role === "office" ? "Directory" : "Read-only"} />
+      <TopBar title="Subcontractors" subtitle={role === "superintendent" ? "Read-only" : "Directory"} />
       <main className="max-w-md mx-auto p-4">
         <SubcontractorsManager
           initial={(data as Subcontractor[]) ?? []}
-          canEdit={role === "office"}
+          canEdit={role === "office" || role === "project_manager"}
         />
       </main>
     </div>
