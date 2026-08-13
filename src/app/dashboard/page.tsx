@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2 } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet } from "lucide-react";
 
 const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
 
@@ -143,6 +143,17 @@ export default async function DashboardPage() {
               Photos
             </Link>
           </div>
+        )}
+
+        {/* Office: weekly per-worker report */}
+        {role === "office" && (
+          <Link
+            href="/admin/reports/weekly"
+            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+          >
+            <FileSpreadsheet className="w-5 h-5" />
+            Weekly Report
+          </Link>
         )}
 
         {/* Project manager: invoice creation (crew/super assignment is on the
