@@ -61,7 +61,7 @@ export default function BottomNav() {
 
   const items = [
     { href: "/dashboard", label: "Home", Icon: Home },
-    { href: "/crew/photo", label: "Photo", Icon: Camera },
+    { href: "/crew/photo", label: "Photos", Icon: Camera },
     { href: "/crew/time", label: "Time", Icon: Clock },
   ];
   if (role === "office") {

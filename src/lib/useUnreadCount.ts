@@ -9,10 +9,12 @@ export function useUnreadCount() {
 
   useEffect(() => {
     let active = true;
+    const onDashboard = pathname === "/dashboard";
 
-    async function fetchUnread() {
+    async function fetchUnread(markSeen: boolean) {
       try {
-        const res = await fetch("/api/notifications/unread");
+        const url = `/api/notifications/unread${markSeen ? "?markSeen=1" : ""}`;
+        const res = await fetch(url);
         if (!res.ok) return;
         const data = await res.json();
         if (active) setUnread(data.unread ?? 0);
@@ -21,8 +23,12 @@ export function useUnreadCount() {
       }
     }
 
-    fetchUnread();
-    const interval = setInterval(fetchUnread, 30000);
+    // Immediate fetch on navigation: when landing on Home, mark everything
+    // seen in the same request so the badge clears instantly instead of
+    // waiting on the 30s poll. The periodic poll never marks seen, so the
+    // badge only clears when the user actually visits Home.
+    fetchUnread(onDashboard);
+    const interval = setInterval(() => fetchUnread(false), 30000);
     return () => {
       active = false;
       clearInterval(interval);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin } from "lucide-react";
@@ -29,6 +29,8 @@ export default function PhotoLightbox({
   // of using a public URL. Keyed by photo id so survivors stay valid after a
   // delete (we just drop the deleted id from photos_).
   const [urls, setUrls] = useState<Record<string, string>>({});
+  // Touch swipe tracking for mobile next/prev navigation.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     setPhotos(photos);
@@ -150,6 +152,26 @@ export default function PhotoLightbox({
           <div
             className="flex-1 flex items-center justify-center p-4"
             onClick={(e) => e.stopPropagation()}
+            onTouchStart={(e) => {
+              const t = e.touches[0];
+              touchStart.current = { x: t.clientX, y: t.clientY };
+            }}
+            onTouchEnd={(e) => {
+              const start = touchStart.current;
+              if (!start) return;
+              const t = e.changedTouches[0];
+              const dx = t.clientX - start.x;
+              const dy = t.clientY - start.y;
+              touchStart.current = null;
+              // Only treat as a horizontal swipe if the horizontal movement is
+              // dominant and over ~40px; otherwise leave it as a tap.
+              if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+              if (dx < 0) {
+                setIndex((i) => Math.min(photos_.length - 1, i + 1));
+              } else {
+                setIndex((i) => Math.max(0, i - 1));
+              }
+            }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img

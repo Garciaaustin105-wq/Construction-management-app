@@ -1,12 +1,37 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(req: Request) {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
+    return NextResponse.json({ unread: 0 });
+  }
+
+  const url = new URL(req.url);
+  const markSeen = url.searchParams.get("markSeen") === "1";
+
+  // Get jobs user can see (RLS scopes to assigned crew / all for office).
+  const { data: jobs } = await supabase
+    .from("jobs")
+    .select("id, status, created_at, assigned_crew");
+
+  // markSeen=1: the user just landed on Home, so stamp every visible job as
+  // seen NOW (in the same request, before computing) and return 0. This fixes
+  // the race where the client badge refetch beat the dashboard's fire-and-
+  // forget job_views upsert and read a stale count.
+  if (markSeen && jobs && jobs.length > 0) {
+    const now = new Date().toISOString();
+    await supabase.from("job_views").upsert(
+      jobs.map((j) => ({
+        user_id: user.id,
+        job_id: j.id,
+        last_seen_at: now,
+      })),
+      { onConflict: "user_id,job_id" }
+    );
     return NextResponse.json({ unread: 0 });
   }
 
@@ -20,11 +45,6 @@ export async function GET() {
   for (const v of views ?? []) {
     lastSeen[v.job_id] = v.last_seen_at;
   }
-
-  // Get jobs user can see
-  const { data: jobs } = await supabase
-    .from("jobs")
-    .select("id, status, created_at, assigned_crew");
 
   const epoch = "1970-01-01";
   let unread = 0;
