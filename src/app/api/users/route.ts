@@ -27,9 +27,13 @@ export async function POST(request: Request) {
   if (!email || !password || !role) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
-  if (!["crew", "customer"].includes(role)) {
+  if (
+    !["crew", "superintendent", "project_manager", "office", "customer"].includes(
+      role
+    )
+  ) {
     return NextResponse.json(
-      { error: "Office can only create crew or customer users" },
+      { error: "Invalid role" },
       { status: 400 }
     );
   }

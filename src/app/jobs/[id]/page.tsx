@@ -13,8 +13,13 @@ import DeleteJobButton from "@/components/DeleteJobButton";
 import JobFinancials from "@/components/JobFinancials";
 import JobBudget from "@/components/JobBudget";
 import ReceiptsSection from "@/components/ReceiptsSection";
+import JobSubcontractors, {
+  type JobSub,
+} from "@/components/JobSubcontractors";
 import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
+
+const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
 
 export default async function JobDetailPage({
   params,
@@ -37,7 +42,7 @@ export default async function JobDetailPage({
 
   // Fan out all per-job reads in parallel (was sequential awaits, so the job
   // page waited on job → photos → rfis → blueprints → receipts → crew).
-  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes] = await Promise.all([
+  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes] = await Promise.all([
     supabase
       .from("jobs")
       .select("id, name, address, description, status, created_at, assigned_crew, customers(name)")
@@ -74,6 +79,21 @@ export default async function JobDetailPage({
           .eq("role", "crew")
           .order("full_name")
       : Promise.resolve({ data: [] }),
+    // Subcontractors attached to this job — management only.
+    MANAGEMENT.has(role)
+      ? supabase
+          .from("job_subcontractors")
+          .select(
+            "subcontractor_id, role_on_job, subcontractor:subcontractors(id, company, trade, phone, email)"
+          )
+          .eq("job_id", id)
+      : Promise.resolve({ data: [] }),
+    MANAGEMENT.has(role)
+      ? supabase
+          .from("subcontractors")
+          .select("id, company")
+          .order("company")
+      : Promise.resolve({ data: [] }),
   ]);
 
   const job = jobRes.data;
@@ -83,6 +103,31 @@ export default async function JobDetailPage({
   const blueprints = blueprintsRes.data;
   const receipts = receiptsRes.data;
   const crewMembers = crewRes.data;
+
+  // Flatten attached subcontractors for the JobSubcontractors section.
+  const jobSubs: JobSub[] = ((jobSubsRes.data ?? []) as unknown as {
+    subcontractor_id: string;
+    role_on_job: string | null;
+    subcontractor: {
+      id: string;
+      company: string;
+      trade: string | null;
+      phone: string | null;
+      email: string | null;
+    } | null;
+  }[])
+    .map((r) => {
+      const s = r.subcontractor;
+      return {
+        subcontractor_id: r.subcontractor_id,
+        company: s?.company ?? "—",
+        trade: s?.trade ?? null,
+        phone: s?.phone ?? null,
+        email: s?.email ?? null,
+        role_on_job: r.role_on_job,
+      };
+    });
+  const allSubs = (allSubsRes.data ?? []) as { id: string; company: string }[];
 
   // Mark this job as viewed (fire-and-forget; doesn't block render)
   void supabase
@@ -185,6 +230,16 @@ export default async function JobDetailPage({
           blueprints={blueprints ?? []}
           role={role}
         />
+
+        {/* Subcontractors on this job — management only (office can edit) */}
+        {MANAGEMENT.has(role) && (
+          <JobSubcontractors
+            jobId={job.id}
+            initial={jobSubs}
+            allSubs={allSubs}
+            canEdit={role === "office"}
+          />
+        )}
 
         <ActivityTimeline job={job} photos={photos ?? []} rfis={rfis ?? []} />
 

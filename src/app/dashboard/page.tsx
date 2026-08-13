@@ -7,7 +7,9 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2 } from "lucide-react";
+
+const MANAGEMENT = new Set(["office", "superintendent", "project_manager"]);
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -139,6 +141,26 @@ export default async function DashboardPage() {
             >
               <Images className="w-5 h-5" />
               Photos
+            </Link>
+          </div>
+        )}
+
+        {/* Management (office / superintendent / project_manager): subs + customers */}
+        {MANAGEMENT.has(role) && (
+          <div className="grid grid-cols-2 gap-2">
+            <Link
+              href="/admin/subcontractors"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Briefcase className="w-5 h-5" />
+              Subs
+            </Link>
+            <Link
+              href="/admin/customers"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Building2 className="w-5 h-5" />
+              Customers
             </Link>
           </div>
         )}

@@ -2,12 +2,50 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { HardHat, Building2, ArrowLeft, Loader2 } from "lucide-react";
+import {
+  HardHat,
+  Building2,
+  ArrowLeft,
+  Loader2,
+  ClipboardList,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { useToast } from "@/components/Toast";
+
+type Role =
+  | "crew"
+  | "superintendent"
+  | "project_manager"
+  | "office"
+  | "customer";
+
+const ROLE_OPTIONS: {
+  value: Role;
+  label: string;
+  icon: typeof HardHat;
+  hint: string;
+}[] = [
+  { value: "crew", label: "Crew", icon: HardHat, hint: "Field worker" },
+  {
+    value: "superintendent",
+    label: "Superintendent",
+    icon: ClipboardList,
+    hint: "Field supervisor",
+  },
+  {
+    value: "project_manager",
+    label: "Project Manager",
+    icon: ShieldCheck,
+    hint: "Manages projects",
+  },
+  { value: "office", label: "Office", icon: Users, hint: "Full access" },
+  { value: "customer", label: "Customer", icon: Building2, hint: "Client portal" },
+];
 
 export default function NewUserPage() {
   const router = useRouter();
-  const [role, setRole] = useState<"crew" | "customer">("crew");
+  const [role, setRole] = useState<Role>("crew");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -72,27 +110,49 @@ export default function NewUserPage() {
           onSubmit={handleSubmit}
           className="bg-white rounded-lg p-4 shadow-sm space-y-4"
         >
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            <button
-              type="button"
-              onClick={() => setRole("crew")}
-              className={`flex-1 py-2 rounded-md text-sm font-medium flex items-center justify-center gap-2 ${
-                role === "crew" ? "bg-white shadow text-gray-900" : "text-gray-600"
-              }`}
-            >
-              <HardHat className="w-4 h-4" />
-              Crew
-            </button>
-            <button
-              type="button"
-              onClick={() => setRole("customer")}
-              className={`flex-1 py-2 rounded-md text-sm font-medium flex items-center justify-center gap-2 ${
-                role === "customer" ? "bg-white shadow text-gray-900" : "text-gray-600"
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              Customer
-            </button>
+          <div>
+            <span className="text-sm font-medium text-gray-700 block mb-2">
+              Role
+            </span>
+            <div className="space-y-2">
+              {ROLE_OPTIONS.map((opt) => {
+                const Icon = opt.icon;
+                const active = role === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setRole(opt.value)}
+                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg border text-left ${
+                      active
+                        ? "border-blue-600 bg-blue-50 ring-1 ring-blue-600"
+                        : "border-gray-300 bg-white"
+                    }`}
+                  >
+                    <Icon
+                      className={`w-5 h-5 flex-shrink-0 ${
+                        active ? "text-blue-600" : "text-gray-400"
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={`text-sm font-medium ${
+                          active ? "text-blue-700" : "text-gray-900"
+                        }`}
+                      >
+                        {opt.label}
+                      </p>
+                      <p className="text-xs text-gray-500">{opt.hint}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {role !== "customer" && (
+              <p className="text-xs text-gray-400 mt-2">
+                Crew members cannot view subcontractor or customer info.
+              </p>
+            )}
           </div>
 
           <label className="block">
@@ -159,7 +219,9 @@ export default function NewUserPage() {
             className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && <Loader2 className="w-5 h-5 animate-spin" />}
-            {loading ? "Creating..." : `Add ${role === "crew" ? "Crew Member" : "Customer"}`}
+            {loading
+              ? "Creating..."
+              : `Add ${ROLE_OPTIONS.find((o) => o.value === role)?.label ?? "User"}`}
           </button>
         </form>
       </main>
