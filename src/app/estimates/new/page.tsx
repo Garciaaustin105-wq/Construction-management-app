@@ -8,6 +8,7 @@ import EstimateLineItemEditor, {
   type EstimateLine,
   type CostCodeOption,
 } from "@/components/EstimateLineItemEditor";
+import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
 
 function NewEstimateForm() {
   const router = useRouter();
@@ -20,6 +21,7 @@ function NewEstimateForm() {
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [costCodes, setCostCodes] = useState<CostCodeOption[]>([]);
+  const [priorItems, setPriorItems] = useState<PriorItem[]>([]);
   const [items, setItems] = useState<EstimateLine[]>([
     { cost_code_id: null, description: "", quantity: 1, unit: "EA", unit_price: 0 },
   ]);
@@ -54,6 +56,7 @@ function NewEstimateForm() {
       ]);
       setJobs(jobRows ?? []);
       setCostCodes((codeRows as CostCodeOption[]) ?? []);
+      setPriorItems(await fetchPriorLineItems());
     })();
   }, [router]);
 
@@ -186,6 +189,7 @@ function NewEstimateForm() {
                 items={items}
                 onChange={setItems}
                 costCodes={costCodes}
+                priorItems={priorItems}
               />
             </div>
           </div>

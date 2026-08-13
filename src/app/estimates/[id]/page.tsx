@@ -9,6 +9,7 @@ import EstimateLineItemEditor, {
   type EstimateLine,
   type CostCodeOption,
 } from "@/components/EstimateLineItemEditor";
+import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
 
 type Estimate = {
   id: string;
@@ -48,6 +49,7 @@ export default function EstimateDetailPage({
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [items, setItems] = useState<EstimateLine[]>([]);
   const [costCodes, setCostCodes] = useState<CostCodeOption[]>([]);
+  const [priorItems, setPriorItems] = useState<PriorItem[]>([]);
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -86,6 +88,7 @@ export default function EstimateDetailPage({
         supabase.from("cost_codes").select("id, code, name").order("code"),
       ]);
       setCostCodes((codeRows as CostCodeOption[]) ?? []);
+      setPriorItems(await fetchPriorLineItems());
 
       if (!est) {
         toast.error("Estimate not found");
@@ -230,6 +233,7 @@ export default function EstimateDetailPage({
               items={items}
               onChange={setItems}
               costCodes={costCodes}
+              priorItems={priorItems}
               disabled={readOnly}
             />
           </div>

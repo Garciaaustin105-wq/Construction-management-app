@@ -2,6 +2,7 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { formatMoney } from "@/lib/money";
+import type { PriorItem } from "@/lib/estimateHistory";
 
 export type EstimateLine = {
   cost_code_id: string | null;
@@ -19,19 +20,46 @@ export type CostCodeOption = {
 
 const UNITS = ["EA", "LF", "SF", "CF", "HR", "DAY", "LOT", "GAL", "TON", "%"];
 
+// <datalist> id is shared across all line-item description inputs so the
+// browser's native autocomplete pulldown shows previously used items.
+const DESCRIPTION_DATALIST = "estimate-item-history";
+
 export default function EstimateLineItemEditor({
   items,
   onChange,
   costCodes,
+  priorItems = [],
   disabled = false,
 }: {
   items: EstimateLine[];
   onChange: (next: EstimateLine[]) => void;
   costCodes: CostCodeOption[];
+  priorItems?: PriorItem[];
   disabled?: boolean;
 }) {
   function update(idx: number, patch: Partial<EstimateLine>) {
     onChange(items.map((item, i) => (i === idx ? { ...item, ...patch } : item)));
+  }
+
+  // When the typed/selected description exactly matches a previously used
+  // item, auto-fill its unit + unit price so picking from the pulldown brings
+  // the pricing forward. Only fills when the line still has default values so
+  // we never clobber a manual edit.
+  function applyHistory(idx: number, description: string) {
+    const match = priorItems.find(
+      (p) => p.description.toLowerCase() === description.trim().toLowerCase()
+    );
+    if (!match) return;
+    const item = items[idx];
+    if (!item) return;
+    const patch: Partial<EstimateLine> = {};
+    if (item.unit_price === 0 && match.unit_price > 0) {
+      patch.unit_price = match.unit_price;
+    }
+    if ((!item.unit || item.unit === "EA") && match.unit) {
+      patch.unit = match.unit;
+    }
+    if (Object.keys(patch).length > 0) update(idx, patch);
   }
 
   function add() {
@@ -52,6 +80,13 @@ export default function EstimateLineItemEditor({
 
   return (
     <div className="space-y-2">
+      {priorItems.length > 0 && (
+        <datalist id={DESCRIPTION_DATALIST}>
+          {priorItems.map((p) => (
+            <option key={p.description} value={p.description} />
+          ))}
+        </datalist>
+      )}
       {items.length === 0 && (
         <div className="text-center py-6 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg">
           No line items yet. Tap &ldquo;Add line&rdquo; below.
@@ -113,7 +148,11 @@ export default function EstimateLineItemEditor({
             <input
               type="text"
               value={item.description}
-              onChange={(e) => update(idx, { description: e.target.value })}
+              list={DESCRIPTION_DATALIST}
+              onChange={(e) => {
+                update(idx, { description: e.target.value });
+                applyHistory(idx, e.target.value);
+              }}
               disabled={disabled}
               placeholder="Description (e.g. Cat6 cable run, labor)"
               className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
