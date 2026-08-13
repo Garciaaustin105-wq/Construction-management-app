@@ -56,7 +56,8 @@ export default function CrewTimePage() {
   const [now, setNow] = useState(() => Date.now());
 
   async function load() {
-    setLoading(true);
+    // No synchronous setLoading(true) — initial state is already `true`, so
+    // the mount effect triggers no setState in the effect body.
     const { data: { user } } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
@@ -86,9 +87,11 @@ export default function CrewTimePage() {
   }
 
   useEffect(() => {
-    load();
-    // Auto-grab location on open so it's ready at clock-in — no manual tap.
-    getLocation();
+    (async () => {
+      await load();
+      // Auto-grab location on open so it's ready at clock-in — no manual tap.
+      await getLocation();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

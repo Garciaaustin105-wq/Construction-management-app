@@ -34,7 +34,7 @@ function sheetNameOf(name: string, used: Set<string>): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 28);
-  let base = cleaned || "Worker";
+  const base = cleaned || "Worker";
   let candidate = base;
   let n = 2;
   while (used.has(candidate)) {

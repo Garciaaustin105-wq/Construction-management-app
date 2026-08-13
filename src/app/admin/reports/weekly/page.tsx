@@ -50,6 +50,10 @@ export default async function WeeklyReportPage({
 
   const startISO = from.toISOString();
   const endISO = addDays(toInclusive, 1).toISOString();
+  // Async server component — runs once per request, so Date.now() is the
+  // request time (used to compute elapsed time for still-open shifts), not a
+  // client-render side effect. react-hooks/purity is a false positive here.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
 
   const rangeLabel = `${from.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} – ${toInclusive.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
@@ -112,9 +116,6 @@ export default async function WeeklyReportPage({
   }[]) {
     profiles.set(p.id, { name: p.full_name ?? "Unknown", role: p.role ?? "—" });
   }
-  const nameOf = (id: string | null) =>
-    (id && profiles.get(id)?.name) ?? "Unknown";
-
   type TimeRow = {
     user_id: string;
     clock_in_at: string;

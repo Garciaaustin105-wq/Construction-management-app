@@ -1,5 +1,4 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
 import { buildCalendar, feedUid, type FeedEvent } from "@/lib/ical";
 
 export const dynamic = "force-dynamic";
@@ -41,9 +40,53 @@ function requestHost(request: Request): string {
 
 // Parse a `date` column ('YYYY-MM-DD') into a UTC-midnight Date for all-day
 // events. ical-generator emits DTSTART;VALUE=DATE from an allDay Date.
-function allDayDate(value: string): Date {
-  return new Date(`${value}T00:00:00.000Z`);
+// Callers always pre-filter nulls via `.not("...", "is", null)`, so a null here
+// is a runtime impossibility — the assertion keeps the signature honest about
+// the schema (these columns are nullable) without synthesizing a bogus epoch.
+function allDayDate(value: string | null): Date {
+  return new Date(`${value!}T00:00:00.000Z`);
 }
+
+// Row shapes for the joins the feed queries. Supabase's generated types type
+// relation selects loosely (often as arrays/unknown), so we cast the returned
+// rows to these precise shapes via `as unknown as Row[]` — the same pattern
+// used in src/lib/reports.ts. `customers`/`subcontractor` are many-to-one via
+// FK, so they surface as a single object (or null) at runtime.
+type JobCalRow = {
+  id: string;
+  name: string | null;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  customers: { name: string } | null;
+};
+type SchedCalRow = {
+  id: string;
+  title: string;
+  start_at: string;
+  end_at: string | null;
+  kind: string;
+  notes: string | null;
+  jobs: { name: string } | null;
+};
+type SubCalRow = {
+  id: string;
+  scheduled_date: string | null;
+  role_on_job: string | null;
+  subcontractor: { company: string } | null;
+  jobs: { name: string } | null;
+};
+type InvCalRow = {
+  id: string;
+  due_date: string | null;
+  jobs: { name: string } | null;
+  customers?: { name: string } | null;
+};
+type QuoteCalRow = {
+  id: string;
+  valid_until: string | null;
+  jobs: { name: string } | null;
+  customers?: { name: string } | null;
+};
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -86,7 +129,18 @@ export async function GET(request: Request) {
   // super_admin sees platform-wide (no org filter); everyone else is scoped to
   // their feed's org.
   const isSuperAdmin = role === "super_admin";
-  const orgFilter = (q: any) => (isSuperAdmin ? q : q.eq("organization_id", feedOrgId));
+  // Applies the org scope to any query builder, preserving its exact type so
+  // chaining (.contains/.in/.order/await) still works. `T` is left unconstrained
+  // on purpose: the Supabase builder types are deeply recursive, and constraining
+  // them triggers TS2589 ("type instantiation excessively deep"). The structural
+  // cast below is the only place we touch the builder's shape.
+  const orgFilter = <T>(q: T): T =>
+    isSuperAdmin
+      ? q
+      : (q as unknown as { eq(column: string, value: string): T }).eq(
+          "organization_id",
+          feedOrgId
+        );
 
   // Fire-and-forget: stamp last_fetched_at so the /calendar UI can show "last
   // polled". Not awaited so it never blocks the response.
@@ -118,9 +172,10 @@ export async function GET(request: Request) {
   }
 
   const { data: jobs } = await jobsQuery;
-  for (const job of jobs ?? []) {
-    const jobName = (job as any).name ?? "Job";
-    const custName = ((job as any).customers as { name: string } | null)?.name;
+  const jobRows = (jobs ?? []) as unknown as JobCalRow[];
+  for (const job of jobRows) {
+    const jobName = job.name ?? "Job";
+    const custName = job.customers?.name;
     const ctx = custName ? ` · ${custName}` : "";
     if (job.scheduled_start) {
       events.push({
@@ -149,7 +204,7 @@ export async function GET(request: Request) {
   if (MANAGEMENT_ROLES.has(role) || isSuperAdmin) {
     visibleJobIds = null;
   } else {
-    visibleJobIds = (jobs ?? []).map((j) => j.id);
+    visibleJobIds = jobRows.map((j) => j.id);
   }
 
   // ── Schedule events (timed) ───────────────────────────────────────────────
@@ -168,8 +223,8 @@ export async function GET(request: Request) {
   eventsQuery = eventsQuery.order("start_at", { ascending: true }).limit(500);
 
   const { data: schedEvents } = await eventsQuery;
-  for (const ev of schedEvents ?? []) {
-    const jobName = ((ev as any).jobs as { name: string } | null)?.name;
+  for (const ev of (schedEvents ?? []) as unknown as SchedCalRow[]) {
+    const jobName = ev.jobs?.name;
     events.push({
       uid: feedUid("event", ev.id, host),
       summary: jobName ? `${ev.title} · ${jobName}` : ev.title,
@@ -192,9 +247,9 @@ export async function GET(request: Request) {
       .not("scheduled_date", "is", null);
     subQ = orgFilter(subQ);
     const { data: subs } = await subQ;
-    for (const s of subs ?? []) {
-      const company = ((s as any).subcontractor as { company: string } | null)?.company ?? "Subcontractor";
-      const jobName = ((s as any).jobs as { name: string } | null)?.name;
+    for (const s of (subs ?? []) as unknown as SubCalRow[]) {
+      const company = s.subcontractor?.company ?? "Subcontractor";
+      const jobName = s.jobs?.name;
       events.push({
         uid: feedUid("sub", s.id, host),
         summary: `${company} on site${jobName ? ` · ${jobName}` : ""}`,
@@ -216,9 +271,9 @@ export async function GET(request: Request) {
       .not("due_date", "is", null);
     invQ = orgFilter(invQ);
     const { data: invs } = await invQ;
-    for (const inv of invs ?? []) {
-      const jobName = ((inv as any).jobs as { name: string } | null)?.name;
-      const custName = ((inv as any).customers as { name: string } | null)?.name;
+    for (const inv of (invs ?? []) as unknown as InvCalRow[]) {
+      const jobName = inv.jobs?.name;
+      const custName = inv.customers?.name;
       events.push({
         uid: feedUid("inv", inv.id, host),
         summary: `Invoice due${custName ? ` · ${custName}` : ""}`,
@@ -235,8 +290,8 @@ export async function GET(request: Request) {
       .select("id, due_date, jobs(name)")
       .eq("customer_id", customerId)
       .not("due_date", "is", null);
-    for (const inv of invs ?? []) {
-      const jobName = ((inv as any).jobs as { name: string } | null)?.name;
+    for (const inv of (invs ?? []) as unknown as InvCalRow[]) {
+      const jobName = inv.jobs?.name;
       events.push({
         uid: feedUid("inv", inv.id, host),
         summary: "Invoice due",
@@ -258,9 +313,9 @@ export async function GET(request: Request) {
       .not("valid_until", "is", null);
     quoteQ = orgFilter(quoteQ);
     const { data: quotes } = await quoteQ;
-    for (const q of quotes ?? []) {
-      const jobName = ((q as any).jobs as { name: string } | null)?.name;
-      const custName = ((q as any).customers as { name: string } | null)?.name;
+    for (const q of (quotes ?? []) as unknown as QuoteCalRow[]) {
+      const jobName = q.jobs?.name;
+      const custName = q.customers?.name;
       events.push({
         uid: feedUid("quote", q.id, host),
         summary: `Quote expires${custName ? ` · ${custName}` : ""}`,
@@ -277,8 +332,8 @@ export async function GET(request: Request) {
       .select("id, valid_until, jobs(name)")
       .eq("customer_id", customerId)
       .not("valid_until", "is", null);
-    for (const q of quotes ?? []) {
-      const jobName = ((q as any).jobs as { name: string } | null)?.name;
+    for (const q of (quotes ?? []) as unknown as QuoteCalRow[]) {
+      const jobName = q.jobs?.name;
       events.push({
         uid: feedUid("quote", q.id, host),
         summary: "Quote expires",
@@ -291,7 +346,7 @@ export async function GET(request: Request) {
     }
   }
 
-  const ics = buildCalendar(events, host);
+  const ics = buildCalendar(events);
   return new Response(ics, {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",

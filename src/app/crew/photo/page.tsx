@@ -44,11 +44,13 @@ function PhotoUploadForm() {
   }
 
   useEffect(() => {
-    supabase
-      .from("jobs")
-      .select("id, name")
-      .then(({ data }) => setJobs(data ?? []));
-    getLocation();
+    (async () => {
+      const { data } = await supabase.from("jobs").select("id, name");
+      setJobs(data ?? []);
+      // Auto-grab location the moment the page opens so it's ready by the time
+      // the user takes a photo (falls back to IP location if GPS is denied).
+      await getLocation();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

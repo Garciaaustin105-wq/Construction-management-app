@@ -4,7 +4,7 @@ import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import TimeExportButton, { type ExportRow } from "@/components/TimeExportButton";
-import { Clock, Users, MapPin, ChevronLeft, ChevronRight, User, Briefcase } from "lucide-react";
+import { Users, MapPin, ChevronLeft, ChevronRight, User, Briefcase } from "lucide-react";
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -79,6 +79,10 @@ export default async function TimeOverviewPage({
     if (!Number.isNaN(parsed.getTime())) weekStart = startOfWeek(parsed);
   }
   const weekEnd = addDays(weekStart, 7);
+  // Async server component — runs once per request, so Date.now() is the
+  // request time (used to compute elapsed time for still-open shifts), not a
+  // client-render side effect. react-hooks/purity is a false positive here.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   const isCurrentWeek = toISODate(weekStart) === toISODate(startOfWeek(today));
   const prevWeek = toISODate(addDays(weekStart, -7));
@@ -237,7 +241,7 @@ export default async function TimeOverviewPage({
             <p className="text-[10px] text-gray-400">people working</p>
           </div>
           <div className="bg-white rounded-lg p-3 shadow-sm text-center">
-            <p className="text-[10px] uppercase font-semibold text-gray-500">This week's hours</p>
+            <p className="text-[10px] uppercase font-semibold text-gray-500">This week&rsquo;s hours</p>
             <p className="text-2xl font-bold text-blue-700 mt-0.5">{weekHours.toFixed(1)}</p>
             <p className="text-[10px] text-gray-400">{workers.length} people</p>
           </div>

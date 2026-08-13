@@ -58,7 +58,6 @@ export async function stampImage(
     const fontSize = Math.max(14, Math.round(w / 40));
     ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
     ctx.textBaseline = "middle";
-    const textW = ctx.measureText(stamp).width;
     const padX = fontSize * 0.6;
     const barH = Math.round(fontSize * 2);
     const barY = h - barH;

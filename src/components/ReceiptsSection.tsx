@@ -121,8 +121,10 @@ export default function ReceiptsSection({
         .select("id, code, name")
         .order("code");
       setCostCodes(codes ?? []);
+      // Awaited inside the IIFE so the setLocals() it triggers lands after an
+      // await, not synchronously in the effect body (react-hooks/set-state-in-effect).
+      await refreshLocal();
     })();
-    refreshLocal();
   }, [supabase, refreshLocal]);
 
   // Look up remote records by id so shared local receipts can read

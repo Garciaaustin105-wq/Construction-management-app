@@ -48,7 +48,7 @@ export default async function CustomerDetailPage({
   // Subcontractors attached to this customer's jobs.
   // job_subcontractors -> subcontractor + job name. We pull for the jobs above.
   const jobIds = jobs.map((j) => j.id);
-  let subs: CustomerSub[] = [];
+  const subs: CustomerSub[] = [];
   if (jobIds.length > 0) {
     const { data: linked } = await supabase
       .from("job_subcontractors")

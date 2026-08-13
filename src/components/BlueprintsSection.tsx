@@ -71,7 +71,7 @@ export default function BlueprintsSection({
       return;
     }
 
-    const path = `${jobId}/${Date.now()}-${file.name}`;
+    const path = `${jobId}/${crypto.randomUUID()}-${file.name}`;
     const { error: upError } = await supabase.storage
       .from("blueprints")
       .upload(path, file);

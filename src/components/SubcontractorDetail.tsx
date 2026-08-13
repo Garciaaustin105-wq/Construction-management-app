@@ -118,7 +118,7 @@ export default function SubcontractorDetail({
     }
     setUploading(true);
     const safe = file.name.replace(/[^a-z0-9.\-]+/gi, "_");
-    const path = `${sub.id}/${Date.now()}-${safe}`;
+    const path = `${sub.id}/${crypto.randomUUID()}-${safe}`;
     const { error: upErr } = await supabase.storage
       .from("subcontractor-files")
       .upload(path, file);

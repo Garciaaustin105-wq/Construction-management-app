@@ -21,9 +21,9 @@ export type FeedEvent = {
   description?: string;
 };
 
-// Build a full text/calendar document from the role-scoped event list. `host`
-// is the deployed app host (used as the UID authority + PRODID).
-export function buildCalendar(events: FeedEvent[], host: string): string {
+// Build a full text/calendar document from the role-scoped event list. Event
+// UIDs already embed the deployed host (built by feedUid), so no host arg here.
+export function buildCalendar(events: FeedEvent[]): string {
   const cal = ical({
     name: "Terra Vista",
     // PRODID identifies the generating app per RFC 5545.

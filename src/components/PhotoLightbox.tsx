@@ -59,8 +59,11 @@ export default function PhotoLightbox({
       for (const [id, url] of entries) if (url) map[id] = url;
       setUrls(map);
     }
-    if (photos.length > 0) mint();
-    else setUrls({});
+    // Always mint — the empty case resolves to setUrls({}) inside the async
+    // callback (after Promise.all), which keeps setState out of the effect body
+    // (react-hooks/set-state-in-effect). Synchronous setUrls({}) here would
+    // trigger a cascading render.
+    void mint();
     return () => {
       cancelled = true;
     };

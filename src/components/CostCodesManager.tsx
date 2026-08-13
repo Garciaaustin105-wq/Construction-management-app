@@ -25,7 +25,10 @@ export default function CostCodesManager({ orgId }: { orgId: string }) {
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    setLoading(true);
+    // No synchronous setLoading(true) here — the initial state is already
+    // `true`, so the mount effect calling load() triggers no setState in the
+    // effect body (react-hooks/set-state-in-effect). Reloading after `add`
+    // doesn't need a spinner (the Add button has its own `saving` state).
     const { data } = await supabase
       .from("cost_codes")
       .select("id, code, name, category")
@@ -35,7 +38,10 @@ export default function CostCodesManager({ orgId }: { orgId: string }) {
   }
 
   useEffect(() => {
-    load();
+    (async () => {
+      await load();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function add(e: React.FormEvent) {

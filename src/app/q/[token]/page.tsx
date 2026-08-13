@@ -97,7 +97,7 @@ export default async function PublicQuotePage({
               This quote was rejected{fmtDate(quote.rejected_at) ? ` on ${fmtDate(quote.rejected_at)}` : ""}
             </p>
             <p className="text-sm text-gray-600 mt-1">
-              Reach out to {orgName} if you'd like to revisit it.
+              Reach out to {orgName} if you&rsquo;d like to revisit it.
             </p>
           </div>
         )}

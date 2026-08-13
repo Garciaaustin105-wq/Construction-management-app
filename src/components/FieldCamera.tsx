@@ -81,10 +81,19 @@ export default function FieldCamera({
     [stopStream]
   );
 
-  // Open the camera automatically on mount.
+  // Open the camera automatically on mount. startCamera updates status
+  // synchronously (starting/no-camera) to sync with the camera external
+  // system — defer it to a microtask so those setStates run outside the
+  // effect body and don't trigger a cascading render.
   useEffect(() => {
-    startCamera(facing);
-    return () => stopStream();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) startCamera(facing);
+    });
+    return () => {
+      cancelled = true;
+      stopStream();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

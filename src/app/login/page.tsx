@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
@@ -12,6 +13,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const supabase = createClient();
   const toast = useToast();
+  const router = useRouter();
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -31,9 +33,10 @@ export default function LoginPage() {
       return;
     }
     toast.success("Signed in");
-    // Use a small delay so the cookie is fully set before navigation
+    // Use a small delay so the auth cookie is fully set before navigating.
+    // router.replace (not window.location) so it's a proper Next navigation.
     setTimeout(() => {
-      window.location.href = "/dashboard";
+      router.replace("/dashboard");
     }, 200);
   }
 

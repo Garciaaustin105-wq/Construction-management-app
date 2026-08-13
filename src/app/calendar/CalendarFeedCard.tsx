@@ -37,9 +37,12 @@ export default function CalendarFeedCard({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Auto-create the feed on first visit if the user has no row yet.
+  // Auto-create the feed on first visit if the user has no row yet. No
+  // synchronous setCreating(true) here — the initial `creating` state is
+  // already `!initialUrl`, so on mount the spinner shows automatically; the
+  // button path sets it explicitly (see onClick). First statement is an
+  // await, so the mount effect's call triggers no setState in its body.
   async function ensureFeed() {
-    setCreating(true);
     const res = await fetch("/api/calendar/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -56,7 +59,9 @@ export default function CalendarFeedCard({
 
   // Auto-create the feed on first visit if the user has no row yet.
   useEffect(() => {
-    if (!initialUrl) void ensureFeed();
+    (async () => {
+      if (!initialUrl) await ensureFeed();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -168,7 +173,10 @@ export default function CalendarFeedCard({
         </>
       ) : (
         <button
-          onClick={ensureFeed}
+          onClick={() => {
+            setCreating(true);
+            void ensureFeed();
+          }}
           className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-blue-700"
         >
           Create feed link
