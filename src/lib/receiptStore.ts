@@ -23,6 +23,13 @@ export type LocalReceipt = {
   paymentMethod?: string; // Cash / Personal Card / Company Card / Account
   receiptNo?: string; // vendor receipt / reference number
   costCodeId?: string | null; // tag against a cost code for budget-vs-actual
+  // GPS at capture time (mirrors photos / time_entries). Populated by
+  // resolveLocation() in ReceiptsSection at capture; sent to the server on
+  // share. Null until a fix is obtained (existing receipts stay null).
+  lat?: number | null;
+  lng?: number | null;
+  locationSource?: string | null; // "gps" | "ip"
+  locationAccuracy?: number | null; // meters (GPS only)
 };
 
 const DB_NAME = "cmapp";

@@ -2,20 +2,30 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
+import WeeklyReportFilters from "@/components/WeeklyReportFilters";
 import {
-  parseWeekStart,
   addDays,
   toISODate,
   fmtDuration,
   hoursFromMs,
 } from "@/lib/weekUtils";
+import { resolveReportRange, rangeDayCount } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
-import { Download, ChevronLeft, ChevronRight, Camera, Receipt, Briefcase } from "lucide-react";
+import { Download, Camera, Receipt, Briefcase } from "lucide-react";
+
+export const dynamic = "force-dynamic";
 
 export default async function WeeklyReportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ weekStart?: string }>;
+  searchParams: Promise<{
+    from?: string;
+    to?: string;
+    job?: string;
+    worker?: string;
+    code?: string;
+    weekStart?: string; // legacy
+  }>;
 }) {
   const supabase = await createClient();
   const {
@@ -32,43 +42,67 @@ export default async function WeeklyReportPage({
   if (reportRole !== "office" && reportRole !== "admin") redirect("/dashboard");
 
   const sp = await searchParams;
-  const weekStart = parseWeekStart(sp.weekStart);
-  const weekEnd = addDays(weekStart, 7);
-  const startISO = weekStart.toISOString();
-  const endISO = weekEnd.toISOString();
+  const jobId = sp.job || null;
+  const workerId = sp.worker || null;
+  const codeId = sp.code || null;
+  const { from, toInclusive } = resolveReportRange(sp.from, sp.to, sp.weekStart);
+  const dayCount = rangeDayCount(from, toInclusive);
+
+  const startISO = from.toISOString();
+  const endISO = addDays(toInclusive, 1).toISOString();
   const now = Date.now();
 
-  const prevWeek = toISODate(addDays(weekStart, -7));
-  const nextWeek = toISODate(addDays(weekStart, 7));
-  const fileDate = toISODate(weekStart);
-  const weekLabel = `${weekStart.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-  })} – ${addDays(weekStart, 6).toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-  })}`;
+  const rangeLabel = `${from.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} – ${toInclusive.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
 
-  const [timeRes, photoRes, receiptRes, profileRes] = await Promise.all([
-    supabase
-      .from("time_entries")
-      .select(
-        "user_id, clock_in_at, clock_out_at, job:jobs(name)"
-      )
-      .gte("clock_in_at", startISO)
-      .lt("clock_in_at", endISO),
-    supabase
-      .from("photos")
-      .select("uploaded_by, created_at, job:jobs(name)")
-      .gte("created_at", startISO)
-      .lt("created_at", endISO),
-    supabase
-      .from("receipts")
-      .select("uploaded_by, amount, reimbursed, job:jobs(name)")
-      .gte("captured_at", startISO)
-      .lt("captured_at", endISO),
-    supabase.from("profiles").select("id, full_name, role"),
-  ]);
+  // Dropdown data + report queries in parallel. Filters apply to time_entries
+  // + receipts (job/worker/code) and photos (job/worker only — no cost code).
+  const [jobsRes, workersRes, codesRes, timeRes, photoRes, receiptRes, profileRes] =
+    await Promise.all([
+      supabase.from("jobs").select("id, name").order("name"),
+      supabase.from("profiles").select("id, full_name").order("full_name"),
+      supabase.from("cost_codes").select("id, code, name").order("code"),
+      (() => {
+        let q = supabase
+          .from("time_entries")
+          .select("user_id, clock_in_at, clock_out_at, job:jobs(name)")
+          .gte("clock_in_at", startISO)
+          .lt("clock_in_at", endISO);
+        if (jobId) q = q.eq("job_id", jobId);
+        if (workerId) q = q.eq("user_id", workerId);
+        if (codeId) q = q.eq("cost_code_id", codeId);
+        return q;
+      })(),
+      (() => {
+        let q = supabase
+          .from("photos")
+          .select("uploaded_by, created_at, job:jobs(name)")
+          .gte("created_at", startISO)
+          .lt("created_at", endISO);
+        if (jobId) q = q.eq("job_id", jobId);
+        if (workerId) q = q.eq("uploaded_by", workerId);
+        return q;
+      })(),
+      (() => {
+        let q = supabase
+          .from("receipts")
+          .select("uploaded_by, amount, reimbursed, job:jobs(name)")
+          .gte("captured_at", startISO)
+          .lt("captured_at", endISO);
+        if (jobId) q = q.eq("job_id", jobId);
+        if (workerId) q = q.eq("uploaded_by", workerId);
+        if (codeId) q = q.eq("cost_code_id", codeId);
+        return q;
+      })(),
+      supabase.from("profiles").select("id, full_name, role"),
+    ]);
+
+  const jobs = (jobsRes.data ?? []) as { id: string; name: string }[];
+  const workerOptions = ((workersRes.data ?? []) as { id: string; full_name: string | null }[]).map(
+    (p) => ({ id: p.id, name: p.full_name ?? "Unknown" })
+  );
+  const costCodes = ((codesRes.data ?? []) as { id: string; code: string; name: string }[]).map(
+    (c) => ({ id: c.id, label: `${c.code} · ${c.name}` })
+  );
 
   const profiles = new Map<string, { name: string; role: string }>();
   for (const p of (profileRes.data ?? []) as {
@@ -158,37 +192,60 @@ export default async function WeeklyReportPage({
   const totalSubmitted = rows.reduce((s, r) => s + r.submitted, 0);
   const totalOwed = rows.reduce((s, r) => s + r.owed, 0);
 
+  // Filter query string for the Excel download link.
+  const exportQs = new URLSearchParams();
+  if (sp.from) exportQs.set("from", sp.from);
+  else exportQs.set("from", toISODate(from));
+  if (sp.to) exportQs.set("to", sp.to);
+  else exportQs.set("to", toISODate(toInclusive));
+  if (jobId) exportQs.set("job", jobId);
+  if (workerId) exportQs.set("worker", workerId);
+  if (codeId) exportQs.set("code", codeId);
+  const exportHref = `/api/reports/weekly?${exportQs.toString()}`;
+
+  const current = {
+    job: jobId ?? "",
+    worker: workerId ?? "",
+    code: codeId ?? "",
+    from: toISODate(from),
+    to: toISODate(toInclusive),
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title="Weekly Report" />
+      <TopBar title="Per-Worker Report" subtitle={rangeLabel} />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
-        {/* Week navigator */}
-        <div className="bg-white rounded-lg p-3 shadow-sm flex items-center justify-between">
-          <Link
-            href={`/admin/reports/weekly?weekStart=${prevWeek}`}
-            className="p-2 rounded-lg hover:bg-gray-100 active:bg-gray-100"
-          >
-            <ChevronLeft className="w-5 h-5 text-gray-600" />
-          </Link>
-          <span className="font-semibold text-gray-900">{weekLabel}</span>
-          <Link
-            href={`/admin/reports/weekly?weekStart=${nextWeek}`}
-            className="p-2 rounded-lg hover:bg-gray-100 active:bg-gray-100"
-          >
-            <ChevronRight className="w-5 h-5 text-gray-600" />
-          </Link>
+        <Link href="/admin/reports" className="text-xs text-blue-600 font-medium">
+          ← All reports
+        </Link>
+
+        {/* Filters (date range + job / worker / cost code) */}
+        <div className="bg-white rounded-lg p-3 shadow-sm">
+          <WeeklyReportFilters
+            jobs={jobs}
+            workers={workerOptions}
+            costCodes={costCodes}
+            current={current}
+          />
         </div>
 
         {/* Download */}
         <a
-          href={`/api/reports/weekly?weekStart=${fileDate}`}
+          href={exportHref}
           download
           className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
         >
           <Download className="w-5 h-5" />
           Download Excel
         </a>
+
+        {dayCount > 31 && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+            Range is {dayCount} days — the Daily Hours sheet is omitted from the
+            Excel export (too wide). All other sheets still include the full range.
+          </p>
+        )}
 
         {/* Totals strip */}
         <div className="grid grid-cols-2 gap-2">
@@ -224,7 +281,7 @@ export default async function WeeklyReportPage({
           {rows.length === 0 ? (
             <div className="bg-white rounded-lg p-6 text-center shadow-sm">
               <p className="text-sm text-gray-500">
-                No activity this week.
+                No activity in this range{jobId || workerId || codeId ? " for these filters" : ""}.
               </p>
             </div>
           ) : (
@@ -268,8 +325,8 @@ export default async function WeeklyReportPage({
                     </div>
                   </div>
                   {w.projects.size > 0 && (
-                    <p className="text-xs text-gray-500 mt-2 truncate">
-                      {[...w.projects].join(", ")}
+                    <p className="text-xs text-gray-500 mt-2">
+                      {[...w.projects].sort().join(", ")}
                     </p>
                   )}
                 </div>

@@ -1,18 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import { parseWeekStart, addDays, hoursFromMs } from "@/lib/weekUtils";
+import { addDays, hoursFromMs, toISODate } from "@/lib/weekUtils";
+import { resolveReportRange, rangeDayCount } from "@/lib/reports";
 
-// Weekly per-worker report — office only. Streams a real .xlsx workbook for the
-// selected Monday-based week with the following sheets:
-//   1. Summary           — per-worker totals + a "Paid This Week $" column
-//   2. Daily Hours        — Mon–Sun × worker hours grid
+// Per-Worker report (formerly "weekly") — office only. Streams a real .xlsx
+// workbook for a selectable date range + job/worker/cost-code filters with the
+// following sheets:
+//   1. Summary           — per-worker totals + "Paid This Week $" + Projects
+//   2. Daily Hours        — one column per day in the range × worker hours grid
+//                           (omitted when the range exceeds 31 days)
 //   3. Hours by Code      — hours per worker × cost code
 //   4. Timesheet          — every clock-in row (with GPS lat/lng/source)
-//   5. Receipts           — every receipt captured this week (with payment
+//   5. Receipts           — every receipt captured in range (with payment
 //                           method, receipt no, reimbursed_at)
-//   6. Payments           — receipts *paid* this week (reimbursed_at in range),
-//                           including ones captured in a prior week
+//   6. Payments           — receipts *paid* in range (reimbursed_at in range),
+//                           including ones captured in a prior range
 //   7..N. <Worker>        — one detail sheet per worker (their timesheet +
 //                           receipts stacked on one tab)
 //
@@ -67,50 +70,76 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const weekStart = parseWeekStart(searchParams.get("weekStart") ?? undefined);
-  const weekEnd = addDays(weekStart, 7);
-  const startISO = weekStart.toISOString();
-  const endISO = weekEnd.toISOString();
+  const jobId = searchParams.get("job") || null;
+  const workerId = searchParams.get("worker") || null;
+  const codeId = searchParams.get("code") || null;
+  const { from, toInclusive } = resolveReportRange(
+    searchParams.get("from"),
+    searchParams.get("to"),
+    searchParams.get("weekStart") // legacy fallback
+  );
+  const dayCount = rangeDayCount(from, toInclusive);
+  const showDaily = dayCount <= 31;
+
+  const startISO = from.toISOString();
+  const endISO = addDays(toInclusive, 1).toISOString(); // exclusive end
   const now = Date.now();
-  // Local-midnight Monday in ms — used to bucket each clock-in into a weekday
-  // column (0=Mon … 6=Sun). weekStart comes from parseWeekStart as local
-  // midnight; we re-derive its local-midnight ms so the diff is calendar-day
-  // based (DST-safe via Math.round).
-  const weekStartLocalMs = new Date(
-    weekStart.getFullYear(),
-    weekStart.getMonth(),
-    weekStart.getDate()
+  // Local-midnight of the range start — used to bucket each clock-in into a
+  // day column (0 = first day … dayCount-1 = last). DST-safe via Math.round.
+  const fromLocalMs = new Date(
+    from.getFullYear(),
+    from.getMonth(),
+    from.getDate()
   ).getTime();
 
+  // Apply the shared filters to a query. `userCol` differs per table
+  // (time_entries.user_id vs receipts.uploaded_by).
+  function applyFilters<T>(q: T, userCol: string): T {
+    let qq = q as unknown as { eq: (c: string, v: string) => unknown };
+    if (jobId) qq = qq.eq("job_id", jobId) as typeof qq;
+    if (workerId) qq = qq.eq(userCol, workerId) as typeof qq;
+    if (codeId) qq = qq.eq("cost_code_id", codeId) as typeof qq;
+    return qq as unknown as T;
+  }
+
   const [timeRes, receiptRes, paymentRes, profileRes] = await Promise.all([
-    supabase
-      .from("time_entries")
-      .select(
-        "user_id, clock_in_at, clock_out_at, note, lat, lng, location_source, job:jobs(name), cost_code:cost_codes(code, name)"
-      )
-      .gte("clock_in_at", startISO)
-      .lt("clock_in_at", endISO)
-      .order("clock_in_at", { ascending: true }),
-    supabase
-      .from("receipts")
-      .select(
-        "uploaded_by, uploaded_by_name, captured_at, vendor, amount, tax, category, payment_method, receipt_no, reimbursed, reimbursed_at, notes, job:jobs(name)"
-      )
-      .gte("captured_at", startISO)
-      .lt("captured_at", endISO)
-      .order("captured_at", { ascending: true }),
-    // Receipts *paid* this week (reimbursed_at in range) — catches payments
-    // processed this week for receipts captured in a prior week. The detail
+    applyFilters(
+      supabase
+        .from("time_entries")
+        .select(
+          "user_id, clock_in_at, clock_out_at, note, lat, lng, location_source, job:jobs(name), cost_code:cost_codes(code, name)"
+        )
+        .gte("clock_in_at", startISO)
+        .lt("clock_in_at", endISO)
+        .order("clock_in_at", { ascending: true }),
+      "user_id"
+    ),
+    applyFilters(
+      supabase
+        .from("receipts")
+        .select(
+          "uploaded_by, uploaded_by_name, captured_at, vendor, amount, tax, category, payment_method, receipt_no, reimbursed, reimbursed_at, notes, job:jobs(name)"
+        )
+        .gte("captured_at", startISO)
+        .lt("captured_at", endISO)
+        .order("captured_at", { ascending: true }),
+      "uploaded_by"
+    ),
+    // Receipts *paid* in range (reimbursed_at in range) — catches payments
+    // processed in range for receipts captured in a prior range. The detail
     // Receipts sheet above is filtered on captured_at and would miss these.
-    supabase
-      .from("receipts")
-      .select(
-        "uploaded_by, uploaded_by_name, amount, vendor, captured_at, reimbursed_at, job:jobs(name)"
-      )
-      .eq("reimbursed", true)
-      .gte("reimbursed_at", startISO)
-      .lt("reimbursed_at", endISO)
-      .order("reimbursed_at", { ascending: true }),
+    applyFilters(
+      supabase
+        .from("receipts")
+        .select(
+          "uploaded_by, uploaded_by_name, amount, vendor, captured_at, reimbursed_at, job:jobs(name)"
+        )
+        .eq("reimbursed", true)
+        .gte("reimbursed_at", startISO)
+        .lt("reimbursed_at", endISO)
+        .order("reimbursed_at", { ascending: true }),
+      "uploaded_by"
+    ),
     supabase.from("profiles").select("id, full_name, role").order("full_name"),
   ]);
 
@@ -170,7 +199,7 @@ export async function GET(request: Request) {
     paidBack: number;
     owed: number;
     paidThisWeek: number;
-    hoursByDay: number[]; // length 7, index 0=Mon … 6=Sun
+    hoursByDay: number[]; // length dayCount, index 0 = first day
     hoursByCode: Map<string, number>; // key = "code name" | "— No code —"
   };
   const workers = new Map<string, WorkerAgg>();
@@ -184,7 +213,7 @@ export async function GET(request: Request) {
         paidBack: 0,
         owed: 0,
         paidThisWeek: 0,
-        hoursByDay: [0, 0, 0, 0, 0, 0, 0],
+        hoursByDay: Array.from({ length: dayCount }, () => 0),
         hoursByCode: new Map(),
       };
       workers.set(id, w);
@@ -202,7 +231,7 @@ export async function GET(request: Request) {
     w.hours += hours;
     if (jobName !== "—") w.projects.add(jobName);
     w.hoursByCode.set(cc, (w.hoursByCode.get(cc) ?? 0) + hours);
-    // Bucket the shift into the weekday of its clock-in date. A shift spanning
+    // Bucket the shift into the day of its clock-in date. A shift spanning
     // midnight attributes all its hours to the clock-in day — simple and
     // consistent with the per-shift rounding above.
     const ci = new Date(t.clock_in_at);
@@ -212,8 +241,8 @@ export async function GET(request: Request) {
       ci.getDate()
     ).getTime();
     const dayIdx = Math.min(
-      6,
-      Math.max(0, Math.round((ciLocalMs - weekStartLocalMs) / 86_400_000))
+      dayCount - 1,
+      Math.max(0, Math.round((ciLocalMs - fromLocalMs) / 86_400_000))
     );
     w.hoursByDay[dayIdx] += hours;
     timesheetRows.push([
@@ -288,13 +317,13 @@ export async function GET(request: Request) {
     nameOf(a).localeCompare(nameOf(b))
   );
 
-  // 1. Summary
+  // 1. Summary — "Projects" lists the comma-joined project names per worker.
   const summaryAoA: (string | number)[][] = [
     [
       "Worker",
       "Role",
       "Total Hours",
-      "# Projects",
+      "Projects",
       "Receipts Submitted $",
       "Paid Back $",
       "Owed $",
@@ -307,7 +336,7 @@ export async function GET(request: Request) {
       nameOf(id),
       roleOf(id),
       w.hours,
-      w.projects.size,
+      [...w.projects].sort().join(", "),
       w.submitted,
       w.paidBack,
       w.owed,
@@ -330,35 +359,38 @@ export async function GET(request: Request) {
     "Summary"
   );
 
-  // 2. Daily Hours — Mon–Sun × worker grid + total.
-  const dayHeaders = Array.from({ length: 7 }, (_, i) => {
-    const d = addDays(weekStart, i);
-    return d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
-  });
-  const dailyAoA: (string | number)[][] = [
-    ["Worker", ...dayHeaders, "Total"],
-  ];
-  for (const id of workerIds) {
-    const w = workers.get(id)!;
+  // 2. Daily Hours — one column per day in the range × worker grid + total.
+  // Omitted when the range exceeds 31 days (the grid would be unwieldy).
+  if (showDaily) {
+    const dayHeaders = Array.from({ length: dayCount }, (_, i) => {
+      const d = addDays(from, i);
+      return d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
+    });
+    const dailyAoA: (string | number)[][] = [
+      ["Worker", ...dayHeaders, "Total"],
+    ];
+    for (const id of workerIds) {
+      const w = workers.get(id)!;
+      dailyAoA.push([
+        nameOf(id),
+        ...w.hoursByDay,
+        w.hoursByDay.reduce((s, h) => s + h, 0),
+      ]);
+    }
+    const dailyTotals = Array.from({ length: dayCount }, (_, i) =>
+      workerIds.reduce((s, id) => s + (workers.get(id)?.hoursByDay[i] ?? 0), 0)
+    );
     dailyAoA.push([
-      nameOf(id),
-      ...w.hoursByDay,
-      w.hoursByDay.reduce((s, h) => s + h, 0),
+      "TOTAL",
+      ...dailyTotals,
+      dailyTotals.reduce((s, h) => s + h, 0),
     ]);
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet(dailyAoA),
+      "Daily Hours"
+    );
   }
-  const dailyTotals = Array.from({ length: 7 }, (_, i) =>
-    workerIds.reduce((s, id) => s + (workers.get(id)?.hoursByDay[i] ?? 0), 0)
-  );
-  dailyAoA.push([
-    "TOTAL",
-    ...dailyTotals,
-    dailyTotals.reduce((s, h) => s + h, 0),
-  ]);
-  XLSX.utils.book_append_sheet(
-    wb,
-    XLSX.utils.aoa_to_sheet(dailyAoA),
-    "Daily Hours"
-  );
 
   // 3. Hours by Code — one row per (worker × cost code) with nonzero hours.
   const byCodeAoA: (string | number)[][] = [["Worker", "Cost Code", "Hours"]];
@@ -425,7 +457,7 @@ export async function GET(request: Request) {
     "Receipts"
   );
 
-  // 6. Payments (paid this week)
+  // 6. Payments (paid in range)
   XLSX.utils.book_append_sheet(
     wb,
     XLSX.utils.aoa_to_sheet([
@@ -541,11 +573,11 @@ export async function GET(request: Request) {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 
-  const fileDate = weekStart.toISOString().slice(0, 10);
+  const fileStamp = `${toISODate(from)}_to_${toISODate(toInclusive)}`;
   return new NextResponse(blob, {
     status: 200,
     headers: {
-      "Content-Disposition": `attachment; filename="weekly-report-${fileDate}.xlsx"`,
+      "Content-Disposition": `attachment; filename="per-worker-report-${fileStamp}.xlsx"`,
       "Cache-Control": "no-store",
     },
   });

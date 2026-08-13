@@ -31,16 +31,23 @@ export default function PhotoLightbox({
   const [urls, setUrls] = useState<Record<string, string>>({});
   // Touch swipe tracking for mobile next/prev navigation.
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  // Locally-deleted photo ids, remembered for the component's lifetime. Both
+  // the prop-sync effect and the signed-URL effect filter these out so a stale
+  // read-after-write re-fetch (triggered by router.refresh() after a delete)
+  // can never resurrect a deleted row with a now-404 signed URL — which was the
+  // cause of the blank-card / no-auto-advance bug on mobile.
+  const deletedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    setPhotos(photos);
+    setPhotos(photos.filter((p) => !deletedIds.current.has(p.id)));
   }, [photos]);
 
   useEffect(() => {
     let cancelled = false;
     async function mint() {
+      const live = photos.filter((p) => !deletedIds.current.has(p.id));
       const entries = await Promise.all(
-        photos.map(async (p) => {
+        live.map(async (p) => {
           const { data } = await supabase.storage
             .from("job-photos")
             .createSignedUrl(p.storage_path, 3600);
@@ -76,12 +83,33 @@ export default function PhotoLightbox({
 
   async function handleDelete() {
     if (!confirm(`Delete this photo? This can't be undone.`)) return;
-    await supabase.storage.from("job-photos").remove([current.storage_path]);
-    await supabase.from("photos").delete().eq("id", current.id);
-    const next = photos_.filter((p) => p.id !== current.id);
+    const victim = current;
+    // Remove the storage object, then the DB row. We gate on the DB delete —
+    // if it fails, leave the photo in place and surface the error instead of
+    // dropping it from the grid into a broken state. (A storage-remove failure
+    // while the row deletes is harmless: the row is gone so the app won't show
+    // it; the orphaned object is a minor storage cleanup issue.)
+    await supabase.storage.from("job-photos").remove([victim.storage_path]);
+    const { error } = await supabase.from("photos").delete().eq("id", victim.id);
+    if (error) {
+      alert("Could not delete the photo. Try again.");
+      return;
+    }
+    // Remember the deletion so the prop-sync + URL effects never bring it back,
+    // and drop its signed URL immediately so the grid doesn't flash a broken
+    // image during the router.refresh() re-mint window.
+    deletedIds.current.add(victim.id);
+    setUrls((prev) => {
+      const next = { ...prev };
+      delete next[victim.id];
+      return next;
+    });
+    const next = photos_.filter((p) => p.id !== victim.id);
     setPhotos(next);
     if (next.length === 0) setOpen(false);
     else if (index >= next.length) setIndex(next.length - 1);
+    // index otherwise stays put — after a middle-of-list delete, later items
+    // shift down so photos_[index] is already the NEXT photo (auto-advance).
     router.refresh();
   }
 
@@ -103,6 +131,9 @@ export default function PhotoLightbox({
               src={urls[p.id] ?? ""}
               alt={p.caption ?? ""}
               className="w-full h-full object-cover"
+              onError={(e) => {
+                e.currentTarget.style.visibility = "hidden";
+              }}
             />
             {p.caption && (
               <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">
@@ -178,6 +209,9 @@ export default function PhotoLightbox({
               src={urls[current.id] ?? ""}
               alt={current.caption ?? ""}
               className="max-w-full max-h-full object-contain"
+              onError={(e) => {
+                e.currentTarget.style.visibility = "hidden";
+              }}
             />
           </div>
 

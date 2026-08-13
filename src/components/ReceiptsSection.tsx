@@ -25,6 +25,7 @@ import {
 } from "@/lib/receiptStore";
 import { stampImage } from "@/lib/stampImage";
 import { validateUpload } from "@/lib/uploadValidate";
+import { resolveLocation } from "@/lib/geo";
 
 export type RemoteReceipt = {
   id: string;
@@ -182,6 +183,10 @@ export default function ReceiptsSection({
         date: new Date(),
         jobName,
       });
+      // Resolve capture location in parallel with the stamp so we record
+      // where the receipt was taken (GPS, falling back to IP geolocation).
+      // Never blocks the save — a failed/absent fix just leaves null.
+      const gps = await resolveLocation().catch(() => null);
       const localId = await addReceipt({
         jobId,
         jobName,
@@ -192,6 +197,10 @@ export default function ReceiptsSection({
         notes: "",
         capturedAt: new Date().toISOString(),
         shared: false,
+        lat: gps?.result?.lat ?? null,
+        lng: gps?.result?.lng ?? null,
+        locationSource: gps?.result?.source ?? null,
+        locationAccuracy: gps?.result?.accuracy ?? null,
       });
       void refreshLocal();
       toast.success("Receipt saved on phone");
@@ -237,6 +246,11 @@ export default function ReceiptsSection({
       if (rec.paymentMethod) form.append("paymentMethod", rec.paymentMethod);
       if (rec.receiptNo) form.append("receiptNo", rec.receiptNo);
       if (rec.costCodeId) form.append("costCodeId", rec.costCodeId);
+      if (typeof rec.lat === "number") form.append("lat", String(rec.lat));
+      if (typeof rec.lng === "number") form.append("lng", String(rec.lng));
+      if (rec.locationSource) form.append("locationSource", rec.locationSource);
+      if (typeof rec.locationAccuracy === "number")
+        form.append("locationAccuracy", String(rec.locationAccuracy));
       form.append("file", rec.blob, "receipt.jpg");
 
       const res = await fetch("/api/receipts/share", { method: "POST", body: form });

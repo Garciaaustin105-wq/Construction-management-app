@@ -38,6 +38,16 @@ export async function POST(request: Request) {
   const paymentMethod = (form.get("paymentMethod") as string | null) || null;
   const receiptNo = (form.get("receiptNo") as string | null) || null;
   const costCodeId = (form.get("costCodeId") as string | null) || null;
+  const latRaw = form.get("lat");
+  const lat =
+    latRaw === null || latRaw === "" || latRaw === "null" ? null : Number(latRaw);
+  const lngRaw = form.get("lng");
+  const lng =
+    lngRaw === null || lngRaw === "" || lngRaw === "null" ? null : Number(lngRaw);
+  const locationSource = (form.get("locationSource") as string | null) || null;
+  const accRaw = form.get("locationAccuracy");
+  const locationAccuracy =
+    accRaw === null || accRaw === "" || accRaw === "null" ? null : Number(accRaw);
   const file = form.get("file") as File | null;
 
   if (!jobId || !capturedAt || !file) {
@@ -139,6 +149,13 @@ export async function POST(request: Request) {
       payment_method: paymentMethod,
       receipt_no: receiptNo,
       cost_code_id: costCodeId || null,
+      lat: typeof lat === "number" && !Number.isNaN(lat) ? lat : null,
+      lng: typeof lng === "number" && !Number.isNaN(lng) ? lng : null,
+      location_source: locationSource,
+      location_accuracy:
+        typeof locationAccuracy === "number" && !Number.isNaN(locationAccuracy)
+          ? locationAccuracy
+          : null,
     })
     .select("id")
     .single();

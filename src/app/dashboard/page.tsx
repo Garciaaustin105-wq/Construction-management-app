@@ -171,14 +171,14 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* Office / admin: weekly per-worker report */}
+        {/* Office / admin: reports hub (per-worker + receipts reports) */}
         {showOfficeSurface && (
           <Link
-            href="/admin/reports/weekly"
+            href="/admin/reports"
             className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
           >
             <FileSpreadsheet className="w-5 h-5" />
-            Weekly Report
+            Reports
           </Link>
         )}
 
