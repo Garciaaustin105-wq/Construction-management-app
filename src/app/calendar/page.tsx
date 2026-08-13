@@ -71,27 +71,32 @@ export default async function CalendarPage() {
             Add to your calendar
           </h2>
           <p className="text-xs text-gray-500">
-            Copy the feed URL above, then paste it into your calendar provider.
-            The feed is read-only — changes made in the app appear on the next
-            sync.
+            Copy the feed URL above, then add it to your calendar once. The feed
+            is read-only — changes made in the app appear on the next sync.
+            (Google + Outlook can&rsquo;t add a URL from their phone apps — add
+            it on the web once and it syncs to your phone automatically.)
           </p>
           <div className="space-y-2">
             <div>
               <p className="font-medium text-gray-900">Google Calendar</p>
               <p className="text-xs text-gray-600">
-                Settings → Add calendar → From URL → paste → Add calendar.
+                On a web browser, open calendar.google.com → ⚙️ Settings → Add
+                calendar → From URL → paste → Add. It then appears in the
+                Google Calendar app on your phone.
               </p>
             </div>
             <div>
               <p className="font-medium text-gray-900">Outlook</p>
               <p className="text-xs text-gray-600">
-                Add calendar → Subscribe from web → paste → Import.
+                On the web at outlook.live.com → Add calendar → Subscribe from
+                web → paste → Import. Syncs to the Outlook app.
               </p>
             </div>
             <div>
-              <p className="font-medium text-gray-900">Apple Calendar</p>
+              <p className="font-medium text-gray-900">Apple Calendar (iPhone)</p>
               <p className="text-xs text-gray-600">
-                File → New Calendar Subscription → paste URL → Subscribe.
+                On the phone: Settings → Calendar → Accounts → Add Account →
+                Other → Add Subscribed Calendar → paste URL → Subscribe.
               </p>
             </div>
           </div>
