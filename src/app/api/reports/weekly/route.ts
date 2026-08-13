@@ -9,17 +9,17 @@ import { parseWeekStart, addDays, hoursFromMs } from "@/lib/weekUtils";
 //   2. Daily Hours        — Mon–Sun × worker hours grid
 //   3. Hours by Code      — hours per worker × cost code
 //   4. Timesheet          — every clock-in row (with GPS lat/lng/source)
-//   5. Photos             — every photo row (with GPS lat/lng/source)
-//   6. Receipts           — every receipt captured this week (with payment
+//   5. Receipts           — every receipt captured this week (with payment
 //                           method, receipt no, reimbursed_at)
-//   7. Payments           — receipts *paid* this week (reimbursed_at in range),
+//   6. Payments           — receipts *paid* this week (reimbursed_at in range),
 //                           including ones captured in a prior week
-//   8..N. <Worker>        — one detail sheet per worker (their timesheet +
-//                           photos + receipts stacked on one tab)
+//   7..N. <Worker>        — one detail sheet per worker (their timesheet +
+//                           receipts stacked on one tab)
 //
-// Office RLS lets us read all time_entries, photos, receipts, and profiles
-// directly (no service role needed). Tenant scoping is RLS-enforced — the route
-// uses the user-scoped server client, never the service role.
+// Photos are intentionally excluded from this report (per user request). Office
+// RLS lets us read all time_entries, receipts, and profiles directly (no service
+// role needed). Tenant scoping is RLS-enforced — the route uses the user-scoped
+// server client, never the service role.
 
 type Profile = { id: string; full_name: string | null; role: string | null };
 
@@ -82,7 +82,7 @@ export async function GET(request: Request) {
     weekStart.getDate()
   ).getTime();
 
-  const [timeRes, photoRes, receiptRes, paymentRes, profileRes] = await Promise.all([
+  const [timeRes, receiptRes, paymentRes, profileRes] = await Promise.all([
     supabase
       .from("time_entries")
       .select(
@@ -91,14 +91,6 @@ export async function GET(request: Request) {
       .gte("clock_in_at", startISO)
       .lt("clock_in_at", endISO)
       .order("clock_in_at", { ascending: true }),
-    supabase
-      .from("photos")
-      .select(
-        "uploaded_by, created_at, caption, lat, lng, location_source, job:jobs(name)"
-      )
-      .gte("created_at", startISO)
-      .lt("created_at", endISO)
-      .order("created_at", { ascending: true }),
     supabase
       .from("receipts")
       .select(
@@ -141,15 +133,6 @@ export async function GET(request: Request) {
     job: { name: string | null } | null;
     cost_code: { code: string; name: string } | null;
   };
-  type PhotoRow = {
-    uploaded_by: string | null;
-    created_at: string;
-    caption: string | null;
-    lat: number | null;
-    lng: number | null;
-    location_source: string | null;
-    job: { name: string | null } | null;
-  };
   type ReceiptRow = {
     uploaded_by: string | null;
     uploaded_by_name: string | null;
@@ -176,7 +159,6 @@ export async function GET(request: Request) {
   };
 
   const times = (timeRes.data ?? []) as unknown as TimeRow[];
-  const photos = (photoRes.data ?? []) as unknown as PhotoRow[];
   const receipts = (receiptRes.data ?? []) as unknown as ReceiptRow[];
   const payments = (paymentRes.data ?? []) as unknown as PaymentRow[];
 
@@ -184,7 +166,6 @@ export async function GET(request: Request) {
   type WorkerAgg = {
     hours: number;
     projects: Set<string>;
-    photos: number;
     submitted: number;
     paidBack: number;
     owed: number;
@@ -199,7 +180,6 @@ export async function GET(request: Request) {
       w = {
         hours: 0,
         projects: new Set(),
-        photos: 0,
         submitted: 0,
         paidBack: 0,
         owed: 0,
@@ -253,25 +233,6 @@ export async function GET(request: Request) {
       t.lng ?? "",
       locLabel(t.location_source),
       t.note ?? "",
-    ]);
-  }
-
-  const photoRows: (string | number)[][] = [];
-  for (const p of photos) {
-    const jobName = p.job?.name ?? "—";
-    if (p.uploaded_by) {
-      const w = ensureWorker(p.uploaded_by);
-      w.photos += 1;
-      if (jobName !== "—") w.projects.add(jobName);
-    }
-    photoRows.push([
-      nameOf(p.uploaded_by),
-      jobName,
-      new Date(p.created_at).toLocaleDateString(),
-      p.caption ?? "",
-      p.lat ?? "",
-      p.lng ?? "",
-      locLabel(p.location_source),
     ]);
   }
 
@@ -334,7 +295,6 @@ export async function GET(request: Request) {
       "Role",
       "Total Hours",
       "# Projects",
-      "# Photos",
       "Receipts Submitted $",
       "Paid Back $",
       "Owed $",
@@ -348,7 +308,6 @@ export async function GET(request: Request) {
       roleOf(id),
       w.hours,
       w.projects.size,
-      w.photos,
       w.submitted,
       w.paidBack,
       w.owed,
@@ -360,7 +319,6 @@ export async function GET(request: Request) {
     "",
     workerIds.reduce((s, id) => s + (workers.get(id)?.hours ?? 0), 0),
     "",
-    workerIds.reduce((s, id) => s + (workers.get(id)?.photos ?? 0), 0),
     workerIds.reduce((s, id) => s + (workers.get(id)?.submitted ?? 0), 0),
     workerIds.reduce((s, id) => s + (workers.get(id)?.paidBack ?? 0), 0),
     workerIds.reduce((s, id) => s + (workers.get(id)?.owed ?? 0), 0),
@@ -444,17 +402,7 @@ export async function GET(request: Request) {
     "Timesheet"
   );
 
-  // 5. Photos
-  XLSX.utils.book_append_sheet(
-    wb,
-    XLSX.utils.aoa_to_sheet([
-      ["Worker", "Job", "Date", "Caption", "Lat", "Lng", "Location"],
-      ...photoRows,
-    ]),
-    "Photos"
-  );
-
-  // 6. Receipts
+  // 5. Receipts
   XLSX.utils.book_append_sheet(
     wb,
     XLSX.utils.aoa_to_sheet([
@@ -477,7 +425,7 @@ export async function GET(request: Request) {
     "Receipts"
   );
 
-  // 7. Payments (paid this week)
+  // 6. Payments (paid this week)
   XLSX.utils.book_append_sheet(
     wb,
     XLSX.utils.aoa_to_sheet([
@@ -502,10 +450,10 @@ export async function GET(request: Request) {
     "Payments"
   );
 
-  // 8..N. Per-worker detail sheets — one tab per worker with their timesheet +
-  // photos + receipts stacked. Rows are filtered by user id (NOT by display
-  // name) so two workers who share a name — or who both fall back to
-  // "Unknown" — don't get merged. Sheet names are sanitized + deduped.
+  // 7..N. Per-worker detail sheets — one tab per worker with their timesheet +
+  // receipts stacked. Rows are filtered by user id (NOT by display name) so
+  // two workers who share a name — or who both fall back to "Unknown" — don't
+  // get merged. Sheet names are sanitized + deduped.
   for (const id of workerIds) {
     const name = nameOf(id);
     const role = roleOf(id);
@@ -546,21 +494,6 @@ export async function GET(request: Request) {
         t.lng ?? "",
         locLabel(t.location_source),
         t.note ?? "",
-      ]);
-    }
-
-    sheet.push([]);
-    sheet.push(["Photos"]);
-    sheet.push(["Job", "Date", "Caption", "Lat", "Lng", "Location"]);
-    for (const p of photos) {
-      if (p.uploaded_by !== id) continue;
-      sheet.push([
-        p.job?.name ?? "—",
-        new Date(p.created_at).toLocaleDateString(),
-        p.caption ?? "",
-        p.lat ?? "",
-        p.lng ?? "",
-        locLabel(p.location_source),
       ]);
     }
 
