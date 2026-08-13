@@ -24,6 +24,7 @@ export default function NewInvoiceForm({
   const [jobId, setJobId] = useState<string>(preselectedJobId);
   const [customerId, setCustomerId] = useState<string>("");
   const [notes, setNotes] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [items, setItems] = useState<LineItem[]>([
     { description: "", quantity: 1, unit_price: 0 },
   ]);
@@ -99,6 +100,7 @@ export default function NewInvoiceForm({
         job_id: jobId,
         customer_id: customerId || null,
         status: "sent",
+        due_date: dueDate || null,
       })
       .select("id")
       .single();
@@ -190,6 +192,21 @@ export default function NewInvoiceForm({
             </select>
             <span className="text-xs text-gray-500 mt-1 block">
               Auto-filled from the job, change if needed.
+            </span>
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">
+              Due date (optional)
+            </span>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
+            />
+            <span className="text-xs text-gray-500 mt-1 block">
+              Shows on the invoice and in the office calendar feed.
             </span>
           </label>
 

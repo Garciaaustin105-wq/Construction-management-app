@@ -16,6 +16,9 @@ import ReceiptsSection from "@/components/ReceiptsSection";
 import JobSubcontractors, {
   type JobSub,
 } from "@/components/JobSubcontractors";
+import ScheduleEventsManager, {
+  type ScheduleEvent,
+} from "@/components/ScheduleEventsManager";
 import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
 import { MANAGEMENT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
@@ -41,7 +44,7 @@ export default async function JobDetailPage({
 
   // Fan out all per-job reads in parallel (was sequential awaits, so the job
   // page waited on job → photos → rfis → blueprints → receipts → crew).
-  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes] = await Promise.all([
+  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes, schedEventsRes] = await Promise.all([
     supabase
       .from("jobs")
       .select("id, name, address, description, status, created_at, assigned_crew, customers(name)")
@@ -83,7 +86,7 @@ export default async function JobDetailPage({
       ? supabase
           .from("job_subcontractors")
           .select(
-            "subcontractor_id, role_on_job, subcontractor:subcontractors(id, company, trade, phone, email)"
+            "subcontractor_id, role_on_job, scheduled_date, subcontractor:subcontractors(id, company, trade, phone, email)"
           )
           .eq("job_id", id)
       : Promise.resolve({ data: [] }),
@@ -93,6 +96,13 @@ export default async function JobDetailPage({
           .select("id, company")
           .order("company")
       : Promise.resolve({ data: [] }),
+    // Schedule events — readable by management (all), assigned crew, and the
+    // owning customer (RLS enforces). Ordered by start time.
+    supabase
+      .from("schedule_events")
+      .select("id, title, start_at, end_at, kind, notes")
+      .eq("job_id", id)
+      .order("start_at", { ascending: true }),
   ]);
 
   const job = jobRes.data;
@@ -107,6 +117,7 @@ export default async function JobDetailPage({
   const jobSubs: JobSub[] = ((jobSubsRes.data ?? []) as unknown as {
     subcontractor_id: string;
     role_on_job: string | null;
+    scheduled_date: string | null;
     subcontractor: {
       id: string;
       company: string;
@@ -124,9 +135,11 @@ export default async function JobDetailPage({
         phone: s?.phone ?? null,
         email: s?.email ?? null,
         role_on_job: r.role_on_job,
+        scheduled_date: r.scheduled_date,
       };
     });
   const allSubs = (allSubsRes.data ?? []) as { id: string; company: string }[];
+  const schedEvents = (schedEventsRes.data ?? []) as ScheduleEvent[];
 
   // Mark this job as viewed (fire-and-forget; doesn't block render)
   void supabase
@@ -239,6 +252,14 @@ export default async function JobDetailPage({
             canEdit={isOfficeLike(role)}
           />
         )}
+
+        {/* Schedule events — all authorized roles see; office/PM can edit.
+            RLS admits management (all), assigned crew, and owning customer. */}
+        <ScheduleEventsManager
+          jobId={job.id}
+          initial={schedEvents}
+          canEdit={OFFICE_OR_PM.has(role)}
+        />
 
         <ActivityTimeline job={job} photos={photos ?? []} rfis={rfis ?? []} />
 

@@ -15,6 +15,7 @@ function NewQuoteForm() {
   const [jobs, setJobs] = useState<{ id: string; name: string; customer_id: string | null }[]>([]);
   const [jobId, setJobId] = useState(preselectedJob);
   const [notes, setNotes] = useState("");
+  const [validUntil, setValidUntil] = useState("");
   const [items, setItems] = useState<LineItem[]>([
     { description: "", quantity: 1, unit_price: 0 },
   ]);
@@ -78,6 +79,7 @@ function NewQuoteForm() {
         customer_id: job?.customer_id ?? null,
         status: "draft",
         notes: notes || null,
+        valid_until: validUntil || null,
         created_by: user.id,
       })
       .select()
@@ -163,6 +165,21 @@ function NewQuoteForm() {
               rows={3}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
             />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">
+              Valid until (optional)
+            </span>
+            <input
+              type="date"
+              value={validUntil}
+              onChange={(e) => setValidUntil(e.target.value)}
+              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+            />
+            <span className="text-xs text-gray-500 mt-1 block">
+              Expiry date shown to the customer + the calendar feed.
+            </span>
           </label>
 
           <div>

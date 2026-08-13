@@ -15,6 +15,7 @@ export default function EditQuotePage({
   const toast = useToast();
   const [quoteId, setQuoteId] = useState<string>("");
   const [notes, setNotes] = useState("");
+  const [validUntil, setValidUntil] = useState("");
   const [items, setItems] = useState<LineItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [authorized, setAuthorized] = useState(false);
@@ -39,7 +40,7 @@ export default function EditQuotePage({
 
       const { data: quote } = await supabase
         .from("quotes")
-        .select("notes, status")
+        .select("notes, status, valid_until")
         .eq("id", id)
         .single();
 
@@ -50,6 +51,7 @@ export default function EditQuotePage({
       }
 
       setNotes(quote.notes ?? "");
+      setValidUntil(quote.valid_until ?? "");
       setAuthorized(true);
 
       const { data: lines } = await supabase
@@ -86,7 +88,11 @@ export default function EditQuotePage({
 
     const { error: updateError } = await supabase
       .from("quotes")
-      .update({ notes: notes || null, updated_at: new Date().toISOString() })
+      .update({
+        notes: notes || null,
+        valid_until: validUntil || null,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", quoteId);
 
     if (updateError) {
@@ -153,6 +159,18 @@ export default function EditQuotePage({
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">
+              Valid until (optional)
+            </span>
+            <input
+              type="date"
+              value={validUntil}
+              onChange={(e) => setValidUntil(e.target.value)}
+              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
             />
           </label>
 

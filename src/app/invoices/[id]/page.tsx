@@ -5,6 +5,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import InvoiceActions from "./InvoiceActions";
+import InvoiceDueDate from "./InvoiceDueDate";
 import Link from "next/link";
 
 export default async function InvoiceDetailPage({
@@ -29,7 +30,7 @@ export default async function InvoiceDetailPage({
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, status, paid_at, created_at, job_id, customer_id, quote_id, jobs(name), customers(name)"
+      "id, status, paid_at, created_at, due_date, job_id, customer_id, quote_id, jobs(name), customers(name)"
     )
     .eq("id", id)
     .single();
@@ -70,6 +71,15 @@ export default async function InvoiceDetailPage({
               {jobName}
             </Link>
           </p>
+          <InvoiceDueDate
+            invoiceId={invoice.id}
+            initial={invoice.due_date}
+            canEdit={
+              role === "office" ||
+              role === "admin" ||
+              role === "project_manager"
+            }
+          />
           <p className="text-xs text-gray-400 mt-2">
             Issued {new Date(invoice.created_at).toLocaleDateString()}
             {invoice.paid_at && (

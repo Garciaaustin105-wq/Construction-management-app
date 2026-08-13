@@ -14,6 +14,7 @@ export type JobSub = {
   phone: string | null;
   email: string | null;
   role_on_job: string | null;
+  scheduled_date: string | null;
 };
 
 export default function JobSubcontractors({
@@ -34,6 +35,7 @@ export default function JobSubcontractors({
   const [subs, setSubs] = useState<JobSub[]>(initial);
   const [pickSub, setPickSub] = useState("");
   const [pickRole, setPickRole] = useState("");
+  const [pickDate, setPickDate] = useState("");
   const [attaching, setAttaching] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -52,6 +54,7 @@ export default function JobSubcontractors({
       job_id: jobId,
       subcontractor_id: pickSub,
       role_on_job: pickRole.trim() || null,
+      scheduled_date: pickDate || null,
     });
     setAttaching(false);
     if (error) {
@@ -68,12 +71,35 @@ export default function JobSubcontractors({
         phone: null,
         email: null,
         role_on_job: pickRole.trim() || null,
+        scheduled_date: pickDate || null,
       },
     ]);
     setPickSub("");
     setPickRole("");
+    setPickDate("");
     toast.success("Subcontractor attached");
     router.refresh();
+  }
+
+  // Update the scheduled on-site date for an attached sub (office only).
+  async function setScheduledDate(subId: string, value: string) {
+    setBusyId(subId);
+    const { error } = await supabase
+      .from("job_subcontractors")
+      .update({ scheduled_date: value || null })
+      .eq("job_id", jobId)
+      .eq("subcontractor_id", subId);
+    setBusyId(null);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setSubs((prev) =>
+      prev.map((s) =>
+        s.subcontractor_id === subId ? { ...s, scheduled_date: value || null } : s
+      )
+    );
+    toast.success("On-site date saved");
   }
 
   async function detach(subId: string) {
@@ -129,6 +155,15 @@ export default function JobSubcontractors({
                 onChange={(e) => setPickRole(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
+              <label className="block">
+                <span className="text-xs text-gray-500">On-site date (optional)</span>
+                <input
+                  type="date"
+                  value={pickDate}
+                  onChange={(e) => setPickDate(e.target.value)}
+                  className="mt-0.5 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </label>
               <button
                 type="submit"
                 disabled={attaching}
@@ -159,47 +194,70 @@ export default function JobSubcontractors({
       ) : (
         <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
           {subs.map((s) => (
-            <div key={s.subcontractor_id} className="p-3 flex items-start gap-2">
-              <Link
-                href={`/admin/subcontractors/${s.subcontractor_id}`}
-                className="min-w-0 flex-1"
-              >
-                <p className="font-medium text-gray-900 truncate flex items-center gap-1">
-                  <Briefcase className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                  {s.company}
-                </p>
-                {s.trade && (
-                  <p className="text-xs text-blue-600 truncate">{s.trade}</p>
-                )}
-                {s.role_on_job && (
-                  <p className="text-xs text-gray-500 truncate">{s.role_on_job}</p>
-                )}
-                <div className="flex flex-col gap-0.5 mt-1">
-                  {s.phone && (
-                    <span className="text-xs text-gray-600 inline-flex items-center gap-1">
-                      <Phone className="w-3 h-3" /> {s.phone}
-                    </span>
-                  )}
-                  {s.email && (
-                    <span className="text-xs text-gray-600 inline-flex items-center gap-1 truncate">
-                      <Mail className="w-3 h-3" /> {s.email}
-                    </span>
-                  )}
-                </div>
-              </Link>
-              {canEdit && (
-                <button
-                  onClick={() => detach(s.subcontractor_id)}
-                  disabled={busyId === s.subcontractor_id}
-                  className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 flex-shrink-0"
-                  title="Remove"
+            <div key={s.subcontractor_id} className="p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <Link
+                  href={`/admin/subcontractors/${s.subcontractor_id}`}
+                  className="min-w-0 flex-1"
                 >
-                  {busyId === s.subcontractor_id ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <X className="w-4 h-4" />
+                  <p className="font-medium text-gray-900 truncate flex items-center gap-1">
+                    <Briefcase className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    {s.company}
+                  </p>
+                  {s.trade && (
+                    <p className="text-xs text-blue-600 truncate">{s.trade}</p>
                   )}
-                </button>
+                  {s.role_on_job && (
+                    <p className="text-xs text-gray-500 truncate">{s.role_on_job}</p>
+                  )}
+                  <div className="flex flex-col gap-0.5 mt-1">
+                    {s.phone && (
+                      <span className="text-xs text-gray-600 inline-flex items-center gap-1">
+                        <Phone className="w-3 h-3" /> {s.phone}
+                      </span>
+                    )}
+                    {s.email && (
+                      <span className="text-xs text-gray-600 inline-flex items-center gap-1 truncate">
+                        <Mail className="w-3 h-3" /> {s.email}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+                {canEdit && (
+                  <button
+                    onClick={() => detach(s.subcontractor_id)}
+                    disabled={busyId === s.subcontractor_id}
+                    className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 flex-shrink-0"
+                    title="Remove"
+                  >
+                    {busyId === s.subcontractor_id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <X className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
+              {/* On-site date — editable for office, read for other management. */}
+              {canEdit ? (
+                <label className="block">
+                  <span className="text-xs text-gray-500">On-site date</span>
+                  <input
+                    type="date"
+                    value={s.scheduled_date ?? ""}
+                    onChange={(e) =>
+                      setScheduledDate(s.subcontractor_id, e.target.value)
+                    }
+                    disabled={busyId === s.subcontractor_id}
+                    className="mt-0.5 w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+                  />
+                </label>
+              ) : (
+                s.scheduled_date && (
+                  <p className="text-xs text-gray-600">
+                    On-site: {new Date(s.scheduled_date + "T00:00:00").toLocaleDateString()}
+                  </p>
+                )
               )}
             </div>
           ))}
