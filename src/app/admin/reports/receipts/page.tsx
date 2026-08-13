@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import ReceiptReportFilters from "@/components/ReceiptReportFilters";
 import { fetchReceiptsReport, receiptTotals, type ReceiptReportFilters as Filters } from "@/lib/reports";
+import { signedThumbnail } from "@/lib/storage";
 import { formatMoney } from "@/lib/money";
 import Link from "next/link";
 import ReceiptReportPaidToggle from "@/components/ReceiptReportPaidToggle";
@@ -55,7 +56,7 @@ export default async function ReceiptsReportPage({
       .select("id, full_name")
       .order("full_name"),
     supabase.from("cost_codes").select("id, code, name").order("code"),
-    fetchReceiptsReport(supabase, filters),
+    fetchReceiptsReport(supabase, filters, { limit: 100 }),
   ]);
 
   const jobs = (jobsRes.data ?? []) as { id: string; name: string }[];
@@ -66,17 +67,24 @@ export default async function ReceiptsReportPage({
     (c) => ({ id: c.id, label: `${c.code} · ${c.name}` })
   );
 
-  // Mint signed URLs (1h) for the on-screen thumbnails + per-row download. The
-  // receipts bucket is private; office storage RLS allows reads.
+  // Mint signed URLs (1h) for the per-row download (full-res, batched — one
+  // request) AND transformed 128px thumbnails for the on-screen table cells
+  // (per-path singular, since createSignedUrls doesn't support `transform`).
+  // The receipts bucket is private; office storage RLS allows reads.
   const paths = [...new Set(rows.map((r) => r.storage_path))];
   const urlByPath = new Map<string, string>();
+  const thumbByPath = new Map<string, string>();
   if (paths.length > 0) {
-    const { data: signed } = await supabase.storage
-      .from("receipts")
-      .createSignedUrls(paths, 3600);
-    for (const s of signed ?? []) {
+    const [signed, thumbs] = await Promise.all([
+      supabase.storage.from("receipts").createSignedUrls(paths, 3600),
+      Promise.all(paths.map((p) => signedThumbnail(supabase, "receipts", p, 128))),
+    ]);
+    for (const s of signed.data ?? []) {
       if (s.signedUrl && s.path) urlByPath.set(s.path, s.signedUrl);
     }
+    paths.forEach((p, i) => {
+      if (thumbs[i]) thumbByPath.set(p, thumbs[i] as string);
+    });
   }
 
   const totals = receiptTotals(rows);
@@ -191,6 +199,7 @@ export default async function ReceiptsReportPage({
                 )}
                 {rows.map((r) => {
                   const url = urlByPath.get(r.storage_path);
+                  const thumb = thumbByPath.get(r.storage_path);
                   const hasGps =
                     typeof r.lat === "number" && typeof r.lng === "number";
                   return (
@@ -242,14 +251,20 @@ export default async function ReceiptsReportPage({
                         />
                       </td>
                       <td className="px-2 py-2 whitespace-nowrap">
-                        {url ? (
-                          <div className="flex items-center gap-1">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <div className="flex items-center gap-1">
+                          {thumb ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={url}
+                              src={thumb}
                               alt="Receipt"
+                              loading="lazy"
+                              decoding="async"
                               className="w-14 h-10 object-cover rounded"
                             />
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                          {url && (
                             <a
                               href={url}
                               download
@@ -258,10 +273,8 @@ export default async function ReceiptsReportPage({
                             >
                               <Download className="w-4 h-4" />
                             </a>
-                          </div>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { signedThumbnail, signedFull } from "@/lib/storage";
 import { useRouter } from "next/navigation";
 import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin } from "lucide-react";
 
@@ -29,6 +30,13 @@ export default function PhotoLightbox({
   // of using a public URL. Keyed by photo id so survivors stay valid after a
   // delete (we just drop the deleted id from photos_).
   const [urls, setUrls] = useState<Record<string, string>>({});
+  // Full-res URL for the currently-open lightbox photo, minted on demand (one
+  // call) instead of up front for every photo. Paired with the path it was
+  // minted for so a stale value from a previous photo never renders — the
+  // lightbox falls back to the thumbnail until the matching full-res resolves.
+  const [fullRes, setFullRes] = useState<{ path: string; url: string } | null>(
+    null
+  );
   // Touch swipe tracking for mobile next/prev navigation.
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   // Locally-deleted photo ids, remembered for the component's lifetime. Both
@@ -48,10 +56,14 @@ export default function PhotoLightbox({
       const live = photos.filter((p) => !deletedIds.current.has(p.id));
       const entries = await Promise.all(
         live.map(async (p) => {
-          const { data } = await supabase.storage
-            .from("job-photos")
-            .createSignedUrl(p.storage_path, 3600);
-          return [p.id, data?.signedUrl ?? null] as const;
+          // 240px transformed thumbnail — KBs, not the multi-MB original.
+          const url = await signedThumbnail(
+            supabase,
+            "job-photos",
+            p.storage_path,
+            240
+          );
+          return [p.id, url] as const;
         })
       );
       if (cancelled) return;
@@ -68,6 +80,23 @@ export default function PhotoLightbox({
       cancelled = true;
     };
   }, [photos, supabase]);
+
+  // Mint the full-res URL only for the photo the lightbox is actually showing
+  // — one request on open/swipe, not N up front. The thumbnail (urls[id]) shows
+  // until it resolves, then the image upgrades.
+  useEffect(() => {
+    if (!open) return;
+    const path = photos_[index]?.storage_path;
+    if (!path) return;
+    let cancelled = false;
+    (async () => {
+      const url = await signedFull(supabase, "job-photos", path);
+      if (!cancelled && url) setFullRes({ path, url });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, index, photos_, supabase]);
 
   useEffect(() => {
     if (!open) return;
@@ -133,6 +162,8 @@ export default function PhotoLightbox({
             <img
               src={urls[p.id] ?? ""}
               alt={p.caption ?? ""}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover"
               onError={(e) => {
                 e.currentTarget.style.visibility = "hidden";
@@ -209,7 +240,11 @@ export default function PhotoLightbox({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={urls[current.id] ?? ""}
+              src={
+                (fullRes?.path === current.storage_path
+                  ? fullRes.url
+                  : urls[current.id]) ?? ""
+              }
               alt={current.caption ?? ""}
               className="max-w-full max-h-full object-contain"
               onError={(e) => {

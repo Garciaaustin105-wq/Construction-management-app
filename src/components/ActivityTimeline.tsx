@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { signedThumbnail } from "@/lib/storage";
 import { FileImage, Sparkles, CornerDownRight, HelpCircle } from "lucide-react";
 
 type Photo = {
@@ -45,10 +46,14 @@ export default function ActivityTimeline({
     async function mint() {
       const entries = await Promise.all(
         photos.map(async (p) => {
-          const { data } = await supabase.storage
-            .from("job-photos")
-            .createSignedUrl(p.storage_path, 3600);
-          return [p.id, data?.signedUrl ?? null] as const;
+          // 96px transformed thumbnail for the 12x12 timeline avatar.
+          const url = await signedThumbnail(
+            supabase,
+            "job-photos",
+            p.storage_path,
+            96
+          );
+          return [p.id, url] as const;
         })
       );
       if (cancelled) return;
@@ -123,6 +128,8 @@ export default function ActivityTimeline({
                     <img
                       src={urls[p.id]}
                       alt=""
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                     />
                   )}

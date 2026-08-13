@@ -10,9 +10,38 @@ export const dynamic = "force-dynamic";
 // Env-gated by SAAS_OPEN: keep it "false" (unset) until multi_tenancy_b.sql
 // is live, so no second org can sign up during the policy-rewrite window.
 //
-// Abuse surface (deferred, per plan): no captcha / no rate limiting / no email
-// verification beyond Supabase Auth's built-in email limits. We do enforce
-// one-org-per-email and a minimum password length.
+// Abuse protection: a hidden honeypot field ("company_website") + a per-IP
+// rate limit (max 5 signups/hour). There is no captcha and no email verification
+// beyond Supabase Auth's built-in limits. The rate limit is in-memory, so it
+// resets on cold start and is not shared across serverless instances — fine for
+// a solo launch; swap in Upstash Ratelimit (@upstash/ratelimit + redis) when
+// shared, persistent limits are needed.
+
+// Per-IP signup timestamps (ms) within the rolling 1h window. Module-level so
+// it survives across requests within a single instance lifetime.
+const signupHits = new Map<string, number[]>();
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const RATE_LIMIT_MAX = 5;
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const hits = (signupHits.get(ip) ?? []).filter(
+    (t) => now - t < RATE_LIMIT_WINDOW_MS
+  );
+  if (hits.length >= RATE_LIMIT_MAX) {
+    signupHits.set(ip, hits);
+    return true;
+  }
+  hits.push(now);
+  signupHits.set(ip, hits);
+  return false;
+}
+
+function clientIp(request: Request): string {
+  const xfwd = request.headers.get("x-forwarded-for");
+  if (xfwd) return xfwd.split(",")[0].trim();
+  return "unknown";
+}
 
 export async function POST(request: Request) {
   if (process.env.SAAS_OPEN !== "true") {
@@ -22,13 +51,32 @@ export async function POST(request: Request) {
     );
   }
 
+  const ip = clientIp(request);
+  if (rateLimited(ip)) {
+    return NextResponse.json(
+      { error: "Too many signups from this network. Try again later." },
+      { status: 429 }
+    );
+  }
+
   const body = await request.json();
-  const { business_name, full_name, email, password } = body as {
-    business_name?: string;
-    full_name?: string;
-    email?: string;
-    password?: string;
-  };
+  const { business_name, full_name, email, password, company_website } =
+    body as {
+      business_name?: string;
+      full_name?: string;
+      email?: string;
+      password?: string;
+      company_website?: string;
+    };
+
+  // Honeypot: a real user never fills the hidden "company_website" field. Bots
+  // do. Pretend success so the trap isn't revealed, but do nothing.
+  if (company_website && company_website.trim().length > 0) {
+    return NextResponse.json(
+      { ok: true, userId: "00000000-0000-0000-0000-000000000000" },
+      { status: 201 }
+    );
+  }
 
   const bizName = (business_name ?? "").trim();
   const name = (full_name ?? "").trim();

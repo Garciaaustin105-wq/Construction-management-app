@@ -10,6 +10,17 @@ import Link from "next/link";
 import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 
+// Small overline label that groups the dashboard tiles into named sections
+// (Create / Manage / Track / Your Work). Kept deliberately understated so it
+// reads as a section divider, not a heading that competes with content titles.
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+      {children}
+    </h2>
+  );
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient();
   const {
@@ -31,6 +42,11 @@ export default async function DashboardPage() {
   // across all orgs).
   const showOfficeSurface = role === "office" || role === "admin";
   const showPlatform = isSuperAdmin(role);
+  // Section visibility — each tile inside still keeps its own exact role guard;
+  // these only decide whether a labeled section renders at all.
+  const showCreate = showOfficeSurface || role === "project_manager";
+  const showManage = MANAGEMENT.has(role);
+  const showTrack = showOfficeSurface || !showPlatform;
 
   // Fan out the independent reads in parallel (was sequential awaits, so the
   // dashboard waited on jobs → photos → rfis → invoices one after another).
@@ -123,137 +139,166 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* Office / admin: create new project button */}
-        {showOfficeSurface && (
-          <div className="grid grid-cols-3 gap-2">
-            <Link
-              href="/admin/projects/new"
-              className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              New
-            </Link>
-            <Link
-              href="/estimates"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Calculator className="w-5 h-5" />
-              Estimates
-            </Link>
-            <Link
-              href="/invoices/new"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Receipt className="w-5 h-5" />
-              Invoice
-            </Link>
-            <Link
-              href="/time"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Clock className="w-5 h-5" />
-              Time
-            </Link>
-            <Link
-              href="/admin/cost-codes"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Tag className="w-5 h-5" />
-              Codes
-            </Link>
-            <Link
-              href="/photos"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Images className="w-5 h-5" />
-              Photos
-            </Link>
-          </div>
+        {/* CREATE — office/admin quick actions, or the PM invoice grid. PM is
+            not on the office surface, so it gets its own two-tile grid here. */}
+        {showCreate && (
+          <section className="space-y-2">
+            <SectionHeader>Create</SectionHeader>
+            {showOfficeSurface && (
+              <div className="grid grid-cols-3 gap-2">
+                <Link
+                  href="/admin/projects/new"
+                  className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  New
+                </Link>
+                <Link
+                  href="/estimates"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Calculator className="w-5 h-5" />
+                  Estimates
+                </Link>
+                <Link
+                  href="/invoices/new"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Receipt className="w-5 h-5" />
+                  Invoice
+                </Link>
+              </div>
+            )}
+            {role === "project_manager" && (
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href="/invoices/new"
+                  className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+                >
+                  <Receipt className="w-5 h-5" />
+                  Invoice
+                </Link>
+                <Link
+                  href="/invoices"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Receipt className="w-5 h-5" />
+                  All Invoices
+                </Link>
+              </div>
+            )}
+          </section>
         )}
 
-        {/* Office / admin: reports hub (per-worker + receipts reports) */}
-        {showOfficeSurface && (
-          <Link
-            href="/admin/reports"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <FileSpreadsheet className="w-5 h-5" />
-            Reports
-          </Link>
+        {/* MANAGE — admin (users + org settings) + MANAGEMENT (cost codes,
+            subs, customers). Each tile keeps its own role guard. */}
+        {showManage && (
+          <section className="space-y-2">
+            <SectionHeader>Manage</SectionHeader>
+            {role === "admin" && (
+              <div className="grid grid-cols-2 gap-2">
+                <Link
+                  href="/admin/users"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Users className="w-5 h-5" />
+                  Users
+                </Link>
+                <Link
+                  href="/admin/org"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Building className="w-5 h-5" />
+                  Org Settings
+                </Link>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              {showOfficeSurface && (
+                <Link
+                  href="/admin/cost-codes"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Tag className="w-5 h-5" />
+                  Codes
+                </Link>
+              )}
+              {MANAGEMENT.has(role) && (
+                <Link
+                  href="/admin/subcontractors"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Briefcase className="w-5 h-5" />
+                  Subs
+                </Link>
+              )}
+              {MANAGEMENT.has(role) && (
+                <Link
+                  href="/admin/customers"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Building2 className="w-5 h-5" />
+                  Customers
+                </Link>
+              )}
+            </div>
+          </section>
         )}
 
-        {/* Admin only (superset of office): manage users + org settings */}
-        {role === "admin" && (
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              href="/admin/users"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Users className="w-5 h-5" />
-              Users
-            </Link>
-            <Link
-              href="/admin/org"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Building className="w-5 h-5" />
-              Org Settings
-            </Link>
-          </div>
+        {/* TRACK — time/photos/reports (office) + calendar (every org user
+            except super_admin). Office gets the grid; everyone else just gets
+            the full-width calendar link. */}
+        {showTrack && (
+          <section className="space-y-2">
+            <SectionHeader>Track</SectionHeader>
+            {showOfficeSurface ? (
+              <div className="grid grid-cols-3 gap-2">
+                <Link
+                  href="/time"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Clock className="w-5 h-5" />
+                  Time
+                </Link>
+                <Link
+                  href="/photos"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Images className="w-5 h-5" />
+                  Photos
+                </Link>
+                <Link
+                  href="/calendar"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Calendar className="w-5 h-5" />
+                  Calendar
+                </Link>
+              </div>
+            ) : (
+              <Link
+                href="/calendar"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Calendar className="w-5 h-5" />
+                Calendar
+              </Link>
+            )}
+            {showOfficeSurface && (
+              <Link
+                href="/admin/reports"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <FileSpreadsheet className="w-5 h-5" />
+                Reports
+              </Link>
+            )}
+          </section>
         )}
 
-        {/* Project manager: invoice creation (crew/super assignment is on the
-            job page; subs + customers are in the management block below). */}
-        {role === "project_manager" && (
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              href="/invoices/new"
-              className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-            >
-              <Receipt className="w-5 h-5" />
-              Invoice
-            </Link>
-            <Link
-              href="/invoices"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Receipt className="w-5 h-5" />
-              All Invoices
-            </Link>
-          </div>
-        )}
-
-        {/* Management (office / superintendent / project_manager): subs + customers */}
-        {MANAGEMENT.has(role) && (
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              href="/admin/subcontractors"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Briefcase className="w-5 h-5" />
-              Subs
-            </Link>
-            <Link
-              href="/admin/customers"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Building2 className="w-5 h-5" />
-              Customers
-            </Link>
-          </div>
-        )}
-
-        {/* Calendar — personal subscribe feed, shown to every org-scoped user
-            (crew/customer included; the feed enforces role-based content). */}
-        {!showPlatform && (
-          <Link
-            href="/calendar"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <Calendar className="w-5 h-5" />
-            Calendar
-          </Link>
-        )}
+        {/* YOUR WORK — jobs, photos, invoices, RFIs. Each subsection keeps its
+            own role guard; this header just labels the group. */}
+        <SectionHeader>Your Work</SectionHeader>
 
         {/* Jobs as cards — tap to view detail */}
         <section>

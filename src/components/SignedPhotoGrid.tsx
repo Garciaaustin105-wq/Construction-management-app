@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { signedThumbnail } from "@/lib/storage";
 
 // job-photos is a PRIVATE bucket. Thumbnails can't use a public URL, so we mint
 // a signed URL per photo on demand (the receipts/blueprints pattern). The
@@ -21,10 +22,14 @@ export default function SignedPhotoGrid({ photos }: { photos: Photo[] }) {
     async function mint() {
       const entries = await Promise.all(
         photos.map(async (p) => {
-          const { data } = await supabase.storage
-            .from("job-photos")
-            .createSignedUrl(p.storage_path, 3600);
-          return [p.id, data?.signedUrl ?? null] as const;
+          // 240px transformed thumbnail — KBs, not the full-res original.
+          const url = await signedThumbnail(
+            supabase,
+            "job-photos",
+            p.storage_path,
+            240
+          );
+          return [p.id, url] as const;
         })
       );
       if (cancelled) return;
@@ -57,6 +62,8 @@ export default function SignedPhotoGrid({ photos }: { photos: Photo[] }) {
             <img
               src={urls[p.id]}
               alt={p.caption ?? ""}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover"
             />
           </a>

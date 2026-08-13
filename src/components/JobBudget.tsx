@@ -27,20 +27,18 @@ function hoursBetween(inIso: string, outIso: string): number {
 export default async function JobBudget({ jobId }: { jobId: string }) {
   const supabase = await createClient();
 
-  // Job labor rate (for converting hours → dollars).
-  const { data: job } = await supabase
-    .from("jobs")
-    .select("labor_rate")
-    .eq("id", jobId)
-    .single();
-  const laborRate = job?.labor_rate != null ? Number(job.labor_rate) : null;
-
+  // Fan out every independent read in parallel — the labor rate used to be a
+  // serial await before this block, adding a round trip before any of the
+  // budget queries could start.
   const [
+    { data: job },
     { data: estimate },
     { data: costCodes },
     { data: timeRows },
     { data: receiptRows },
   ] = await Promise.all([
+    // Job labor rate (for converting hours → dollars).
+    supabase.from("jobs").select("labor_rate").eq("id", jobId).single(),
     // Latest estimate (any status) for the job → the working budget.
     supabase
       .from("estimates")
@@ -59,6 +57,7 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
       .select("cost_code_id, amount")
       .eq("job_id", jobId),
   ]);
+  const laborRate = job?.labor_rate != null ? Number(job.labor_rate) : null;
 
   const codeName = new Map<string, CodeRow>(
     ((costCodes as CodeRow[] | null) ?? []).map((c) => [c.id, c])

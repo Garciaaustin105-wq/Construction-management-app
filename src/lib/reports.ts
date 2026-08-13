@@ -49,7 +49,8 @@ function endOfDayISO(to: string): string {
 
 export async function fetchReceiptsReport(
   supabase: SupabaseClient,
-  filters: ReceiptReportFilters
+  filters: ReceiptReportFilters,
+  opts?: { limit?: number }
 ): Promise<ReceiptReportRow[]> {
   let q = supabase
     .from("receipts")
@@ -66,7 +67,12 @@ export async function fetchReceiptsReport(
     if (end) q = q.lt("captured_at", end);
   }
 
+  // Cap the on-screen table (opts.limit) because it mints a transformed
+  // thumbnail per row — createSignedUrls doesn't support `transform`, so it's
+  // one request per path and bounding the page keeps N small. The Excel/PDF
+  // exports call this without a limit so they include every matching receipt.
   q = q.order("captured_at", { ascending: true });
+  if (opts?.limit) q = q.limit(opts.limit);
 
   const { data, error } = await q;
   if (error) return [];

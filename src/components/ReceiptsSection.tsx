@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { signedThumbnail } from "@/lib/storage";
 import { useToast } from "@/components/Toast";
 import {
   Camera,
@@ -105,25 +106,33 @@ export default function ReceiptsSection({
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      const id = data.user?.id ?? null;
+      // getUser, cost_codes, and refreshLocal are independent — fan them out
+      // instead of awaiting one after another. The profile read depends on the
+      // user id, so it follows getUser.
+      const [userRes, codesRes] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.from("cost_codes").select("id, code, name").order("code"),
+      ]);
+      const id = userRes.data.user?.id ?? null;
       setUserId(id);
+      setCostCodes(codesRes.data ?? []);
+      // refreshLocal is awaited inside the IIFE so the setLocals() it triggers
+      // lands after an await, not synchronously in the effect body
+      // (react-hooks/set-state-in-effect). It runs in parallel with the profile
+      // read when there's a user, or alone otherwise.
       if (id) {
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("full_name")
-          .eq("id", id)
-          .single();
-        if (prof?.full_name) setUserName(prof.full_name);
+        const [profRes] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("id", id)
+            .single(),
+          refreshLocal(),
+        ]);
+        if (profRes.data?.full_name) setUserName(profRes.data.full_name);
+      } else {
+        await refreshLocal();
       }
-      const { data: codes } = await supabase
-        .from("cost_codes")
-        .select("id, code, name")
-        .order("code");
-      setCostCodes(codes ?? []);
-      // Awaited inside the IIFE so the setLocals() it triggers lands after an
-      // await, not synchronously in the effect body (react-hooks/set-state-in-effect).
-      await refreshLocal();
     })();
   }, [supabase, refreshLocal]);
 
@@ -142,10 +151,16 @@ export default function ReceiptsSection({
       const entries: Record<string, string> = {};
       await Promise.all(
         remoteOnly.map(async (r) => {
-          const { data } = await supabase.storage
-            .from("receipts")
-            .createSignedUrl(r.storage_path, 3600);
-          if (data?.signedUrl) entries[r.id] = data.signedUrl;
+          // 128px transformed thumbnail for the 64px list tile — KBs, not the
+          // full-res original. (The lightbox / download paths mint full-res
+          // separately, on demand.)
+          const url = await signedThumbnail(
+            supabase,
+            "receipts",
+            r.storage_path,
+            128
+          );
+          if (url) entries[r.id] = url;
         })
       );
       if (!cancelled) setSignedUrls((prev) => ({ ...prev, ...entries }));
@@ -507,6 +522,8 @@ export default function ReceiptsSection({
                     <img
                       src={thumb}
                       alt="Receipt thumbnail"
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                     />
                   ) : (
