@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { sendVerificationEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -127,25 +128,35 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Create the auth user (admin role).
-  const { data: authData, error: authError } =
-    await admin.auth.admin.createUser({
+  // 2. Create the auth user (admin role) AND generate the email-verification
+  //    link in one call. admin.generateLink({type:'signup'}) creates the user
+  //    UNCONFIRMED (email_confirmed_at stays null) and returns the verify link
+  //    (properties.action_link) for us to deliver via Resend — it does not send
+  //    the email itself. The user cannot sign in until they click the link:
+  //    once "Confirm email" is enabled in Supabase Auth, signInWithPassword
+  //    rejects unconfirmed users with error 'email_not_confirmed'.
+  const origin = new URL(request.url).origin;
+  const { data: linkData, error: linkError } =
+    await admin.auth.admin.generateLink({
+      type: "signup",
       email: mail,
       password,
-      email_confirm: true,
-      user_metadata: { role: "admin", full_name: name },
-      app_metadata: { role: "admin" },
+      options: {
+        redirectTo: `${origin}/auth/callback`,
+        data: { role: "admin", full_name: name },
+      },
     });
-  if (authError || !authData.user) {
+  if (linkError || !linkData.user || !linkData.properties?.action_link) {
     // Roll back the org.
     await admin.from("organizations").delete().eq("id", org.id);
     return NextResponse.json(
-      { error: authError?.message ?? "Failed to create user" },
+      { error: linkError?.message ?? "Failed to create user" },
       { status: 500 }
     );
   }
 
-  const newUserId = authData.user.id;
+  const newUserId = linkData.user.id;
+  const verifyLink = linkData.properties.action_link;
 
   // 3. Create the admin profile, stamped with the new org.
   const { error: profileError } = await admin.from("profiles").insert({
@@ -168,8 +179,23 @@ export async function POST(request: Request) {
   // 4. Link the org's owner_id back to the new admin profile.
   await admin.from("organizations").update({ owner_id: newUserId }).eq("id", org.id);
 
+  // 5. Send the verification email. NON-FATAL: by this point the workspace is
+  //    fully created (unconfirmed). If the email send fails (Resend down, key
+  //    missing, domain not verified) we do NOT roll back — that would destroy
+  //    the user's org over a transient provider issue. Instead we surface
+  //    emailSent:false so the client can nudge the user to contact support /
+  //    request a resend. (Resend of the link is future work; an admin can
+  //    re-run a generateLink + send manually for now.)
+  let emailSent = true;
+  try {
+    const result = await sendVerificationEmail({ to: mail, name, verifyLink });
+    if (result.error) emailSent = false;
+  } catch {
+    emailSent = false;
+  }
+
   return NextResponse.json(
-    { ok: true, userId: newUserId, organizationId: org.id },
+    { ok: true, userId: newUserId, organizationId: org.id, emailSent },
     { status: 201 }
   );
 }

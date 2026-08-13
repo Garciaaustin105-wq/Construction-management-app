@@ -23,6 +23,7 @@ export default function SignupForm() {
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [successEmail, setSuccessEmail] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState(true);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +52,7 @@ export default function SignupForm() {
     }
 
     setSuccessEmail(email.trim());
+    setEmailSent(data.emailSent !== false);
     setLoading(false);
   }
 
@@ -63,10 +65,17 @@ export default function SignupForm() {
           Workspace created
         </h1>
         <p className="text-sm text-gray-600">
-          Your business workspace is ready. Sign in with your new credentials to
-          get started.
+          We sent a verification link to your email. Click it to confirm your
+          address, then sign in to continue.
         </p>
         <p className="text-xs text-gray-400 break-all">{successEmail}</p>
+        {emailSent ? null : (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            We couldn&apos;t send your verification email right now. Your
+            workspace is created — contact support to resend the verification
+            link.
+          </p>
+        )}
         <Link
           href="/login"
           className="block w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700"

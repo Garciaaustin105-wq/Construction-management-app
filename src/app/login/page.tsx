@@ -1,11 +1,33 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import Link from "next/link";
+
+function Banner() {
+  // Reads query flags set by /auth/callback and surfaces them inline. Wrapped in
+  // <Suspense> because useSearchParams forces the page into a client boundary.
+  const sp = useSearchParams();
+  const verified = sp.get("verified") === "1";
+  const failed = sp.get("error") === "reset_failed";
+  if (!verified && !failed) return null;
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 text-sm ${
+        verified
+          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+          : "bg-amber-50 border-amber-200 text-amber-800"
+      }`}
+    >
+      {verified
+        ? "Your email is verified — sign in to continue."
+        : "That reset link is invalid or has expired. Try sending a new one."}
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -57,6 +79,9 @@ export default function LoginPage() {
           />
           <p className="text-xs text-gray-500 mt-1">Sign in to continue</p>
         </div>
+        <Suspense>
+          <Banner />
+        </Suspense>
         <div>
           <label htmlFor="email" className="sr-only">
             Email
@@ -86,6 +111,14 @@ export default function LoginPage() {
             className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
             autoComplete="current-password"
           />
+        </div>
+        <div className="text-right -mt-2">
+          <Link
+            href="/forgot-password"
+            className="text-xs text-blue-600 active:text-blue-700"
+          >
+            Forgot password?
+          </Link>
         </div>
         <button
           type="submit"

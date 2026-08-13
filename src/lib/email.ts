@@ -111,3 +111,71 @@ export async function sendQuoteEmail(
     html,
   });
 }
+
+export type SendVerificationEmailInput = {
+  to: string;
+  name: string;
+  verifyLink: string; // the action_link returned by admin.generateLink({type:'signup'})
+};
+
+// Sends the "verify your email" email to a new self-serve signup. The link is
+// generated server-side via admin.auth.admin.generateLink({type:'signup',...})
+// in /api/signup and delivered here through Resend (NOT Supabase's built-in
+// sender), so it depends on the Resend sending domain being verified for
+// delivery to non-owner inboxes. Returns Resend's { data, error }; the caller
+// (signup route) treats a failed send as non-fatal (workspace is already
+// created) and surfaces an emailSent:false flag to the client.
+export async function sendVerificationEmail(
+  input: SendVerificationEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
+    );
+  }
+
+  const resend = new Resend(apiKey);
+  const name = escapeHtml(input.name || "there");
+  const href = input.verifyLink; // Supabase-generated verify URL — left intact
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">Terra Vista</p>
+          <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Verify your email</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${name},</p>
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            Thanks for creating your business workspace. Please confirm your
+            email address to finish setting up your account and sign in.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${href}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Verify email</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            If you didn't create an account, you can safely ignore this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by Terra Vista Construction Management.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  return resend.emails.send({
+    from: fromAddress(),
+    to: input.to,
+    subject: "Verify your email — Terra Vista",
+    html,
+  });
+}
