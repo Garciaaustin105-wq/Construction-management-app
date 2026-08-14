@@ -87,6 +87,13 @@ type EstimateCalRow = {
   jobs: { name: string } | null;
   customers?: { name: string } | null;
 };
+type VisitCalRow = {
+  id: string;
+  due_date: string;
+  status: string;
+  jobs: { name: string } | null;
+  recurring_schedules: { service_type: string | null } | null;
+};
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -343,6 +350,42 @@ export async function GET(request: Request) {
         description: jobName
           ? `Estimate for ${jobName} expires today.`
           : "Estimate expires today.",
+      });
+    }
+  }
+
+  // ── Lawn visits (all-day) ─────────────────────────────────────────────────
+  // management / super_admin → all org; crew → assigned; customer → own.
+  // Pending + done visits surface on their due_date (a done visit still shows on
+  // the day it was completed). Reuses the visibleJobIds set computed above.
+  {
+    let visitQ = admin
+      .from("lawn_visits")
+      .select(
+        "id, due_date, status, jobs(name), recurring_schedules(service_type)"
+      )
+      .in("status", ["pending", "done"]);
+    if (visibleJobIds === null) {
+      visitQ = orgFilter(visitQ);
+    } else {
+      visitQ = visitQ.in(
+        "job_id",
+        visibleJobIds.length ? visibleJobIds : ["00000000-0000-0000-0000-000000000000"]
+      );
+    }
+    visitQ = visitQ.order("due_date", { ascending: true }).limit(500);
+    const { data: visits } = await visitQ;
+    for (const v of (visits ?? []) as unknown as VisitCalRow[]) {
+      const jobName = v.jobs?.name;
+      const svc = v.recurring_schedules?.service_type;
+      events.push({
+        uid: feedUid("lawn", v.id, host),
+        summary: `${svc ?? "Lawn visit"}${jobName ? ` · ${jobName}` : ""}`,
+        start: allDayDate(v.due_date),
+        allDay: true,
+        description: `${svc ?? "Lawn maintenance"} visit${
+          jobName ? ` for ${jobName}` : ""
+        } — ${v.status}.`,
       });
     }
   }

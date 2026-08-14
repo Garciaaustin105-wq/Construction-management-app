@@ -11,6 +11,7 @@ import {
   Receipt,
   Clock,
   Building,
+  Sprout,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
@@ -67,6 +68,7 @@ export default function BottomNav() {
   ];
   if (role === "office" || role === "admin" || role === "super_admin") {
     items.push({ href: "/receipts", label: "Receipts", Icon: Receipt });
+    items.push({ href: "/lawn", label: "Lawn", Icon: Sprout });
     items.push({ href: "/admin/users", label: "Admin", Icon: Users });
   }
   if (role === "super_admin") {

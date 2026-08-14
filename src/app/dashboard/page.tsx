@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, Sprout } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 
 // Small overline label that groups the dashboard tiles into named sections
@@ -263,6 +263,15 @@ export default async function DashboardPage() {
                 >
                   <Tag className="w-5 h-5" />
                   Codes
+                </Link>
+              )}
+              {showOfficeSurface && (
+                <Link
+                  href="/lawn"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Sprout className="w-5 h-5 text-green-600" />
+                  Lawn
                 </Link>
               )}
               {MANAGEMENT.has(role) && (
