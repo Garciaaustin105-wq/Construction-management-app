@@ -246,7 +246,7 @@ export default function PhotoLightbox({
                   : urls[current.id]) ?? ""
               }
               alt={current.caption ?? ""}
-              className="max-w-full max-h-full object-contain"
+              className="max-w-full max-h-full object-contain min-w-0 min-h-0"
               onError={(e) => {
                 e.currentTarget.style.visibility = "hidden";
               }}

@@ -793,7 +793,7 @@ export default function ReceiptsSection({
             <img
               src={lightbox.url}
               alt="Receipt"
-              className="max-w-full max-h-full object-contain"
+              className="max-w-full max-h-full object-contain min-w-0 min-h-0"
             />
           </div>
         </div>
