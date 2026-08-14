@@ -2,6 +2,7 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { formatMoney, type LineItem } from "@/lib/money";
+import NumberInput from "@/components/NumberInput";
 
 export type { LineItem };
 
@@ -75,32 +76,18 @@ export default function LineItemEditor({
             <div className="grid grid-cols-3 gap-2">
               <label className="block">
                 <span className="text-xs text-gray-500">Qty</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                <NumberInput
                   value={item.quantity}
-                  onChange={(e) =>
-                    update(idx, {
-                      quantity: parseFloat(e.target.value) || 0,
-                    })
-                  }
+                  onChange={(n) => update(idx, { quantity: n })}
                   disabled={disabled}
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 />
               </label>
               <label className="block">
                 <span className="text-xs text-gray-500">Unit price</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                <NumberInput
                   value={item.unit_price}
-                  onChange={(e) =>
-                    update(idx, {
-                      unit_price: parseFloat(e.target.value) || 0,
-                    })
-                  }
+                  onChange={(n) => update(idx, { unit_price: n })}
                   disabled={disabled}
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 />

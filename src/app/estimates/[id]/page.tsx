@@ -10,6 +10,7 @@ import EstimateLineItemEditor, {
   type CostCodeOption,
 } from "@/components/EstimateLineItemEditor";
 import EstimateDocument from "@/components/EstimateDocument";
+import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
 import CustomerEstimateActions from "./CustomerEstimateActions";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
@@ -645,48 +646,36 @@ export default function EstimateDetailPage({
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
                   <span className="text-xs text-gray-500">Markup %</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
+                  <NumberInput
                     value={markupPct}
-                    onChange={(e) => setMarkupPct(parseFloat(e.target.value) || 0)}
+                    onChange={setMarkupPct}
                     disabled={!editable}
                     className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
                   />
                 </label>
                 <label className="block">
                   <span className="text-xs text-gray-500">Contingency %</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
+                  <NumberInput
                     value={contingencyPct}
-                    onChange={(e) => setContingencyPct(parseFloat(e.target.value) || 0)}
+                    onChange={setContingencyPct}
                     disabled={!editable}
                     className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
                   />
                 </label>
                 <label className="block">
                   <span className="text-xs text-gray-500">Sales tax %</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
+                  <NumberInput
                     value={taxPct}
-                    onChange={(e) => setTaxPct(parseFloat(e.target.value) || 0)}
+                    onChange={setTaxPct}
                     disabled={!editable}
                     className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
                   />
                 </label>
                 <label className="block">
                   <span className="text-xs text-gray-500">Deposit %</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
+                  <NumberInput
                     value={depositPct}
-                    onChange={(e) => setDepositPct(parseFloat(e.target.value) || 0)}
+                    onChange={setDepositPct}
                     disabled={!editable}
                     className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
                   />
@@ -696,12 +685,9 @@ export default function EstimateDetailPage({
                 <span className="text-xs text-gray-500">
                   Deposit amount $ (overrides the % above when set)
                 </span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                <NumberInput
                   value={depositAmount}
-                  onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0)}
+                  onChange={setDepositAmount}
                   disabled={!editable}
                   className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
                 />
