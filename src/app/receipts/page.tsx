@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
+import { OFFICE_LIKE } from "@/lib/roles";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import OfficeReceiptsList, {
   type ReceiptRow,
@@ -25,7 +26,13 @@ export default async function ReceiptsOverviewPage({
     .select("role")
     .eq("id", user.id)
     .single();
-  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+  const role = profile?.role ?? "crew";
+  // Admit office / admin / super_admin — the same set BottomNav shows the
+  // Receipts tab to. Gating on role === "office" alone bounced admin and
+  // super_admin back to /dashboard when they tapped the tab (looked like the
+  // page just refreshed / sent them home). RLS already returns rows for all
+  // three via tier_office (is_office = office/admin, plus super_admin).
+  if (!OFFICE_LIKE.has(role)) redirect("/dashboard");
 
   const sp = await searchParams;
   const offset = Math.max(0, Number(sp.offset ?? "0") || 0);
