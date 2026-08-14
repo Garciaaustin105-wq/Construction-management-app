@@ -5,6 +5,7 @@ import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
+import { OFFICE_OR_PM } from "@/lib/roles";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
@@ -26,7 +27,11 @@ export default async function QuotesPage({
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
-  if (role !== "office" && role !== "admin") redirect("/dashboard");
+  // Admit office / admin / project_manager / super_admin so every management
+  // role can open the list (was office/admin only, which bounced PM/super_admin
+  // back to /dashboard). Quote creation stays office/admin (see /quotes/new).
+  if (!OFFICE_OR_PM.has(role)) redirect("/dashboard");
+  const canCreate = role === "office" || role === "admin";
 
   const statusFilter = params.status ?? "all";
 
@@ -70,13 +75,15 @@ export default async function QuotesPage({
       <TopBar title="Quotes" subtitle={`${quotesWithTotals.length} total`} />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
-        <Link
-          href="/quotes/new"
-          className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          New Quote
-        </Link>
+        {canCreate && (
+          <Link
+            href="/quotes/new"
+            className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            New Quote
+          </Link>
+        )}
 
         <div className="flex gap-2 overflow-x-auto -mx-4 px-4">
           {filterOptions.map((opt) => (
