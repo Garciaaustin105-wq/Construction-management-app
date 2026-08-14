@@ -23,7 +23,7 @@ import {
 
 type Estimate = {
   id: string;
-  job_id: string;
+  job_id: string | null;
   title: string | null;
   status: string;
   note: string | null;
@@ -47,7 +47,7 @@ type Estimate = {
   show_itemized: boolean;
   viewed_at: string | null;
   jobs: { name: string; address: string | null } | null;
-  customers: { name: string | null; contact_email: string | null } | null;
+  customers: { name: string | null; contact_email: string | null; address: string | null } | null;
 };
 
 type OrgInfo = {
@@ -152,8 +152,8 @@ export default function EstimateDetailPage({
       // deep row-inference doesn't blow up (TS2589) on the long column list —
       // we cast the result to `Estimate` below regardless.
       const estSelect: string = isOffice
-        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, jobs(name, address), customers(name, contact_email)"
-        : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email)";
+        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, jobs(name, address), customers(name, contact_email, address)"
+        : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email, address)";
       const { data: est } = await supabase
         .from("estimates")
         .select(estSelect)
@@ -268,8 +268,13 @@ export default function EstimateDetailPage({
 
   const customerName = estimate.customers?.name ?? "—";
   const customerEmail = estimate.customers?.contact_email ?? null;
-  const jobName = estimate.jobs?.name ?? "—";
-  const projectAddress = estimate.jobs?.address ?? null;
+  const customerAddress = estimate.customers?.address ?? null;
+  // Standalone (job-less) estimates label the project with the title (or the
+  // customer name) instead of "—", and use the customer's address as the
+  // project address when there's no job address.
+  const jobName = estimate.jobs?.name ?? estimate.title ?? customerName;
+  const projectAddress = estimate.jobs?.address ?? customerAddress ?? null;
+  const isStandalone = !estimate.job_id;
 
   const pricing: EstimatePricing = {
     markupPct,
@@ -522,17 +527,24 @@ export default function EstimateDetailPage({
           <>
             <section className="bg-white rounded-lg p-4 shadow-sm space-y-1">
               <div className="flex items-center justify-between gap-2">
-                <Link
-                  href={`/jobs/${estimate.job_id}`}
-                  className="text-sm font-semibold text-blue-700 truncate"
-                >
-                  {jobName}
-                </Link>
+                {estimate.job_id ? (
+                  <Link
+                    href={`/jobs/${estimate.job_id}`}
+                    className="text-sm font-semibold text-blue-700 truncate"
+                  >
+                    {jobName}
+                  </Link>
+                ) : (
+                  <span className="text-sm font-semibold text-gray-700 truncate">
+                    {customerName}
+                  </span>
+                )}
                 <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-700 flex-shrink-0">
                   {STATUS_LABEL[estimate.status] ?? estimate.status}
                 </span>
               </div>
               <p className="text-xs text-gray-400">
+                {isStandalone && "Standalone estimate · "}
                 {new Date(estimate.created_at).toLocaleDateString()}
               </p>
             </section>
@@ -825,7 +837,7 @@ export default function EstimateDetailPage({
                   ? `Will be sent to ${customerEmail}`
                   : estimate.customer_id
                   ? "No email on file — add one in Customers before sending."
-                  : "No customer linked to this job — add one in Customers."}
+                  : "No customer linked to this estimate — add one in Customers."}
               </p>
             </div>
 

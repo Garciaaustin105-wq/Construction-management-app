@@ -39,7 +39,7 @@ export default async function InvoicesPage({
   let query = supabase
     .from("invoices")
     .select(
-      "id, status, paid_at, created_at, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
+      "id, status, paid_at, created_at, amount_paid, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
     )
     .order("created_at", { ascending: false });
 
@@ -51,14 +51,18 @@ export default async function InvoicesPage({
 
   const rows = (invoices ?? []).map((inv) => {
     const items = (inv.invoice_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+    const invTotal = computeTotal(items);
+    const amountPaid = Number((inv as { amount_paid?: number | null }).amount_paid ?? 0) || 0;
+    // Unpaid invoices show the balance due (grand total − deposit applied).
     return {
       id: inv.id,
       status: inv.status,
       paidAt: inv.paid_at,
       createdAt: inv.created_at,
-      jobName: (inv.jobs as unknown as { name: string } | null)?.name ?? "—",
+      jobName: (inv.jobs as unknown as { name: string } | null)?.name ?? "Standalone",
       customerName: (inv.customers as unknown as { name: string } | null)?.name ?? "—",
-      total: computeTotal(items),
+      total: inv.status === "sent" && amountPaid > 0 ? Math.max(0, invTotal - amountPaid) : invTotal,
+      depositApplied: inv.status === "sent" && amountPaid > 0,
     };
   });
 

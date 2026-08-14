@@ -32,7 +32,7 @@ export default async function PublicEstimatePage({
   const { data: estimate } = await admin
     .from("estimates")
     .select(
-      "id, status, customer_notes, valid_until, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name)"
+      "id, title, status, customer_notes, valid_until, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, address)"
     )
     .eq("share_token", token)
     .maybeSingle();
@@ -77,10 +77,12 @@ export default async function PublicEstimatePage({
   }
 
   const jobRow = estimate.jobs as unknown as { name: string; address: string | null } | null;
-  const jobName = jobRow?.name ?? "—";
-  const projectAddress = jobRow?.address ?? null;
-  const customerName =
-    (estimate.customers as unknown as { name: string } | null)?.name ?? "—";
+  const custRow = estimate.customers as unknown as { name: string; address: string | null } | null;
+  const customerName = custRow?.name ?? "—";
+  // Standalone (job-less) estimates: label the project with the title (or the
+  // customer name) and use the customer's address as the project address.
+  const jobName = jobRow?.name ?? (estimate.title as string | null) ?? customerName;
+  const projectAddress = jobRow?.address ?? custRow?.address ?? null;
 
   const items = (lineItems ?? []).map((i) => ({
     id: i.id,

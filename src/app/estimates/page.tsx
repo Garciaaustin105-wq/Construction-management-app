@@ -18,6 +18,7 @@ type EstimateRow = {
   deposit_pct: number;
   deposit_amount: number;
   jobs: { name: string } | null;
+  customers: { name: string | null } | null;
   estimate_line_items: { quantity: number; unit_price: number }[];
 };
 
@@ -54,7 +55,7 @@ export default async function EstimatesPage() {
   const { data: estimates } = await supabase
     .from("estimates")
     .select(
-      "id, status, title, created_at, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
+      "id, status, title, created_at, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), customers(name), estimate_line_items(quantity, unit_price)"
     )
     .order("created_at", { ascending: false });
 
@@ -77,7 +78,8 @@ export default async function EstimatesPage() {
       status: e.status,
       title: e.title,
       estimateNumber: e.estimate_number,
-      jobName: e.jobs?.name ?? "—",
+      // Standalone (job-less) estimates fall back to the customer name.
+      jobName: e.jobs?.name ?? e.customers?.name ?? "—",
       createdAt: e.created_at,
       total: hasPricing ? totals.grandTotal : totals.subtotal,
     };

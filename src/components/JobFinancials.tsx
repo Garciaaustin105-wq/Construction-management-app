@@ -25,7 +25,7 @@ export default async function JobFinancials({
     supabase
       .from("invoices")
       .select(
-        "id, status, paid_at, created_at, invoice_line_items(quantity, unit_price)"
+        "id, status, paid_at, created_at, amount_paid, invoice_line_items(quantity, unit_price)"
       )
       .eq("job_id", jobId)
       .order("created_at", { ascending: false }),
@@ -46,18 +46,26 @@ export default async function JobFinancials({
   const invoiceRows = (invoices ?? []).map((inv) => {
     const items =
       (inv.invoice_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+    const invTotal = computeTotal(items);
+    // amount_paid is seeded with the estimate deposit on approval; the balance
+    // due is the grand total minus what's been paid. Outstanding totals use the
+    // balance so a collected deposit isn't counted as still-owed.
+    const amountPaid = Number((inv as { amount_paid?: number | null }).amount_paid ?? 0) || 0;
+    const balanceDue = Math.max(0, invTotal - amountPaid);
     return {
       id: inv.id,
       status: inv.status,
       paidAt: inv.paid_at,
       createdAt: inv.created_at,
-      total: computeTotal(items),
+      total: invTotal,
+      amountPaid,
+      balanceDue,
     };
   });
 
   const unpaidTotal = invoiceRows
     .filter((i) => i.status === "sent")
-    .reduce((sum, i) => sum + i.total, 0);
+    .reduce((sum, i) => sum + i.balanceDue, 0);
 
   if (
     role !== "office" &&
@@ -146,8 +154,17 @@ export default async function JobFinancials({
               <div className="flex flex-col items-end gap-1">
                 <StatusBadge status={inv.status} />
                 <span className="text-sm font-semibold text-gray-900">
-                  {formatMoney(inv.total)}
+                  {formatMoney(
+                    inv.status === "sent" && inv.amountPaid > 0
+                      ? inv.balanceDue
+                      : inv.total
+                  )}
                 </span>
+                {inv.status === "sent" && inv.amountPaid > 0 && (
+                  <span className="text-[10px] text-gray-400">
+                    after deposit
+                  </span>
+                )}
               </div>
             </div>
           </Link>

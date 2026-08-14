@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, UserPlus } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import EstimateLineItemEditor, {
   type EstimateLine,
@@ -20,6 +20,22 @@ function NewEstimateForm() {
     { id: string; name: string; customer_id: string | null }[]
   >([]);
   const [jobId, setJobId] = useState(preselectedJob);
+  // mode: "job" = link to a job (customer derived from the job); "customer" =
+  // standalone estimate for a customer with no job profile (prospect → estimate).
+  // A ?job= preselect forces job mode (you're creating from a job's context).
+  const [mode, setMode] = useState<"job" | "customer">("job");
+  const [customers, setCustomers] = useState<
+    { id: string; name: string; contact_email: string | null }[]
+  >([]);
+  const [customerId, setCustomerId] = useState("");
+  const [orgId, setOrgId] = useState<string | null>(null);
+  // Inline "new customer" form (name + contact email) — reuses the
+  // CustomersManager insert shape. Inserts with the caller's organization_id
+  // (root table), refreshes the list, and auto-selects the new customer.
+  const [showNewCust, setShowNewCust] = useState(false);
+  const [newCustName, setNewCustName] = useState("");
+  const [newCustEmail, setNewCustEmail] = useState("");
+  const [addingCust, setAddingCust] = useState(false);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [costCodes, setCostCodes] = useState<CostCodeOption[]>([]);
@@ -51,7 +67,7 @@ function NewEstimateForm() {
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, organization_id")
         .eq("id", user.id)
         .single();
       if (profile?.role !== "office" && profile?.role !== "admin") {
@@ -59,24 +75,44 @@ function NewEstimateForm() {
         return;
       }
       setAuthorized(true);
+      if (profile?.organization_id) setOrgId(profile.organization_id);
 
-      const [{ data: jobRows }, { data: codeRows }] = await Promise.all([
-        supabase
-          .from("jobs")
-          .select("id, name, customer_id")
-          .order("created_at", { ascending: false }),
-        supabase.from("cost_codes").select("id, code, name").order("code"),
-      ]);
+      const [{ data: jobRows }, { data: codeRows }, { data: custRows }] =
+        await Promise.all([
+          supabase
+            .from("jobs")
+            .select("id, name, customer_id")
+            .order("created_at", { ascending: false }),
+          supabase.from("cost_codes").select("id, code, name").order("code"),
+          // Customers is a root table; RLS scopes to the caller's org.
+          supabase
+            .from("customers")
+            .select("id, name, contact_email")
+            .order("name"),
+        ]);
       setJobs(jobRows ?? []);
       setCostCodes((codeRows as CostCodeOption[]) ?? []);
+      setCustomers(
+        (custRows as {
+          id: string;
+          name: string;
+          contact_email: string | null;
+        }[]) ?? []
+      );
       setPriorItems(await fetchPriorLineItems());
     })();
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!jobId) {
+    // Job mode requires a job; standalone mode requires a customer. The
+    // customer for a job estimate is derived from jobs.customer_id.
+    if (mode === "job" && !jobId) {
       toast.warning("Pick a job");
+      return;
+    }
+    if (mode === "customer" && !customerId) {
+      toast.warning("Pick a customer");
       return;
     }
     const validItems = items.filter(
@@ -84,6 +120,10 @@ function NewEstimateForm() {
     );
     if (validItems.length === 0) {
       toast.warning("Add at least one line item");
+      return;
+    }
+    if (!orgId) {
+      toast.error("No organization on your profile — contact an admin.");
       return;
     }
     setLoading(true);
@@ -99,7 +139,16 @@ function NewEstimateForm() {
       return;
     }
 
-    const selectedJob = jobs.find((j) => j.id === jobId);
+    const selectedJob = mode === "job" ? jobs.find((j) => j.id === jobId) : null;
+    // customer_id: from the job (job mode) or the picked customer (standalone).
+    const estimateCustomerId =
+      mode === "job"
+        ? selectedJob?.customer_id ?? null
+        : customerId || null;
+    // job_id is null in standalone mode. organization_id is ALWAYS passed —
+    // trg_estimates_org stamps from the job when linked, else from this value
+    // (so a job-less estimate still gets an org for RLS + numbering).
+    const estimateJobId = mode === "job" ? jobId : null;
 
     // Auto-generate a per-org estimate number (EST-0001…). RLS scopes the
     // read to this office user's org, so we find the max existing number and
@@ -125,10 +174,11 @@ function NewEstimateForm() {
       const res = await supabase
         .from("estimates")
         .insert({
-          job_id: jobId,
+          job_id: estimateJobId,
           title: title.trim() || null,
           note: note.trim() || null,
-          customer_id: selectedJob?.customer_id ?? null,
+          customer_id: estimateCustomerId,
+          organization_id: orgId,
           status: "draft",
           created_by: user.id,
           estimate_number: estimateNumber,
@@ -178,12 +228,54 @@ function NewEstimateForm() {
     }
 
     toast.success("Estimate created");
-    // Carry ?job= forward so the new estimate's back button returns to the job
-    // we were creating from (matches the back-to-job behavior on the list pages).
-    const estimateHref = preselectedJob
-      ? `/estimates/${estimate.id}?job=${preselectedJob}`
-      : `/estimates/${estimate.id}`;
+    // Carry ?job= forward (job mode only) so the new estimate's back button
+    // returns to the job we were creating from. Standalone estimates have no
+    // job, so they go straight to the estimate detail (back → /estimates).
+    const estimateHref =
+      mode === "job" && preselectedJob
+        ? `/estimates/${estimate.id}?job=${preselectedJob}`
+        : `/estimates/${estimate.id}`;
     setTimeout(() => router.push(estimateHref), 600);
+  }
+
+  // Inline "new customer" — inserts a customer (root table, app-supplied org)
+  // then refreshes the list and auto-selects it. Mirrors CustomersManager.
+  async function addCustomer() {
+    if (!newCustName.trim()) {
+      toast.warning("Customer name is required");
+      return;
+    }
+    if (!orgId) {
+      toast.error("No organization on your profile — contact an admin.");
+      return;
+    }
+    setAddingCust(true);
+    const supabaseMod = await import("@/lib/supabase/client");
+    const supabase = supabaseMod.createClient();
+    const { data, error } = await supabase
+      .from("customers")
+      .insert({
+        name: newCustName.trim(),
+        contact_email: newCustEmail.trim() || null,
+        organization_id: orgId,
+      })
+      .select("id, name, contact_email")
+      .single();
+    setAddingCust(false);
+    if (error || !data) {
+      toast.error(`Failed: ${error?.message ?? "error"}`);
+      return;
+    }
+    setCustomers((prev) =>
+      [...prev, data as { id: string; name: string; contact_email: string | null }].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+    );
+    setCustomerId((data as { id: string }).id);
+    setNewCustName("");
+    setNewCustEmail("");
+    setShowNewCust(false);
+    toast.success("Customer added");
   }
 
   if (!authorized) {
@@ -216,22 +308,115 @@ function NewEstimateForm() {
 
       <main className="max-w-md mx-auto p-4">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">Job *</span>
-            <select
-              value={jobId}
-              onChange={(e) => setJobId(e.target.value)}
-              required
-              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+          {/* Mode toggle: link to a job, or quote a customer with no job yet. */}
+          <div className="bg-white rounded-lg p-1 grid grid-cols-2 gap-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setMode("job")}
+              className={`py-2.5 rounded-md text-sm font-semibold ${
+                mode === "job"
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-600"
+              }`}
             >
-              <option value="">Select job</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              Linked to a job
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("customer")}
+              className={`py-2.5 rounded-md text-sm font-semibold ${
+                mode === "customer"
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-600"
+              }`}
+            >
+              Customer only
+            </button>
+          </div>
+
+          {mode === "job" ? (
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">Job *</span>
+              <select
+                value={jobId}
+                onChange={(e) => setJobId(e.target.value)}
+                required
+                className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+              >
+                <option value="">Select job</option>
+                {jobs.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="space-y-2">
+              <label className="block">
+                <span className="text-sm font-medium text-gray-700">
+                  Customer *
+                </span>
+                <select
+                  value={customerId}
+                  onChange={(e) => setCustomerId(e.target.value)}
+                  required
+                  className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+                >
+                  <option value="">Select customer</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.contact_email ? ` · ${c.contact_email}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowNewCust((v) => !v)}
+                className="text-sm text-blue-600 flex items-center gap-1"
+              >
+                <UserPlus className="w-4 h-4" />
+                {showNewCust ? "Cancel new customer" : "New customer"}
+              </button>
+              {showNewCust && (
+                <div className="bg-white rounded-lg p-3 shadow-sm space-y-2">
+                  <input
+                    type="text"
+                    placeholder="Customer / company name *"
+                    value={newCustName}
+                    onChange={(e) => setNewCustName(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="email"
+                    placeholder="Contact email (used to send the estimate)"
+                    value={newCustEmail}
+                    onChange={(e) => setNewCustEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomer}
+                    disabled={addingCust}
+                    className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {addingCust ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    Add customer
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-gray-400">
+                Standalone estimates have no job — the customer&rsquo;s address
+                (if any) shows as the project address on the document.
+              </p>
+            </div>
+          )}
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Title (optional)</span>

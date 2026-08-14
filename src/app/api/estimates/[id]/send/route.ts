@@ -61,7 +61,7 @@ export async function POST(
   const { data: estimate } = await supabase
     .from("estimates")
     .select(
-      "id, status, customer_id, organization_id, valid_until, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name, address), customers(name, contact_email)"
+      "id, status, customer_id, organization_id, valid_until, estimate_number, title, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name, address), customers(name, contact_email)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -82,6 +82,7 @@ export async function POST(
     | null;
   const jobName =
     (estimate.jobs as unknown as { name: string } | null)?.name ??
+    (estimate.title as string | null) ??
     "your project";
   const customerEmail = customer?.contact_email?.trim() || null;
   const estimateNumber = estimate.estimate_number ?? null;

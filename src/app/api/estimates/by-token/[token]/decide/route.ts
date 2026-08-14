@@ -37,7 +37,7 @@ export async function POST(
 
   const { data: estimate } = await admin
     .from("estimates")
-    .select("id, status, job_id, customer_id, markup_pct, contingency_pct, tax_pct")
+    .select("id, status, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount")
     .eq("share_token", token)
     .maybeSingle();
 
@@ -84,6 +84,43 @@ export async function POST(
     );
   }
 
+  // Round to cents, half away from zero (matches Postgres round(numeric, 2)).
+  const round2 = (n: number) =>
+    (Math.round(Math.abs(n) * 100) / 100) * (n < 0 ? -1 : 1);
+
+  // Deposit = explicit $ when > 0, else % of the grand total — same math as
+  // approve_estimate + computeEstimateTotals. Seeded as amount_paid so the
+  // invoice balance reflects the deposit without a manual step. Computed from
+  // the same subtotal/summary figures used for the invoice lines below.
+  const markupPct0 = Number(estimate.markup_pct) || 0;
+  const contingencyPct0 = Number(estimate.contingency_pct) || 0;
+  const taxPct0 = Number(estimate.tax_pct) || 0;
+  const depositPct0 = Number(estimate.deposit_pct) || 0;
+  const depositAmt0 = Number(estimate.deposit_amount) || 0;
+
+  // We need the line items to compute the subtotal anyway (below), so fetch
+  // them now and reuse for the deposit.
+  const { data: items } = await admin
+    .from("estimate_line_items")
+    .select("description, quantity, unit_price, position")
+    .eq("estimate_id", estimate.id)
+    .order("position");
+  const subtotal0 = (items ?? []).reduce(
+    (s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
+    0
+  );
+  const mkAmt0 = markupPct0 > 0 ? round2((subtotal0 * markupPct0) / 100) : 0;
+  const ctAmt0 = contingencyPct0 > 0 ? round2((subtotal0 * contingencyPct0) / 100) : 0;
+  const preTax0 = round2(subtotal0 + mkAmt0 + ctAmt0);
+  const txAmt0 = taxPct0 > 0 ? round2((preTax0 * taxPct0) / 100) : 0;
+  const grandTotal0 = round2(preTax0 + txAmt0);
+  const deposit0 =
+    depositAmt0 > 0
+      ? round2(depositAmt0)
+      : depositPct0 > 0
+      ? round2((grandTotal0 * depositPct0) / 100)
+      : 0;
+
   const { data: invoice, error: invError } = await admin
     .from("invoices")
     .insert({
@@ -91,6 +128,7 @@ export async function POST(
       job_id: estimate.job_id,
       customer_id: estimate.customer_id,
       status: "sent",
+      amount_paid: deposit0,
     })
     .select("id")
     .single();
@@ -101,11 +139,6 @@ export async function POST(
     );
   }
 
-  const { data: items } = await admin
-    .from("estimate_line_items")
-    .select("description, quantity, unit_price, position")
-    .eq("estimate_id", estimate.id)
-    .order("position");
   if (items && items.length > 0) {
     const { error: linesError } = await admin.from("invoice_line_items").insert(
       items.map((i) => ({
@@ -131,8 +164,6 @@ export async function POST(
   const markupPct = Number(estimate.markup_pct) || 0;
   const contingencyPct = Number(estimate.contingency_pct) || 0;
   const taxPct = Number(estimate.tax_pct) || 0;
-  const round2 = (n: number) =>
-    (Math.round(Math.abs(n) * 100) / 100) * (n < 0 ? -1 : 1);
   const subtotal = (items ?? []).reduce(
     (s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
     0

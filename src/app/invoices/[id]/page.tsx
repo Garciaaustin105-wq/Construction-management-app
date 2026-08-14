@@ -33,7 +33,7 @@ export default async function InvoiceDetailPage({
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, status, paid_at, created_at, due_date, job_id, customer_id, estimate_id, jobs(name), customers(name)"
+      "id, status, paid_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, jobs(name), customers(name)"
     )
     .eq("id", id)
     .single();
@@ -50,6 +50,10 @@ export default async function InvoiceDetailPage({
   const total = computeTotal(
     items.map((i) => ({ quantity: Number(i.quantity), unit_price: Number(i.unit_price) }))
   );
+  // amount_paid is seeded with the estimate deposit on approval. The balance
+  // due is the grand total minus what's been paid (0 when fully paid).
+  const amountPaid = Number(invoice.amount_paid ?? 0) || 0;
+  const balanceDue = Math.max(0, total - amountPaid);
   const jobName = (invoice.jobs as unknown as { name: string } | null)?.name ?? "—";
   const customerName = (invoice.customers as unknown as { name: string } | null)?.name ?? "—";
 
@@ -73,12 +77,19 @@ export default async function InvoiceDetailPage({
           <p className="text-sm text-gray-700">
             <span className="text-gray-500">Customer:</span> {customerName}
           </p>
-          <p className="text-sm text-gray-700">
-            <span className="text-gray-500">Job:</span>{" "}
-            <Link href={`/jobs/${invoice.job_id}`} className="text-blue-600 underline">
-              {jobName}
-            </Link>
-          </p>
+          {invoice.job_id ? (
+            <p className="text-sm text-gray-700">
+              <span className="text-gray-500">Job:</span>{" "}
+              <Link href={`/jobs/${invoice.job_id}`} className="text-blue-600 underline">
+                {jobName}
+              </Link>
+            </p>
+          ) : (
+            <p className="text-sm text-gray-700">
+              <span className="text-gray-500">Job:</span>{" "}
+              <span className="text-gray-500">Standalone estimate (no job)</span>
+            </p>
+          )}
           <InvoiceDueDate
             invoiceId={invoice.id}
             initial={invoice.due_date}
@@ -94,6 +105,22 @@ export default async function InvoiceDetailPage({
               <> · Paid {new Date(invoice.paid_at).toLocaleDateString()}</>
             )}
           </p>
+          {amountPaid > 0 && invoice.status !== "paid" && (
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1 text-sm">
+              <div className="flex justify-between text-gray-500">
+                <span>Invoice total</span>
+                <span className="tabular-nums">{formatMoney(total)}</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>Paid so far (deposit applied)</span>
+                <span className="tabular-nums">−{formatMoney(amountPaid)}</span>
+              </div>
+              <div className="flex justify-between font-semibold text-gray-900">
+                <span>Balance due</span>
+                <span className="tabular-nums">{formatMoney(balanceDue)}</span>
+              </div>
+            </div>
+          )}
         </section>
 
         {invoice.estimate_id && (

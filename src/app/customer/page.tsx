@@ -35,7 +35,7 @@ export default async function CustomerPortal() {
       ? supabase
           .from("estimates")
           .select(
-            "id, status, created_at, sent_at, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
+            "id, status, created_at, sent_at, title, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
           )
           .eq("customer_id", customerId)
           .eq("status", "sent")
@@ -45,7 +45,7 @@ export default async function CustomerPortal() {
       ? supabase
           .from("invoices")
           .select(
-            "id, status, paid_at, created_at, jobs(name), invoice_line_items(quantity, unit_price)"
+            "id, status, paid_at, created_at, amount_paid, jobs(name), invoice_line_items(quantity, unit_price)"
           )
           .eq("customer_id", customerId)
           .order("created_at", { ascending: false })
@@ -93,7 +93,11 @@ export default async function CustomerPortal() {
     return {
       id: q.id,
       estimateNumber: (q as { estimate_number?: string | null }).estimate_number ?? null,
-      jobName: (q.jobs as unknown as { name: string } | null)?.name ?? "—",
+      // Standalone (job-less) estimates fall back to the title.
+      jobName:
+        (q.jobs as unknown as { name: string } | null)?.name ??
+        (q as { title?: string | null }).title ??
+        "—",
       sentAt: q.sent_at,
       total: hasPricing ? totals.grandTotal : computeTotal(items),
     };
@@ -102,13 +106,22 @@ export default async function CustomerPortal() {
   const invoiceRows = (invoices ?? []).map((inv) => {
     const items =
       (inv.invoice_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+    const invTotal = computeTotal(items);
+    const amountPaid = Number((inv as { amount_paid?: number | null }).amount_paid ?? 0) || 0;
+    // Unpaid invoices show the balance due (grand total − deposit) so the
+    // customer sees what they still owe after the deposit was applied.
+    const owed =
+      inv.status === "sent" && amountPaid > 0
+        ? Math.max(0, invTotal - amountPaid)
+        : invTotal;
     return {
       id: inv.id,
       status: inv.status,
       paidAt: inv.paid_at,
       createdAt: inv.created_at,
       jobName: (inv.jobs as unknown as { name: string } | null)?.name ?? "—",
-      total: computeTotal(items),
+      total: owed,
+      depositApplied: inv.status === "sent" && amountPaid > 0,
     };
   });
 
@@ -189,6 +202,11 @@ export default async function CustomerPortal() {
                         <span className="text-sm font-bold text-gray-900">
                           {formatMoney(inv.total)}
                         </span>
+                        {inv.depositApplied && (
+                          <span className="text-[10px] text-gray-400">
+                            after deposit
+                          </span>
+                        )}
                       </div>
                     </div>
                   </Link>
