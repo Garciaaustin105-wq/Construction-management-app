@@ -103,16 +103,20 @@ export default function EstimateLineItemEditor({
   }
 
   // When the typed/selected description exactly matches a previously used
-  // item, auto-fill its unit + unit price so picking from the pulldown brings
-  // the pricing forward. Only fills when the line still has default values so
-  // we never clobber a manual edit.
-  function applyHistory(idx: number, description: string) {
+  // item, return a patch that brings forward its unit + unit price + section.
+  // Only fills when the line still has default values so we never clobber a
+  // manual edit. Returns a patch (NOT a state update) so the caller can merge
+  // it with the description change in a SINGLE update() call — two separate
+  // updates would both build off the stale `items` and the second one would
+  // clobber the just-set description back to empty (the "dropdown name doesn't
+  // paste" bug).
+  function historyPatch(idx: number, description: string): Partial<EstimateLine> {
     const match = priorItems.find(
       (p) => p.description.toLowerCase() === description.trim().toLowerCase()
     );
-    if (!match) return;
+    if (!match) return {};
     const item = items[idx];
-    if (!item) return;
+    if (!item) return {};
     const patch: Partial<EstimateLine> = {};
     if (item.unit_price === 0 && match.unit_price > 0) {
       patch.unit_price = match.unit_price;
@@ -123,7 +127,7 @@ export default function EstimateLineItemEditor({
     if (!item.section && match.section) {
       patch.section = match.section;
     }
-    if (Object.keys(patch).length > 0) update(idx, patch);
+    return patch;
   }
 
   function add() {
@@ -373,8 +377,11 @@ export default function EstimateLineItemEditor({
               value={item.description}
               list={DESCRIPTION_DATALIST}
               onChange={(e) => {
-                update(idx, { description: e.target.value });
-                applyHistory(idx, e.target.value);
+                const v = e.target.value;
+                // Single update: set the description AND bring forward any
+                // matching history (unit/price/section) in one call so neither
+                // clobbers the other.
+                update(idx, { description: v, ...historyPatch(idx, v) });
               }}
               disabled={disabled}
               placeholder="Description (e.g. Cat6 cable run, labor)"
