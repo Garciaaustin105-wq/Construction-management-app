@@ -40,12 +40,15 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function EstimateDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ job?: string }>;
 }) {
   const router = useRouter();
   const toast = useToast();
   const [id, setId] = useState<string>("");
+  const [backJobId, setBackJobId] = useState<string>("");
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [items, setItems] = useState<EstimateLine[]>([]);
   const [costCodes, setCostCodes] = useState<CostCodeOption[]>([]);
@@ -59,6 +62,8 @@ export default function EstimateDetailPage({
     (async () => {
       const { id: paramId } = await params;
       setId(paramId);
+      const { job: jobParam } = await searchParams;
+      setBackJobId(jobParam ?? "");
       const supabaseMod = await import("@/lib/supabase/client");
       const supabase = supabaseMod.createClient();
       const {
@@ -113,7 +118,7 @@ export default function EstimateDetailPage({
       );
       setLoading(false);
     })();
-  }, [params, router, toast]);
+  }, [params, searchParams, router, toast]);
 
   async function saveLines() {
     if (!id) return;
@@ -167,7 +172,13 @@ export default function EstimateDetailPage({
       return;
     }
     toast.success("Converted to quote");
-    setTimeout(() => router.push(`/quotes/${data}`), 600);
+    // Preserve job context: if we arrived from a job folder, send the new
+    // quote detail back to the job too (otherwise the quote's back goes to
+    // /quotes, which is correct for a list-first flow).
+    const quoteHref = backJobId
+      ? `/quotes/${data}?job=${backJobId}`
+      : `/quotes/${data}`;
+    setTimeout(() => router.push(quoteHref), 600);
   }
 
   if (!authorized || loading) {
@@ -185,11 +196,15 @@ export default function EstimateDetailPage({
     <div className="min-h-screen bg-gray-50 pb-24">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <button
-          onClick={() => router.push("/estimates")}
-          className="text-sm text-blue-600 px-2 py-1 -ml-2 flex items-center gap-1"
+          onClick={() =>
+            router.push(backJobId ? `/jobs/${backJobId}` : "/estimates")
+          }
+          className="text-sm text-blue-600 px-2 py-1 -ml-2 flex items-center gap-1 max-w-[45%]"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Estimates
+          <ArrowLeft className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">
+            {backJobId ? "Back to job" : "Estimates"}
+          </span>
         </button>
         <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 truncate max-w-[55%]">
           {estimate.title || "Estimate"}
@@ -263,10 +278,10 @@ export default function EstimateDetailPage({
 
         {readOnly && (
           <Link
-            href="/estimates"
+            href={backJobId ? `/jobs/${backJobId}` : "/estimates"}
             className="block text-center text-sm text-gray-500 py-2"
           >
-            ← Back to estimates
+            ← {backJobId ? "Back to job" : "Back to estimates"}
           </Link>
         )}
       </main>

@@ -8,12 +8,15 @@ import LineItemEditor, { LineItem } from "@/components/LineItemEditor";
 
 export default function EditQuotePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ job?: string }>;
 }) {
   const router = useRouter();
   const toast = useToast();
   const [quoteId, setQuoteId] = useState<string>("");
+  const [backJobId, setBackJobId] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [items, setItems] = useState<LineItem[]>([]);
@@ -24,6 +27,8 @@ export default function EditQuotePage({
     (async () => {
       const { id } = await params;
       setQuoteId(id);
+      const { job: jobParam } = await searchParams;
+      setBackJobId(jobParam ?? "");
       const supabaseMod = await import("@/lib/supabase/client");
       const supabase = supabaseMod.createClient();
       const { data: { user } } = await supabase.auth.getUser();
@@ -72,7 +77,7 @@ export default function EditQuotePage({
         setItems([{ description: "", quantity: 1, unit_price: 0 }]);
       }
     })();
-  }, [params, router, toast]);
+  }, [params, searchParams, router, toast]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -123,7 +128,12 @@ export default function EditQuotePage({
     }
 
     toast.success("Quote updated");
-    setTimeout(() => router.push(`/quotes/${quoteId}`), 600);
+    // Return to the quote detail, preserving job context so its back button
+    // still points at the job we came from.
+    const quoteHref = backJobId
+      ? `/quotes/${quoteId}?job=${backJobId}`
+      : `/quotes/${quoteId}`;
+    setTimeout(() => router.push(quoteHref), 600);
   }
 
   if (!authorized) {
@@ -138,11 +148,15 @@ export default function EditQuotePage({
     <div className="min-h-screen bg-gray-50 pb-24">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <button
-          onClick={() => router.push(`/quotes/${quoteId}`)}
-          className="text-sm text-blue-600 px-2 py-1 -ml-2 flex items-center gap-1"
+          onClick={() =>
+            router.push(backJobId ? `/jobs/${backJobId}` : `/quotes/${quoteId}`)
+          }
+          className="text-sm text-blue-600 px-2 py-1 -ml-2 flex items-center gap-1 max-w-[45%]"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Quote
+          <ArrowLeft className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">
+            {backJobId ? "Back to job" : "Quote"}
+          </span>
         </button>
         <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2">
           Edit Quote

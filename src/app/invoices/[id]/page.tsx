@@ -10,10 +10,13 @@ import Link from "next/link";
 
 export default async function InvoiceDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ job?: string }>;
 }) {
   const { id } = await params;
+  const { job: jobParam } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -52,7 +55,12 @@ export default async function InvoiceDetailPage({
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title="Invoice" subtitle={customerName} />
+      <TopBar
+        title="Invoice"
+        subtitle={customerName}
+        backHref={jobParam ? `/jobs/${jobParam}` : undefined}
+        backLabel={jobParam ? "Back to job" : undefined}
+      />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
         <section className="bg-white rounded-lg p-4 shadow-sm">
@@ -90,7 +98,7 @@ export default async function InvoiceDetailPage({
 
         {invoice.quote_id && (
           <Link
-            href={`/quotes/${invoice.quote_id}`}
+            href={`/quotes/${invoice.quote_id}${jobParam ? `?job=${jobParam}` : ""}`}
             className="block bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900 active:bg-blue-100"
           >
             ← View source quote

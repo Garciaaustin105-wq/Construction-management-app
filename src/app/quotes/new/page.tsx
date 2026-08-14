@@ -116,6 +116,11 @@ function NewQuoteForm() {
     // Draft saved. If the office chose "Save & Send", email the customer now.
     // On email failure the draft still exists — toast the error and stay on the
     // form so they can fix the customer email and resend from the detail page.
+    // The detail-page href carries ?job= so its back button returns to the job
+    // we created from (matches the list-first flow's back-to-job behavior).
+    const quoteHref = preselectedJob
+      ? `/quotes/${quote.id}?job=${preselectedJob}`
+      : `/quotes/${quote.id}`;
     if (sendRef.current) {
       setSending(true);
       try {
@@ -128,7 +133,7 @@ function NewQuoteForm() {
             data?.error ??
               "Saved as draft, but send failed — open the quote to resend."
           );
-          router.push(`/quotes/${quote.id}`);
+          router.push(quoteHref);
           return;
         }
         toast.success(`Sent to ${data.sentTo ?? "customer"}`);
@@ -142,7 +147,7 @@ function NewQuoteForm() {
     } else {
       toast.success("Quote saved as draft");
     }
-    setTimeout(() => router.push(`/quotes/${quote.id}`), 600);
+    setTimeout(() => router.push(quoteHref), 600);
   }
 
   if (!authorized) {

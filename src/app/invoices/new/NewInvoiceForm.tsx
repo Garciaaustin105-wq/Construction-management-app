@@ -130,7 +130,12 @@ export default function NewInvoiceForm({
     }
 
     toast.success("Invoice created");
-    setTimeout(() => router.push(`/invoices/${invoice.id}`), 600);
+    // Carry ?job= forward so the new invoice's back button returns to the job
+    // we created from (matches the back-to-job behavior on the other new pages).
+    const invoiceHref = preselectedJobId
+      ? `/invoices/${invoice.id}?job=${preselectedJobId}`
+      : `/invoices/${invoice.id}`;
+    setTimeout(() => router.push(invoiceHref), 600);
   }
 
   if (!authorized) {

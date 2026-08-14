@@ -125,7 +125,12 @@ function NewEstimateForm() {
     }
 
     toast.success("Estimate created");
-    setTimeout(() => router.push(`/estimates/${estimate.id}`), 600);
+    // Carry ?job= forward so the new estimate's back button returns to the job
+    // we were creating from (matches the back-to-job behavior on the list pages).
+    const estimateHref = preselectedJob
+      ? `/estimates/${estimate.id}?job=${preselectedJob}`
+      : `/estimates/${estimate.id}`;
+    setTimeout(() => router.push(estimateHref), 600);
   }
 
   if (!authorized) {

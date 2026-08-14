@@ -123,7 +123,7 @@ export default async function JobFinancials({
         {estimateRows.map((e) => (
           <Link
             key={e.id}
-            href={`/estimates/${e.id}`}
+            href={`/estimates/${e.id}?job=${jobId}`}
             className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
           >
             <div className="flex justify-between items-start gap-2">
@@ -152,7 +152,7 @@ export default async function JobFinancials({
         {quoteRows.map((q) => (
           <Link
             key={q.id}
-            href={`/quotes/${q.id}`}
+            href={`/quotes/${q.id}?job=${jobId}`}
             className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
           >
             <div className="flex justify-between items-start gap-2">
@@ -178,7 +178,7 @@ export default async function JobFinancials({
         {invoiceRows.map((inv) => (
           <Link
             key={inv.id}
-            href={`/invoices/${inv.id}`}
+            href={`/invoices/${inv.id}?job=${jobId}`}
             className={`block rounded-lg p-3 shadow-sm active:opacity-80 ${
               inv.status === "sent"
                 ? "bg-amber-50 border border-amber-200"

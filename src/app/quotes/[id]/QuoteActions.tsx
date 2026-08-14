@@ -10,15 +10,20 @@ export default function QuoteActions({
   quoteId,
   status,
   invoiceId,
+  jobId,
 }: {
   quoteId: string;
   status: string;
   invoiceId: string | null;
+  jobId?: string | null;
 }) {
   const router = useRouter();
   const supabase = createClient();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // Append ?job= to onward navigations when we arrived from a job folder, so
+  // the edit / invoice pages' back buttons return to that job too.
+  const jobQuery = jobId ? `?job=${jobId}` : "";
 
   // Email the customer a frictionless /q/{token} link + mark the quote sent.
   // The route emails first and only marks sent on success, so "sent" always
@@ -90,7 +95,7 @@ export default function QuoteActions({
           </button>
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={() => router.push(`/quotes/${quoteId}/edit`)}
+              onClick={() => router.push(`/quotes/${quoteId}/edit${jobQuery}`)}
               className="bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-2"
             >
               <Pencil className="w-4 h-4" />
@@ -139,7 +144,7 @@ export default function QuoteActions({
 
       {status === "approved" && invoiceId && (
         <button
-          onClick={() => router.push(`/invoices/${invoiceId}`)}
+          onClick={() => router.push(`/invoices/${invoiceId}${jobQuery}`)}
           className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-base active:bg-green-700 flex items-center justify-center gap-2"
         >
           <Receipt className="w-5 h-5" />

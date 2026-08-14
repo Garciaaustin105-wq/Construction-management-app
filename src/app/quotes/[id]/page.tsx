@@ -10,10 +10,13 @@ import Link from "next/link";
 
 export default async function QuoteDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ job?: string }>;
 }) {
   const { id } = await params;
+  const { job: jobParam } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -59,7 +62,12 @@ export default async function QuoteDetailPage({
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title="Quote" subtitle={jobName} />
+      <TopBar
+        title="Quote"
+        subtitle={jobName}
+        backHref={jobParam ? `/jobs/${jobParam}` : undefined}
+        backLabel={jobParam ? "Back to job" : undefined}
+      />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
         <section className="bg-white rounded-lg p-4 shadow-sm">
@@ -142,7 +150,7 @@ export default async function QuoteDetailPage({
 
         {invoice && (
           <Link
-            href={`/invoices/${invoice.id}`}
+            href={`/invoices/${invoice.id}${jobParam ? `?job=${jobParam}` : ""}`}
             className="block bg-green-50 border border-green-200 rounded-lg p-3 active:bg-green-100"
           >
             <p className="text-xs font-semibold text-green-700 uppercase">
@@ -160,6 +168,7 @@ export default async function QuoteDetailPage({
             quoteId={quote.id}
             status={quote.status}
             invoiceId={invoice?.id ?? null}
+            jobId={jobParam ?? null}
           />
         )}
 
