@@ -114,7 +114,7 @@ export default function PhotoLightbox({
   const current = photos_[index];
 
   async function handleDelete() {
-    if (!confirm(`Delete this photo? This can't be undone.`)) return;
+    if (!customConfirm(`Delete this photo? This can't be undone.`)) return;
     const victim = current;
     // Remove the storage object, then the DB row. We gate on the DB delete —
     // if it fails, leave the photo in place and surface the error instead of
@@ -124,7 +124,7 @@ export default function PhotoLightbox({
     await supabase.storage.from("job-photos").remove([victim.storage_path]);
     const { error } = await supabase.from("photos").delete().eq("id", victim.id);
     if (error) {
-      alert("Could not delete the photo. Try again.");
+      customAlert("Could not delete the photo. Try again.");
       return;
     }
     // Remember the deletion so the prop-sync + URL effects never bring it back,
