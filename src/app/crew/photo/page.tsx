@@ -8,6 +8,7 @@ import { Camera, Loader2, MapPin, AlertCircle, X, Images, Upload } from "lucide-
 import { useToast } from "@/components/Toast";
 import FieldCamera from "@/components/FieldCamera";
 import { validateUpload } from "@/lib/uploadValidate";
+import { normalizeImage } from "@/lib/normalizeImage";
 import { resolveLocation, type GpsResult, type GpsStatus } from "@/lib/geo";
 
 type QStatus = "pending" | "uploading" | "done" | "error";
@@ -127,12 +128,16 @@ function PhotoUploadForm() {
       setQueue((prev) =>
         prev.map((q) => (q.id === item.id ? { ...q, status: "uploading" } : q))
       );
-      const ext = item.file.name.split(".").pop() || "jpg";
+      // Normalize before upload: apply EXIF orientation and re-encode as JPEG so
+      // the stored bytes are upright and renderable everywhere (incl. desktop
+      // Chrome, which can't display HEIC). Falls back to the original file if
+      // this browser can't decode it (rare), so a batch never stalls.
+      const blob = await normalizeImage(item.file).catch(() => item.file);
       // timestamp + queue id guarantees uniqueness within a batch
-      const path = `${jobId}/${Date.now()}-${item.id}.${ext}`;
+      const path = `${jobId}/${Date.now()}-${item.id}.jpg`;
       const { error: uploadError } = await supabase.storage
         .from("job-photos")
-        .upload(path, item.file);
+        .upload(path, blob, { contentType: "image/jpeg" });
       if (uploadError) {
         fail++;
         setQueue((prev) =>
