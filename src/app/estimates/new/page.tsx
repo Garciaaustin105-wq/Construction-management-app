@@ -23,7 +23,12 @@ function NewEstimateForm() {
   // mode: "job" = link to a job (customer derived from the job); "customer" =
   // standalone estimate for a customer with no job profile (prospect → estimate).
   // A ?job= preselect forces job mode (you're creating from a job's context).
-  const [mode, setMode] = useState<"job" | "customer">("job");
+  // When opened directly (no ?job=) default to "customer" so the customer picker
+  // is front-and-center for the prospect→estimate flow — otherwise the page
+  // lands on a job picker with no way to select a brand-new customer.
+  const [mode, setMode] = useState<"job" | "customer">(
+    preselectedJob ? "job" : "customer"
+  );
   const [customers, setCustomers] = useState<
     { id: string; name: string; contact_email: string | null }[]
   >([]);
@@ -77,31 +82,56 @@ function NewEstimateForm() {
       setAuthorized(true);
       if (profile?.organization_id) setOrgId(profile.organization_id);
 
-      const [{ data: jobRows }, { data: codeRows }, { data: custRows }] =
-        await Promise.all([
-          supabase
-            .from("jobs")
-            .select("id, name, customer_id")
-            .order("created_at", { ascending: false }),
-          supabase.from("cost_codes").select("id, code, name").order("code"),
-          // Customers is a root table; RLS scopes to the caller's org.
-          supabase
-            .from("customers")
-            .select("id, name, contact_email")
-            .order("name"),
-        ]);
+      const [{ data: jobRows }, { data: codeRows }] = await Promise.all([
+        supabase
+          .from("jobs")
+          .select("id, name, customer_id")
+          .order("created_at", { ascending: false }),
+        supabase.from("cost_codes").select("id, code, name").order("code"),
+      ]);
       setJobs(jobRows ?? []);
       setCostCodes((codeRows as CostCodeOption[]) ?? []);
-      setCustomers(
-        (custRows as {
-          id: string;
-          name: string;
-          contact_email: string | null;
-        }[]) ?? []
-      );
       setPriorItems(await fetchPriorLineItems());
     })();
   }, [router]);
+
+  // Load the org's customers whenever standalone mode is active, and again when
+  // the window regains focus — so a customer just created in the directory (or
+  // another tab) appears in the picker without a manual reload. Customers are
+  // only needed in customer mode (job mode derives the customer from the job),
+  // so this effect is gated on mode === "customer".
+  useEffect(() => {
+    if (mode !== "customer") return;
+    let cancelled = false;
+    async function loadCustomers() {
+      const supabaseMod = await import("@/lib/supabase/client");
+      const supabase = supabaseMod.createClient();
+      const { data: custRows } = await supabase
+        .from("customers")
+        .select("id, name, contact_email")
+        .order("name");
+      if (!cancelled) {
+        setCustomers(
+          (custRows as {
+            id: string;
+            name: string;
+            contact_email: string | null;
+          }[]) ?? []
+        );
+      }
+    }
+    loadCustomers();
+    function onFocus() {
+      loadCustomers();
+    }
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [mode]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
