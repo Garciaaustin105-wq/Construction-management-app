@@ -180,18 +180,53 @@ export async function POST(request: Request) {
   await admin.from("organizations").update({ owner_id: newUserId }).eq("id", org.id);
 
   // 5. Send the verification email. NON-FATAL: by this point the workspace is
-  //    fully created (unconfirmed). If the email send fails (Resend down, key
-  //    missing, domain not verified) we do NOT roll back — that would destroy
-  //    the user's org over a transient provider issue. Instead we surface
-  //    emailSent:false so the client can nudge the user to contact support /
-  //    request a resend. (Resend of the link is future work; an admin can
-  //    re-run a generateLink + send manually for now.)
+  //    fully created (unconfirmed). If the email send fails we do NOT roll back —
+  //    that would destroy the user's org over a transient provider issue.
+  //
+  //    Delivery strategy: prefer the branded Resend email (needs RESEND_API_KEY
+  //    AND a verified RESEND_FROM sending domain). If Resend is NOT configured,
+  //    or the send fails, fall back to Supabase's built-in verification email
+  //    (supabase.auth.resend). This is critical: Resend's onboarding address
+  //    (onboarding@resend.com, the default when RESEND_FROM is unset) ONLY
+  //    delivers to the Resend account owner — so without a verified sending
+  //    domain a new business owner would NEVER receive their verification
+  //    link, be left unconfirmed, and locked out of sign-in. Supabase's sender
+  //    is rate-limited but delivers to any inbox with zero config, so signup
+  //    verification can never silently fail again.
   let emailSent = true;
-  try {
-    const result = await sendVerificationEmail({ to: mail, name, verifyLink });
-    if (result.error) emailSent = false;
-  } catch {
-    emailSent = false;
+  const resendReady = !!(
+    process.env.RESEND_API_KEY && process.env.RESEND_FROM
+  );
+  let useSupabaseFallback = !resendReady;
+  if (resendReady) {
+    try {
+      const result = await sendVerificationEmail({ to: mail, name, verifyLink });
+      if (result.error) {
+        // Resend rejected (e.g. unverified domain) — fall back.
+        useSupabaseFallback = true;
+      }
+    } catch {
+      // Resend threw (key issue, network) — fall back.
+      useSupabaseFallback = true;
+    }
+  }
+  if (useSupabaseFallback) {
+    try {
+      const { createClient } = await import("@supabase/supabase-js");
+      const anon = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+      );
+      const { error: rErr } = await anon.auth.resend({
+        type: "signup",
+        email: mail,
+        options: { emailRedirectTo: `${origin}/auth/callback` },
+      });
+      if (rErr) emailSent = false;
+    } catch {
+      emailSent = false;
+    }
   }
 
   return NextResponse.json(

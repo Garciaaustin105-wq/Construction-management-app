@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Plus, Eye, Pencil } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Eye, Pencil, UserPlus } from "lucide-react";
 import Link from "next/link";
 import { useToast } from "@/components/Toast";
 import EstimateLineItemEditor, {
@@ -119,6 +119,20 @@ export default function EstimateDetailPage({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
+  // Editable customer picker (office) — lets the office attach or change the
+  // customer on an existing estimate, including adding a brand-new customer
+  // inline. Without this a job-linked estimate whose job has no customer, or a
+  // standalone estimate created without one, had no way to get a recipient —
+  // the edit form only showed the customer as read-only text.
+  const [customers, setCustomers] = useState<
+    { id: string; name: string; contact_email: string | null }[]
+  >([]);
+  const [customerId, setCustomerId] = useState("");
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [showNewCust, setShowNewCust] = useState(false);
+  const [newCustName, setNewCustName] = useState("");
+  const [newCustEmail, setNewCustEmail] = useState("");
+  const [addingCust, setAddingCust] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -137,11 +151,12 @@ export default function EstimateDetailPage({
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, organization_id")
         .eq("id", user.id)
         .single();
       const r = profile?.role ?? "crew";
       setRole(r);
+      setOrgId(profile?.organization_id ?? null);
       setAuthorized(true);
 
       const isOffice = r === "office" || r === "admin";
@@ -226,17 +241,30 @@ export default function EstimateDetailPage({
       }
 
       if (isOffice) {
-        const [{ data: codeRows }, { data: inv }] = await Promise.all([
-          supabase.from("cost_codes").select("id, code, name").order("code"),
-          supabase
-            .from("invoices")
-            .select("id")
-            .eq("estimate_id", paramId)
-            .maybeSingle(),
-        ]);
+        const [{ data: codeRows }, { data: inv }, { data: custRows }] =
+          await Promise.all([
+            supabase.from("cost_codes").select("id, code, name").order("code"),
+            supabase
+              .from("invoices")
+              .select("id")
+              .eq("estimate_id", paramId)
+              .maybeSingle(),
+            supabase
+              .from("customers")
+              .select("id, name, contact_email")
+              .order("name"),
+          ]);
         setCostCodes((codeRows as CostCodeOption[]) ?? []);
         setPriorItems(await fetchPriorLineItems());
         if (inv?.id) setInvoiceId(inv.id);
+        setCustomers(
+          (custRows as {
+            id: string;
+            name: string;
+            contact_email: string | null;
+          }[]) ?? []
+        );
+        setCustomerId(e.customer_id ?? "");
       }
 
       setLoading(false);
@@ -268,8 +296,12 @@ export default function EstimateDetailPage({
     : "Estimates";
 
   const customerName = estimate.customers?.name ?? "—";
-  const customerEmail = estimate.customers?.contact_email ?? null;
   const customerAddress = estimate.customers?.address ?? null;
+  // The customer the office has selected in the picker (live, pre-save). Used
+  // for the "will be sent to" hint so it reflects a just-picked/just-added
+  // customer before the estimate is saved + reloaded.
+  const selectedCustomer =
+    customers.find((c) => c.id === customerId) ?? null;
   // Standalone (job-less) estimates label the project with the title (or the
   // customer name) instead of "—", and use the customer's address as the
   // project address when there's no job address.
@@ -406,6 +438,51 @@ export default function EstimateDetailPage({
     );
   }
 
+  // Inline "new customer" on the estimate — inserts a customer (root table,
+  // app-supplied org) then refreshes the list and auto-selects it. Mirrors the
+  // creator + CustomersManager so the office can attach a brand-new customer
+  // without leaving the estimate.
+  async function addCustomer() {
+    if (!newCustName.trim()) {
+      toast.warning("Customer name is required");
+      return;
+    }
+    if (!orgId) {
+      toast.error("No organization on your profile — contact an admin.");
+      return;
+    }
+    setAddingCust(true);
+    const supabaseMod = await import("@/lib/supabase/client");
+    const supabase = supabaseMod.createClient();
+    const { data, error } = await supabase
+      .from("customers")
+      .insert({
+        name: newCustName.trim(),
+        contact_email: newCustEmail.trim() || null,
+        organization_id: orgId,
+      })
+      .select("id, name, contact_email")
+      .single();
+    setAddingCust(false);
+    if (error || !data) {
+      toast.error(`Failed: ${error?.message ?? "error"}`);
+      return;
+    }
+    const row = data as {
+      id: string;
+      name: string;
+      contact_email: string | null;
+    };
+    setCustomers((prev) =>
+      [...prev, row].sort((a, b) => a.name.localeCompare(b.name))
+    );
+    setCustomerId(row.id);
+    setNewCustName("");
+    setNewCustEmail("");
+    setShowNewCust(false);
+    toast.success("Customer added");
+  }
+
   // ── Office: Edit / Preview & Send tabs ────────────────────────────────────
   async function saveEstimate() {
     if (!id) return;
@@ -425,6 +502,7 @@ export default function EstimateDetailPage({
       .update({
         title: title.trim() || null,
         note: note.trim() || null,
+        customer_id: customerId || null,
         customer_notes: customerNotes.trim() || null,
         valid_until: validUntil || null,
         estimate_number: estimateNumber.trim() || null,
@@ -815,16 +893,67 @@ export default function EstimateDetailPage({
               />
             </label>
 
-            <div className="bg-white rounded-lg p-3 shadow-sm text-sm">
-              <p className="text-gray-500">Customer</p>
-              <p className="text-gray-900 font-medium">{customerName}</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {customerEmail
-                  ? `Will be sent to ${customerEmail}`
-                  : estimate.customer_id
-                  ? "No email on file — add one in Customers before sending."
-                  : "No customer linked to this estimate — add one in Customers."}
+            <div className="bg-white rounded-lg p-3 shadow-sm text-sm space-y-2">
+              <span className="text-gray-500 block">Customer</span>
+              <select
+                value={customerId}
+                onChange={(e) => setCustomerId(e.target.value)}
+                className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+              >
+                <option value="">Select customer</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.contact_email ? ` · ${c.contact_email}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500">
+                {!customerId
+                  ? "No customer linked — pick one or add a new customer so the estimate knows who to send to."
+                  : selectedCustomer?.contact_email
+                  ? `Will be sent to ${selectedCustomer.contact_email}`
+                  : "No email on file — add one in Customers before sending."}
               </p>
+              <button
+                type="button"
+                onClick={() => setShowNewCust((v) => !v)}
+                className="text-sm text-blue-600 flex items-center gap-1"
+              >
+                <UserPlus className="w-4 h-4" />
+                {showNewCust ? "Cancel new customer" : "New customer"}
+              </button>
+              {showNewCust && (
+                <div className="bg-gray-50 rounded-lg p-2 space-y-2">
+                  <input
+                    type="text"
+                    placeholder="Customer / company name *"
+                    value={newCustName}
+                    onChange={(e) => setNewCustName(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="email"
+                    placeholder="Contact email (used to send the estimate)"
+                    value={newCustEmail}
+                    onChange={(e) => setNewCustEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomer}
+                    disabled={addingCust}
+                    className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {addingCust ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    Add customer
+                  </button>
+                </div>
+              )}
             </div>
 
             {editable && (
