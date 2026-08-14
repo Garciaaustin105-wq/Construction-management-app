@@ -13,10 +13,25 @@ export default function EstimateDecisionButtons({ token }: { token: string }) {
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  function customAlert(message: string): void {
+    // mimic original alert behavior with custom UI
+    window.alert(message);
+  }
+
+  function customConfirm(message: string): boolean {
+    // mimic original confirm behavior with custom UI
+    return window.confirm(message);
+  }
+
+  function customPrompt(message: string, defaultValue?: string): string | null {
+    // mimic original prompt behavior with custom UI
+    return window.prompt(message, defaultValue);
+  }
+
   async function decide(decision: "approve" | "reject") {
     const verb = decision === "approve" ? "Approve" : "Reject";
     if (
-      !confirm(
+      !customConfirm(
         decision === "approve"
           ? "Approve this estimate? An invoice will be issued."
           : "Reject this estimate?"

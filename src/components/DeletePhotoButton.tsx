@@ -19,7 +19,7 @@ export default function DeletePhotoButton({
   const toast = useToast();
 
   async function handleDelete() {
-    if (!confirm("Delete this photo? This can't be undone.")) return;
+    if (!customConfirm("Delete this photo? This can't be undone.")) return;
     setDeleting(true);
     await supabase.storage.from("job-photos").remove([storagePath]);
     const { error } = await supabase.from("photos").delete().eq("id", photoId);

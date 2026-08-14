@@ -78,7 +78,7 @@ export default function CalendarFeedCard({
   }
 
   async function regenerate() {
-    if (!confirm("Regenerate the link? Your existing subscribed calendar will stop updating until you paste the new URL.")) {
+    if (!customConfirm("Regenerate the link? Your existing subscribed calendar will stop updating until you paste the new URL.")) {
       return;
     }
     setBusy(true);
@@ -98,7 +98,7 @@ export default function CalendarFeedCard({
   }
 
   async function revoke() {
-    if (!confirm("Revoke the feed? Your subscribed calendar will stop updating.")) {
+    if (!customConfirm("Revoke the feed? Your subscribed calendar will stop updating.")) {
       return;
     }
     setBusy(true);

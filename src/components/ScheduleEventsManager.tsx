@@ -82,7 +82,7 @@ export default function ScheduleEventsManager({
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete this schedule event?")) return;
+    if (!customConfirm("Delete this schedule event?")) return;
     setBusyId(id);
     const { error } = await supabase.from("schedule_events").delete().eq("id", id);
     setBusyId(null);

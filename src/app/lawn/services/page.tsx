@@ -112,7 +112,7 @@ export default function LawnServicesPage() {
   }
 
   async function removeService(svc: Service) {
-    if (!confirm(`Delete "${svc.name}"? This removes it from the service dropdown.`)) return;
+    if (!customConfirm(`Delete "${svc.name}"? This removes it from the service dropdown.`)) return;
     setBusy(true);
     const supabase = createClient();
     const { error } = await supabase.from("lawn_services").delete().eq("id", svc.id);

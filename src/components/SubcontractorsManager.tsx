@@ -78,7 +78,7 @@ export default function SubcontractorsManager({
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete this subcontractor? Removes it from all jobs and deletes its files.")) return;
+    if (!customConfirm("Delete this subcontractor? Removes it from all jobs and deletes its files.")) return;
     setBusyId(id);
     // Clean up storage files first (cascade removes the metadata rows).
     const { data: atts } = await supabase
