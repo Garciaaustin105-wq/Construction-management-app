@@ -37,7 +37,7 @@ export async function POST(
 
   const { data: estimate } = await admin
     .from("estimates")
-    .select("id, status, job_id, customer_id")
+    .select("id, status, job_id, customer_id, markup_pct, contingency_pct, tax_pct")
     .eq("share_token", token)
     .maybeSingle();
 
@@ -119,6 +119,75 @@ export async function POST(
     if (linesError) {
       return NextResponse.json(
         { error: `Invoice created but line items failed: ${linesError.message}` },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Pricing-summary invoice lines so the invoice total equals the estimate
+  // grand total (subtotal + markup + contingency + tax). Mirrors the
+  // approve_estimate RPC math exactly. Deposit is estimate-only (never an
+  // invoice line). Only added when that pct > 0.
+  const markupPct = Number(estimate.markup_pct) || 0;
+  const contingencyPct = Number(estimate.contingency_pct) || 0;
+  const taxPct = Number(estimate.tax_pct) || 0;
+  const round2 = (n: number) =>
+    (Math.round(Math.abs(n) * 100) / 100) * (n < 0 ? -1 : 1);
+  const subtotal = (items ?? []).reduce(
+    (s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
+    0
+  );
+  let pos = (items ?? []).reduce((m, i) => Math.max(m, Number(i.position) || 0), 0);
+  const summaryRows: {
+    invoice_id: string;
+    description: string;
+    quantity: number;
+    unit_price: number;
+    position: number;
+  }[] = [];
+  let markupAmt = 0;
+  let contAmt = 0;
+  if (markupPct > 0) {
+    markupAmt = round2((subtotal * markupPct) / 100);
+    pos += 1;
+    summaryRows.push({
+      invoice_id: invoice.id,
+      description: `Overhead & Profit (${markupPct}%)`,
+      quantity: 1,
+      unit_price: markupAmt,
+      position: pos,
+    });
+  }
+  if (contingencyPct > 0) {
+    contAmt = round2((subtotal * contingencyPct) / 100);
+    pos += 1;
+    summaryRows.push({
+      invoice_id: invoice.id,
+      description: `Contingency (${contingencyPct}%)`,
+      quantity: 1,
+      unit_price: contAmt,
+      position: pos,
+    });
+  }
+  if (taxPct > 0) {
+    const preTax = round2(subtotal + markupAmt + contAmt);
+    const taxAmt = round2((preTax * taxPct) / 100);
+    pos += 1;
+    summaryRows.push({
+      invoice_id: invoice.id,
+      description: `Sales Tax (${taxPct}%)`,
+      quantity: 1,
+      unit_price: taxAmt,
+      position: pos,
+    });
+  }
+  if (summaryRows.length > 0) {
+    const { error: summaryError } = await admin
+      .from("invoice_line_items")
+      .insert(summaryRows);
+    if (summaryError) {
+      return NextResponse.json(
+        { error: `Invoice created but summary lines failed: ${summaryError.message}` },
         { status: 500 }
       );
     }

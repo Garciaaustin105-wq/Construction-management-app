@@ -4,24 +4,30 @@ export type PriorItem = {
   description: string;
   unit: string | null;
   unit_price: number;
+  section: string | null;
 };
 
 // Previously-used line items across all estimates, deduped by description. Fed
 // into a <datalist> on the estimate editor so the office can pull a past item
-// (description + unit + unit price) instead of retyping. Quotes were merged
-// into estimates (their line items migrated into estimate_line_items), so this
-// single table covers everything. Office RLS sees all estimates; crew never
-// reaches this page.
+// (description + unit + unit price + section) instead of retyping. Quotes were
+// merged into estimates (their line items migrated into estimate_line_items),
+// so this single table covers everything. Office RLS sees all estimates; crew
+// never reaches this page.
 export async function fetchPriorLineItems(): Promise<PriorItem[]> {
   const supabase = createClient();
   const { data } = await supabase
     .from("estimate_line_items")
-    .select("description, unit, unit_price")
+    .select("description, unit, unit_price, section")
     .not("description", "is", null);
 
   const map = new Map<string, PriorItem>();
   const rows =
-    (data ?? []) as { description: string | null; unit: string | null; unit_price: number }[];
+    (data ?? []) as {
+      description: string | null;
+      unit: string | null;
+      unit_price: number;
+      section: string | null;
+    }[];
   for (const r of rows) {
     if (!r.description) continue;
     const desc = r.description.trim();
@@ -34,6 +40,7 @@ export async function fetchPriorLineItems(): Promise<PriorItem[]> {
       description: desc,
       unit: r.unit,
       unit_price: Number(r.unit_price) || 0,
+      section: r.section ?? null,
     };
     if (!existing || (existing.unit_price === 0 && candidate.unit_price > 0)) {
       map.set(key, candidate);

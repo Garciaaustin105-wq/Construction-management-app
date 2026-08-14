@@ -29,6 +29,7 @@ export type SendEstimateEmailInput = {
   customerName: string;
   orgName: string;
   jobName: string;
+  estimateNumber?: string | null; // e.g. "EST-0007"
   total: string; // pre-formatted money, e.g. "$1,234.50"
   validUntil: string | null; // pre-formatted date or null
   estimateUrl: string; // public /q/{token} link
@@ -54,6 +55,11 @@ export async function sendEstimateEmail(
   const job = escapeHtml(input.jobName);
   const customer = escapeHtml(input.customerName || "there");
   const total = escapeHtml(input.total);
+  const numberLine = input.estimateNumber
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Estimate #${escapeHtml(
+        input.estimateNumber
+      )}</p>`
+    : "";
   const validLine = input.validUntil
     ? `<p style="margin:0;color:#6b7280;font-size:14px;">This estimate is valid until <strong style="color:#374151;">${escapeHtml(
         input.validUntil
@@ -85,6 +91,7 @@ export async function sendEstimateEmail(
           </p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
             <tr><td style="padding:16px 20px;">
+              ${numberLine}
               <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Project</p>
               <p style="margin:0 0 12px;color:#111827;font-size:15px;font-weight:600;">${job}</p>
               <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Estimate total</p>
@@ -114,7 +121,9 @@ export async function sendEstimateEmail(
   return resend.emails.send({
     from: fromAddress(),
     to: input.to,
-    subject: `Estimate from ${input.orgName} — ${input.jobName}`,
+    subject: input.estimateNumber
+      ? `Estimate #${input.estimateNumber} from ${input.orgName} — ${input.jobName}`
+      : `Estimate from ${input.orgName} — ${input.jobName}`,
     html,
   });
 }

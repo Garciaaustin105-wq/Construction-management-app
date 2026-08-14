@@ -25,7 +25,15 @@ function NewEstimateForm() {
   const [costCodes, setCostCodes] = useState<CostCodeOption[]>([]);
   const [priorItems, setPriorItems] = useState<PriorItem[]>([]);
   const [items, setItems] = useState<EstimateLine[]>([
-    { cost_code_id: null, description: "", quantity: 1, unit: "EA", unit_price: 0 },
+    {
+      cost_code_id: null,
+      description: "",
+      quantity: 1,
+      unit: "EA",
+      unit_price: 0,
+      section: "",
+      internal_cost: null,
+    },
   ]);
   const [loading, setLoading] = useState(false);
   const [authorized, setAuthorized] = useState(false);
@@ -92,32 +100,70 @@ function NewEstimateForm() {
     }
 
     const selectedJob = jobs.find((j) => j.id === jobId);
-    const { data: estimate, error } = await supabase
-      .from("estimates")
-      .insert({
-        job_id: jobId,
-        title: title.trim() || null,
-        note: note.trim() || null,
-        customer_id: selectedJob?.customer_id ?? null,
-        status: "draft",
-        created_by: user.id,
-      })
-      .select()
-      .single();
 
-    if (error || !estimate) {
-      toast.error(`Failed to create estimate: ${error?.message ?? "unknown error"}`);
+    // Auto-generate a per-org estimate number (EST-0001…). RLS scopes the
+    // read to this office user's org, so we find the max existing number and
+    // add one. The partial unique index estimates_estimate_number_unique_org
+    // can race on concurrent creates — on a 23505 we bump and retry (≤3).
+    async function nextEstimateNumber(): Promise<string> {
+      const { data: rows } = await supabase
+        .from("estimates")
+        .select("estimate_number")
+        .not("estimate_number", "is", null);
+      let max = 0;
+      for (const r of rows ?? []) {
+        const m = /^EST-(\d+)$/.exec(r.estimate_number ?? "");
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+      return `EST-${String(max + 1).padStart(4, "0")}`;
+    }
+
+    let estimate: { id: string } | null = null;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3 && !estimate; attempt++) {
+      const estimateNumber = await nextEstimateNumber();
+      const res = await supabase
+        .from("estimates")
+        .insert({
+          job_id: jobId,
+          title: title.trim() || null,
+          note: note.trim() || null,
+          customer_id: selectedJob?.customer_id ?? null,
+          status: "draft",
+          created_by: user.id,
+          estimate_number: estimateNumber,
+        })
+        .select()
+        .single();
+      if (!res.error && res.data) {
+        estimate = res.data as { id: string };
+        break;
+      }
+      lastError = res.error;
+      // 23505 = unique_violation on the estimate_number index → retry with a
+      // fresh max. Anything else is a real error — stop.
+      if (res.error?.code !== "23505") break;
+    }
+
+    if (!estimate) {
+      const msg =
+        lastError && typeof lastError === "object" && "message" in lastError
+          ? String((lastError as { message: string }).message)
+          : "unknown error";
+      toast.error(`Failed to create estimate: ${msg}`);
       setLoading(false);
       return;
     }
 
     const lineInserts = validItems.map((item, idx) => ({
-      estimate_id: estimate.id,
+      estimate_id: estimate!.id,
       cost_code_id: item.cost_code_id ?? null,
       description: item.description.trim() || null,
       quantity: item.quantity,
       unit: item.unit || null,
       unit_price: item.unit_price,
+      section: item.section || null,
+      internal_cost: item.internal_cost ?? null,
       position: idx,
     }));
 

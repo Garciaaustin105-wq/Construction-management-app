@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import { formatMoney } from "@/lib/money";
+import { computeEstimateTotals, formatMoney } from "@/lib/money";
 import { OFFICE_OR_PM } from "@/lib/roles";
 import Link from "next/link";
 import { FileText, Plus } from "lucide-react";
@@ -11,6 +11,12 @@ type EstimateRow = {
   status: string;
   title: string | null;
   created_at: string;
+  estimate_number: string | null;
+  markup_pct: number;
+  contingency_pct: number;
+  tax_pct: number;
+  deposit_pct: number;
+  deposit_amount: number;
   jobs: { name: string } | null;
   estimate_line_items: { quantity: number; unit_price: number }[];
 };
@@ -48,23 +54,32 @@ export default async function EstimatesPage() {
   const { data: estimates } = await supabase
     .from("estimates")
     .select(
-      "id, status, title, created_at, jobs(name), estimate_line_items(quantity, unit_price)"
+      "id, status, title, created_at, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
     )
     .order("created_at", { ascending: false });
 
   const rows = (estimates as EstimateRow[] | null ?? []).map((e) => {
     const items = (e.estimate_line_items as { quantity: number; unit_price: number }[]) ?? [];
-    const total = items.reduce(
-      (sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
-      0
-    );
+    const totals = computeEstimateTotals(items, {
+      markupPct: Number(e.markup_pct) || 0,
+      contingencyPct: Number(e.contingency_pct) || 0,
+      taxPct: Number(e.tax_pct) || 0,
+      depositPct: Number(e.deposit_pct) || 0,
+      depositAmount: Number(e.deposit_amount) || 0,
+    });
+    const hasPricing =
+      totals.markupAmount > 0 ||
+      totals.contingencyAmount > 0 ||
+      totals.taxAmount > 0 ||
+      totals.depositAmount > 0;
     return {
       id: e.id,
       status: e.status,
       title: e.title,
+      estimateNumber: e.estimate_number,
       jobName: e.jobs?.name ?? "—",
       createdAt: e.created_at,
-      total,
+      total: hasPricing ? totals.grandTotal : totals.subtotal,
     };
   });
 
@@ -106,6 +121,7 @@ export default async function EstimatesPage() {
                       {r.title || r.jobName}
                     </p>
                     <p className="text-xs text-gray-500 truncate">
+                      {r.estimateNumber ? `${r.estimateNumber} · ` : ""}
                       {r.title ? `${r.jobName} · ` : ""}
                       {new Date(r.createdAt).toLocaleDateString()}
                     </p>

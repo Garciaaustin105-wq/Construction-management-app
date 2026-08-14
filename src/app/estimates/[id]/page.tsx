@@ -13,7 +13,13 @@ import EstimateDocument from "@/components/EstimateDocument";
 import EstimateOfficeActions from "./EstimateOfficeActions";
 import CustomerEstimateActions from "./CustomerEstimateActions";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
-import { computeTotal, formatMoney } from "@/lib/money";
+import {
+  computeTotal,
+  computeInternalCost,
+  computeEstimateTotals,
+  formatMoney,
+  type EstimatePricing,
+} from "@/lib/money";
 
 type Estimate = {
   id: string;
@@ -29,7 +35,18 @@ type Estimate = {
   approved_at: string | null;
   rejected_at: string | null;
   organization_id: string | null;
-  jobs: { name: string } | null;
+  estimate_number: string | null;
+  markup_pct: number;
+  contingency_pct: number;
+  tax_pct: number;
+  deposit_pct: number;
+  deposit_amount: number;
+  exclusions: string | null;
+  terms: string | null;
+  payment_schedule: string | null;
+  show_itemized: boolean;
+  viewed_at: string | null;
+  jobs: { name: string; address: string | null } | null;
   customers: { name: string | null; contact_email: string | null } | null;
 };
 
@@ -47,6 +64,8 @@ type LineRow = {
   quantity: number;
   unit: string | null;
   unit_price: number;
+  internal_cost: number | null;
+  section: string | null;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -84,6 +103,17 @@ export default function EstimateDetailPage({
   const [note, setNote] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
   const [validUntil, setValidUntil] = useState("");
+  const [estimateNumber, setEstimateNumber] = useState("");
+  const [markupPct, setMarkupPct] = useState(0);
+  const [contingencyPct, setContingencyPct] = useState(0);
+  const [taxPct, setTaxPct] = useState(0);
+  const [depositPct, setDepositPct] = useState(0);
+  const [depositAmount, setDepositAmount] = useState(0);
+  const [exclusions, setExclusions] = useState("");
+  const [terms, setTerms] = useState("");
+  const [paymentSchedule, setPaymentSchedule] = useState("");
+  const [showItemized, setShowItemized] = useState(true);
+  const [viewedAt, setViewedAt] = useState<string | null>(null);
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -115,11 +145,18 @@ export default function EstimateDetailPage({
 
       const isOffice = r === "office" || r === "admin";
 
+      // Office reads every column (including the office-only viewed_at + note);
+      // customer/crew read a customer-safe subset (no viewed_at, no note, no
+      // internal_cost/cost_code_id). Both join jobs(name, address) for the doc.
+      // Typed as a plain string (not a literal union) so the supabase client's
+      // deep row-inference doesn't blow up (TS2589) on the long column list —
+      // we cast the result to `Estimate` below regardless.
+      const estSelect: string = isOffice
+        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, jobs(name, address), customers(name, contact_email)"
+        : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email)";
       const { data: est } = await supabase
         .from("estimates")
-        .select(
-          "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, jobs(name), customers(name, contact_email)"
-        )
+        .select(estSelect)
         .eq("id", paramId)
         .single();
 
@@ -134,12 +171,24 @@ export default function EstimateDetailPage({
       setNote(e.note ?? "");
       setCustomerNotes(e.customer_notes ?? "");
       setValidUntil(e.valid_until ?? "");
+      setEstimateNumber(e.estimate_number ?? "");
+      setMarkupPct(Number(e.markup_pct) || 0);
+      setContingencyPct(Number(e.contingency_pct) || 0);
+      setTaxPct(Number(e.tax_pct) || 0);
+      setDepositPct(Number(e.deposit_pct) || 0);
+      setDepositAmount(Number(e.deposit_amount) || 0);
+      setExclusions(e.exclusions ?? "");
+      setTerms(e.terms ?? "");
+      setPaymentSchedule(e.payment_schedule ?? "");
+      setShowItemized(e.show_itemized ?? true);
+      setViewedAt(e.viewed_at ?? null);
 
-      // Line items — office reads cost-coded rows; customer reads only
-      // customer-safe columns (no cost_code_id, no unit).
+      // Line items — office reads cost-coded rows + internal_cost + section;
+      // customer reads only customer-safe columns (no cost_code_id, no unit,
+      // no internal_cost). Section is customer-visible.
       const lineSelect = isOffice
-        ? "id, cost_code_id, description, quantity, unit, unit_price"
-        : "id, description, quantity, unit_price";
+        ? "id, cost_code_id, description, quantity, unit, unit_price, internal_cost, section"
+        : "id, description, quantity, unit_price, section";
       const { data: lineRows } = await supabase
         .from("estimate_line_items")
         .select(lineSelect)
@@ -152,6 +201,9 @@ export default function EstimateDetailPage({
           quantity: Number(row.quantity) || 0,
           unit: row.unit ?? "EA",
           unit_price: Number(row.unit_price) || 0,
+          section: row.section ?? "",
+          internal_cost:
+            row.internal_cost != null ? Number(row.internal_cost) : null,
         }))
       );
 
@@ -217,10 +269,29 @@ export default function EstimateDetailPage({
   const customerName = estimate.customers?.name ?? "—";
   const customerEmail = estimate.customers?.contact_email ?? null;
   const jobName = estimate.jobs?.name ?? "—";
+  const projectAddress = estimate.jobs?.address ?? null;
 
-  const total = computeTotal(
+  const pricing: EstimatePricing = {
+    markupPct,
+    contingencyPct,
+    taxPct,
+    depositPct,
+    depositAmount,
+  };
+  const totals = computeEstimateTotals(
+    items.map((i) => ({ quantity: i.quantity, unit_price: i.unit_price })),
+    pricing
+  );
+  const hasPricing =
+    totals.markupAmount > 0 ||
+    totals.contingencyAmount > 0 ||
+    totals.taxAmount > 0 ||
+    totals.depositAmount > 0;
+  const grandTotal = hasPricing ? totals.grandTotal : totals.subtotal;
+  const sellTotal = computeTotal(
     items.map((i) => ({ quantity: i.quantity, unit_price: i.unit_price }))
   );
+  const internalCostTotal = computeInternalCost(items);
 
   // ── Customer view: just the document (+ approve/reject while awaiting) ────
   if (isCustomer) {
@@ -254,13 +325,20 @@ export default function EstimateDetailPage({
             rejectedAt={estimate.rejected_at}
             validUntil={estimate.valid_until}
             customerNotes={estimate.customer_notes}
+            estimateNumber={estimate.estimate_number}
+            projectAddress={projectAddress}
+            pricing={pricing}
+            showItemized={estimate.show_itemized}
+            exclusions={estimate.exclusions}
+            terms={estimate.terms}
+            paymentSchedule={estimate.payment_schedule}
             items={items.map((i, idx) => ({
               id: String(idx),
               description: i.description,
               quantity: i.quantity,
               unitPrice: i.unit_price,
+              section: i.section,
             }))}
-            total={total}
           />
 
           {estimate.status === "sent" && (
@@ -302,13 +380,20 @@ export default function EstimateDetailPage({
             rejectedAt={estimate.rejected_at}
             validUntil={estimate.valid_until}
             customerNotes={estimate.customer_notes}
+            estimateNumber={estimate.estimate_number}
+            projectAddress={projectAddress}
+            pricing={pricing}
+            showItemized={estimate.show_itemized}
+            exclusions={estimate.exclusions}
+            terms={estimate.terms}
+            paymentSchedule={estimate.payment_schedule}
             items={items.map((i, idx) => ({
               id: String(idx),
               description: i.description,
               quantity: i.quantity,
               unitPrice: i.unit_price,
+              section: i.section,
             }))}
-            total={total}
           />
         </main>
       </div>
@@ -336,11 +421,29 @@ export default function EstimateDetailPage({
         note: note.trim() || null,
         customer_notes: customerNotes.trim() || null,
         valid_until: validUntil || null,
+        estimate_number: estimateNumber.trim() || null,
+        markup_pct: Number(markupPct) || 0,
+        contingency_pct: Number(contingencyPct) || 0,
+        tax_pct: Number(taxPct) || 0,
+        deposit_pct: Number(depositPct) || 0,
+        deposit_amount: Number(depositAmount) || 0,
+        exclusions: exclusions.trim() || null,
+        terms: terms.trim() || null,
+        payment_schedule: paymentSchedule.trim() || null,
+        show_itemized: showItemized,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id);
     if (estError) {
-      toast.error(`Save failed: ${estError.message}`);
+      // 23505 = the edited estimate_number collides with another estimate in
+      // this org (partial unique index). Surface a clear message.
+      if (estError.code === "23505") {
+        toast.error(
+          "That estimate number is already used by another estimate in your organization."
+        );
+      } else {
+        toast.error(`Save failed: ${estError.message}`);
+      }
       setSaving(false);
       return;
     }
@@ -354,6 +457,8 @@ export default function EstimateDetailPage({
       quantity: item.quantity,
       unit: item.unit || null,
       unit_price: item.unit_price,
+      section: item.section || null,
+      internal_cost: item.internal_cost ?? null,
       position: idx,
     }));
     const { error: linesError } = await supabase
@@ -446,6 +551,24 @@ export default function EstimateDetailPage({
               />
             </label>
 
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Estimate number
+              </span>
+              <input
+                type="text"
+                value={estimateNumber}
+                onChange={(e) => setEstimateNumber(e.target.value)}
+                disabled={!editable}
+                placeholder="EST-0001"
+                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base disabled:bg-gray-50"
+              />
+              <span className="text-xs text-gray-400 mt-1 block">
+                Auto-generated (EST-0001…). Edit to override — must be unique
+                within your organization.
+              </span>
+            </label>
+
             <div>
               <span className="text-sm font-medium text-gray-700">
                 Line items
@@ -502,6 +625,198 @@ export default function EstimateDetailPage({
               />
             </label>
 
+            {/* Pricing summary — markup/contingency/tax/deposit */}
+            <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+              <p className="text-sm font-semibold text-gray-700">
+                Pricing summary
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="text-xs text-gray-500">Markup %</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={markupPct}
+                    onChange={(e) => setMarkupPct(parseFloat(e.target.value) || 0)}
+                    disabled={!editable}
+                    className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-gray-500">Contingency %</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={contingencyPct}
+                    onChange={(e) => setContingencyPct(parseFloat(e.target.value) || 0)}
+                    disabled={!editable}
+                    className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-gray-500">Sales tax %</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={taxPct}
+                    onChange={(e) => setTaxPct(parseFloat(e.target.value) || 0)}
+                    disabled={!editable}
+                    className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-gray-500">Deposit %</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={depositPct}
+                    onChange={(e) => setDepositPct(parseFloat(e.target.value) || 0)}
+                    disabled={!editable}
+                    className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="text-xs text-gray-500">
+                  Deposit amount $ (overrides the % above when set)
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0)}
+                  disabled={!editable}
+                  className="mt-1 block w-full px-2 py-2 border border-gray-300 rounded-lg text-sm disabled:bg-gray-50"
+                />
+              </label>
+              {/* Computed grand total preview */}
+              <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Subtotal</span>
+                  <span className="tabular-nums">{formatMoney(sellTotal)}</span>
+                </div>
+                {totals.markupAmount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Markup</span>
+                    <span className="tabular-nums">{formatMoney(totals.markupAmount)}</span>
+                  </div>
+                )}
+                {totals.contingencyAmount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Contingency</span>
+                    <span className="tabular-nums">{formatMoney(totals.contingencyAmount)}</span>
+                  </div>
+                )}
+                {totals.taxAmount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Tax</span>
+                    <span className="tabular-nums">{formatMoney(totals.taxAmount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-1 border-t border-gray-200 font-semibold">
+                  <span>Grand total</span>
+                  <span className="tabular-nums">{formatMoney(grandTotal)}</span>
+                </div>
+                {totals.depositAmount > 0 && (
+                  <div className="flex justify-between text-gray-500">
+                    <span>Deposit due</span>
+                    <span className="tabular-nums">{formatMoney(totals.depositAmount)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Itemized vs lump-sum toggle */}
+            <label className="flex items-center justify-between bg-white rounded-lg p-4 shadow-sm">
+              <span className="text-sm font-medium text-gray-700">
+                Show itemized line items
+              </span>
+              <input
+                type="checkbox"
+                checked={showItemized}
+                onChange={(e) => setShowItemized(e.target.checked)}
+                disabled={!editable}
+                className="w-5 h-5"
+              />
+            </label>
+            {!showItemized && (
+              <p className="text-xs text-gray-400 -mt-2">
+                When off, the customer sees a lump-sum total instead of the
+                line-by-line breakdown.
+              </p>
+            )}
+
+            {/* Office margin panel — internal cost vs sell (never shown to
+                customers; internal_cost is office-only). */}
+            {internalCostTotal > 0 && (
+              <div className="bg-gray-900 text-white rounded-lg p-4 space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-300">Sell total</span>
+                  <span className="tabular-nums">{formatMoney(sellTotal)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-300">Internal cost</span>
+                  <span className="tabular-nums">{formatMoney(internalCostTotal)}</span>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <span>Margin</span>
+                  <span className={`tabular-nums ${sellTotal - internalCostTotal < 0 ? "text-red-300" : "text-green-300"}`}>
+                    {formatMoney(sellTotal - internalCostTotal)}{" "}
+                    ({sellTotal > 0
+                      ? ((sellTotal - internalCostTotal) / sellTotal * 100).toFixed(1)
+                      : "0"}%)
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Exclusions (optional)
+              </span>
+              <textarea
+                value={exclusions}
+                onChange={(e) => setExclusions(e.target.value)}
+                disabled={!editable}
+                placeholder="What this estimate does NOT cover (e.g. permits, fixtures supplied by owner)"
+                rows={2}
+                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base disabled:bg-gray-50"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Terms &amp; conditions (optional)
+              </span>
+              <textarea
+                value={terms}
+                onChange={(e) => setTerms(e.target.value)}
+                disabled={!editable}
+                placeholder="Payment due on completion. 1-year workmanship warranty…"
+                rows={3}
+                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base disabled:bg-gray-50"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Payment schedule (optional)
+              </span>
+              <textarea
+                value={paymentSchedule}
+                onChange={(e) => setPaymentSchedule(e.target.value)}
+                disabled={!editable}
+                placeholder="e.g. 25% deposit at signing, 65% at rough-in, 10% at final walk-through"
+                rows={2}
+                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base disabled:bg-gray-50"
+              />
+            </label>
+
             <div className="bg-white rounded-lg p-3 shadow-sm text-sm">
               <p className="text-gray-500">Customer</p>
               <p className="text-gray-900 font-medium">{customerName}</p>
@@ -541,6 +856,12 @@ export default function EstimateDetailPage({
           </>
         ) : (
           <>
+            {viewedAt && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center text-xs text-blue-800">
+                Viewed by the customer on{" "}
+                {new Date(viewedAt).toLocaleString()}
+              </div>
+            )}
             <EstimateDocument
               orgName={org.name}
               orgAddress={org.address}
@@ -551,13 +872,20 @@ export default function EstimateDetailPage({
               status={estimate.status === "draft" ? "sent" : estimate.status}
               validUntil={validUntil || null}
               customerNotes={customerNotes || null}
+              estimateNumber={estimateNumber || null}
+              projectAddress={projectAddress}
+              pricing={pricing}
+              showItemized={showItemized}
+              exclusions={exclusions || null}
+              terms={terms || null}
+              paymentSchedule={paymentSchedule || null}
               items={items.map((i, idx) => ({
                 id: String(idx),
                 description: i.description,
                 quantity: i.quantity,
                 unitPrice: i.unit_price,
+                section: i.section,
               }))}
-              total={total}
               preview={estimate.status === "draft"}
             />
 
@@ -569,7 +897,7 @@ export default function EstimateDetailPage({
             />
 
             <p className="text-xs text-gray-400 text-center">
-              Total {formatMoney(total)}
+              Grand total {formatMoney(grandTotal)}
             </p>
           </>
         )}

@@ -1,6 +1,6 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { notFound } from "next/navigation";
-import { computeTotal } from "@/lib/money";
+import type { EstimatePricing } from "@/lib/money";
 import EstimateDocument from "@/components/EstimateDocument";
 import EstimateDecisionButtons from "./EstimateDecisionButtons";
 
@@ -12,6 +12,10 @@ export const dynamic = "force-dynamic";
 // decides. The /q/{token} URL is preserved from the old quote flow so
 // already-emailed links keep working; the token now lives on the estimates row
 // (migrated with the same id).
+//
+// Selects only customer-safe columns (no cost_code_id, no internal_cost, no
+// note, no viewed_at). The first open stamps viewed_at (fire-and-forget) so the
+// office knows the customer looked.
 export default async function PublicEstimatePage({
   params,
 }: {
@@ -28,7 +32,7 @@ export default async function PublicEstimatePage({
   const { data: estimate } = await admin
     .from("estimates")
     .select(
-      "id, status, customer_notes, valid_until, sent_at, approved_at, rejected_at, organization_id, jobs(name), customers(name)"
+      "id, status, customer_notes, valid_until, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name)"
     )
     .eq("share_token", token)
     .maybeSingle();
@@ -37,10 +41,20 @@ export default async function PublicEstimatePage({
     notFound();
   }
 
-  // Customer-safe columns only — no cost_code_id.
+  // Stamp viewed_at on first open (only if still null). Fire-and-forget —
+  // don't block the render. Service role so it applies regardless of RLS.
+  if (estimate.status === "sent") {
+    void admin
+      .from("estimates")
+      .update({ viewed_at: new Date().toISOString() })
+      .eq("share_token", token)
+      .is("viewed_at", null);
+  }
+
+  // Customer-safe columns only — no cost_code_id, no internal_cost.
   const { data: lineItems } = await admin
     .from("estimate_line_items")
-    .select("id, description, quantity, unit_price, position")
+    .select("id, description, quantity, unit_price, position, section")
     .eq("estimate_id", estimate.id)
     .order("position");
 
@@ -62,8 +76,9 @@ export default async function PublicEstimatePage({
     }
   }
 
-  const jobName =
-    (estimate.jobs as unknown as { name: string } | null)?.name ?? "—";
+  const jobRow = estimate.jobs as unknown as { name: string; address: string | null } | null;
+  const jobName = jobRow?.name ?? "—";
+  const projectAddress = jobRow?.address ?? null;
   const customerName =
     (estimate.customers as unknown as { name: string } | null)?.name ?? "—";
 
@@ -72,10 +87,16 @@ export default async function PublicEstimatePage({
     description: i.description,
     quantity: Number(i.quantity),
     unitPrice: Number(i.unit_price),
+    section: i.section ?? null,
   }));
-  const total = computeTotal(
-    items.map((i) => ({ quantity: i.quantity, unit_price: i.unitPrice }))
-  );
+
+  const pricing: EstimatePricing = {
+    markupPct: Number(estimate.markup_pct) || 0,
+    contingencyPct: Number(estimate.contingency_pct) || 0,
+    taxPct: Number(estimate.tax_pct) || 0,
+    depositPct: Number(estimate.deposit_pct) || 0,
+    depositAmount: Number(estimate.deposit_amount) || 0,
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -92,8 +113,14 @@ export default async function PublicEstimatePage({
         rejectedAt={estimate.rejected_at}
         validUntil={estimate.valid_until}
         customerNotes={estimate.customer_notes}
+        estimateNumber={estimate.estimate_number}
+        projectAddress={projectAddress}
+        pricing={pricing}
+        showItemized={estimate.show_itemized ?? true}
+        exclusions={estimate.exclusions}
+        terms={estimate.terms}
+        paymentSchedule={estimate.payment_schedule}
         items={items}
-        total={total}
       />
 
       {/* Decision buttons only while awaiting the customer */}

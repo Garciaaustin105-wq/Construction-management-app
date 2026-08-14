@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { computeTotal, formatMoney } from "@/lib/money";
+import { computeEstimateTotals, formatMoney } from "@/lib/money";
 import { sendEstimateEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +61,7 @@ export async function POST(
   const { data: estimate } = await supabase
     .from("estimates")
     .select(
-      "id, status, customer_id, organization_id, valid_until, jobs(name), customers(name, contact_email)"
+      "id, status, customer_id, organization_id, valid_until, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name, address), customers(name, contact_email)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -84,6 +84,7 @@ export async function POST(
     (estimate.jobs as unknown as { name: string } | null)?.name ??
     "your project";
   const customerEmail = customer?.contact_email?.trim() || null;
+  const estimateNumber = estimate.estimate_number ?? null;
 
   if (!estimate.customer_id) {
     return NextResponse.json(
@@ -98,19 +99,30 @@ export async function POST(
     );
   }
 
-  // Line items → total for the email summary.
+  // Line items → grand total (incl. markup/contingency/tax) for the email.
   const { data: lineItems } = await supabase
     .from("estimate_line_items")
     .select("quantity, unit_price")
     .eq("estimate_id", id);
-  const total = formatMoney(
-    computeTotal(
-      (lineItems ?? []).map((i) => ({
-        quantity: Number(i.quantity),
-        unit_price: Number(i.unit_price),
-      }))
-    )
+  const totals = computeEstimateTotals(
+    (lineItems ?? []).map((i) => ({
+      quantity: Number(i.quantity),
+      unit_price: Number(i.unit_price),
+    })),
+    {
+      markupPct: Number(estimate.markup_pct) || 0,
+      contingencyPct: Number(estimate.contingency_pct) || 0,
+      taxPct: Number(estimate.tax_pct) || 0,
+      depositPct: Number(estimate.deposit_pct) || 0,
+      depositAmount: Number(estimate.deposit_amount) || 0,
+    }
   );
+  const hasPricing =
+    totals.markupAmount > 0 ||
+    totals.contingencyAmount > 0 ||
+    totals.taxAmount > 0 ||
+    totals.depositAmount > 0;
+  const total = formatMoney(hasPricing ? totals.grandTotal : totals.subtotal);
 
   // Org name for branding.
   let orgName = "Terra Vista Construction";
@@ -140,6 +152,7 @@ export async function POST(
       customerName: customer?.name ?? "",
       orgName,
       jobName,
+      estimateNumber,
       total,
       validUntil,
       estimateUrl,

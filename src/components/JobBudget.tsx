@@ -4,17 +4,27 @@ import JobLaborRateControl from "@/components/JobLaborRateControl";
 import Link from "next/link";
 import { Calculator, Plus } from "lucide-react";
 
-// Office-only: budget-vs-actual per cost code for a job.
-//   Budget   = latest estimate's line items (qty × unit_price), grouped by cost code.
+// Office-only: cost-budget-vs-actual per cost code for a job.
+//   Budget   = latest estimate's line items (qty × internal_cost, falling back
+//              to unit_price when no internal cost is set), grouped by cost code.
 //   Actuals  = shared receipts (amount) + crew time entries (hours × job labor_rate).
-// Variance  = budget − actual  (positive = under budget, negative = over).
+// Variance  = cost budget − actual  (positive = under budget, negative = over).
+//
+// Using internal_cost (not the customer sell price) gives the conventional PM
+// reading: budget is what the work costs us, actuals are what we spent. Older
+// estimates without internal_cost fall back to unit_price so they still work.
 //
 // Receipts/time with no cost code roll into an "Uncoded" bucket so the office
 // can see untagged spend at a glance. Untagged receipts still count toward the
 // job total; untagged time hours are shown but, like all labor, only priced
 // when a labor rate is set.
 
-type EstimateLine = { cost_code_id: string | null; quantity: number; unit_price: number };
+type EstimateLine = {
+  cost_code_id: string | null;
+  quantity: number;
+  unit_price: number;
+  internal_cost: number | null;
+};
 type TimeRow = { cost_code_id: string | null; clock_in_at: string; clock_out_at: string | null };
 type ReceiptRow = { cost_code_id: string | null; amount: number | null };
 type CodeRow = { id: string; code: string; name: string };
@@ -39,10 +49,10 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
   ] = await Promise.all([
     // Job labor rate (for converting hours → dollars).
     supabase.from("jobs").select("labor_rate").eq("id", jobId).single(),
-    // Latest estimate (any status) for the job → the working budget.
+    // Latest estimate (any status) for the job → the working cost budget.
     supabase
       .from("estimates")
-      .select("id, title, status, created_at, estimate_line_items(cost_code_id, quantity, unit_price)")
+      .select("id, title, status, created_at, estimate_line_items(cost_code_id, quantity, unit_price, internal_cost)")
       .eq("job_id", jobId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -63,13 +73,19 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
     ((costCodes as CodeRow[] | null) ?? []).map((c) => [c.id, c])
   );
 
-  // Budget per cost code (from the latest estimate).
+  // Cost budget per cost code (from the latest estimate). Uses internal_cost
+  // when set, falling back to unit_price so estimates without cost data still
+  // produce a budget figure.
   const budgetByCode = new Map<string, number>();
   let estimateTotal = 0;
   const estLines = (estimate?.estimate_line_items as EstimateLine[] | null) ?? [];
   for (const l of estLines) {
     const key = l.cost_code_id ?? "__uncoded__";
-    const line = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+    const unitCost =
+      l.internal_cost != null && Number(l.internal_cost) !== 0
+        ? Number(l.internal_cost)
+        : Number(l.unit_price) || 0;
+    const line = (Number(l.quantity) || 0) * unitCost;
     budgetByCode.set(key, (budgetByCode.get(key) ?? 0) + line);
     estimateTotal += line;
   }
@@ -111,7 +127,7 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
       <section>
         <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
           <Calculator className="w-4 h-4" />
-          Budget vs Actual
+          Cost Budget vs Actual
         </h2>
         <div className="bg-white rounded-lg p-4 text-center">
           <p className="text-sm text-gray-500">
@@ -143,7 +159,7 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
     <section>
       <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
         <Calculator className="w-4 h-4" />
-        Budget vs Actual
+        Cost Budget vs Actual
       </h2>
 
       {/* Budget source + labor rate control */}
@@ -258,8 +274,8 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
       </div>
 
       <p className="text-[10px] text-gray-400 mt-1">
-        Budget = latest estimate · Labor = closed time entries × rate · Receipts = shared expenses.
-        Positive variance = under budget.
+        Cost budget = latest estimate (internal cost, falling back to sell price) · Labor = closed
+        time entries × rate · Receipts = shared expenses. Positive variance = under budget.
       </p>
     </section>
   );
