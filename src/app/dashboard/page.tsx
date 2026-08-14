@@ -30,11 +30,53 @@ export default async function DashboardPage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, organization_id")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
 
-  const role = profile?.role ?? "crew";
+  // No profile row means the auth user exists but no workspace was created
+  // (e.g. a signup that didn't persist the profile, or a dashboard-created
+  // auth user with no profile). Don't silently drop them into a crew view that
+  // looks like a successful login to the wrong project — surface the broken
+  // state so it gets fixed. ("Users read own profile" is just id = auth.uid(),
+  // so a null result reliably means no profile, not an RLS hiccup.)
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-gray-50 pb-24">
+        <TopBar title="Account not set up" showSignOut />
+        <main className="max-w-md mx-auto p-4">
+          <div className="bg-white rounded-lg p-6 space-y-3 text-center">
+            <h1 className="text-lg font-bold text-gray-900">
+              No workspace profile found
+            </h1>
+            <p className="text-sm text-gray-600">
+              Your sign-in worked, but this account has no workspace profile
+              attached. This happens when a signup doesn&apos;t complete. Please
+              contact support (or the business owner) to finish setting up the
+              account, then sign in again.
+            </p>
+            <p className="text-xs text-gray-400">
+              Signed-in user: {user.email}
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const role = profile.role ?? "crew";
+
+  // Show the user's OWN organization name (not a hardcoded brand) so each
+  // tenant sees their own workspace — otherwise every new business is labelled
+  // "Terra Vista" and appears to be someone else's project. "Org members read
+  // org" admits same_org, so a user with a profile can read their own org;
+  // super_admin has org_id null and lands on the platform view instead.
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", profile.organization_id)
+    .maybeSingle();
+  const orgName = orgRow?.name ?? "Workspace";
 
   // admin supersetes office on the office surface (grid, weekly report,
   // invoices, RFIs). super_admin does NOT get the office surface — they get a
@@ -115,7 +157,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title="Terra Vista" subtitle={`Signed in as ${role}`} />
+      <TopBar title={orgName} subtitle={`Signed in as ${role}`} />
 
       <main className="max-w-md mx-auto p-4 space-y-6">
         <ClientPullToRefresh>
