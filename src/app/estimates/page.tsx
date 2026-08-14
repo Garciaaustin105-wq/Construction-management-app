@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { formatMoney } from "@/lib/money";
+import { OFFICE_OR_PM } from "@/lib/roles";
 import Link from "next/link";
 import { FileText, Plus } from "lucide-react";
 
@@ -34,7 +35,15 @@ export default async function EstimatesPage() {
     .select("role")
     .eq("id", user.id)
     .single();
-  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+  const role = profile?.role ?? "crew";
+  // Admit office / admin / project_manager / super_admin (OFFICE_OR_PM). The
+  // dashboard shows the Estimates tile to the office surface, so gating this
+  // list on role === "office" alone bounced admin/super_admin back to /dashboard
+  // (looked like the page just refreshed).
+  if (!OFFICE_OR_PM.has(role)) redirect("/dashboard");
+  // Estimate creation is office/admin (see /estimates/new gate) — hide the New
+  // button for the other admitted roles so they don't see a button that bounces.
+  const canCreate = role === "office" || role === "admin";
 
   const { data: estimates } = await supabase
     .from("estimates")
@@ -64,13 +73,15 @@ export default async function EstimatesPage() {
       <TopBar title="Estimates" subtitle="Cost-coded job pricing" />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
-        <Link
-          href="/estimates/new"
-          className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          New Estimate
-        </Link>
+        {canCreate && (
+          <Link
+            href="/estimates/new"
+            className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            New Estimate
+          </Link>
+        )}
 
         {rows.length === 0 ? (
           <div className="bg-white rounded-lg p-6 text-center">
