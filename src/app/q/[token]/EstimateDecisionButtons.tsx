@@ -4,10 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 
-// Frictionless Approve/Reject for the public customer quote view. The share
-// token in the URL is the only credential (validated server-side). On success
-// the page is refreshed so the server-rendered confirmation state shows.
-export default function QuoteDecisionButtons({ token }: { token: string }) {
+// Frictionless Approve/Reject for the public customer estimate view. The
+// share token in the URL is the only credential (validated server-side). On
+// success the page is refreshed so the server-rendered confirmation state
+// shows.
+export default function EstimateDecisionButtons({ token }: { token: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,15 +18,15 @@ export default function QuoteDecisionButtons({ token }: { token: string }) {
     if (
       !confirm(
         decision === "approve"
-          ? "Approve this quote? An invoice will be issued."
-          : "Reject this quote?"
+          ? "Approve this estimate? An invoice will be issued."
+          : "Reject this estimate?"
       )
     )
       return;
     setBusy(decision);
     setError(null);
     try {
-      const res = await fetch(`/api/quotes/by-token/${token}/decide`, {
+      const res = await fetch(`/api/estimates/by-token/${token}/decide`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision }),
@@ -60,7 +61,7 @@ export default function QuoteDecisionButtons({ token }: { token: string }) {
         ) : (
           <CheckCircle2 className="w-5 h-5" />
         )}
-        Approve Quote
+        Approve Estimate
       </button>
       <button
         onClick={() => decide("reject")}
@@ -72,7 +73,7 @@ export default function QuoteDecisionButtons({ token }: { token: string }) {
         ) : (
           <XCircle className="w-4 h-4" />
         )}
-        Reject Quote
+        Reject Estimate
       </button>
       <p className="text-center text-[11px] text-gray-400">
         Approving creates your invoice. You can reject if anything looks off.

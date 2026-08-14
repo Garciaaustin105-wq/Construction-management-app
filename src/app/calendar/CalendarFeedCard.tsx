@@ -12,11 +12,11 @@ function feedDescription(role: string): string {
     case "admin":
     case "superintendent":
     case "project_manager":
-      return "Includes job start/end dates, schedule events, subcontractor on-site dates, invoice due dates, and quote expiry dates for your organization.";
+      return "Includes job start/end dates, schedule events, subcontractor on-site dates, invoice due dates, and estimate expiry dates for your organization.";
     case "crew":
       return "Includes start/end dates and schedule events for the jobs you're assigned to.";
     case "customer":
-      return "Includes start/end dates and schedule events for your jobs, plus your own invoice due dates and quote expiry dates.";
+      return "Includes start/end dates and schedule events for your jobs, plus your own invoice due dates and estimate expiry dates.";
     default:
       return "Includes the calendar events you have access to.";
   }

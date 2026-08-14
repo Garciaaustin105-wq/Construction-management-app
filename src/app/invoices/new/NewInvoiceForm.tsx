@@ -96,7 +96,7 @@ export default function NewInvoiceForm({
     const { data: invoice, error: invError } = await supabase
       .from("invoices")
       .insert({
-        quote_id: null,
+        estimate_id: null,
         job_id: jobId,
         customer_id: customerId || null,
         status: "sent",

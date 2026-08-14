@@ -108,7 +108,7 @@ export default async function InvoicesPage({
               <EmptyState
                 icon={EmptyIcons.FileText}
                 title="No invoices yet"
-                description="Invoices are created when a customer approves a quote."
+                description="Invoices are created when a customer approves an estimate."
               />
             </div>
           ) : (

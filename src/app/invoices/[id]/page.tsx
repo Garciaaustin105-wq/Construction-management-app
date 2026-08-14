@@ -33,7 +33,7 @@ export default async function InvoiceDetailPage({
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, status, paid_at, created_at, due_date, job_id, customer_id, quote_id, jobs(name), customers(name)"
+      "id, status, paid_at, created_at, due_date, job_id, customer_id, estimate_id, jobs(name), customers(name)"
     )
     .eq("id", id)
     .single();
@@ -96,12 +96,12 @@ export default async function InvoiceDetailPage({
           </p>
         </section>
 
-        {invoice.quote_id && (
+        {invoice.estimate_id && (
           <Link
-            href={`/quotes/${invoice.quote_id}${jobParam ? `?job=${jobParam}` : ""}`}
+            href={`/estimates/${invoice.estimate_id}${jobParam ? `?job=${jobParam}` : ""}`}
             className="block bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900 active:bg-blue-100"
           >
-            ← View source quote
+            ← View source estimate
           </Link>
         )}
 

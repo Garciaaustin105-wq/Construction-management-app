@@ -263,7 +263,7 @@ export default async function JobDetailPage({
 
         <ActivityTimeline job={job} photos={photos ?? []} rfis={rfis ?? []} />
 
-        {/* Quotes & Invoices — office sees all, customer sees only their own */}
+        {/* Estimates & Invoices — office sees all, customer sees only their own */}
         <JobFinancials jobId={job.id} role={role} />
 
         {/* Budget vs Actual — office only */}

@@ -88,8 +88,8 @@ export default async function EstimatesPage() {
             <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
             <p className="text-sm font-medium text-gray-700">No estimates yet</p>
             <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-              Build a cost-coded estimate for a job, then convert it to a quote
-              to send to the customer.
+              Build a cost-coded estimate for a job, then preview and send it to
+              the customer for approval.
             </p>
           </div>
         ) : (

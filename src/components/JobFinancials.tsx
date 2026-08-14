@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { formatMoney, computeTotal } from "@/lib/money";
 import StatusBadge from "@/components/StatusBadge";
-import { FileText, Receipt, Calculator } from "lucide-react";
+import { Receipt, Calculator } from "lucide-react";
 import Link from "next/link";
 
 export default async function JobFinancials({
@@ -13,19 +13,12 @@ export default async function JobFinancials({
 }) {
   const supabase = await createClient();
 
-  const [{ data: estimates }, { data: quotes }, { data: invoices }] = await Promise.all([
+  const [{ data: estimates }, { data: invoices }] = await Promise.all([
     // Estimates — office sees all; crew sees their assigned jobs (RLS).
     supabase
       .from("estimates")
       .select(
         "id, status, title, created_at, estimate_line_items(quantity, unit_price)"
-      )
-      .eq("job_id", jobId)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("quotes")
-      .select(
-        "id, status, created_at, quote_line_items(quantity, unit_price)"
       )
       .eq("job_id", jobId)
       .order("created_at", { ascending: false }),
@@ -50,17 +43,6 @@ export default async function JobFinancials({
     };
   });
 
-  const quoteRows = (quotes ?? []).map((q) => {
-    const items =
-      (q.quote_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
-    return {
-      id: q.id,
-      status: q.status,
-      createdAt: q.created_at,
-      total: computeTotal(items),
-    };
-  });
-
   const invoiceRows = (invoices ?? []).map((inv) => {
     const items =
       (inv.invoice_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
@@ -80,7 +62,6 @@ export default async function JobFinancials({
   if (
     role !== "office" &&
     estimateRows.length === 0 &&
-    quoteRows.length === 0 &&
     invoiceRows.length === 0
   ) {
     return null;
@@ -90,24 +71,17 @@ export default async function JobFinancials({
     <section>
       <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
         <Receipt className="w-4 h-4" />
-        Quotes & Invoices
+        Estimates & Invoices
       </h2>
 
       {role === "office" && (
-        <div className="grid grid-cols-3 gap-2 mb-2">
+        <div className="grid grid-cols-2 gap-2 mb-2">
           <Link
             href={`/estimates/new?job=${jobId}`}
             className="bg-blue-600 text-white text-center py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 flex items-center justify-center gap-1"
           >
             <Calculator className="w-4 h-4" />
             Estimate
-          </Link>
-          <Link
-            href={`/quotes/new?job=${jobId}`}
-            className="bg-white border border-gray-300 text-gray-900 text-center py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-1"
-          >
-            <FileText className="w-4 h-4" />
-            Quote
           </Link>
           <Link
             href={`/invoices/new?job=${jobId}`}
@@ -138,37 +112,9 @@ export default async function JobFinancials({
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 capitalize">
-                  {e.status}
-                </span>
+                <StatusBadge status={e.status} />
                 <span className="text-sm font-semibold text-gray-900">
                   {formatMoney(e.total)}
-                </span>
-              </div>
-            </div>
-          </Link>
-        ))}
-
-        {quoteRows.map((q) => (
-          <Link
-            key={q.id}
-            href={`/quotes/${q.id}?job=${jobId}`}
-            className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
-          >
-            <div className="flex justify-between items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-gray-500 uppercase flex items-center gap-1">
-                  <FileText className="w-3 h-3" />
-                  Quote
-                </p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {new Date(q.createdAt).toLocaleDateString()}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <StatusBadge status={q.status} />
-                <span className="text-sm font-semibold text-gray-900">
-                  {formatMoney(q.total)}
                 </span>
               </div>
             </div>
@@ -207,9 +153,9 @@ export default async function JobFinancials({
           </Link>
         ))}
 
-        {estimateRows.length === 0 && quoteRows.length === 0 && invoiceRows.length === 0 && (
+        {estimateRows.length === 0 && invoiceRows.length === 0 && (
           <div className="bg-white rounded-lg p-4 text-center text-sm text-gray-500">
-            No estimates, quotes, or invoices yet for this job.
+            No estimates or invoices yet for this job.
           </div>
         )}
       </div>

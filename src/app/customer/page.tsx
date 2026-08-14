@@ -25,17 +25,17 @@ export default async function CustomerPortal() {
 
   const customerId = profile?.customer_id;
 
-  // Fan out the independent reads (jobs, pending quotes, invoices) in parallel.
-  const [jobsRes, quotesRes, invoicesRes] = await Promise.all([
+  // Fan out the independent reads (jobs, pending estimates, invoices) in parallel.
+  const [jobsRes, estimatesRes, invoicesRes] = await Promise.all([
     supabase
       .from("jobs")
       .select("id, name, address, description, status, scheduled_start, scheduled_end")
       .order("created_at", { ascending: false }),
     customerId
       ? supabase
-          .from("quotes")
+          .from("estimates")
           .select(
-            "id, status, created_at, sent_at, jobs(name), quote_line_items(quantity, unit_price)"
+            "id, status, created_at, sent_at, jobs(name), estimate_line_items(quantity, unit_price)"
           )
           .eq("customer_id", customerId)
           .eq("status", "sent")
@@ -53,7 +53,7 @@ export default async function CustomerPortal() {
   ]);
 
   const jobs = jobsRes.data;
-  const pendingQuotes = quotesRes.data;
+  const pendingEstimates = estimatesRes.data;
   const invoices = invoicesRes.data;
 
   const jobsWithFiles = await Promise.all(
@@ -75,9 +75,9 @@ export default async function CustomerPortal() {
     })
   );
 
-  const quoteRows = (pendingQuotes ?? []).map((q) => {
+  const estimateRows = (pendingEstimates ?? []).map((q) => {
     const items =
-      (q.quote_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
+      (q.estimate_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
     return {
       id: q.id,
       jobName: (q.jobs as unknown as { name: string } | null)?.name ?? "—",
@@ -111,18 +111,18 @@ export default async function CustomerPortal() {
 
       <main className="max-w-md mx-auto p-4 space-y-4">
         <ClientPullToRefresh>
-          {/* Pending quote approvals */}
-          {quoteRows.length > 0 && (
+          {/* Pending estimate approvals */}
+          {estimateRows.length > 0 && (
             <section>
               <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
                 <FileText className="w-4 h-4" />
-                Quotes awaiting your approval
+                Estimates awaiting your approval
               </h2>
               <div className="space-y-2">
-                {quoteRows.map((q) => (
+                {estimateRows.map((q) => (
                   <Link
                     key={q.id}
-                    href={`/quotes/${q.id}`}
+                    href={`/estimates/${q.id}`}
                     className="block bg-amber-50 border border-amber-200 rounded-lg p-3 active:bg-amber-100"
                   >
                     <div className="flex justify-between items-start gap-2">

@@ -15,7 +15,7 @@ export type FeedEvent = {
   summary: string;
   start: Date;
   end?: Date;
-  // true → all-day DATE value (jobs/sub/invoice/quote dates); false/omitted →
+  // true → all-day DATE value (jobs/sub/invoice/estimate dates); false/omitted →
   // timed UTC DTSTART (schedule_events).
   allDay?: boolean;
   description?: string;

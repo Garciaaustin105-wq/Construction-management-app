@@ -16,7 +16,9 @@ function NewEstimateForm() {
   const preselectedJob = search.get("job") ?? "";
   const toast = useToast();
 
-  const [jobs, setJobs] = useState<{ id: string; name: string }[]>([]);
+  const [jobs, setJobs] = useState<
+    { id: string; name: string; customer_id: string | null }[]
+  >([]);
   const [jobId, setJobId] = useState(preselectedJob);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -51,7 +53,10 @@ function NewEstimateForm() {
       setAuthorized(true);
 
       const [{ data: jobRows }, { data: codeRows }] = await Promise.all([
-        supabase.from("jobs").select("id, name").order("created_at", { ascending: false }),
+        supabase
+          .from("jobs")
+          .select("id, name, customer_id")
+          .order("created_at", { ascending: false }),
         supabase.from("cost_codes").select("id, code, name").order("code"),
       ]);
       setJobs(jobRows ?? []);
@@ -86,12 +91,14 @@ function NewEstimateForm() {
       return;
     }
 
+    const selectedJob = jobs.find((j) => j.id === jobId);
     const { data: estimate, error } = await supabase
       .from("estimates")
       .insert({
         job_id: jobId,
         title: title.trim() || null,
         note: note.trim() || null,
+        customer_id: selectedJob?.customer_id ?? null,
         status: "draft",
         created_by: user.id,
       })

@@ -13,10 +13,10 @@ export const dynamic = "force-dynamic";
 // Role-based content (respects the standing security constraint: crew/customer
 // get NO subcontractor or financial/customer info beyond their own):
 //   office / admin / superintendent / PM  → all org jobs, schedule_events,
-//                                            sub dates, invoice due, quote expiry
+//                                            sub dates, invoice due, estimate expiry
 //   crew                                  → assigned jobs + their schedule_events
 //   customer                              → own jobs + their schedule_events +
-//                                            own invoice due + own quote expiry
+//                                            own invoice due + own estimate expiry
 //   super_admin                           → platform-wide (all orgs), all sources
 
 const MANAGEMENT_ROLES = new Set([
@@ -81,7 +81,7 @@ type InvCalRow = {
   jobs: { name: string } | null;
   customers?: { name: string } | null;
 };
-type QuoteCalRow = {
+type EstimateCalRow = {
   id: string;
   valid_until: string | null;
   jobs: { name: string } | null;
@@ -304,44 +304,45 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── Quote expiry dates ────────────────────────────────────────────────────
-  // management / super_admin → all org; customer → own quotes; crew → none.
+  // ── Estimate expiry dates ─────────────────────────────────────────────────
+  // management / super_admin → all org; customer → own estimates; crew → none.
+  // (Quotes were merged into estimates — valid_until now lives on estimates.)
   if (MANAGEMENT_ROLES.has(role) || isSuperAdmin) {
-    let quoteQ = admin
-      .from("quotes")
+    let estQ = admin
+      .from("estimates")
       .select("id, valid_until, jobs(name), customers(name)")
       .not("valid_until", "is", null);
-    quoteQ = orgFilter(quoteQ);
-    const { data: quotes } = await quoteQ;
-    for (const q of (quotes ?? []) as unknown as QuoteCalRow[]) {
-      const jobName = q.jobs?.name;
-      const custName = q.customers?.name;
+    estQ = orgFilter(estQ);
+    const { data: estimates } = await estQ;
+    for (const e of (estimates ?? []) as unknown as EstimateCalRow[]) {
+      const jobName = e.jobs?.name;
+      const custName = e.customers?.name;
       events.push({
-        uid: feedUid("quote", q.id, host),
-        summary: `Quote expires${custName ? ` · ${custName}` : ""}`,
-        start: allDayDate(q.valid_until),
+        uid: feedUid("estimate", e.id, host),
+        summary: `Estimate expires${custName ? ` · ${custName}` : ""}`,
+        start: allDayDate(e.valid_until),
         allDay: true,
         description: jobName
-          ? `Quote for ${jobName} expires today.`
-          : "Quote expires today.",
+          ? `Estimate for ${jobName} expires today.`
+          : "Estimate expires today.",
       });
     }
   } else if (role === "customer" && customerId) {
-    const { data: quotes } = await admin
-      .from("quotes")
+    const { data: estimates } = await admin
+      .from("estimates")
       .select("id, valid_until, jobs(name)")
       .eq("customer_id", customerId)
       .not("valid_until", "is", null);
-    for (const q of (quotes ?? []) as unknown as QuoteCalRow[]) {
-      const jobName = q.jobs?.name;
+    for (const e of (estimates ?? []) as unknown as EstimateCalRow[]) {
+      const jobName = e.jobs?.name;
       events.push({
-        uid: feedUid("quote", q.id, host),
-        summary: "Quote expires",
-        start: allDayDate(q.valid_until),
+        uid: feedUid("estimate", e.id, host),
+        summary: "Estimate expires",
+        start: allDayDate(e.valid_until),
         allDay: true,
         description: jobName
-          ? `Quote for ${jobName} expires today.`
-          : "Quote expires today.",
+          ? `Estimate for ${jobName} expires today.`
+          : "Estimate expires today.",
       });
     }
   }

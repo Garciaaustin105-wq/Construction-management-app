@@ -4,11 +4,11 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 // Frictionless customer decision — public (no auth); the share_token in the URL
-// is the only credential. Mirrors the logged-in approve_quote / reject_quote
-// RPCs but resolves the quote by token. Service role because there is no user
+// is the only credential. Mirrors the logged-in approve_estimate / reject_estimate
+// RPCs but resolves the estimate by token. Service role because there is no user
 // session. Guards: token must resolve + status must be 'sent' + (for approve)
-// no existing invoice — so a draft, an already-decided quote, or a double-click
-// can't act twice.
+// no existing invoice — so a draft, an already-decided estimate, or a double-
+// click can't act twice.
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> }
@@ -35,31 +35,31 @@ export async function POST(
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  const { data: quote } = await admin
-    .from("quotes")
+  const { data: estimate } = await admin
+    .from("estimates")
     .select("id, status, job_id, customer_id")
     .eq("share_token", token)
     .maybeSingle();
 
-  if (!quote) {
-    return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+  if (!estimate) {
+    return NextResponse.json({ error: "Estimate not found" }, { status: 404 });
   }
-  if (quote.status !== "sent") {
+  if (estimate.status !== "sent") {
     return NextResponse.json(
-      { error: "This quote is not awaiting action." },
+      { error: "This estimate is not awaiting action." },
       { status: 400 }
     );
   }
 
   if (decision === "reject") {
     const { error } = await admin
-      .from("quotes")
+      .from("estimates")
       .update({
         status: "rejected",
         rejected_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", quote.id);
+      .eq("id", estimate.id);
     if (error) {
       return NextResponse.json(
         { error: `Failed: ${error.message}` },
@@ -69,16 +69,17 @@ export async function POST(
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 
-  // approve — mirror approve_quote: guard against an existing invoice, create
-  // the invoice (status 'sent'), snapshot the line items, then flip the quote.
+  // approve — mirror approve_estimate: guard against an existing invoice, create
+  // the invoice (status 'sent'), snapshot the line items, then flip the
+  // estimate. Snapshot selects only customer-safe columns (no cost_code_id).
   const { data: existing } = await admin
     .from("invoices")
     .select("id")
-    .eq("quote_id", quote.id)
+    .eq("estimate_id", estimate.id)
     .maybeSingle();
   if (existing) {
     return NextResponse.json(
-      { error: "This quote has already been approved." },
+      { error: "This estimate has already been approved." },
       { status: 400 }
     );
   }
@@ -86,9 +87,9 @@ export async function POST(
   const { data: invoice, error: invError } = await admin
     .from("invoices")
     .insert({
-      quote_id: quote.id,
-      job_id: quote.job_id,
-      customer_id: quote.customer_id,
+      estimate_id: estimate.id,
+      job_id: estimate.job_id,
+      customer_id: estimate.customer_id,
       status: "sent",
     })
     .select("id")
@@ -101,9 +102,9 @@ export async function POST(
   }
 
   const { data: items } = await admin
-    .from("quote_line_items")
+    .from("estimate_line_items")
     .select("description, quantity, unit_price, position")
-    .eq("quote_id", quote.id)
+    .eq("estimate_id", estimate.id)
     .order("position");
   if (items && items.length > 0) {
     const { error: linesError } = await admin.from("invoice_line_items").insert(
@@ -123,17 +124,17 @@ export async function POST(
     }
   }
 
-  const { error: qError } = await admin
-    .from("quotes")
+  const { error: eError } = await admin
+    .from("estimates")
     .update({
       status: "approved",
       approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", quote.id);
-  if (qError) {
+    .eq("id", estimate.id);
+  if (eError) {
     return NextResponse.json(
-      { error: `Invoice created but quote status failed: ${qError.message}` },
+      { error: `Invoice created but estimate status failed: ${eError.message}` },
       { status: 500 }
     );
   }
