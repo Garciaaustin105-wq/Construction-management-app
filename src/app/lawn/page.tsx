@@ -13,8 +13,14 @@ type VisitRow = {
   id: string;
   due_date: string;
   status: string;
-  jobs: { name: string; address: string | null } | null;
-  customers?: { name: string | null } | null;
+  // customers is reached THROUGH jobs (lawn_visits has job_id, no customer_id),
+  // so the embed is jobs(..., customers(name)) — a direct customers(name) here
+  // would 400 (PGRST118, no FK) and null out the whole query.
+  jobs: {
+    name: string;
+    address: string | null;
+    customers: { name: string | null } | null;
+  } | null;
 };
 type ScheduleRow = {
   id: string;
@@ -27,8 +33,7 @@ type ScheduleRow = {
   service_type: string | null;
   price_per_visit: number;
   active: boolean;
-  jobs: { name: string } | null;
-  customers?: { name: string | null } | null;
+  jobs: { name: string; customers: { name: string | null } | null } | null;
 };
 
 const STATUS_CHIP: Record<string, string> = {
@@ -69,14 +74,14 @@ export default async function LawnPage() {
   const [{ data: visits }, { data: schedules }] = await Promise.all([
     supabase
       .from("lawn_visits")
-      .select("id, due_date, status, jobs(name, address), customers(name)")
+      .select("id, due_date, status, jobs(name, address, customers(name))")
       .eq("status", "pending")
       .lte("due_date", today)
       .order("due_date", { ascending: true }),
     supabase
       .from("recurring_schedules")
       .select(
-        "id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, jobs(name), customers(name)"
+        "id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, jobs(name, customers(name))"
       )
       .order("active", { ascending: false })
       .order("created_at", { ascending: false }),
@@ -125,9 +130,7 @@ export default async function LawnPage() {
             <div className="space-y-2">
               {visitRows.map((v) => {
                 const jobName = v.jobs?.name ?? "—";
-                const custName =
-                  (v.customers as unknown as { name: string | null } | null)?.name ??
-                  null;
+                const custName = v.jobs?.customers?.name ?? null;
                 return (
                   <Link
                     key={v.id}
@@ -186,9 +189,7 @@ export default async function LawnPage() {
             <div className="space-y-2">
               {scheduleRows.map((s) => {
                 const jobName = s.jobs?.name ?? "—";
-                const custName =
-                  (s.customers as unknown as { name: string | null } | null)?.name ??
-                  null;
+                const custName = s.jobs?.customers?.name ?? null;
                 const sched = {
                   frequency: s.frequency,
                   days_of_week: s.days_of_week,

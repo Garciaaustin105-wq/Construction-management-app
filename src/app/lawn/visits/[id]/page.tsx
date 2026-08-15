@@ -28,8 +28,13 @@ type Visit = {
   completed_at: string | null;
   notes: string | null;
   recurring_schedule_id: string;
-  jobs: { name: string; address: string | null } | null;
-  customers?: { name: string | null } | null;
+  // customers is reached through jobs (lawn_visits has job_id, no customer_id)
+  // — embed jobs(name, address, customers(name)).
+  jobs: {
+    name: string;
+    address: string | null;
+    customers: { name: string | null } | null;
+  } | null;
 };
 
 type Photo = { id: string; storage_path: string; caption: string | null };
@@ -65,7 +70,7 @@ export default function VisitDetailPage({
     const { data: v } = await supabase
       .from("lawn_visits")
       .select(
-        "id, job_id, due_date, status, crew_id, completed_at, notes, recurring_schedule_id, jobs(name, address), customers(name)"
+        "id, job_id, due_date, status, crew_id, completed_at, notes, recurring_schedule_id, jobs(name, address, customers(name))"
       )
       .eq("id", id)
       .maybeSingle();
@@ -238,8 +243,7 @@ export default function VisitDetailPage({
 
   const jobName = visit.jobs?.name ?? "—";
   const jobAddress = visit.jobs?.address ?? null;
-  const custName =
-    (visit.customers as unknown as { name: string | null } | null)?.name ?? null;
+  const custName = visit.jobs?.customers?.name ?? null;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">

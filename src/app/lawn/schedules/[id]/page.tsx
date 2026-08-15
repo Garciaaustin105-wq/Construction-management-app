@@ -22,8 +22,9 @@ type Schedule = {
   price_per_visit: number;
   active: boolean;
   notes: string | null;
-  jobs: { name: string } | null;
-  customers?: { name: string | null } | null;
+  // customers is reached through jobs (recurring_schedules has job_id, no
+  // customer_id) — embed jobs(name, customers(name)).
+  jobs: { name: string; customers: { name: string | null } | null } | null;
 };
 
 type Visit = {
@@ -83,7 +84,7 @@ export default function ScheduleDetailPage({
       const { data: sched } = await supabase
         .from("recurring_schedules")
         .select(
-          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes, jobs(name), customers(name)"
+          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes, jobs(name, customers(name))"
         )
         .eq("id", id)
         .maybeSingle();
@@ -236,8 +237,7 @@ export default function ScheduleDetailPage({
   }
 
   const jobName = schedule.jobs?.name ?? "—";
-  const custName =
-    (schedule.customers as unknown as { name: string | null } | null)?.name ?? null;
+  const custName = schedule.jobs?.customers?.name ?? null;
   const schedSummary = summarizeSchedule({
     frequency: schedule.frequency,
     days_of_week: schedule.days_of_week,
