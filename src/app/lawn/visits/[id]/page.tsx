@@ -17,7 +17,11 @@ import {
   Camera,
   Images,
   RotateCcw,
+  Send,
 } from "lucide-react";
+import LawnPropertyDetails, {
+  type LawnJob,
+} from "@/components/LawnPropertyDetails";
 
 type Visit = {
   id: string;
@@ -64,6 +68,8 @@ export default function VisitDetailPage({
   const [moving, setMoving] = useState(false);
   const [moveDate, setMoveDate] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [property, setProperty] = useState<LawnJob | null>(null);
+  const [sendingOMW, setSendingOMW] = useState(false);
 
   async function load() {
     const supabase = createClient();
@@ -77,7 +83,7 @@ export default function VisitDetailPage({
     if (!v) return;
     setVisit(v as unknown as Visit);
 
-    const [{ data: photoRows }, { data: crewRows }] = await Promise.all([
+    const [{ data: photoRows }, { data: crewRows }, { data: lawnJob }] = await Promise.all([
       supabase
         .from("photos")
         .select("id, storage_path, caption")
@@ -88,9 +94,15 @@ export default function VisitDetailPage({
         .select("id, full_name, email")
         .in("role", ["crew", "superintendent"])
         .order("full_name"),
+      supabase
+        .from("lawn_jobs")
+        .select("*")
+        .eq("id", (v as unknown as Visit).job_id)
+        .maybeSingle(),
     ]);
     setPhotos((photoRows as unknown as Photo[]) ?? []);
     setCrew((crewRows as { id: string; full_name: string | null; email: string }[]) ?? []);
+    setProperty((lawnJob as unknown as LawnJob | null) ?? null);
   }
 
   useEffect(() => {
@@ -122,20 +134,27 @@ export default function VisitDetailPage({
   async function updateStatus(status: string) {
     if (!visit) return;
     setBusy(true);
-    const supabase = createClient();
-    const patch: Record<string, unknown> = { status };
-    if (status === "done") patch.completed_at = new Date().toISOString();
-    if (status !== "done") patch.completed_at = null;
-    const { error } = await supabase
-      .from("lawn_visits")
-      .update(patch)
-      .eq("id", visit.id);
-    setBusy(false);
-    if (error) {
-      toast.error(`Failed: ${error.message}`);
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+    } catch {
+      setBusy(false);
+      toast.error("Failed: network error");
       return;
     }
-    setVisit({ ...visit, status, completed_at: patch.completed_at as string | null });
+    setBusy(false);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
+    }
+    const completed_at =
+      status === "done" ? new Date().toISOString() : null;
+    setVisit({ ...visit, status, completed_at });
     toast.success(
       status === "done"
         ? "Marked done"
@@ -151,17 +170,28 @@ export default function VisitDetailPage({
       return;
     }
     setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("lawn_visits")
-      .update({ due_date: moveDate })
-      .eq("id", visit.id);
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ due_date: moveDate }),
+      });
+    } catch {
+      setBusy(false);
+      toast.error("Failed: network error");
+      return;
+    }
     setBusy(false);
-    if (error) {
-      if (error.code === "23505") {
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+      };
+      if (data.code === "23505") {
         toast.error("A visit already exists on that date for this schedule");
       } else {
-        toast.error(`Failed: ${error.message}`);
+        toast.error(`Failed: ${data.error ?? res.statusText}`);
       }
       return;
     }
@@ -169,6 +199,41 @@ export default function VisitDetailPage({
     setMoving(false);
     setMoveDate("");
     toast.success("Visit moved");
+  }
+
+  async function onMyWay() {
+    if (!visit) return;
+    setSendingOMW(true);
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visit.id}/on-my-way`, {
+        method: "POST",
+      });
+    } catch {
+      setSendingOMW(false);
+      toast.error("Failed: network error");
+      return;
+    }
+    setSendingOMW(false);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
+    }
+    const data = (await res.json().catch(() => ({}))) as {
+      ok: boolean;
+      reason?: string;
+      error?: string;
+    };
+    if (data.ok) {
+      toast.success("On-my-way sent");
+    } else if (data.reason === "no email") {
+      toast.warning("No email on file");
+    } else if (data.reason === "not configured") {
+      toast.warning("Email not configured");
+    } else {
+      toast.error(`Failed: ${data.error ?? "email not sent"}`);
+    }
   }
 
   async function assignCrew(crewId: string) {
@@ -335,19 +400,41 @@ export default function VisitDetailPage({
               </button>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setMoving(true);
-                setMoveDate(visit.due_date);
-              }}
-              disabled={busy}
-              className="text-sm text-blue-600 font-medium"
-            >
-              Move date
-            </button>
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setMoving(true);
+                  setMoveDate(visit.due_date);
+                }}
+                disabled={busy}
+                className="text-sm text-blue-600 font-medium"
+              >
+                Move date
+              </button>
+              <button
+                type="button"
+                onClick={onMyWay}
+                disabled={busy || sendingOMW}
+                className="text-sm text-green-700 font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {sendingOMW ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+                On my way
+              </button>
+            </div>
           )}
         </div>
+
+        {/* Property profile (lawn_jobs 1:1) */}
+        <LawnPropertyDetails
+          jobId={visit.job_id}
+          initial={property}
+          canEdit={authorized}
+        />
 
         {/* Crew assignment */}
         {crew.length > 0 && (

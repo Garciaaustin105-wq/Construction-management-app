@@ -195,3 +195,157 @@ export async function sendVerificationEmail(
     html,
   });
 }
+
+// ── Lawn visit emails ──────────────────────────────────────────────────────
+//
+// Two short transactional emails for the lawn visit flow. Both follow the
+// NON-FATAL pattern: if RESEND_API_KEY / RESEND_FROM is missing, they return
+// { error } WITHOUT throwing, so a route can treat an unconfigured Resend as a
+// soft skip (toast "Email not configured") rather than a 500. A transient
+// Resend failure also returns { error } — the caller stamps notified_at
+// regardless so a one-shot notice isn't retried on every action.
+
+export type SendOnMyWayEmailInput = {
+  to: string;
+  customerName: string;
+  jobName: string;
+  address: string | null;
+};
+
+// "Your lawn crew is on the way" — one-tap heads-up sent from the visit page.
+export async function sendOnMyWayEmail(
+  input: SendOnMyWayEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const resend = new Resend(apiKey);
+  const customer = escapeHtml(input.customerName || "there");
+  const job = escapeHtml(input.jobName);
+  const address = input.address ? escapeHtml(input.address) : null;
+  const addressLine = address
+    ? `<p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;"><strong>${address}</strong></p>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#15803d;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">Terra Vista</p>
+          <p style="margin:4px 0 0;color:#bbf7d0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Your crew is on the way</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${customer},</p>
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            Your lawn crew is heading out to service
+            <strong>${job}</strong>. They should arrive shortly.
+          </p>
+          ${addressLine}
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This is an automated heads-up from Terra Vista Construction Management.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by Terra Vista Construction Management.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: `Your lawn crew is on the way — ${input.jobName}`,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}
+
+export type SendLawnVisitEmailInput = {
+  to: string;
+  customerName: string;
+  jobName: string;
+  address: string | null;
+  subject: string;
+  lines: string[]; // pre-formatted body lines (plain text, rendered as paragraphs)
+};
+
+// Generic lawn-visit notice (visit completed / skipped / rescheduled). The
+// caller picks the subject + body lines so this stays a thin, reusable wrapper.
+export async function sendLawnVisitEmail(
+  input: SendLawnVisitEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const resend = new Resend(apiKey);
+  const customer = escapeHtml(input.customerName || "there");
+  const job = escapeHtml(input.jobName);
+  const address = input.address ? escapeHtml(input.address) : null;
+  const addressLine = address
+    ? `<p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;"><strong>${address}</strong></p>`
+    : "";
+  const bodyLines = input.lines
+    .map(
+      (l) =>
+        `<p style="margin:0 0 12px;color:#111827;font-size:16px;line-height:1.5;">${escapeHtml(
+          l
+        )}</p>`
+    )
+    .join("");
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#15803d;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">Terra Vista</p>
+          <p style="margin:4px 0 0;color:#bbf7d0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Lawn service update</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${customer},</p>
+          <p style="margin:0 0 12px;color:#111827;font-size:16px;line-height:1.5;">
+            A service update for <strong>${job}</strong>:
+          </p>
+          ${bodyLines}
+          ${addressLine}
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This is an automated notice from Terra Vista Construction Management.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by Terra Vista Construction Management.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: input.subject,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}

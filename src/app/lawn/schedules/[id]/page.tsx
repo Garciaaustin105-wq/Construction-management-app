@@ -8,6 +8,9 @@ import TopBar from "@/components/TopBar";
 import { useToast } from "@/components/Toast";
 import { generateDueDates, summarizeSchedule } from "@/lib/lawnRecurrence";
 import { Loader2, RefreshCw, Pause, Play, Calendar } from "lucide-react";
+import LawnPropertyDetails, {
+  type LawnJob,
+} from "@/components/LawnPropertyDetails";
 
 type Schedule = {
   id: string;
@@ -53,6 +56,7 @@ export default function ScheduleDetailPage({
 
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [property, setProperty] = useState<LawnJob | null>(null);
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -95,12 +99,21 @@ export default function ScheduleDetailPage({
       }
       setSchedule(sched as unknown as Schedule);
 
-      const { data: visitRows } = await supabase
-        .from("lawn_visits")
-        .select("id, due_date, status, crew_id, notes")
-        .eq("recurring_schedule_id", id)
-        .order("due_date", { ascending: true });
+      const jobId = (sched as unknown as Schedule).job_id;
+      const [{ data: visitRows }, { data: lawnJob }] = await Promise.all([
+        supabase
+          .from("lawn_visits")
+          .select("id, due_date, status, crew_id, notes")
+          .eq("recurring_schedule_id", id)
+          .order("due_date", { ascending: true }),
+        supabase
+          .from("lawn_jobs")
+          .select("*")
+          .eq("id", jobId)
+          .maybeSingle(),
+      ]);
       setVisits((visitRows as unknown as Visit[]) ?? []);
+      setProperty((lawnJob as unknown as LawnJob | null) ?? null);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -181,14 +194,24 @@ export default function ScheduleDetailPage({
 
   async function skipVisit(visitId: string) {
     setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("lawn_visits")
-      .update({ status: "skipped" })
-      .eq("id", visitId);
+    // Route through the /status API (not a direct update) so the customer is
+    // emailed + notified_at stamped — same path as the visit detail page.
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visitId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "skipped" }),
+      });
+    } catch {
+      setBusy(false);
+      toast.error("Failed: network error");
+      return;
+    }
     setBusy(false);
-    if (error) {
-      toast.error(`Failed: ${error.message}`);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
       return;
     }
     setVisits((prev) =>
@@ -203,18 +226,31 @@ export default function ScheduleDetailPage({
       return;
     }
     setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("lawn_visits")
-      .update({ due_date: moveDate })
-      .eq("id", visitId);
+    // Route through the /status API so a move emails the customer + stamps
+    // notified_at (a direct update would silently skip both).
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visitId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ due_date: moveDate }),
+      });
+    } catch {
+      setBusy(false);
+      toast.error("Failed: network error");
+      return;
+    }
     setBusy(false);
-    if (error) {
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+      };
       // 23505 = a visit already exists on that date for this schedule.
-      if (error.code === "23505") {
+      if (data.code === "23505") {
         toast.error("A visit already exists on that date for this schedule");
       } else {
-        toast.error(`Failed: ${error.message}`);
+        toast.error(`Failed: ${data.error ?? res.statusText}`);
       }
       return;
     }
@@ -309,6 +345,13 @@ export default function ScheduleDetailPage({
             </button>
           </div>
         </div>
+
+        {/* Property profile (lawn_jobs 1:1) */}
+        <LawnPropertyDetails
+          jobId={schedule.job_id}
+          initial={property}
+          canEdit={authorized}
+        />
 
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
