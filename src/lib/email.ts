@@ -65,7 +65,7 @@ export async function sendEstimateEmail(
         input.validUntil
       )}</strong>.</p>`
     : "";
-  const messageLine = input.message && input.message.trim()
+  const messageLine = input.message?.trim()
     ? `<p style="margin:0 0 20px;color:#111827;font-size:15px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(
         input.message.trim()
       )}</p>`
