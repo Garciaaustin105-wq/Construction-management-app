@@ -136,18 +136,21 @@ export async function POST(request: Request) {
       const result = await sendPasswordResetEmail({ to: mail, resetLink });
       if (result.error) {
         console.error("forgot-password: Resend rejected:", result.error.message);
+        // TEMP DIAGNOSTIC: surface the provider's rejection reason so we can
+        // see why delivery fails (env vars are masked in Vercel). Resend error
+        // messages do not contain the API key. Trim once resolved.
         return NextResponse.json(
-          { error: "Could not send the reset email. Try again or contact support." },
+          {
+            error: `Email provider rejected the send: ${result.error.message}`,
+          },
           { status: 500 }
         );
       }
     } catch (err) {
-      console.error(
-        "forgot-password: send threw:",
-        err instanceof Error ? err.message : err
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("forgot-password: send threw:", msg);
       return NextResponse.json(
-        { error: "Could not send the reset email. Try again or contact support." },
+        { error: `Email send failed: ${msg}` },
         { status: 500 }
       );
     }
