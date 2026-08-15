@@ -103,7 +103,7 @@ export default function JobSubcontractors({
   }
 
   async function detach(subId: string) {
-    if (!customConfirm("Remove this subcontractor from the job?")) return;
+    if (!confirm("Remove this subcontractor from the job?")) return;
     setBusyId(subId);
     const { error } = await supabase
       .from("job_subcontractors")

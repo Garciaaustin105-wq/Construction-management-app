@@ -179,21 +179,12 @@ export default function EstimateLineItemEditor({
   }
 
   // Save the current valid items as a reusable template (prompts for a name).
-  function customAlert(message: string): void {
-    window.alert(message);
-  }
-  function customConfirm(message: string): boolean {
-    return window.confirm(message);
-  }
-  function customPrompt(message: string): string | null {
-    return window.prompt(message);
-  }
   async function saveAsTemplate() {
     const valid = items.filter(
       (i) => i.description.trim() || i.cost_code_id
     );
     if (valid.length === 0) return;
-    const name = customPrompt("Name this template (e.g. 'Standard bathroom rough-in'):");
+    const name = window.prompt("Name this template (e.g. 'Standard bathroom rough-in'):");
     if (!name?.trim() || !orgId || !userId) return;
     setSavingTpl(true);
     const mod = await import("@/lib/supabase/client");

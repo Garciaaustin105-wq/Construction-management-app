@@ -18,7 +18,6 @@ import {
   Mail,
   Briefcase,
 } from "lucide-react";
-import { customAlert, customConfirm, customPrompt } from "@/components/CustomDialogs";
 
 export type SubDetail = {
   id: string;
@@ -161,7 +160,7 @@ export default function SubcontractorDetail({
   }
 
   async function deleteFile(att: SubAttachment) {
-    if (!customConfirm(`Delete ${att.filename}?`)) return;
+    if (!confirm(`Delete ${att.filename}?`)) return;
     setFileBusy(att.id);
     await supabase.storage.from("subcontractor-files").remove([att.storage_path]);
     await supabase.from("subcontractor_attachments").delete().eq("id", att.id);
@@ -199,7 +198,7 @@ export default function SubcontractorDetail({
   }
 
   async function detachJob(jobId: string) {
-    if (!customConfirm("Remove this sub from the job?")) return;
+    if (!confirm("Remove this sub from the job?")) return;
     setJobBusy(jobId);
     const { error } = await supabase
       .from("job_subcontractors")

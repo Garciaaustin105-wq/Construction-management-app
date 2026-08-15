@@ -100,7 +100,7 @@ export default function BlueprintsSection({
   }
 
   async function handleDelete(blueprint: Blueprint) {
-    if (!customConfirm(`Delete ${blueprint.filename}?`)) return;
+    if (!confirm(`Delete ${blueprint.filename}?`)) return;
     await supabase.storage.from("blueprints").remove([blueprint.storage_path]);
     await supabase.from("blueprints").delete().eq("id", blueprint.id);
     toast.success("Blueprint deleted");

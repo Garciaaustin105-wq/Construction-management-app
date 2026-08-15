@@ -76,7 +76,7 @@ export default function CostCodesManager({ orgId }: { orgId: string }) {
   }
 
   async function remove(cc: CostCode) {
-    if (!customConfirm(`Delete ${cc.code} — ${cc.name}? This removes it from the library.`)) return;
+    if (!confirm(`Delete ${cc.code} — ${cc.name}? This removes it from the library.`)) return;
     const { error } = await supabase.from("cost_codes").delete().eq("id", cc.id);
     if (error) {
       toast.error(error.message);

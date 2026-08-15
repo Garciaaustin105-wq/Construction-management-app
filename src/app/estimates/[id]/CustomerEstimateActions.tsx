@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { customAlert, customConfirm, customPrompt } from "@/lib/dialogs";
 
 // Logged-in customer Approve/Reject for an estimate awaiting their decision.
 // Calls the approve_estimate / reject_estimate SECURITY DEFINER RPCs (customer-
@@ -22,7 +21,7 @@ export default function CustomerEstimateActions({
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
 
   async function approve() {
-    if (!customConfirm("Approve this estimate? An invoice will be created.")) return;
+    if (!confirm("Approve this estimate? An invoice will be created.")) return;
     setBusy("approve");
     const { error } = await supabase.rpc("approve_estimate", {
       p_estimate_id: estimateId,
@@ -37,7 +36,7 @@ export default function CustomerEstimateActions({
   }
 
   async function reject() {
-    if (!customConfirm("Reject this estimate?")) return;
+    if (!confirm("Reject this estimate?")) return;
     setBusy("reject");
     const { error } = await supabase.rpc("reject_estimate", {
       p_estimate_id: estimateId,

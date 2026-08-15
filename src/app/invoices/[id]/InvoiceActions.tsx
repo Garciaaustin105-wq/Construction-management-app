@@ -34,7 +34,7 @@ export default function InvoiceActions({
   }
 
   async function deleteInvoice() {
-    if (!customConfirm("Delete this invoice? This can't be undone.")) return;
+    if (!confirm("Delete this invoice? This can't be undone.")) return;
     setBusy(true);
     const { error } = await supabase.from("invoices").delete().eq("id", invoiceId);
     if (error) {

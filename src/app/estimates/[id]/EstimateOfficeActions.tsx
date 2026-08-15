@@ -67,7 +67,7 @@ export default function EstimateOfficeActions({
   }
 
   async function deleteEstimate() {
-    if (!customConfirm("Delete this draft estimate? This can't be undone.")) return;
+    if (!confirm("Delete this draft estimate? This can't be undone.")) return;
     setBusy(true);
     const { error } = await supabase
       .from("estimates")

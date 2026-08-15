@@ -345,7 +345,7 @@ export default function ReceiptsSection({
 
   // --- Delete -------------------------------------------------------------
   async function removeLocal(rec: LocalReceipt) {
-    if (!customConfirm("Delete this receipt? This can't be undone.")) return;
+    if (!confirm("Delete this receipt? This can't be undone.")) return;
     const key = `local-${rec.localId}`;
     setBusyId(key);
     try {
@@ -362,7 +362,7 @@ export default function ReceiptsSection({
     }
   }
   async function removeRemote(r: RemoteReceipt) {
-    if (!customConfirm("Delete this shared receipt? Removes it for everyone.")) return;
+    if (!confirm("Delete this shared receipt? Removes it for everyone.")) return;
     const key = `remote-${r.id}`;
     setBusyId(key);
     try {

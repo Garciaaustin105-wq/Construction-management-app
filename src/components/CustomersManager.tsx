@@ -98,7 +98,7 @@ export default function CustomersManager({
       );
       return;
     }
-    if (!customConfirm("Delete this customer?")) return;
+    if (!confirm("Delete this customer?")) return;
     setBusyId(id);
     const { error } = await supabase.from("customers").delete().eq("id", id);
     setBusyId(null);

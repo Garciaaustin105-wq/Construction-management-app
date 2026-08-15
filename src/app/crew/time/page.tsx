@@ -176,7 +176,7 @@ export default function CrewTimePage() {
   }
 
   async function removeEntry(entry: TimeEntry) {
-    if (!customConfirm("Delete this time entry? This can't be undone.")) return;
+    if (!confirm("Delete this time entry? This can't be undone.")) return;
     const { error } = await supabase.from("time_entries").delete().eq("id", entry.id);
     if (error) {
       toast.error(error.message);
