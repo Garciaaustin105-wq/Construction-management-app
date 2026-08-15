@@ -62,7 +62,7 @@ export default async function WeeklyReportPage({
   // + receipts (job/worker/code) and photos (job/worker only — no cost code).
   const [jobsRes, workersRes, codesRes, timeRes, photoRes, receiptRes, profileRes] =
     await Promise.all([
-      supabase.from("jobs").select("id, name").order("name"),
+      supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
       supabase.from("profiles").select("id, full_name").order("full_name"),
       supabase.from("cost_codes").select("id, code, name").order("code"),
       (() => {

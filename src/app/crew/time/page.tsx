@@ -62,7 +62,7 @@ export default function CrewTimePage() {
     setUserId(user?.id ?? null);
 
     const [jobsR, codesR, entriesR] = await Promise.all([
-      supabase.from("jobs").select("id, name").order("name"),
+      supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
       supabase.from("cost_codes").select("id, code, name").order("code"),
       user?.id
         ? supabase

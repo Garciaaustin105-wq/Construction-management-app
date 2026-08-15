@@ -43,7 +43,7 @@ export default async function SubcontractorDetailPage({
       .from("job_subcontractors")
       .select("job_id, role_on_job, job:jobs(name)")
       .eq("subcontractor_id", id),
-    supabase.from("jobs").select("id, name").order("name"),
+    supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
   ]);
 
   if (!sub) notFound();

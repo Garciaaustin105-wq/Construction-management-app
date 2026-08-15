@@ -96,6 +96,7 @@ export default async function DashboardPage() {
     supabase
       .from("jobs")
       .select("id, name, status, customers(name)")
+      .eq("type", "construction")
       .order("created_at", { ascending: false }),
     supabase
       .from("photos")

@@ -46,7 +46,7 @@ function PhotoUploadForm() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("jobs").select("id, name");
+      const { data } = await supabase.from("jobs").select("id, name").eq("type", "construction");
       setJobs(data ?? []);
       // Auto-grab location the moment the page opens so it's ready by the time
       // the user takes a photo (falls back to IP location if GPS is denied).

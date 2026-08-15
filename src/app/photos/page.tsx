@@ -38,9 +38,12 @@ export default async function PhotosPage({
       .select(
         "id, storage_path, caption, created_at, uploaded_by, lat, lng, uploader:profiles(full_name), job:jobs(name)"
       )
+      // Exclude lawn visit photos — those live in the Lawn tab. visit_id is set
+      // only on photos attached to a lawn_visit; construction photos are null.
+      .is("visit_id", null)
       .order("created_at", { ascending: false })
       .limit(200),
-    supabase.from("jobs").select("id, name").order("name"),
+    supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
   ]);
 
   type Row = {

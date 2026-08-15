@@ -97,8 +97,8 @@ export default async function LawnPage() {
       <main className="max-w-md mx-auto p-4 space-y-6">
         <div className="grid grid-cols-2 gap-2">
           <Link
-            href="/admin/projects/new"
-            className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+            href="/lawn/new"
+            className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
           >
             <Plus className="w-5 h-5" />
             New lawn job
@@ -173,11 +173,11 @@ export default async function LawnPage() {
               <EmptyState
                 icon={Sprout}
                 title="No recurring schedules yet"
-                description='Create a lawn job and turn on "Recurring lawn service" to set up a route.'
+                description="Create a lawn job to set up a recurring route."
                 action={
                   <Link
-                    href="/admin/projects/new"
-                    className="inline-flex items-center gap-1 text-sm text-blue-600 font-semibold"
+                    href="/lawn/new"
+                    className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
                   >
                     <Plus className="w-4 h-4" />
                     New lawn job

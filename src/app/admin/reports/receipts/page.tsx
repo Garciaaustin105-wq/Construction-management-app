@@ -50,7 +50,7 @@ export default async function ReceiptsReportPage({
 
   // Dropdown data + the filtered receipts in parallel.
   const [jobsRes, workersRes, codesRes, rows] = await Promise.all([
-    supabase.from("jobs").select("id, name").order("name"),
+    supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
     supabase
       .from("profiles")
       .select("id, full_name")

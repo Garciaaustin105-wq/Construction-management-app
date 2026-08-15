@@ -163,7 +163,8 @@ export async function GET(request: Request) {
   // management + super_admin → all org jobs; crew → assigned; customer → own.
   let jobsQuery = admin
     .from("jobs")
-    .select("id, name, scheduled_start, scheduled_end, customers(name)");
+    .select("id, name, scheduled_start, scheduled_end, customers(name)")
+    .eq("type", "construction");
 
   if (MANAGEMENT_ROLES.has(role) || isSuperAdmin) {
     jobsQuery = orgFilter(jobsQuery);

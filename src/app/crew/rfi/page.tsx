@@ -41,7 +41,8 @@ function RfiForm() {
       setAuthorized(true);
       const { data } = await supabase
         .from("jobs")
-        .select("id, name");
+        .select("id, name")
+        .eq("type", "construction");
       setJobs(data ?? []);
     })();
   }, [router, supabase]);

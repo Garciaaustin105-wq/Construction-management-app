@@ -16,7 +16,8 @@ export async function GET(req: Request) {
   // Get jobs user can see (RLS scopes to assigned crew / all for office).
   const { data: jobs } = await supabase
     .from("jobs")
-    .select("id, status, created_at, assigned_crew");
+    .select("id, status, created_at, assigned_crew")
+    .eq("type", "construction");
 
   // markSeen=1: the user just landed on Home, so stamp every visible job as
   // seen NOW (in the same request, before computing) and return 0. This fixes

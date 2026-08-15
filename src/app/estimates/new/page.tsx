@@ -86,6 +86,7 @@ function NewEstimateForm() {
         supabase
           .from("jobs")
           .select("id, name, customer_id")
+          .eq("type", "construction")
           .order("created_at", { ascending: false }),
         supabase.from("cost_codes").select("id, code, name").order("code"),
       ]);

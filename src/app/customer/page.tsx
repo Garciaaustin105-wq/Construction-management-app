@@ -7,7 +7,7 @@ import CustomerBlueprints from "@/components/CustomerBlueprints";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal, computeEstimateTotals } from "@/lib/money";
-import { MapPin, FileText, Receipt } from "lucide-react";
+import { MapPin, FileText, Receipt, Sprout } from "lucide-react";
 import Link from "next/link";
 
 export default async function CustomerPortal() {
@@ -26,10 +26,12 @@ export default async function CustomerPortal() {
   const customerId = profile?.customer_id;
 
   // Fan out the independent reads (jobs, pending estimates, invoices) in parallel.
-  const [jobsRes, estimatesRes, invoicesRes] = await Promise.all([
+  const [jobsRes, estimatesRes, invoicesRes, lawnJobsRes] = await Promise.all([
+    // Construction jobs only — lawn jobs live in the Lawn section below.
     supabase
       .from("jobs")
       .select("id, name, address, description, status, scheduled_start, scheduled_end")
+      .eq("type", "construction")
       .order("created_at", { ascending: false }),
     customerId
       ? supabase
@@ -50,11 +52,57 @@ export default async function CustomerPortal() {
           .eq("customer_id", customerId)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
+    // Lawn jobs (RLS restricts to the customer's own) → Lawn section below.
+    customerId
+      ? supabase
+          .from("jobs")
+          .select("id, name, address")
+          .eq("type", "lawn")
+          .order("name")
+      : Promise.resolve({ data: [] }),
   ]);
 
   const jobs = jobsRes.data;
   const pendingEstimates = estimatesRes.data;
   const invoices = invoicesRes.data;
+
+  // ── Lawn section ─────────────────────────────────────────────────────────
+  // Pull the customer's lawn visits (upcoming pending + recently completed)
+  // so the portal surfaces recurring service independently of the construction
+  // Projects list. RLS admits the owning customer on lawn_visits (same policy
+  // family as schedule_events), so no customer_id filter is needed.
+  const lawnJobs = (lawnJobsRes.data ?? []) as {
+    id: string;
+    name: string;
+    address: string | null;
+  }[];
+  const lawnJobIds = lawnJobs.map((j) => j.id);
+  const lawnVisitsRes =
+    lawnJobIds.length > 0
+      ? await supabase
+          .from("lawn_visits")
+          .select(
+            "id, due_date, status, completed_at, jobs(name, address), recurring_schedules(service_type)"
+          )
+          .in("job_id", lawnJobIds)
+          .order("due_date", { ascending: false })
+          .limit(60)
+      : { data: [] as never[] };
+  type LawnVisitRow = {
+    id: string;
+    due_date: string;
+    status: string;
+    completed_at: string | null;
+    jobs: { name: string; address: string | null } | null;
+    recurring_schedules: { service_type: string | null } | null;
+  };
+  const lawnVisits = (lawnVisitsRes.data ?? []) as unknown as LawnVisitRow[];
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingVisits = lawnVisits
+    .filter((v) => v.status === "pending" && v.due_date >= today)
+    .sort((a, b) => a.due_date.localeCompare(b.due_date))
+    .slice(0, 6);
+  const recentDone = lawnVisits.filter((v) => v.status === "done").slice(0, 4);
 
   const jobsWithFiles = await Promise.all(
     (jobs ?? []).map(async (job) => {
@@ -250,6 +298,65 @@ export default async function CustomerPortal() {
                       </div>
                     </Link>
                   ))}
+              </div>
+            </section>
+          )}
+
+          {/* Lawn service — upcoming visits + recent completions */}
+          {(upcomingVisits.length > 0 || recentDone.length > 0) && (
+            <section>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
+                <Sprout className="w-4 h-4 text-green-600" />
+                Lawn Service
+              </h2>
+              <div className="space-y-2">
+                {upcomingVisits.map((v) => (
+                  <div key={v.id} className="bg-white rounded-lg p-3 shadow-sm">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 truncate">
+                          {v.jobs?.name ?? "Lawn visit"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {v.recurring_schedules?.service_type ?? "Service"} ·{" "}
+                          {new Date(v.due_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <span className="text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full whitespace-nowrap">
+                        Scheduled
+                      </span>
+                    </div>
+                    {v.jobs?.address && (
+                      <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 flex-shrink-0" />
+                        <span>{v.jobs.address}</span>
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {recentDone.map((v) => (
+                  <div
+                    key={v.id}
+                    className="bg-white rounded-lg p-3 shadow-sm"
+                  >
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-700 truncate">
+                          {v.jobs?.name ?? "Lawn visit"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {v.recurring_schedules?.service_type ?? "Service"} ·{" "}
+                          {v.completed_at
+                            ? `Completed ${new Date(v.completed_at).toLocaleDateString()}`
+                            : new Date(v.due_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <span className="text-xs font-medium text-gray-400 whitespace-nowrap">
+                        Done
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
           )}

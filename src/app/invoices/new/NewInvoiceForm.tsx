@@ -55,6 +55,7 @@ export default function NewInvoiceForm({
         supabase
           .from("jobs")
           .select("id, name, customer_id")
+          .eq("type", "construction")
           .order("created_at", { ascending: false }),
         supabase
           .from("customers")

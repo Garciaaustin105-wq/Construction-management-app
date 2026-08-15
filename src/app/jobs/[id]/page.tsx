@@ -47,7 +47,7 @@ export default async function JobDetailPage({
   const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes, schedEventsRes] = await Promise.all([
     supabase
       .from("jobs")
-      .select("id, name, address, description, status, created_at, assigned_crew, customers(name)")
+      .select("id, name, address, description, status, created_at, assigned_crew, customers(name), type")
       .eq("id", id)
       .single(),
     supabase
@@ -107,6 +107,19 @@ export default async function JobDetailPage({
 
   const job = jobRes.data;
   if (!job) notFound();
+
+  // Lawn jobs belong to the Lawn tab — bounce to the schedule detail (or the
+  // Lawn hub if no schedule is attached yet) so the construction job page never
+  // surfaces a recurring-service property.
+  if ((job as unknown as { type?: string }).type === "lawn") {
+    const { data: sched } = await supabase
+      .from("recurring_schedules")
+      .select("id")
+      .eq("job_id", id)
+      .limit(1)
+      .maybeSingle();
+    redirect(sched ? `/lawn/schedules/${(sched as { id: string }).id}` : "/lawn");
+  }
   const photos = photosRes.data;
   const rfis = rfisRes.data;
   const blueprints = blueprintsRes.data;

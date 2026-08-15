@@ -41,6 +41,7 @@ export default async function CustomerDetailPage({
   const { data: jobRows } = await supabase
     .from("jobs")
     .select("id, name, status")
+    .eq("type", "construction")
     .eq("customer_id", id)
     .order("name");
   const jobs: CustomerJob[] = (jobRows ?? []) as CustomerJob[];
