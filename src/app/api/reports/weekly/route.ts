@@ -331,16 +331,16 @@ export async function GET(request: Request) {
     ],
   ];
   for (const id of workerIds) {
-    const w = workers.get(id)!;
+    const w = workers.get(id);
     summaryAoA.push([
       nameOf(id),
       roleOf(id),
-      w.hours,
-      [...w.projects].sort().join(", "),
-      w.submitted,
-      w.paidBack,
-      w.owed,
-      w.paidThisWeek,
+      w?.hours ?? 0,
+      w?.projects ? [...w.projects].sort().join(", ") : "",
+      w?.submitted ?? 0,
+      w?.paidBack ?? 0,
+      w?.owed ?? 0,
+      w?.paidThisWeek ?? 0,
     ]);
   }
   summaryAoA.push([
@@ -370,11 +370,11 @@ export async function GET(request: Request) {
       ["Worker", ...dayHeaders, "Total"],
     ];
     for (const id of workerIds) {
-      const w = workers.get(id)!;
+      const w = workers.get(id);
       dailyAoA.push([
         nameOf(id),
-        ...w.hoursByDay,
-        w.hoursByDay.reduce((s, h) => s + h, 0),
+        ...(w?.hoursByDay ?? []),
+        (w?.hoursByDay ?? []).reduce((s, h) => s + h, 0),
       ]);
     }
     const dailyTotals = Array.from({ length: dayCount }, (_, i) =>
@@ -396,8 +396,8 @@ export async function GET(request: Request) {
   const byCodeAoA: (string | number)[][] = [["Worker", "Cost Code", "Hours"]];
   let byCodeTotal = 0;
   for (const id of workerIds) {
-    const w = workers.get(id)!;
-    const codes = [...w.hoursByCode.entries()].sort((a, b) =>
+    const w = workers.get(id);
+    const codes = [...(w?.hoursByCode ?? new Map()).entries()].sort((a, b) =>
       a[0].localeCompare(b[0])
     );
     for (const [code, hrs] of codes) {

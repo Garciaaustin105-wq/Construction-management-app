@@ -219,7 +219,7 @@ export default async function ReceiptsReportPage({
                             rel="noreferrer"
                             className="text-blue-600 underline"
                           >
-                            {r.lat!.toFixed(4)}, {r.lng!.toFixed(4)}
+                            {r.lat?.toFixed(4)}, {r.lng?.toFixed(4)}
                           </a>
                         ) : (
                           "—"

@@ -67,8 +67,8 @@ export async function POST(request: Request) {
   }
 
   // Determine the target org for the new user.
-  //   super_admin → must supply a valid organization_id (provisioning).
-  //   office / admin → forced to the caller's own org.
+  //   super_admin  must supply a valid organization_id (provisioning).
+  //   office / admin  forced to the caller's own org.
   let targetOrgId: string;
   if (tenant.isSuperAdmin) {
     if (!organization_id) {
@@ -89,9 +89,17 @@ export async function POST(request: Request) {
   }
 
   // Service role client - has admin privileges, bypasses RLS
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { error: "Supabase configuration is missing" },
+      { status: 500 }
+    );
+  }
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    serviceRoleKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 

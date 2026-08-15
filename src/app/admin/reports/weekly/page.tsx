@@ -157,7 +157,11 @@ export default async function WeeklyReportPage({
         owed: 0,
       });
     }
-    return workers.get(id)!;
+    const worker = workers.get(id);
+    if (!worker) {
+      throw new Error(`Worker with id ${id} not found`);
+    }
+    return worker;
   }
 
   for (const t of (timeRes.data ?? []) as unknown as TimeRow[]) {

@@ -108,7 +108,7 @@ export async function GET(request: Request) {
       new Date(r.captured_at).toLocaleDateString(),
       r.uploaded_by_name ?? "—",
       r.job_name ?? "—",
-      hasGps ? `${r.lat!.toFixed(4)}, ${r.lng!.toFixed(4)}` : "—",
+      hasGps ? `${r.lat?.toFixed(4)}, ${r.lng?.toFixed(4)}` : "—",
       r.vendor ?? "—",
       `$${Number(r.amount ?? 0).toFixed(2)}`,
       r.reimbursed ? "Paid" : "Owed",

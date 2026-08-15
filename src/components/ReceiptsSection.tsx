@@ -276,7 +276,11 @@ export default function ReceiptsSection({
         toast.error(data?.error ?? `Share failed (${res.status})`);
         return;
       }
-      await updateReceipt(rec.localId!, {
+      if (!rec.localId) {
+        toast.error("Cannot update receipt: missing local ID");
+        return;
+      }
+      await updateReceipt(rec.localId, {
         shared: true,
         remoteId: data.id,
         storagePath: data.storagePath,
@@ -349,12 +353,16 @@ export default function ReceiptsSection({
     const key = `local-${rec.localId}`;
     setBusyId(key);
     try {
+      if (rec.localId == null) {
+        toast.error("Invalid receipt ID");
+        return;
+      }
       // If it was shared, remove the cloud copy via the server API (service
       // role) so crew deletes don't depend on storage RLS.
       if (rec.shared && rec.remoteId) {
         await fetch(`/api/receipts/${rec.remoteId}`, { method: "DELETE" });
       }
-      await deleteReceipt(rec.localId!);
+      await deleteReceipt(rec.localId);
       await refreshLocal();
       toast.success("Receipt deleted");
     } finally {
@@ -384,9 +392,11 @@ export default function ReceiptsSection({
     rec: LocalReceipt,
     patch: Partial<LocalReceipt>
   ) {
-    await updateReceipt(rec.localId!, patch);
+    const { localId } = rec;
+    if (localId == null) return;
+    await updateReceipt(localId, patch);
     setLocals((prev) =>
-      prev.map((l) => (l.localId === rec.localId ? { ...l, ...patch } : l))
+      prev.map((l) => (l.localId === localId ? { ...l, ...patch } : l))
     );
   }
 

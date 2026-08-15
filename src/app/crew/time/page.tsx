@@ -353,7 +353,9 @@ export default function CrewTimePage() {
           ) : (
             <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
               {recent.map((e) => {
-                const dur = new Date(e.clock_out_at!).getTime() - new Date(e.clock_in_at).getTime();
+                const dur = e.clock_out_at
+                  ? new Date(e.clock_out_at).getTime() - new Date(e.clock_in_at).getTime()
+                  : 0;
                 return (
                   <div key={e.id} className="p-3 flex items-center gap-2">
                     <div className="min-w-0 flex-1">
@@ -364,7 +366,9 @@ export default function CrewTimePage() {
                         {new Date(e.clock_in_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}
                         {new Date(e.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         {" → "}
-                        {new Date(e.clock_out_at!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {e.clock_out_at
+                          ? new Date(e.clock_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          : "—"}
                       </p>
                       {e.cost_code_id && (
                         <p className="text-xs text-blue-600 truncate">{codeLabelById[e.cost_code_id]}</p>

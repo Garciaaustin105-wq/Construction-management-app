@@ -44,7 +44,10 @@ function requestHost(request: Request): string {
 // is a runtime impossibility — the assertion keeps the signature honest about
 // the schema (these columns are nullable) without synthesizing a bogus epoch.
 function allDayDate(value: string | null): Date {
-  return new Date(`${value!}T00:00:00.000Z`);
+  if (value === null) {
+    throw new Error('value must be a valid string');
+  }
+  return new Date(`${value}T00:00:00.000Z`);
 }
 
 // Row shapes for the joins the feed queries. Supabase's generated types type
@@ -78,58 +81,46 @@ type SubCalRow = {
 type InvCalRow = {
   id: string;
   due_date: string | null;
-  jobs: { name: string } | null;
-  customers?: { name: string } | null;
-};
-type EstimateCalRow = {
-  id: string;
-  valid_until: string | null;
-  jobs: { name: string } | null;
-  customers?: { name: string } | null;
-};
-type VisitCalRow = {
-  id: string;
-  due_date: string;
-  status: string;
-  jobs: { name: string } | null;
-  recurring_schedules: { service_type: string | null } | null;
-};
+const url = new URL(request.url);
+const token = url.searchParams.get("token");
+if (!token) {
+  return new Response("Missing token", { status: 400 });
+}
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token");
-  if (!token) {
-    return new Response("Missing token", { status: 400 });
-  }
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!supabaseUrl || !supabaseKey) {
+  return new Response("Missing Supabase environment variables", { status: 500 });
+}
 
-  const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+const admin = createAdminClient(
+  supabaseUrl,
+  supabaseKey,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
 
-  // Resolve the feed row by token. A missing/revoked token → 404 so stale
-  // subscribe URLs in a provider surface as "not found", not an empty calendar.
-  const { data: feed } = await admin
-    .from("calendar_feeds")
-    .select("user_id, organization_id")
-    .eq("token", token)
-    .maybeSingle();
+// Resolve the feed row by token. A missing/revoked token → 404 so stale
+// subscribe URLs in a provider surface as "not found", not an empty calendar.
+const { data: feed } = await admin
+  .from("calendar_feeds")
+  .select("user_id, organization_id")
+  .eq("token", token)
+  .maybeSingle();
 
-  if (!feed) {
-    return new Response("Feed not found", { status: 404 });
-  }
+if (!feed) {
+  return new Response("Feed not found", { status: 404 });
+}
 
-  const userId = feed.user_id as string;
-  const feedOrgId = feed.organization_id as string;
+const userId = feed.user_id as string;
+const feedOrgId = feed.organization_id as string;
 
-  // Resolve the user's role (the feed is personal — it reflects what THIS user
-  // may see, not what the org broadly contains).
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("role, customer_id")
-    .eq("id", userId)
-    .single();
+// Resolve the user's role (the feed is personal — it reflects what THIS user
+// may see, not what the org broadly contains).
+const { data: profile } = await admin
+  .from("profiles")
+  .select("role, customer_id")
+  .eq("id", userId)
+  .single();
   const role = profile?.role ?? "crew";
   const customerId = (profile?.customer_id as string | null) ?? null;
 

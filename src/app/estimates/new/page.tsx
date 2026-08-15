@@ -236,7 +236,7 @@ function NewEstimateForm() {
     }
 
     const lineInserts = validItems.map((item, idx) => ({
-      estimate_id: estimate!.id,
+      estimate_id: estimate?.id ?? null,
       cost_code_id: item.cost_code_id ?? null,
       description: item.description.trim() || null,
       quantity: item.quantity,
