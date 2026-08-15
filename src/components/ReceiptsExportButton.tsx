@@ -69,7 +69,7 @@ export default function ReceiptsExportButton({
 }) {
   const [busy, setBusy] = useState(false);
 
-  async function onExport() {
+  function onExport() {
     if (rows.length === 0) return;
     setBusy(true);
     try {

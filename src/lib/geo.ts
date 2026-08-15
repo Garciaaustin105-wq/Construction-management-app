@@ -23,7 +23,7 @@ export type GpsStatus = "idle" | "getting" | "ok" | "ip" | "denied" | "unavailab
 
 type Resolution = { result: GpsResult | null; status: GpsStatus };
 
-export async function resolveLocation(): Promise<Resolution> {
+export function resolveLocation(): Promise<Resolution> {
   if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
     // No GPS API at all → go straight to the IP fallback.
     return ipFallback();

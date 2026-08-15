@@ -289,7 +289,7 @@ export default function ReceiptsSection({
   }
 
   // --- Save to device -----------------------------------------------------
-  async function downloadLocal(rec: LocalReceipt) {
+  function downloadLocal(rec: LocalReceipt) {
     const url = URL.createObjectURL(rec.blob);
     triggerDownload(url, fileName(rec.capturedAt, jobName, rec.vendor));
     setTimeout(() => URL.revokeObjectURL(url), 4000);
