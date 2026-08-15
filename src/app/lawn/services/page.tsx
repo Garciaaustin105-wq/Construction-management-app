@@ -24,6 +24,10 @@ export default function LawnServicesPage() {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("0");
   const [adding, setAdding] = useState(false);
+  // lawn_services is a ROOT table (no job_id → no set_org_from_job trigger), so
+  // the app MUST send organization_id on insert or the row's org is null and the
+  // `with check tier_office(organization_id)` RLS policy rejects it.
+  const [orgId, setOrgId] = useState<string>("");
 
   async function load() {
     const supabase = createClient();
@@ -54,6 +58,7 @@ export default function LawnServicesPage() {
         router.push("/dashboard");
         return;
       }
+      setOrgId((profile?.organization_id as string) ?? "");
       setAuthorized(true);
       await load();
     })();
@@ -72,12 +77,18 @@ export default function LawnServicesPage() {
     }
     setAdding(true);
     const supabase = createClient();
+    if (!orgId) {
+      toast.error("Could not resolve your organization — reload and try again");
+      setAdding(false);
+      return;
+    }
     const { data, error } = await supabase
       .from("lawn_services")
       .insert({
         name: name.trim(),
         default_price: p,
         active: true,
+        organization_id: orgId,
       })
       .select("id, name, default_price, active")
       .single();
