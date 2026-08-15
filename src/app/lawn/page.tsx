@@ -5,7 +5,7 @@ import EmptyState from "@/components/EmptyState";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import Link from "next/link";
-import { Plus, Sprout, CalendarDays, Scissors, CloudSun } from "lucide-react";
+import { Plus, Sprout, CalendarDays, Calendar, Scissors, CloudSun } from "lucide-react";
 
 // Row shapes for the relation joins (Supabase types these loosely, so we cast
 // via `as unknown as Row[]` — same pattern as estimates/page.tsx).
@@ -104,21 +104,27 @@ export default async function LawnPage() {
             New lawn job
           </Link>
           <Link
+            href="/lawn/calendar"
+            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+          >
+            <Calendar className="w-5 h-5" />
+            Calendar
+          </Link>
+          <Link
             href="/lawn/services"
             className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
           >
             <Scissors className="w-5 h-5" />
             Services
           </Link>
+          <Link
+            href="/lawn/weather"
+            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+          >
+            <CloudSun className="w-5 h-5" />
+            Weather
+          </Link>
         </div>
-
-        <Link
-          href="/lawn/weather"
-          className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-        >
-          <CloudSun className="w-5 h-5" />
-          Weather
-        </Link>
 
         {/* ── Today's Route ─────────────────────────────────────────────── */}
         <section className="space-y-2">
