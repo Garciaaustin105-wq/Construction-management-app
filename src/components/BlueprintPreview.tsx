@@ -136,6 +136,7 @@ export default function BlueprintPreview({
               key={iframeSrc}
               src={iframeSrc}
               title={filename}
+              sandbox=""
               className="w-full h-full bg-white rounded"
               onLoad={() => {
                 // For PDFs, Google Docs returns its viewer page even for invalid URLs,
