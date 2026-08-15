@@ -8,8 +8,8 @@ export const metadata: Metadata = {
   description: BRAND.tagline,
   manifest: "/manifest.json",
   icons: {
-    icon: "/terra-vista-icon.svg",
-    shortcut: "/terra-vista-icon.svg",
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
     apple: "/terra-vista-icon.svg",
   },
   appleWebApp: {
