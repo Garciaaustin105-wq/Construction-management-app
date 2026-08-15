@@ -32,15 +32,15 @@ export default function BillingForm({
   const searchParams = useSearchParams();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
+  const status = searchParams.get("status");
 
   useEffect(() => {
-    const status = searchParams.get("status");
     if (status === "success") {
       toast.success("Subscription active — thanks!");
     } else if (status === "cancel") {
       toast.warning("Checkout canceled.");
     }
-  }, [searchParams, toast]);
+  }, [status, toast]);
 
   const labelMap: Record<string, string> = {
     trial: "Trial",

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, XCircle, Info, AlertTriangle } from "lucide-react";
 
 type ToastVariant = "success" | "error" | "info" | "warning";
@@ -55,13 +55,19 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [dismiss]
   );
 
-  const value: ToastContextValue = {
-    show,
-    success: (m) => show(m, "success"),
-    error: (m) => show(m, "error"),
-    info: (m) => show(m, "info"),
-    warning: (m) => show(m, "warning"),
-  };
+  // Memoized so consumers get a stable reference — otherwise useToast() returns
+  // a new object every render, which makes any effect with `toast` in its deps
+  // re-fire every render (and a toast call inside it -> infinite toast loop).
+  const value = useMemo<ToastContextValue>(
+    () => ({
+      show,
+      success: (m) => show(m, "success"),
+      error: (m) => show(m, "error"),
+      info: (m) => show(m, "info"),
+      warning: (m) => show(m, "warning"),
+    }),
+    [show]
+  );
 
   return (
     <ToastContext.Provider value={value}>
