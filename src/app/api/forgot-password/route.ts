@@ -4,7 +4,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { sendPasswordResetEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
-// redeploy trigger
+// redeploy trigger 2
 
 // Password-reset REQUEST endpoint. Mints a single-use, 15-minute bearer token
 // whose sha256 hash is stored in public.password_resets, and emails a link to
