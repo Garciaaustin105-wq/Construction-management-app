@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   icons: {
     icon: "/icon.svg",
     shortcut: "/icon.svg",
-    apple: "/terra-vista-icon.svg",
+    apple: { url: "/apple-icon.png", sizes: "180x180" },
   },
   appleWebApp: {
     capable: true,

@@ -8,11 +8,19 @@
 // Bumping CACHE below purges the previous cache on activate. Do this whenever a
 // precached asset (icon, manifest, logo) changes so installed clients drop the
 // stale copy and pick up the new one on the next visit — no reinstall needed.
-const CACHE = "terra-vista-v2";
+const CACHE = "terra-vista-v3";
 // Only precache public, auth-free assets. /dashboard etc. get cached on first
 // visit via the navigation handler (they require a session, so precaching them
 // at install time would store a login redirect).
-const APP_SHELL = ["/", "/manifest.json", "/icon.svg", "/terra-vista-icon.svg"];
+const APP_SHELL = [
+  "/",
+  "/manifest.json",
+  "/icon.svg",
+  "/terra-vista-icon.svg",
+  "/apple-icon.png",
+  "/icon-192.png",
+  "/icon-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
