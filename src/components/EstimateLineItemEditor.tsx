@@ -179,12 +179,6 @@ export default function EstimateLineItemEditor({
   }
 
   // Save the current valid items as a reusable template (prompts for a name).
-  function customAlert(message: string): void {
-    window.alert(message);
-  }
-  function customConfirm(message: string): boolean {
-    return window.confirm(message);
-  }
   function customPrompt(message: string): string | null {
     return window.prompt(message);
   }
