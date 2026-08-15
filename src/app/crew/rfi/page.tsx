@@ -87,7 +87,7 @@ function RfiForm() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title="Submit RFI"
         backHref={preselectedJob ? `/jobs/${preselectedJob}` : undefined}
@@ -95,7 +95,7 @@ function RfiForm() {
           jobs.find((j) => j.id === preselectedJob)?.name ?? "Back to job"
         }
       />
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <form onSubmit={handleSubmit} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Job</span>

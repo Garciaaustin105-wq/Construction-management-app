@@ -347,7 +347,7 @@ export default function VisitDetailPage({
   const custName = visit.jobs?.customers?.name ?? null;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title={jobName}
         backHref={
@@ -358,7 +358,7 @@ export default function VisitDetailPage({
         backLabel={isOffice ? "Schedule" : "Route"}
       />
 
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
           <div className="flex justify-between items-start">
             <div className="min-w-0">

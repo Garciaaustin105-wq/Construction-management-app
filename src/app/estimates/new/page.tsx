@@ -318,7 +318,7 @@ function NewEstimateForm() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <button
           onClick={() =>
@@ -337,7 +337,7 @@ function NewEstimateForm() {
         <div className="w-16" />
       </header>
 
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-2xl mx-auto p-4">
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Mode toggle: link to a job, or quote a customer with no job yet. */}
           <div className="bg-white rounded-lg p-1 grid grid-cols-2 gap-1 shadow-sm">

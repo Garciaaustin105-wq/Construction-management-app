@@ -58,7 +58,7 @@ export default async function PublicEstimatePage({
     .eq("estimate_id", estimate.id)
     .order("position");
 
-  let orgName = "Terra Vista Construction";
+  let orgName = "";
   let orgAddress: string | null = null;
   let orgPhone: string | null = null;
   let orgEmail: string | null = null;

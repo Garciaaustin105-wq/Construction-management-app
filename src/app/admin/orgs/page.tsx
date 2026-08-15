@@ -46,12 +46,12 @@ export default async function OrgsPage() {
   }[];
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title="Platform"
         subtitle={`${list.length} organization${list.length === 1 ? "" : "s"}`}
       />
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <div className="space-y-2">
           {list.length === 0 && (
             <p className="text-sm text-gray-500 text-center py-6">

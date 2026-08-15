@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import SignupForm from "./SignupForm";
+import { BRAND } from "@/lib/brand";
 
 // Force dynamic rendering so the SAAS_OPEN flag is read from the runtime
 // environment on every request, NOT baked in at build time. Without this the
@@ -26,7 +27,7 @@ export default function SignupPage() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/terra-vista-logo.svg"
-              alt="Terra Vista Construction Management"
+              alt={BRAND.company}
               width={260}
               height={72}
               className="mx-auto mb-1"

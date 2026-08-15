@@ -206,10 +206,10 @@ export default function MyRoutePage() {
   const upcoming = visits.filter((v) => v.due_date > today);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="My Route" subtitle="Your assigned lawn visits" />
 
-      <main className="max-w-md mx-auto p-4 space-y-6">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
         {visits.length === 0 ? (
           <div className="bg-white rounded-lg">
             <EmptyState

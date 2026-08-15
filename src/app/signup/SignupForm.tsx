@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
+import { BRAND } from "@/lib/brand";
 
 // Client form for the public self-serve signup. The org + admin creation
 // happens server-side in /api/signup (service role, env-gated by SAAS_OPEN).
@@ -96,7 +97,7 @@ export default function SignupForm() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/terra-vista-logo.svg"
-          alt="Terra Vista Construction Management"
+          alt={BRAND.company}
           width={260}
           height={72}
           className="mx-auto mb-1"

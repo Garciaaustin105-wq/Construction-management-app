@@ -91,10 +91,10 @@ export default async function LawnPage() {
   const scheduleRows = (schedules as unknown as ScheduleRow[] | null) ?? [];
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Lawn" subtitle="Recurring routes & today's visits" />
 
-      <main className="max-w-md mx-auto p-4 space-y-6">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
         <div className="grid grid-cols-2 gap-2">
           <Link
             href="/lawn/new"

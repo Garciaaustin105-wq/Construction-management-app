@@ -8,6 +8,7 @@
 // existing events instead of duplicating them on every re-fetch.
 
 import ical from "ical-generator";
+import { BRAND } from "@/lib/brand";
 
 export type FeedEvent = {
   // Stable UID — `<kind>:<rowId>@<host>`. Kept stable across fetches.
@@ -25,9 +26,9 @@ export type FeedEvent = {
 // UIDs already embed the deployed host (built by feedUid), so no host arg here.
 export function buildCalendar(events: FeedEvent[]): string {
   const cal = ical({
-    name: "Terra Vista",
+    name: BRAND.shortName,
     // PRODID identifies the generating app per RFC 5545.
-    prodId: { company: "Terra Vista", product: "Construction Calendar", language: "EN" },
+    prodId: { company: BRAND.shortName, product: "Construction Calendar", language: "EN" },
     // Hint providers how often to re-poll the subscribe URL.
     ttl: 60 * 60, // 1 hour, in seconds
   });
@@ -46,7 +47,7 @@ export function buildCalendar(events: FeedEvent[]): string {
   // ical-generator's toString() emits the VCALENDAR block. We suffix a
   // X-WR-CALNAME so the subscribe shows a friendly name in Apple/Outlook.
   const ics = cal.toString();
-  const calnameLine = `X-WR-CALNAME:Terra Vista`;
+  const calnameLine = `X-WR-CALNAME:${BRAND.shortName}`;
   // Insert right after the VERSION line if present (otherwise prepend).
   if (ics.includes("VERSION:2.0")) {
     return ics.replace("VERSION:2.0", `VERSION:2.0\n${calnameLine}`);

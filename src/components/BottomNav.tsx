@@ -3,37 +3,36 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  Home,
-  Camera,
-  Users,
-  LogOut,
-  Receipt,
-  Clock,
-  Building,
-  Sprout,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
+import { useIsDesktop } from "@/lib/useIsDesktop";
+import { buildNavItems, isPublicRoute, type NavItem } from "@/lib/navItems";
+import type { Role } from "@/lib/roles";
 
 export default function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
-  const [role, setRole] = useState<string | null>(null);
+  const [role, setRole] = useState<Role | null>(null);
   const [hidden, setHidden] = useState(false);
-  const unread = useUnreadCount();
+  const isDesktop = useIsDesktop();
+  // Only poll on mobile (desktop uses the Sidebar's poller). Both chrome
+  // pieces stay mounted via CSS, so this guard keeps it to one poller.
+  const unread = useUnreadCount(!isDesktop);
 
   useEffect(() => {
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
       const { data } = await supabase
         .from("profiles")
         .select("role")
         .eq("id", user.id)
         .single();
-      setRole(data?.role ?? null);
+      setRole((data?.role as Role) ?? null);
     })();
   }, [supabase]);
 
@@ -61,46 +60,22 @@ export default function BottomNav() {
     router.refresh();
   }
 
-  const items = [
-    { href: "/dashboard", label: "Home", Icon: Home },
-    { href: "/crew/photo", label: "Photos", Icon: Camera },
-    { href: "/crew/time", label: "Time", Icon: Clock },
-  ];
-  if (role === "office" || role === "admin" || role === "super_admin") {
-    items.push({ href: "/receipts", label: "Receipts", Icon: Receipt });
-    items.push({ href: "/lawn", label: "Lawn", Icon: Sprout });
-    items.push({ href: "/admin/users", label: "Admin", Icon: Users });
-  }
-  // Field crew get their own scoped Lawn tab (their assigned route), not the
-  // office hub (which would redirect them).
-  if (role === "crew" || role === "superintendent") {
-    items.push({ href: "/lawn/my-route", label: "Route", Icon: Sprout });
-  }
-  if (role === "super_admin") {
-    items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
-  }
+  const items = buildNavItems(role);
 
   // The bottom nav is persistent (rendered from the root layout) but should
   // not appear on public/portal routes that have their own chrome.
-  if (
-    pathname === "/" ||
-    pathname === "/login" ||
-    pathname === "/signup" ||
-    pathname === "/customer"
-  ) {
-    return null;
-  }
+  if (isPublicRoute(pathname)) return null;
 
   return (
     <nav
-      className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 transition-transform duration-200 ${
+      className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 transition-transform duration-200 lg:hidden ${
         hidden ? "translate-y-full" : "translate-y-0"
       }`}
     >
       <div className="max-w-md mx-auto flex">
-        {items.map(({ href, label, Icon }) => {
+        {items.map(({ href, label, Icon, badge }: NavItem) => {
           const active = pathname === href;
-          const showBadge = href === "/dashboard" && unread > 0;
+          const showBadge = badge === "unread" && unread > 0;
           return (
             <Link
               key={href}

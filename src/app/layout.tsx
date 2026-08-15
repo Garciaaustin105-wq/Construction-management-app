@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Providers from "@/components/Providers";
+import { BRAND } from "@/lib/brand";
 
 export const metadata: Metadata = {
-  title: "Terra Vista Construction Management App",
-  description: "Field-to-office construction management",
+  title: BRAND.name,
+  description: BRAND.tagline,
   manifest: "/manifest.json",
   icons: {
     icon: "/terra-vista-icon.svg",
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Terra Vista",
+    title: BRAND.shortName,
   },
 };
 

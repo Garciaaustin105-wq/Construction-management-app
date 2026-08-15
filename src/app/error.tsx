@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { BRAND } from "@/lib/brand";
 
 export default function Error({
   error,
@@ -23,7 +24,7 @@ export default function Error({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/terra-vista-icon.svg"
-          alt="Terra Vista"
+          alt={BRAND.shortName}
           width={56}
           height={56}
           className="mx-auto mb-4 rounded-xl"

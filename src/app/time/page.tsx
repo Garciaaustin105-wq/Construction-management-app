@@ -229,10 +229,10 @@ export default async function TimeOverviewPage({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Time" subtitle="Weekly breakdown" />
 
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         {/* Summary */}
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-white rounded-lg p-3 shadow-sm text-center">

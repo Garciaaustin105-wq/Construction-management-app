@@ -31,9 +31,9 @@ export default async function CalendarPage() {
   // route would 403). Show a notice rather than a broken card.
   if (!tenant.orgId) {
     return (
-      <div className="min-h-screen bg-gray-50 pb-24">
+      <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
         <TopBar title="Calendar" subtitle="Subscribe feed" />
-        <main className="max-w-md mx-auto p-4">
+        <main className="max-w-md lg:max-w-5xl mx-auto p-4">
           <div className="bg-white rounded-lg p-4 shadow-sm text-sm text-gray-600">
             Platform (super admin) accounts don&rsquo;t have a personal calendar
             feed. Sign in under an organization to subscribe.
@@ -56,9 +56,9 @@ export default async function CalendarPage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Calendar" subtitle="Subscribe feed" />
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <CalendarFeedCard
           initialUrl={initialUrl}
           role={tenant.role}

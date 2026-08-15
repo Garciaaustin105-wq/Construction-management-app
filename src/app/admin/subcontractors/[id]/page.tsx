@@ -62,9 +62,9 @@ export default async function SubcontractorDetailPage({
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Subcontractor" />
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <SubcontractorDetail
           sub={sub as unknown as SubDetail}
           attachments={(atts as SubAttachment[]) ?? []}

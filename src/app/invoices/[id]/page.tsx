@@ -58,7 +58,7 @@ export default async function InvoiceDetailPage({
   const customerName = (invoice.customers as unknown as { name: string } | null)?.name ?? "—";
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title="Invoice"
         subtitle={customerName}
@@ -66,7 +66,7 @@ export default async function InvoiceDetailPage({
         backLabel={jobParam ? "Back to job" : undefined}
       />
 
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <section className="bg-white rounded-lg p-4 shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <StatusBadge status={invoice.status} size="md" />

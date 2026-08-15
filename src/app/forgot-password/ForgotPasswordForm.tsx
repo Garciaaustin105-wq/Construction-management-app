@@ -3,44 +3,54 @@
 import { useState } from "react";
 import { Loader2, ArrowLeft, CheckCircle2, Mail } from "lucide-react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { BRAND } from "@/lib/brand";
 
-// Client form for the password-reset request. Calls Supabase's public
-// resetPasswordForEmail endpoint (anon key) which sends a recovery email via
-// Supabase's BUILT-IN email sender — so this works even before the Resend
-// sending domain is verified (unlike the signup verification email, which is
-// sent via Resend). The email link lands on /auth/callback, which exchanges
-// the PKCE code and sends the user to /update-password.
+// Client form for the password-reset request. POSTs the email to our own
+// /api/forgot-password, which mints a single-use, 15-minute bearer token and
+// emails https://<origin>/reset-password?token=<raw> via Resend.
+//
+// Why not Supabase's resetPasswordForEmail: that flow is PKCE — the email link
+// carries only a `code`, and finishing needs a `code_verifier` COOKIE on the
+// device that requested the reset. Click the link on another device / the
+// installed PWA and it fails. Our custom token lives ENTIRELY in the link, so
+// it works cross-device. See password_resets.sql + /reset-password +
+// /api/reset-password.
 //
 // Terminal success + error states render as PERSISTENT inline panels (not
-// toasts) so the result is unambiguous — same UX lesson as SignupForm.
+// toasts) so the result is unambiguous — same UX lesson as SignupForm. The
+// server always returns generic { ok: true } (no-existence-leak), so the
+// success panel is shown even for unknown emails.
 export default function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
 
-  const supabase = createClient();
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setInlineError(null);
 
-    // ?flow=recovery tells /auth/callback this is a password-reset (Supabase's
-    // PKCE redirect appends only `code`, not `type`, so we can't rely on `type`
-    // to route to /update-password — see the callback for the branching logic).
-    const redirectTo = `${window.location.origin}/auth/callback?flow=recovery`;
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo,
-    });
-    if (error) {
-      setInlineError(error.message);
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
       setLoading(false);
-      return;
+      if (!res.ok) {
+        setInlineError(
+          data?.error ??
+            "Could not send a reset link right now. Try again or contact support."
+        );
+        return;
+      }
+      setSentTo(email.trim());
+    } catch {
+      setLoading(false);
+      setInlineError("Network error. Try again.");
     }
-    setSentTo(email.trim());
-    setLoading(false);
   }
 
   // ── Success state ───────────────────────────────────────────────────────
@@ -75,7 +85,7 @@ export default function ForgotPasswordForm() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/terra-vista-logo.svg"
-          alt="Terra Vista Construction Management"
+          alt={BRAND.company}
           width={260}
           height={72}
           className="mx-auto mb-1"

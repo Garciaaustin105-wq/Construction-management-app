@@ -165,10 +165,10 @@ export default async function LawnCalendarPage({
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Lawn Calendar" subtitle="Monthly crew routes" />
 
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         {/* Month nav */}
         <div className="flex items-center justify-between">
           <Link

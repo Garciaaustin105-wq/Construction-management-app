@@ -65,7 +65,7 @@ export default async function LawnWeatherPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title="Weather"
         subtitle={
@@ -73,7 +73,7 @@ export default async function LawnWeatherPage() {
         }
       />
 
-      <main className="max-w-md mx-auto p-4 space-y-6">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
         <Link
           href="/lawn"
           className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"

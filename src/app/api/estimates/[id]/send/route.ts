@@ -126,7 +126,7 @@ export async function POST(
   const total = formatMoney(hasPricing ? totals.grandTotal : totals.subtotal);
 
   // Org name for branding.
-  let orgName = "Terra Vista Construction";
+  let orgName = "";
   if (estimate.organization_id) {
     const { data: org } = await supabase
       .from("organizations")

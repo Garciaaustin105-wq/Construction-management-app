@@ -94,7 +94,7 @@ export default function EstimateDetailPage({
   const [costCodes, setCostCodes] = useState<CostCodeOption[]>([]);
   const [priorItems, setPriorItems] = useState<PriorItem[]>([]);
   const [org, setOrg] = useState<OrgInfo>({
-    name: "Terra Vista Construction",
+    name: "",
     address: null,
     phone: null,
     email: null,
@@ -334,7 +334,7 @@ export default function EstimateDetailPage({
   // ── Customer view: just the document (+ approve/reject while awaiting) ────
   if (isCustomer) {
     return (
-      <div className="min-h-screen bg-gray-50 pb-24">
+      <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
         <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
           <button
             onClick={() => router.push(backHref)}
@@ -349,7 +349,7 @@ export default function EstimateDetailPage({
           <div className="w-16" />
         </header>
 
-        <main className="max-w-md mx-auto p-4 space-y-4">
+        <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
           <EstimateDocument
             orgName={org.name}
             orgAddress={org.address}
@@ -390,7 +390,7 @@ export default function EstimateDetailPage({
   // ── Non-office, non-customer (e.g. crew/PM) → read-only document ──────────
   if (!isOffice) {
     return (
-      <div className="min-h-screen bg-gray-50 pb-24">
+      <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
         <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
           <button
             onClick={() => router.push(backHref)}
@@ -404,7 +404,7 @@ export default function EstimateDetailPage({
           </h1>
           <div className="w-16" />
         </header>
-        <main className="max-w-md mx-auto p-4">
+        <main className="max-w-md lg:max-w-5xl mx-auto p-4">
           <EstimateDocument
             orgName={org.name}
             orgAddress={org.address}
@@ -558,7 +558,7 @@ export default function EstimateDetailPage({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <button
           onClick={() => router.push(backHref)}
@@ -601,7 +601,7 @@ export default function EstimateDetailPage({
         </div>
       </div>
 
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         {tab === "edit" ? (
           <>
             <section className="bg-white rounded-lg p-4 shadow-sm space-y-1">

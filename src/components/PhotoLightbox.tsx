@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { signedThumbnail, signedFull } from "@/lib/storage";
 import { useRouter } from "next/navigation";
-import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin, Loader2 } from "lucide-react";
 
 export default function PhotoLightbox({
   photos,
@@ -158,17 +158,24 @@ export default function PhotoLightbox({
             }}
             className="aspect-square bg-gray-200 rounded-lg overflow-hidden active:opacity-70 relative"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={urls[p.id] ?? ""}
-              alt={p.caption ?? ""}
-              loading="lazy"
-              decoding="async"
-              className="w-full h-full object-cover"
-              onError={(e) => {
-                e.currentTarget.style.visibility = "hidden";
-              }}
-            />
+            {urls[p.id] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={urls[p.id]}
+                alt={p.caption ?? ""}
+                loading="lazy"
+                decoding="async"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.currentTarget.style.visibility = "hidden";
+                }}
+              />
+            ) : (
+              // Signed URL not minted yet - render a placeholder instead of an
+              // <img src=""> (an empty src makes the browser re-fetch the whole
+              // page and logs a React warning).
+              <div className="w-full h-full animate-pulse" />
+            )}
             {p.caption && (
               <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">
                 {p.caption}
@@ -238,19 +245,30 @@ export default function PhotoLightbox({
               }
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={
-                (fullRes?.path === current.storage_path
+            {(() => {
+              // Prefer the on-demand full-res URL once it has minted for this
+              // photo; otherwise fall back to the thumbnail URL. While neither
+              // is ready yet, show a spinner instead of an <img src=""> (empty
+              // src re-fetches the page and logs a React warning).
+              const imgUrl =
+                fullRes?.path === current.storage_path
                   ? fullRes.url
-                  : urls[current.id]) ?? ""
+                  : urls[current.id];
+              if (!imgUrl) {
+                return <Loader2 className="w-10 h-10 text-white/70 animate-spin" />;
               }
-              alt={current.caption ?? ""}
-              className="max-w-full max-h-full object-contain min-w-0 min-h-0"
-              onError={(e) => {
-                e.currentTarget.style.visibility = "hidden";
-              }}
-            />
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={imgUrl}
+                  alt={current.caption ?? ""}
+                  className="max-w-full max-h-full object-contain min-w-0 min-h-0"
+                  onError={(e) => {
+                    e.currentTarget.style.visibility = "hidden";
+                  }}
+                />
+              );
+            })()}
           </div>
 
           <div className="flex justify-between items-center p-4 text-white">

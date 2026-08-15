@@ -4,25 +4,22 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
+import { BRAND } from "@/lib/brand";
 
-// Sets a new password after a recovery-link flow. The session established by
-// /auth/callback (recovery code exchange) is what authorizes the password
-// change — updateUser({ password }) is the documented second step of recovery.
-//
-// "Secure password change" note: if that Supabase Auth setting is enabled AND
-// the recovery session is treated as stale, updateUser may require a nonce from
-// reauthenticate(). Default projects leave it off, so this works as-is. If a
-// reauth error appears in testing, call supabase.auth.reauthenticate() first.
-export default function UpdatePasswordForm() {
+// Sets a new password from a cross-device reset token. The token (from the
+// /reset-password?token=... URL) authorizes the change — NOT a session — so
+// this works whether the user is signed in or not, on any device. The token is
+// POSTed in the request body (not a URL) to /api/reset-password, which claims
+// it (single-use, race-safe) and sets the password via the service-role admin
+// API.
+export default function ResetPasswordForm({ token }: { token: string }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
-  const supabase = createClient();
   const router = useRouter();
   const toast = useToast();
 
@@ -39,16 +36,29 @@ export default function UpdatePasswordForm() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-    if (error) {
-      setInlineError(error.message);
-      return;
+    try {
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setLoading(false);
+      if (!res.ok || !data?.ok) {
+        setInlineError(
+          data?.error ??
+            "Could not reset your password. The link may have expired — request a new one."
+        );
+        return;
+      }
+      setDone(true);
+      toast.success("Password updated");
+      // Brief pause so the toast is visible before navigating away.
+      setTimeout(() => router.replace("/login?reset=1"), 1200);
+    } catch {
+      setLoading(false);
+      setInlineError("Network error. Try again.");
     }
-    setDone(true);
-    toast.success("Password updated");
-    // Brief pause so the toast is visible before navigating away.
-    setTimeout(() => router.replace("/login"), 1200);
   }
 
   // ── Success state ───────────────────────────────────────────────────────
@@ -81,7 +91,7 @@ export default function UpdatePasswordForm() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/terra-vista-logo.svg"
-          alt="Terra Vista Construction Management"
+          alt={BRAND.company}
           width={260}
           height={72}
           className="mx-auto mb-1"

@@ -3,11 +3,17 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 
-export function useUnreadCount() {
+// `enabled` gates whether the poll runs. The desktop Sidebar and mobile
+// BottomNav both stay mounted (CSS hidden/lg:flex does not unmount them), so
+// without a guard both would poll /api/notifications/unread every 30s. Sidebar
+// passes isDesktop; BottomNav passes !isDesktop, so exactly one polls at any
+// viewport. Defaults to true for any other call site.
+export function useUnreadCount(enabled = true) {
   const [unread, setUnread] = useState(0);
   const pathname = usePathname();
 
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     const onDashboard = pathname === "/dashboard";
 
@@ -33,7 +39,7 @@ export function useUnreadCount() {
       active = false;
       clearInterval(interval);
     };
-  }, [pathname]);
+  }, [pathname, enabled]);
 
   return unread;
 }

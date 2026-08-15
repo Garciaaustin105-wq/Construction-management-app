@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BRAND } from "@/lib/brand";
 
 export default function NotFound() {
   return (
@@ -7,7 +8,7 @@ export default function NotFound() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/terra-vista-icon.svg"
-          alt="Terra Vista"
+          alt={BRAND.shortName}
           width={56}
           height={56}
           className="mx-auto mb-4 rounded-xl"

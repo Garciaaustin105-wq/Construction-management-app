@@ -23,9 +23,9 @@ export default async function CostCodesPage() {
   const orgId = (profile?.organization_id as string | null) ?? "";
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Cost Codes" subtitle="The shared job-costing backbone" />
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <CostCodesManager orgId={orgId} />
       </main>
     </div>

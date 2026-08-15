@@ -6,25 +6,30 @@ import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import Link from "next/link";
+import { BRAND } from "@/lib/brand";
 
 function Banner() {
-  // Reads query flags set by /auth/callback and surfaces them inline. Wrapped in
-  // <Suspense> because useSearchParams forces the page into a client boundary.
+  // Reads query flags set by /auth/callback and /reset-password and surfaces
+  // them inline. Wrapped in <Suspense> because useSearchParams forces the page
+  // into a client boundary.
   const sp = useSearchParams();
   const verified = sp.get("verified") === "1";
+  const reset = sp.get("reset") === "1";
   const failed = sp.get("error") === "reset_failed";
-  if (!verified && !failed) return null;
+  if (!verified && !reset && !failed) return null;
   return (
     <div
       className={`rounded-lg border px-3 py-2 text-sm ${
-        verified
+        verified || reset
           ? "bg-emerald-50 border-emerald-200 text-emerald-800"
           : "bg-amber-50 border-amber-200 text-amber-800"
       }`}
     >
       {verified
         ? "Your email is verified — sign in to continue."
-        : "That reset link is invalid or has expired. Try sending a new one."}
+        : reset
+          ? "Your password has been updated — sign in."
+          : "That reset link is invalid or has expired. Try sending a new one."}
     </div>
   );
 }
@@ -72,7 +77,7 @@ export default function LoginPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/terra-vista-logo.svg"
-            alt="Terra Vista Construction Management"
+            alt={BRAND.company}
             width={260}
             height={72}
             className="mx-auto mb-1"

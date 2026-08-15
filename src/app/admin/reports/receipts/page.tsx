@@ -99,7 +99,7 @@ export default async function ReceiptsReportPage({
   const qs = exportQs.toString();
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Receipts Report" subtitle="Itemized expenses" />
 
       <main className="max-w-5xl mx-auto p-4 space-y-4">

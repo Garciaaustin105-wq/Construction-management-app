@@ -42,7 +42,7 @@ export default async function DashboardPage() {
   // so a null result reliably means no profile, not an RLS hiccup.)
   if (!profile) {
     return (
-      <div className="min-h-screen bg-gray-50 pb-24">
+      <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
         <TopBar title="Account not set up" showSignOut />
         <main className="max-w-md mx-auto p-4">
           <div className="bg-white rounded-lg p-6 space-y-3 text-center">
@@ -157,10 +157,10 @@ export default async function DashboardPage() {
   const unpaidTotal = unpaidRows.reduce((sum, r) => sum + r.total, 0);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title={orgName} subtitle={`Signed in as ${role}`} />
 
-      <main className="max-w-md mx-auto p-4 space-y-6">
+      <main className="max-w-md lg:max-w-7xl mx-auto p-4 space-y-6">
         <ClientPullToRefresh>
         {/* Super admin: platform view (no org, so no office grid). */}
         {showPlatform && (
@@ -351,6 +351,12 @@ export default async function DashboardPage() {
         {/* YOUR WORK — jobs, photos, invoices, RFIs. Each subsection keeps its
             own role guard; this header just labels the group. */}
         <SectionHeader>Your Work</SectionHeader>
+        {/* Desktop: 2-col (3-col on xl) grid so the four work sections read as a
+            dashboard, not a phone feed. Mobile keeps the vertical space-y-6
+            stack in the exact same DOM order (Jobs, Photos, Invoices, RFIs).
+            lg:items-start stops shorter cards from stretching to match a tall
+            neighbor. */}
+        <div className="space-y-6 lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0 lg:items-start xl:grid-cols-3">
 
         {/* Jobs as cards — tap to view detail */}
         <section>
@@ -512,6 +518,7 @@ export default async function DashboardPage() {
             </div>
           </section>
         )}
+        </div>
         </ClientPullToRefresh>
       </main>
 

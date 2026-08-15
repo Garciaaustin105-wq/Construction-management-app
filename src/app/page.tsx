@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BRAND } from "@/lib/brand";
 
 export default function HomePage() {
   return (
@@ -7,13 +8,13 @@ export default function HomePage() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/terra-vista-logo.svg"
-          alt="Terra Vista Construction Management"
+          alt={BRAND.company}
           width={300}
           height={83}
           className="mx-auto mb-4"
         />
         <p className="text-gray-600 mb-8">
-          Field-to-office construction management.
+          {BRAND.tagline}.
         </p>
         <Link
           href="/login"

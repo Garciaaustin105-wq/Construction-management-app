@@ -29,14 +29,14 @@ export default async function CustomersPage() {
     .order("name");
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title="Customers"
         subtitle={
           role === "office" || role === "admin" ? "Directory" : "Read-only"
         }
       />
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <CustomersManager
           initial={(data as Customer[]) ?? []}
           canEdit={role === "office" || role === "admin"}

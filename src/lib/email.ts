@@ -8,11 +8,12 @@
 // fine for testing, not production.
 
 import { Resend } from "resend";
+import { BRAND } from "@/lib/brand";
 
 function fromAddress(): string {
   return (
     process.env.RESEND_FROM ||
-    "Terra Vista Construction <onboarding@resend.com>"
+    `${BRAND.company} <onboarding@resend.com>`
   );
 }
 
@@ -111,7 +112,7 @@ export async function sendEstimateEmail(
           </p>
         </td></tr>
         <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via Terra Vista Construction Management.</p>
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via ${BRAND.company}.</p>
         </td></tr>
       </table>
     </td></tr>
@@ -162,7 +163,7 @@ export async function sendVerificationEmail(
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
         <tr><td style="padding:24px 28px;background:#1e3a8a;">
-          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">Terra Vista</p>
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${BRAND.shortName}</p>
           <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Verify your email</p>
         </td></tr>
         <tr><td style="padding:28px;">
@@ -181,7 +182,7 @@ export async function sendVerificationEmail(
           </p>
         </td></tr>
         <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by Terra Vista Construction Management.</p>
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${BRAND.company}.</p>
         </td></tr>
       </table>
     </td></tr>
@@ -191,7 +192,77 @@ export async function sendVerificationEmail(
   return resend.emails.send({
     from: fromAddress(),
     to: input.to,
-    subject: "Verify your email — Terra Vista",
+    subject: `Verify your email — ${BRAND.shortName}`,
+    html,
+  });
+}
+
+export type SendPasswordResetEmailInput = {
+  to: string;
+  resetLink: string; // https://<origin>/reset-password?token=<raw token>
+};
+
+// Sends the "reset your password" email. The link points at our OWN
+// /reset-password?token=... route (NOT Supabase's PKCE recovery link), so the
+// proof lives entirely in the link — the user can click it on any device /
+// browser / the installed PWA and it just works. Unlike the old
+// resetPasswordForEmail flow there is NO Supabase fallback: Supabase's built-in
+// sender can only carry its own (same-device, PKCE) link, not our custom token
+// link, so a verified RESEND_FROM sending domain is REQUIRED for delivery to
+// non-owner inboxes. Throws if RESEND_API_KEY is unset; returns Resend's
+// { data, error } otherwise (the caller treats an error as a hard failure,
+// since a reset email that never arrives is worse than a clear error).
+export async function sendPasswordResetEmail(
+  input: SendPasswordResetEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
+    );
+  }
+
+  const resend = new Resend(apiKey);
+  const href = input.resetLink; // our /reset-password?token=... URL — left intact
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${BRAND.shortName}</p>
+          <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Reset your password</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            We received a request to reset the password for your ${BRAND.company}
+            account. Click the button below to choose a new one.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${href}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Reset password</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This link expires in 15 minutes and can only be used once. You can
+            open it on any device. If you didn't request a password reset, you
+            can safely ignore this email — your password won't change.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  return resend.emails.send({
+    from: fromAddress(),
+    to: input.to,
+    subject: `Reset your password — ${BRAND.shortName}`,
     html,
   });
 }
@@ -204,6 +275,11 @@ export async function sendVerificationEmail(
 // soft skip (toast "Email not configured") rather than a 500. A transient
 // Resend failure also returns { error } — the caller stamps notified_at
 // regardless so a one-shot notice isn't retried on every action.
+//
+// NOTE: these still hardcode "Terra Vista" in the header/footer. That is a
+// multi-tenancy branding gap — a tenant's customer sees the platform name, not
+// the tenant's org. Fix: thread orgName into these (like sendEstimateEmail) and
+// render "Sent by ${org} via ${BRAND.company}". Tracked as a follow-up.
 
 export type SendOnMyWayEmailInput = {
   to: string;

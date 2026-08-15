@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogOut, ChevronLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { BRAND } from "@/lib/brand";
 
 export default function TopBar({
   title,
@@ -47,7 +48,7 @@ export default function TopBar({
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src="/terra-vista-icon.svg"
-            alt="Terra Vista"
+            alt={BRAND.shortName}
             width={28}
             height={28}
             className="shrink-0 rounded-md"

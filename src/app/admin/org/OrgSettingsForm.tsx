@@ -56,7 +56,7 @@ export default function OrgSettingsForm({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <button
           onClick={() => router.push("/dashboard")}
@@ -71,7 +71,7 @@ export default function OrgSettingsForm({
         <div className="w-16" />
       </header>
 
-      <main className="max-w-md mx-auto p-4">
+      <main className="max-w-md lg:max-w-2xl mx-auto p-4">
         {canEdit ? (
           <form
             onSubmit={handleSubmit}

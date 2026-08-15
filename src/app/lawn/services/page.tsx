@@ -134,10 +134,10 @@ export default function LawnServicesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Lawn Services" backHref="/lawn" backLabel="Lawn" />
 
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         {/* Add new service */}
         <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">

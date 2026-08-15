@@ -189,9 +189,9 @@ export default function CrewTimePage() {
   const elapsed = openEntry ? now - new Date(openEntry.clock_in_at).getTime() : 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Time Clock" />
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="w-7 h-7 animate-spin text-gray-400" />

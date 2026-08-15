@@ -122,9 +122,9 @@ export default async function PhotosPage({
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Photos" subtitle={`${filteredById.length} of ${all.length}`} />
-      <main className="max-w-md mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <PhotoFilters
           jobs={jobs}
           uploaders={uploaders}

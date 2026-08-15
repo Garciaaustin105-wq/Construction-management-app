@@ -178,10 +178,10 @@ export default async function JobDetailPage({
   }));
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title={job.name} subtitle={(job.customers as unknown as { name: string } | null)?.name ?? ""} />
 
-      <main className="max-w-md mx-auto p-4 space-y-6">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
         <section className="bg-white rounded-lg p-4 shadow-sm">
           <div className="mb-2">
             <StatusBadge status={job.status} />
