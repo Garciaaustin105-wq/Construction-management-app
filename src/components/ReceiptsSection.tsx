@@ -253,12 +253,20 @@ export default function ReceiptsSection({
       // Route through our server API (service role) so crew uploads don't
       // depend on per-crew storage RLS policies.
       const form = new FormData();
-      form.append("jobId", jobId);
-      form.append("capturedAt", rec.capturedAt);
-      if (rec.vendor) form.append("vendor", rec.vendor);
-      if (typeof rec.amount === "number") form.append("amount", String(rec.amount));
-      if (rec.notes) form.append("notes", rec.notes);
-      if (rec.category) form.append("category", rec.category);
+      const baseFields = {
+        jobId,
+        capturedAt: rec.capturedAt,
+      };
+      const optionalFields = {
+        ...(rec.vendor && { vendor: rec.vendor }),
+        ...(typeof rec.amount === "number" && { amount: String(rec.amount) }),
+        ...(rec.notes && { notes: rec.notes }),
+        ...(rec.category && { category: rec.category }),
+      };
+      const formFields = { ...baseFields, ...optionalFields };
+      Object.entries(formFields).forEach(([field, value]) => {
+        form.append(field, value);
+      });
       if (typeof rec.tax === "number") form.append("tax", String(rec.tax));
       if (rec.paymentMethod) form.append("paymentMethod", rec.paymentMethod);
       if (rec.receiptNo) form.append("receiptNo", rec.receiptNo);
@@ -276,7 +284,11 @@ export default function ReceiptsSection({
         toast.error(data?.error ?? `Share failed (${res.status})`);
         return;
       }
-      await updateReceipt(rec.localId!, {
+      if (!rec.localId) {
+        toast.error("Cannot update receipt: missing local ID");
+        return;
+      }
+      await updateReceipt(rec.localId, {
         shared: true,
         remoteId: data.id,
         storagePath: data.storagePath,
@@ -349,12 +361,16 @@ export default function ReceiptsSection({
     const key = `local-${rec.localId}`;
     setBusyId(key);
     try {
+      if (rec.localId == null) {
+        toast.error("Invalid receipt ID");
+        return;
+      }
       // If it was shared, remove the cloud copy via the server API (service
       // role) so crew deletes don't depend on storage RLS.
       if (rec.shared && rec.remoteId) {
         await fetch(`/api/receipts/${rec.remoteId}`, { method: "DELETE" });
       }
-      await deleteReceipt(rec.localId!);
+      await deleteReceipt(rec.localId);
       await refreshLocal();
       toast.success("Receipt deleted");
     } finally {
@@ -384,9 +400,11 @@ export default function ReceiptsSection({
     rec: LocalReceipt,
     patch: Partial<LocalReceipt>
   ) {
-    await updateReceipt(rec.localId!, patch);
+    const { localId } = rec;
+    if (localId == null) return;
+    await updateReceipt(localId, patch);
     setLocals((prev) =>
-      prev.map((l) => (l.localId === rec.localId ? { ...l, ...patch } : l))
+      prev.map((l) => (l.localId === localId ? { ...l, ...patch } : l))
     );
   }
 

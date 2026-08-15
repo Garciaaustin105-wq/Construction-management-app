@@ -6,14 +6,7 @@ import { sendEstimateEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
-// Office hits Send → email the customer a frictionless /q/{token} link and
-// mark the estimate sent. Email is sent FIRST; the estimate is only marked
-// sent + token stored if the email succeeds (so "sent" always means
-// "delivered"). The caller must be office/admin (user-scoped client, RLS
-// scopes the read to the caller's org); the service role is used only for the
-// email + the status/token write.
-
-function requestHost(request: Request): string {
+const requestHost = (request: Request): string => {
   const xfhost = request.headers.get("x-forwarded-host");
   if (xfhost) return xfhost;
   const hostHeader = request.headers.get("host");
@@ -23,7 +16,7 @@ function requestHost(request: Request): string {
   } catch {
     return "localhost";
   }
-}
+};
 
 export async function POST(
   request: Request,
@@ -178,9 +171,19 @@ export async function POST(
   }
 
   // Mark sent + persist the token (service role so it always applies).
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    return NextResponse.json(
+      { error: "Missing Supabase configuration." },
+      { status: 500 }
+    );
+  }
+
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    supabaseKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
   const { error: updateError } = await admin

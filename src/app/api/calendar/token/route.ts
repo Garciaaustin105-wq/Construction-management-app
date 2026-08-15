@@ -24,10 +24,11 @@ function feedUrl(host: string, token: string): string {
 
 function requestHost(request: Request): string {
   // Vercel sets x-forwarded-host; fall back to the Host header then the URL.
-  const xfhost = request.headers.get("x-forwarded-host");
-  if (xfhost) return xfhost;
-  const hostHeader = request.headers.get("host");
-  if (hostHeader) return hostHeader;
+  const headerKeys = ["x-forwarded-host", "host"];
+  const host = headerKeys
+    .map((header) => request.headers.get(header))
+    .find(Boolean);
+  if (host) return host;
   try {
     return new URL(request.url).host;
   } catch {
@@ -61,9 +62,17 @@ export async function POST(request: Request) {
     // empty / non-JSON body is fine — just means "ensure exists"
   }
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    return NextResponse.json(
+      { error: "Server is not configured properly" },
+      { status: 500 }
+    );
+  }
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    serviceRoleKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
@@ -128,24 +137,34 @@ export async function POST(request: Request) {
 
 export async function DELETE() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const { data: { user } } = await supabase.auth.getUser();
 
   const scoped = await requireOrgScoped(supabase);
-  if (!scoped.ok) {
-    return NextResponse.json(
-      { error: scoped.error },
-      { status: scoped.status }
-    );
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const errorResponses = {
+    NOT_SIGNED_IN: { message: "Not signed in", status: 401 },
+    SCOPED_ERROR: scoped => ({ message: scoped.error, status: scoped.status }),
+    SERVER_CONFIG: { message: 'Server configuration error', status: 500 },
+  };
+
+  const preChecks = [
+    { key: 'NOT_SIGNED_IN', condition: !user },
+    { key: 'SCOPED_ERROR', condition: !scoped.ok },
+    { key: 'SERVER_CONFIG', condition: !supabaseUrl || !serviceRoleKey },
+  ];
+
+  const failedCheck = preChecks.find(check => check.condition);
+  if (failedCheck) {
+    const resp = errorResponses[failedCheck.key];
+    const { message, status } = typeof resp === 'function' ? resp(scoped) : resp;
+    return NextResponse.json({ error: message }, { status });
   }
 
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    serviceRoleKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 

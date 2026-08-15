@@ -65,7 +65,9 @@ export async function GET(request: Request) {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "office" && profile?.role !== "admin") {
+
+  const allowedRoles: Record<string, boolean> = { office: true, admin: true };
+  if (!allowedRoles[profile?.role ?? ""]) {
     return NextResponse.json({ error: "Office only" }, { status: 403 });
   }
 
@@ -77,6 +79,7 @@ export async function GET(request: Request) {
     searchParams.get("from"),
     searchParams.get("to"),
     searchParams.get("weekStart") // legacy fallback
+  );
   );
   const dayCount = rangeDayCount(from, toInclusive);
   const showDaily = dayCount <= 31;
@@ -313,8 +316,8 @@ export async function GET(request: Request) {
   const wb = XLSX.utils.book_new();
   const usedSheetNames = new Set<string>();
 
-  const workerIds = [...workers.keys()].sort((a, b) =>
-    nameOf(a).localeCompare(nameOf(b))
+  const workerIds = [...workers.keys()].sort((idA, idB) =>
+    nameOf(idA).localeCompare(nameOf(idB))
   );
 
   // 1. Summary — "Projects" lists the comma-joined project names per worker.
@@ -331,27 +334,27 @@ export async function GET(request: Request) {
     ],
   ];
   for (const id of workerIds) {
-    const w = workers.get(id)!;
+    const worker = workers.get(id);
     summaryAoA.push([
       nameOf(id),
       roleOf(id),
-      w.hours,
-      [...w.projects].sort().join(", "),
-      w.submitted,
-      w.paidBack,
-      w.owed,
-      w.paidThisWeek,
+      worker?.hours ?? 0,
+      worker?.projects ? [...worker.projects].sort().join(", ") : "",
+      worker?.submitted ?? 0,
+      worker?.paidBack ?? 0,
+      worker?.owed ?? 0,
+      worker?.paidThisWeek ?? 0,
     ]);
   }
   summaryAoA.push([
     "TOTAL",
     "",
-    workerIds.reduce((s, id) => s + (workers.get(id)?.hours ?? 0), 0),
+    workerIds.reduce((sum, id) => sum + (workers.get(id)?.hours ?? 0), 0),
     "",
-    workerIds.reduce((s, id) => s + (workers.get(id)?.submitted ?? 0), 0),
-    workerIds.reduce((s, id) => s + (workers.get(id)?.paidBack ?? 0), 0),
-    workerIds.reduce((s, id) => s + (workers.get(id)?.owed ?? 0), 0),
-    workerIds.reduce((s, id) => s + (workers.get(id)?.paidThisWeek ?? 0), 0),
+    workerIds.reduce((sum, id) => sum + (workers.get(id)?.submitted ?? 0), 0),
+    workerIds.reduce((sum, id) => sum + (workers.get(id)?.paidBack ?? 0), 0),
+    workerIds.reduce((sum, id) => sum + (workers.get(id)?.owed ?? 0), 0),
+    workerIds.reduce((sum, id) => sum + (workers.get(id)?.paidThisWeek ?? 0), 0),
   ]);
   XLSX.utils.book_append_sheet(
     wb,
@@ -363,27 +366,30 @@ export async function GET(request: Request) {
   // Omitted when the range exceeds 31 days (the grid would be unwieldy).
   if (showDaily) {
     const dayHeaders = Array.from({ length: dayCount }, (_, i) => {
-      const d = addDays(from, i);
-      return d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
+      const date = addDays(from, i);
+      return date.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
     });
     const dailyAoA: (string | number)[][] = [
       ["Worker", ...dayHeaders, "Total"],
     ];
     for (const id of workerIds) {
-      const w = workers.get(id)!;
+      const worker = workers.get(id);
       dailyAoA.push([
         nameOf(id),
-        ...w.hoursByDay,
-        w.hoursByDay.reduce((s, h) => s + h, 0),
+        ...(worker?.hoursByDay ?? []),
+        (worker?.hoursByDay ?? []).reduce((sum, hours) => sum + hours, 0),
       ]);
     }
     const dailyTotals = Array.from({ length: dayCount }, (_, i) =>
-      workerIds.reduce((s, id) => s + (workers.get(id)?.hoursByDay[i] ?? 0), 0)
+      workerIds.reduce(
+        (total, id) => total + (workers.get(id)?.hoursByDay[i] ?? 0),
+        0
+      )
     );
     dailyAoA.push([
       "TOTAL",
       ...dailyTotals,
-      dailyTotals.reduce((s, h) => s + h, 0),
+      dailyTotals.reduce((sum, hours) => sum + hours, 0),
     ]);
     XLSX.utils.book_append_sheet(
       wb,
@@ -396,9 +402,9 @@ export async function GET(request: Request) {
   const byCodeAoA: (string | number)[][] = [["Worker", "Cost Code", "Hours"]];
   let byCodeTotal = 0;
   for (const id of workerIds) {
-    const w = workers.get(id)!;
-    const codes = [...w.hoursByCode.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0])
+    const worker = workers.get(id);
+    const codes = [...(worker?.hoursByCode ?? new Map()).entries()].sort((entryA, entryB) =>
+      entryA[0].localeCompare(entryB[0])
     );
     for (const [code, hrs] of codes) {
       byCodeAoA.push([nameOf(id), code, hrs]);

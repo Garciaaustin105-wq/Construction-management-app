@@ -1,10 +1,3 @@
-import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
-
-export const dynamic = "force-dynamic";
-
-// Frictionless customer decision — public (no auth); the share_token in the URL
-// is the only credential. Mirrors the logged-in approve_estimate / reject_estimate
 // RPCs but resolves the estimate by token. Service role because there is no user
 // session. Guards: token must resolve + status must be 'sent' + (for approve)
 // no existing invoice — so a draft, an already-decided estimate, or a double-
@@ -29,9 +22,20 @@ export async function POST(
     );
   }
 
+  const getEnv = (name: string) => {
+    const value = process.env[name];
+    if (!value) {
+      throw new Error(`Missing env var: ${name}`);
+    }
+    return value;
+  };
+
+  const supabaseUrl = getEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseServiceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    supabaseServiceKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 

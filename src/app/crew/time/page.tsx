@@ -7,6 +7,7 @@ import { useToast } from "@/components/Toast";
 import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucide-react";
 import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
 
+
 type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
 type TimeEntry = {
@@ -21,7 +22,7 @@ type TimeEntry = {
   location_source: GpsSource | null;
 };
 
-function fmtDuration(ms: number): string {
+const fmtDuration = (ms: number): string => {
   const s = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -29,7 +30,7 @@ function fmtDuration(ms: number): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${sec}s`;
   return `${sec}s`;
-}
+};
 
 export default function CrewTimePage() {
   const supabase = createClient();
@@ -353,7 +354,9 @@ export default function CrewTimePage() {
           ) : (
             <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
               {recent.map((e) => {
-                const dur = new Date(e.clock_out_at!).getTime() - new Date(e.clock_in_at).getTime();
+                const dur = e.clock_out_at
+                  ? new Date(e.clock_out_at).getTime() - new Date(e.clock_in_at).getTime()
+                  : 0;
                 return (
                   <div key={e.id} className="p-3 flex items-center gap-2">
                     <div className="min-w-0 flex-1">
@@ -364,7 +367,9 @@ export default function CrewTimePage() {
                         {new Date(e.clock_in_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}
                         {new Date(e.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         {" → "}
-                        {new Date(e.clock_out_at!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {e.clock_out_at
+                          ? new Date(e.clock_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          : "—"}
                       </p>
                       {e.cost_code_id && (
                         <p className="text-xs text-blue-600 truncate">{codeLabelById[e.cost_code_id]}</p>

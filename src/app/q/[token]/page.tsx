@@ -6,6 +6,13 @@ import EstimateDecisionButtons from "./EstimateDecisionButtons";
 
 export const dynamic = "force-dynamic";
 
+const assertEnv = (name: string, value: string | undefined): string => {
+  if (!value) {
+    throw new Error(`Missing environment variable ${name}`);
+  }
+  return value;
+};
+
 // Public customer estimate view — no auth. The share_token in the URL is the
 // only credential. Fetched via the service role (validating the token). Office
 // hits Send → customer opens this link → sees the estimate + Approve/Reject →
@@ -23,9 +30,18 @@ export default async function PublicEstimatePage({
 }) {
   const { token } = await params;
 
+  const supabaseUrl = assertEnv(
+    "NEXT_PUBLIC_SUPABASE_URL",
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+  );
+  const supabaseKey = assertEnv(
+    "SUPABASE_SERVICE_ROLE_KEY",
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    supabaseKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 

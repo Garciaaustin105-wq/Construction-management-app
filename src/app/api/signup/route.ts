@@ -70,6 +70,22 @@ export async function POST(request: Request) {
       company_website?: string;
     };
 
+  const fieldErrorMap: Record<string, string> = {
+    business_name: "Business name is required.",
+    full_name: "Full name is required.",
+    email: "Email is required.",
+    password: "Password is required.",
+  };
+
+  for (const [field, errorMsg] of Object.entries(fieldErrorMap)) {
+    if (!(body as any)[field]) {
+      return NextResponse.json({ error: errorMsg }, { status: 400 });
+    }
+  }
+
+  // ...rest of the signup logic
+}
+
   // Honeypot: a real user never fills the hidden "company_website" field. Bots
   // do. Pretend success so the trap isn't revealed, but do nothing.
   if (company_website && company_website.trim().length > 0) {
@@ -96,9 +112,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid email" }, { status: 400 });
   }
 
+  function ensureEnvVar(name: string, value: string | undefined): string {
+    if (!value) {
+      throw new Error(`Environment variable ${name} is missing`);
+    }
+    return value;
+  }
+
+  const supabaseUrl = ensureEnvVar("NEXT_PUBLIC_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const supabaseKey = ensureEnvVar("SUPABASE_SERVICE_ROLE_KEY", process.env.SUPABASE_SERVICE_ROLE_KEY);
+
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    supabaseUrl,
+    supabaseKey,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
@@ -213,9 +239,11 @@ export async function POST(request: Request) {
   if (useSupabaseFallback) {
     try {
       const { createClient } = await import("@supabase/supabase-js");
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
       const anon = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        supabaseUrl ? supabaseUrl : "",
+        supabaseAnonKey ? supabaseAnonKey : "",
         { auth: { autoRefreshToken: false, persistSession: false } }
       );
       const { error: rErr } = await anon.auth.resend({

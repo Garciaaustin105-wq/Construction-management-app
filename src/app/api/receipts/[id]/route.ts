@@ -3,6 +3,14 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
+export function getEnvVar(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`Environment variable ${key} is not set`);
+  }
+  return value;
+}
+
 export const dynamic = "force-dynamic";
 
 // Delete a shared receipt: removes the storage object and the row, using the
@@ -22,8 +30,8 @@ export async function DELETE(
   }
 
   const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    getEnvVar("NEXT_PUBLIC_SUPABASE_URL"),
+    getEnvVar("SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
