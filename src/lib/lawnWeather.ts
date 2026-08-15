@@ -20,6 +20,12 @@ export type WeatherBoard = {
   days: DayForecast[];
   visitsByDate: VisitByDate[];
   locationLabel: string;
+  // How the forecast location was chosen — surfaced as a note so the user
+  // knows what area/job the weather is for.
+  //   "property" = an office-set map pin on the next scheduled lawn job
+  //   "ip"       = Vercel IP geolocation fallback (no pin set on any visit)
+  //   "none"     = no coords available; forecast unavailable
+  locationSource: "property" | "ip" | "none";
   forecastAvailable: boolean;
 };
 
@@ -123,7 +129,12 @@ function resolveLocation(
   visitRows: VisitRow[],
   ipLat: string | null,
   ipLng: string | null
-): { lat: number | null; lng: number | null; label: string } {
+): {
+  lat: number | null;
+  lng: number | null;
+  label: string;
+  source: "property" | "ip" | "none";
+} {
   for (const v of visitRows) {
     const lj = v.jobs?.lawn_jobs;
     if (lj && lj.map_lat != null && lj.map_lng != null) {
@@ -134,6 +145,7 @@ function resolveLocation(
           lat,
           lng,
           label: v.jobs?.address || v.jobs?.name || "property",
+          source: "property",
         };
       }
     }
@@ -142,10 +154,10 @@ function resolveLocation(
     const la = parseFloat(ipLat);
     const ln = parseFloat(ipLng);
     if (!Number.isNaN(la) && !Number.isNaN(ln)) {
-      return { lat: la, lng: ln, label: "your approximate location" };
+      return { lat: la, lng: ln, label: "your approximate location", source: "ip" };
     }
   }
-  return { lat: null, lng: null, label: "location unavailable" };
+  return { lat: null, lng: null, label: "location unavailable", source: "none" };
 }
 
 export async function getLawnWeatherBoard(
@@ -183,13 +195,14 @@ export async function getLawnWeatherBoard(
   const h = await headers();
   const ipLat = h.get("x-vercel-ip-latitude");
   const ipLng = h.get("x-vercel-ip-longitude");
-  const { lat, lng, label } = resolveLocation(visitRows, ipLat, ipLng);
+  const { lat, lng, label, source } = resolveLocation(visitRows, ipLat, ipLng);
 
   if (lat == null || lng == null) {
     return {
       days: [],
       visitsByDate,
       locationLabel: label,
+      locationSource: "none",
       forecastAvailable: false,
     };
   }
@@ -200,6 +213,7 @@ export async function getLawnWeatherBoard(
       days: [],
       visitsByDate,
       locationLabel: label || "property",
+      locationSource: source,
       forecastAvailable: false,
     };
   }
@@ -207,6 +221,7 @@ export async function getLawnWeatherBoard(
     days,
     visitsByDate,
     locationLabel: label || "property",
+    locationSource: source,
     forecastAvailable: true,
   };
 }

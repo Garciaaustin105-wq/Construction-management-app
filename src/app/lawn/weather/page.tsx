@@ -11,7 +11,7 @@ import {
 } from "@/lib/lawnWeather";
 import LawnWeatherMover from "@/components/LawnWeatherMover";
 import Link from "next/link";
-import { CloudSun, CloudRain, ArrowLeft } from "lucide-react";
+import { CloudSun, CloudRain, ArrowLeft, MapPin } from "lucide-react";
 
 function fmtDay(date: string): string {
   const today = new Date().toISOString().slice(0, 10);
@@ -43,7 +43,8 @@ export default async function LawnWeatherPage() {
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
   const board = await getLawnWeatherBoard(supabase);
-  const { days, visitsByDate, locationLabel, forecastAvailable } = board;
+  const { days, visitsByDate, locationLabel, locationSource, forecastAvailable } =
+    board;
 
   // Index forecast days by date for quick lookup.
   const dayMap = new Map<string, DayForecast>(days.map((d) => [d.date, d]));
@@ -86,6 +87,34 @@ export default async function LawnWeatherPage() {
             {visitsByDate.length > 0
               ? ", but your pending visits are shown below."
               : "."}
+          </div>
+        )}
+
+        {/* ── Where this forecast is for ───────────────────────────────────── */}
+        {forecastAvailable && (
+          <div
+            className={`rounded-lg p-3 text-sm flex items-start gap-2 ${
+              locationSource === "property"
+                ? "bg-green-50 border border-green-200 text-green-800"
+                : "bg-blue-50 border border-blue-200 text-blue-800"
+            }`}
+          >
+            <MapPin className="w-4 h-4 mt-0.5 shrink-0" />
+            <p className="leading-snug">
+              {locationSource === "property" ? (
+                <>
+                  Forecast is for <strong>{locationLabel}</strong> — the map pin
+                  set on your next scheduled lawn job. Weather follows the route.
+                </>
+              ) : (
+                <>
+                  Forecast is based on <strong>{locationLabel}</strong> (your
+                  approximate location). No lawn job has a map pin set, so the
+                  weather isn&rsquo;t property-specific. Add a pin in the lawn job
+                  to pin the forecast to that property.
+                </>
+              )}
+            </p>
           </div>
         )}
 
