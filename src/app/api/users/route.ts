@@ -37,28 +37,25 @@ export async function POST(request: Request) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
   const tenant = await getMyOrg(supabase);
-  if (!tenant) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-  if (!isOfficeLike(tenant.role)) {
-    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
-  }
-
   const body = await request.json();
   const { email, password, full_name, role, customer_name, organization_id } =
     body;
 
-  if (!email || !password || !role) {
-    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  const checks: Array<{ cond: boolean; response: [object, number] }> = [
+    { cond: !user, response: [{ error: "Not signed in" }, 401] },
+    { cond: !tenant, response: [{ error: "Not signed in" }, 401] },
+    { cond: tenant !== null && !isOfficeLike(tenant.role), response: [{ error: "Not authorized" }, 403] },
+    { cond: !email || !password || !role, response: [{ error: "Missing fields" }, 400] },
+    { cond: role !== undefined && !ASSIGNABLE_ROLES.includes(role as never), response: [{ error: "Invalid role" }, 400] },
+  ];
+
+  for (const { cond, response: [errorBody, status] } of checks) {
+    if (cond) {
+      return NextResponse.json(errorBody, { status });
+    }
   }
-  if (!ASSIGNABLE_ROLES.includes(role as never)) {
-    return NextResponse.json({ error: "Invalid role" }, { status: 400 });
-  }
+}
   if (!canCreate(tenant.role, role)) {
     return NextResponse.json(
       { error: `Your role (${tenant.role}) cannot create a ${role} user` },

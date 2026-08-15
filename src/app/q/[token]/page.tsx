@@ -6,12 +6,12 @@ import EstimateDecisionButtons from "./EstimateDecisionButtons";
 
 export const dynamic = "force-dynamic";
 
-function assertEnv(name: string, value: string | undefined): string {
+const assertEnv = (name: string, value: string | undefined): string => {
   if (!value) {
     throw new Error(`Missing environment variable ${name}`);
   }
   return value;
-}
+};
 
 // Public customer estimate view — no auth. The share_token in the URL is the
 // only credential. Fetched via the service role (validating the token). Office

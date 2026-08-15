@@ -253,12 +253,20 @@ export default function ReceiptsSection({
       // Route through our server API (service role) so crew uploads don't
       // depend on per-crew storage RLS policies.
       const form = new FormData();
-      form.append("jobId", jobId);
-      form.append("capturedAt", rec.capturedAt);
-      if (rec.vendor) form.append("vendor", rec.vendor);
-      if (typeof rec.amount === "number") form.append("amount", String(rec.amount));
-      if (rec.notes) form.append("notes", rec.notes);
-      if (rec.category) form.append("category", rec.category);
+      const baseFields = {
+        jobId,
+        capturedAt: rec.capturedAt,
+      };
+      const optionalFields = {
+        ...(rec.vendor && { vendor: rec.vendor }),
+        ...(typeof rec.amount === "number" && { amount: String(rec.amount) }),
+        ...(rec.notes && { notes: rec.notes }),
+        ...(rec.category && { category: rec.category }),
+      };
+      const formFields = { ...baseFields, ...optionalFields };
+      Object.entries(formFields).forEach(([field, value]) => {
+        form.append(field, value);
+      });
       if (typeof rec.tax === "number") form.append("tax", String(rec.tax));
       if (rec.paymentMethod) form.append("paymentMethod", rec.paymentMethod);
       if (rec.receiptNo) form.append("receiptNo", rec.receiptNo);

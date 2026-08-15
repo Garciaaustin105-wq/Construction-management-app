@@ -6,14 +6,7 @@ import { sendEstimateEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
-// Office hits Send → email the customer a frictionless /q/{token} link and
-// mark the estimate sent. Email is sent FIRST; the estimate is only marked
-// sent + token stored if the email succeeds (so "sent" always means
-// "delivered"). The caller must be office/admin (user-scoped client, RLS
-// scopes the read to the caller's org); the service role is used only for the
-// email + the status/token write.
-
-function requestHost(request: Request): string {
+const requestHost = (request: Request): string => {
   const xfhost = request.headers.get("x-forwarded-host");
   if (xfhost) return xfhost;
   const hostHeader = request.headers.get("host");
@@ -23,7 +16,7 @@ function requestHost(request: Request): string {
   } catch {
     return "localhost";
   }
-}
+};
 
 export async function POST(
   request: Request,

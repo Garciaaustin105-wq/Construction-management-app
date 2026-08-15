@@ -70,6 +70,22 @@ export async function POST(request: Request) {
       company_website?: string;
     };
 
+  const fieldErrorMap: Record<string, string> = {
+    business_name: "Business name is required.",
+    full_name: "Full name is required.",
+    email: "Email is required.",
+    password: "Password is required.",
+  };
+
+  for (const [field, errorMsg] of Object.entries(fieldErrorMap)) {
+    if (!(body as any)[field]) {
+      return NextResponse.json({ error: errorMsg }, { status: 400 });
+    }
+  }
+
+  // ...rest of the signup logic
+}
+
   // Honeypot: a real user never fills the hidden "company_website" field. Bots
   // do. Pretend success so the trap isn't revealed, but do nothing.
   if (company_website && company_website.trim().length > 0) {
