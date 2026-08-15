@@ -2,13 +2,17 @@
 // Two jobs: (1) make the app installable (Add to Home Screen) and (2) cache the
 // app shell so it loads even with a flaky cell signal. Live data (Supabase REST,
 // storage, our /api routes) is NEVER cached — only HTML navigations and static
-// assets (JS/CSS/images/fonts) are. So offline you get the last-rendered page
-// shell + whatever was in memory, but fresh data still needs a connection.
-const CACHE = "terra-vista-v1";
+// assets (JS/CSS/images/fonts/icons) are. So offline you get the last-rendered
+// page shell + whatever was in memory, but fresh data still needs a connection.
+//
+// Bumping CACHE below purges the previous cache on activate. Do this whenever a
+// precached asset (icon, manifest, logo) changes so installed clients drop the
+// stale copy and pick up the new one on the next visit — no reinstall needed.
+const CACHE = "terra-vista-v2";
 // Only precache public, auth-free assets. /dashboard etc. get cached on first
 // visit via the navigation handler (they require a session, so precaching them
 // at install time would store a login redirect).
-const APP_SHELL = ["/", "/manifest.json", "/terra-vista-icon.svg"];
+const APP_SHELL = ["/", "/manifest.json", "/icon.svg", "/terra-vista-icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -67,23 +71,48 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets (_next/static, images, fonts, icons): cache-first, populate
-  // on first hit. Hashed bundles are safe to cache indefinitely.
+  // Hashed build bundles under /_next/static/ are immutable — cache-first is
+  // safe forever and avoids re-downloading on every visit.
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(
+      (async () => {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        try {
+          const res = await fetch(req);
+          if (res.ok) {
+            const copy = res.clone();
+            const c = await caches.open(CACHE);
+            c.put(req, copy);
+          }
+          return res;
+        } catch {
+          return cached || Response.error();
+        }
+      })()
+    );
+    return;
+  }
+
+  // Everything else static (icons, manifest, logo, other public assets) is NOT
+  // immutable — it can change on deploy. Stale-while-revalidate: serve the
+  // cached copy instantly for speed, but fetch in the background and update the
+  // cache so the NEXT visit reflects the new asset. This is what lets an icon or
+  // logo update show up without uninstalling/reinstalling the app.
   event.respondWith(
     (async () => {
       const cached = await caches.match(req);
-      if (cached) return cached;
-      try {
-        const res = await fetch(req);
-        if (res.ok) {
-          const copy = res.clone();
-          const c = await caches.open(CACHE);
-          c.put(req, copy);
-        }
-        return res;
-      } catch {
-        return cached || Response.error();
-      }
+      const network = fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => cached || Response.error());
+      // Serve cached immediately if we have it; otherwise wait for the network.
+      return cached || network;
     })()
   );
 });
