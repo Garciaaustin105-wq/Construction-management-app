@@ -64,6 +64,7 @@ export default function VisitDetailPage({
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [crew, setCrew] = useState<{ id: string; full_name: string | null; email: string }[]>([]);
   const [authorized, setAuthorized] = useState(false);
+  const [isOffice, setIsOffice] = useState(false);
   const [busy, setBusy] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveDate, setMoveDate] = useState("");
@@ -121,10 +122,26 @@ export default function VisitDetailPage({
         .eq("id", user.id)
         .single();
       const role = profile?.role ?? "crew";
-      if (role !== "office" && role !== "admin" && role !== "super_admin") {
+      const officeLike =
+        role === "office" || role === "admin" || role === "super_admin";
+      if (!officeLike && role !== "crew" && role !== "superintendent") {
         router.push("/dashboard");
         return;
       }
+      // Field crew may only open a visit assigned directly to them (crew_id).
+      if (!officeLike) {
+        const { data: own } = await supabase
+          .from("lawn_visits")
+          .select("crew_id")
+          .eq("id", id)
+          .maybeSingle();
+        const crewId = (own as unknown as { crew_id: string | null } | null)?.crew_id ?? null;
+        if (crewId !== user.id) {
+          router.push("/dashboard");
+          return;
+        }
+      }
+      setIsOffice(officeLike);
       setAuthorized(true);
       await load();
     })();
@@ -134,26 +151,45 @@ export default function VisitDetailPage({
   async function updateStatus(status: string) {
     if (!visit) return;
     setBusy(true);
-    let res: Response;
-    try {
-      res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-    } catch {
+    if (isOffice) {
+      // Office path — route through the /status API so the customer is emailed
+      // + notified_at is stamped.
+      let res: Response;
+      try {
+        res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        });
+      } catch {
+        setBusy(false);
+        toast.error("Failed: network error");
+        return;
+      }
       setBusy(false);
-      toast.error("Failed: network error");
-      return;
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(`Failed: ${data.error ?? res.statusText}`);
+        return;
+      }
+    } else {
+      // Crew path — direct update via RLS (crew update policy on their own
+      // visit). The /status API is office-only. No customer email; office
+      // reviews completed visits at end of day.
+      const supabase = createClient();
+      const patch: Record<string, unknown> = { status };
+      patch.completed_at = status === "done" ? new Date().toISOString() : null;
+      const { error } = await supabase
+        .from("lawn_visits")
+        .update(patch)
+        .eq("id", visit.id);
+      setBusy(false);
+      if (error) {
+        toast.error(`Failed: ${error.message}`);
+        return;
+      }
     }
-    setBusy(false);
-    if (!res.ok) {
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      toast.error(`Failed: ${data.error ?? res.statusText}`);
-      return;
-    }
-    const completed_at =
-      status === "done" ? new Date().toISOString() : null;
+    const completed_at = status === "done" ? new Date().toISOString() : null;
     setVisit({ ...visit, status, completed_at });
     toast.success(
       status === "done"
@@ -312,7 +348,15 @@ export default function VisitDetailPage({
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar title={jobName} backHref={`/lawn/schedules/${visit.recurring_schedule_id}`} backLabel="Schedule" />
+      <TopBar
+        title={jobName}
+        backHref={
+          isOffice
+            ? `/lawn/schedules/${visit.recurring_schedule_id}`
+            : "/lawn/my-route"
+        }
+        backLabel={isOffice ? "Schedule" : "Route"}
+      />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
         <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
@@ -347,7 +391,7 @@ export default function VisitDetailPage({
                 Mark done
               </button>
             )}
-            {visit.status !== "skipped" && (
+            {isOffice && visit.status !== "skipped" && (
               <button
                 type="button"
                 onClick={() => updateStatus("skipped")}
@@ -358,7 +402,7 @@ export default function VisitDetailPage({
                 Skip
               </button>
             )}
-            {visit.status !== "pending" && (
+            {isOffice && visit.status !== "pending" && (
               <button
                 type="button"
                 onClick={() => updateStatus("pending")}
@@ -371,8 +415,8 @@ export default function VisitDetailPage({
             )}
           </div>
 
-          {/* Move date */}
-          {moving ? (
+          {/* Move date + on-my-way — office only */}
+          {isOffice && (moving ? (
             <div className="flex items-center gap-2">
               <input
                 type="date"
@@ -426,18 +470,18 @@ export default function VisitDetailPage({
                 On my way
               </button>
             </div>
-          )}
+          ))}
         </div>
 
         {/* Property profile (lawn_jobs 1:1) */}
         <LawnPropertyDetails
           jobId={visit.job_id}
           initial={property}
-          canEdit={authorized}
+          canEdit={isOffice}
         />
 
-        {/* Crew assignment */}
-        {crew.length > 0 && (
+        {/* Crew assignment — office only */}
+        {isOffice && crew.length > 0 && (
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Assign crew</span>
@@ -495,12 +539,14 @@ export default function VisitDetailPage({
           )}
         </div>
 
-        <Link
-          href={`/jobs/${visit.job_id}`}
-          className="block text-center text-sm text-blue-600 font-medium py-2"
-        >
-          Open job →
-        </Link>
+        {isOffice && (
+          <Link
+            href={`/jobs/${visit.job_id}`}
+            className="block text-center text-sm text-blue-600 font-medium py-2"
+          >
+            Open job →
+          </Link>
+        )}
       </main>
     </div>
   );

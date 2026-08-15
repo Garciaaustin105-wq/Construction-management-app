@@ -71,6 +71,11 @@ export default function BottomNav() {
     items.push({ href: "/lawn", label: "Lawn", Icon: Sprout });
     items.push({ href: "/admin/users", label: "Admin", Icon: Users });
   }
+  // Field crew get their own scoped Lawn tab (their assigned route), not the
+  // office hub (which would redirect them).
+  if (role === "crew" || role === "superintendent") {
+    items.push({ href: "/lawn/my-route", label: "Route", Icon: Sprout });
+  }
   if (role === "super_admin") {
     items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
   }
