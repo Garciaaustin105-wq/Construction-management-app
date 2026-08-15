@@ -83,11 +83,19 @@ export async function POST(request: Request) {
   );
 
   // Resolve the account by email via profiles (profiles.id == auth.users.id).
-  const { data: profile } = await admin
+  // CASE-INSENSITIVE: profiles.email may be stored mixed-case (e.g. an
+  // admin-created "Austin@..." row), and we lowercased the input above. A plain
+  // .eq is case-sensitive in Postgres, so "austin@..." would miss "Austin@..."
+  // and the route would silently no-op (generic 200, no email sent) — which
+  // looked exactly like "the email never arrived." ilike matches
+  // case-insensitively; escape the ILIKE wildcards so _ / % in an email local
+  // part can't widen the match.
+  const { data: profiles } = await admin
     .from("profiles")
     .select("id")
-    .eq("email", mail)
-    .maybeSingle();
+    .ilike("email", mail.replace(/\\/g, "\\\\").replace(/_/g, "\\_").replace(/%/g, "\\%"))
+    .limit(1);
+  const profile = profiles?.[0] ?? null;
 
   if (profile) {
     // Resend is REQUIRED for this flow — Supabase's built-in sender can't carry
