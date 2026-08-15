@@ -32,9 +32,17 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/login?error=reset_failed", url));
   }
 
-  if (type === "recovery") {
+  // Branch on our own `flow` param (forgot-password sends flow=recovery,
+  // signup sends flow=signup). Supabase's PKCE redirect reliably appends only
+  // `code` to the redirect_to — `type` is NOT guaranteed to be forwarded, so
+  // relying on it alone would misroute recovery clicks to the "verified" login
+  // screen instead of /update-password. We keep `type` as a fallback for any
+  // Supabase version that does forward it.
+  const flow = url.searchParams.get("flow");
+  const isRecovery = flow === "recovery" || type === "recovery";
+  if (isRecovery) {
     return NextResponse.redirect(new URL("/update-password", url));
   }
-  // signup verification (and any other type) → email is confirmed, prompt sign-in.
+  // signup verification (and any other flow) → email is confirmed, prompt sign-in.
   return NextResponse.redirect(new URL("/login?verified=1", url));
 }

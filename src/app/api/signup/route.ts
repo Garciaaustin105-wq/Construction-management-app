@@ -142,7 +142,7 @@ export async function POST(request: Request) {
       email: mail,
       password,
       options: {
-        redirectTo: `${origin}/auth/callback`,
+        redirectTo: `${origin}/auth/callback?flow=signup`,
         data: { role: "admin", full_name: name },
       },
     });

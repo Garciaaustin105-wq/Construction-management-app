@@ -27,7 +27,10 @@ export default function ForgotPasswordForm() {
     setLoading(true);
     setInlineError(null);
 
-    const redirectTo = `${window.location.origin}/auth/callback`;
+    // ?flow=recovery tells /auth/callback this is a password-reset (Supabase's
+    // PKCE redirect appends only `code`, not `type`, so we can't rely on `type`
+    // to route to /update-password — see the callback for the branching logic).
+    const redirectTo = `${window.location.origin}/auth/callback?flow=recovery`;
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo,
     });
