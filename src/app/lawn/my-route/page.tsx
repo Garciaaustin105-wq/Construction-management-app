@@ -21,6 +21,7 @@ type Visit = {
   job_id: string;
   due_date: string;
   status: string;
+  route_order: number | null;
   // customers reached through jobs (lawn_visits has job_id, no customer_id).
   jobs: {
     name: string;
@@ -165,11 +166,12 @@ export default function MyRoutePage() {
       const horizonDate = horizon.toISOString().slice(0, 10);
       const { data: rows } = await supabase
         .from("lawn_visits")
-        .select("id, job_id, due_date, status, jobs(name, address, customers(name))")
+        .select("id, job_id, due_date, status, route_order, jobs(name, address, customers(name))")
         .eq("crew_id", user.id)
         .eq("status", "pending")
         .lte("due_date", horizonDate)
-        .order("due_date", { ascending: true });
+        .order("due_date", { ascending: true })
+        .order("route_order", { ascending: true, nullsFirst: false });
       setVisits((rows as unknown as Visit[]) ?? []);
     })();
   }, [router]);

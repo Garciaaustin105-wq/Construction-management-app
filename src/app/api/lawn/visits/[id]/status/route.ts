@@ -75,6 +75,11 @@ export async function POST(
   if (body.status === "done") patch.completed_at = new Date().toISOString();
   else if (body.status) patch.completed_at = null;
   if (body.due_date) patch.due_date = body.due_date;
+  // A move (due_date change) invalidates the dispatcher's saved per-crew
+  // sequence for the old day — null route_order so it doesn't collide with the
+  // target day's existing order in My Route (review MEDIUM-2). The dispatcher
+  // re-plans the target day; until then moved visits sort after planned ones.
+  if (body.due_date && body.due_date !== cur.due_date) patch.route_order = null;
 
   const { error: updateError } = await supabase
     .from("lawn_visits")

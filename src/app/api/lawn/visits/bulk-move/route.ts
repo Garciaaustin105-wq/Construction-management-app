@@ -60,7 +60,10 @@ export async function POST(req: Request) {
   for (const v of visitRows) {
     const { error } = await supabase
       .from("lawn_visits")
-      .update({ due_date: toDate })
+      // Null route_order on move: a moved visit's old per-crew sequence would
+      // collide with the target day's existing order in My Route (review
+      // MEDIUM-2). Re-plan the target day to re-sequence.
+      .update({ due_date: toDate, route_order: null })
       .eq("id", v.id);
     if (error) {
       // 23505 = a visit already exists on `toDate` for this schedule. Skip it
