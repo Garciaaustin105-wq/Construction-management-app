@@ -11,6 +11,7 @@ import { Loader2, RefreshCw, Pause, Play, Calendar } from "lucide-react";
 import LawnPropertyDetails, {
   type LawnJob,
 } from "@/components/LawnPropertyDetails";
+import JobDetailsEditor from "@/components/JobDetailsEditor";
 
 type Schedule = {
   id: string;
@@ -26,8 +27,15 @@ type Schedule = {
   active: boolean;
   notes: string | null;
   // customers is reached through jobs (recurring_schedules has job_id, no
-  // customer_id) — embed jobs(name, customers(name)).
-  jobs: { name: string; customers: { name: string | null } | null } | null;
+  // customer_id) — embed jobs(name, address, description, customers(name)).
+  // address/description live on the jobs row (same as construction) so the
+  // JobDetailsEditor can edit them by job id.
+  jobs: {
+    name: string;
+    address: string | null;
+    description: string | null;
+    customers: { name: string | null } | null;
+  } | null;
 };
 
 type Visit = {
@@ -88,7 +96,7 @@ export default function ScheduleDetailPage({
       const { data: sched } = await supabase
         .from("recurring_schedules")
         .select(
-          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes, jobs(name, customers(name))"
+          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes, jobs(name, address, description, customers(name))"
         )
         .eq("id", id)
         .maybeSingle();
@@ -117,6 +125,27 @@ export default function ScheduleDetailPage({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // JobDetailsEditor save callback: this page is a client component whose data
+  // is fetched in a useEffect (deps [id]), so router.refresh() won't re-fetch.
+  // Update the schedule state directly so the location card + TopBar title
+  // reflect the edited name/address/description immediately.
+  function onJobDetailsSaved(
+    name: string,
+    address: string | null,
+    description: string | null
+  ) {
+    setSchedule((prev) =>
+      prev
+        ? {
+            ...prev,
+            jobs: prev.jobs
+              ? { ...prev.jobs, name, address, description }
+              : { name, address, description, customers: null },
+          }
+        : prev
+    );
+  }
 
   async function toggleActive() {
     if (!schedule) return;
@@ -345,6 +374,21 @@ export default function ScheduleDetailPage({
             </button>
           </div>
         </div>
+
+        {/* Property location / name / notes — editable after creation (same
+            JobDetailsEditor as the construction job page; edits the jobs row by
+            id, since a lawn job's address/description live on jobs). */}
+        <section className="bg-white rounded-lg p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Location</h2>
+          <JobDetailsEditor
+            jobId={schedule.job_id}
+            initialName={schedule.jobs?.name ?? ""}
+            initialAddress={schedule.jobs?.address ?? null}
+            initialDescription={schedule.jobs?.description ?? null}
+            canEdit={authorized}
+            onSaved={onJobDetailsSaved}
+          />
+        </section>
 
         {/* Property profile (lawn_jobs 1:1) */}
         <LawnPropertyDetails

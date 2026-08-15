@@ -14,12 +14,24 @@ export default function JobDetailsEditor({
   initialAddress,
   initialDescription,
   canEdit,
+  onSaved,
 }: {
   jobId: string;
   initialName: string;
   initialAddress: string | null;
   initialDescription: string | null;
   canEdit: boolean;
+  // Optional callback fired after a successful save, carrying the normalized
+  // saved values. The construction job page is a server component and relies on
+  // router.refresh() to re-fetch fresh props, so it doesn't need this. The Lawn
+  // schedule page is a client component whose data is fetched in a useEffect —
+  // router.refresh() won't re-trigger it — so it passes onSaved to update its
+  // own state and re-render with the new address/description.
+  onSaved?: (
+    name: string,
+    address: string | null,
+    description: string | null
+  ) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(initialName);
@@ -45,7 +57,17 @@ export default function JobDetailsEditor({
       toast.error(`Failed: ${error.message}`);
     } else {
       toast.success("Job details updated");
+      // Normalize local state to the saved values so a re-edit doesn't show
+      // the untrimmed draft, then notify the parent (Lawn client page) so its
+      // read-only view + TopBar reflect the change without a server refetch.
+      const savedName = name.trim() || initialName;
+      const savedAddress = address.trim() || null;
+      const savedDescription = description.trim() || null;
+      setName(savedName);
+      setAddress(savedAddress ?? "");
+      setDescription(savedDescription ?? "");
       setEditing(false);
+      onSaved?.(savedName, savedAddress, savedDescription);
       router.refresh();
     }
     setSaving(false);

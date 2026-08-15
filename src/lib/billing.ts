@@ -112,6 +112,16 @@ export function createGate(b: OrgBilling): {
       error: "Your subscription is canceled. Resubscribe to resume creating.",
     };
   }
+  // Past-due: a payment failed and Stripe is retrying. Block creates until the
+  // customer updates their billing info (Customer Portal). Reads stay allowed.
+  if (eff.planStatus === "past_due") {
+    return {
+      ok: false,
+      status: 402,
+      error:
+        "Your subscription payment is past due. Update your billing info to resume creating.",
+    };
+  }
   return null;
 }
 
@@ -224,6 +234,18 @@ async function applySubscription(sub: Stripe.Subscription): Promise<void> {
   if (!org) return; // event for an unknown customer — nothing to sync
 
   const status = subStatusToPlanStatus(sub.status);
+  // A paying subscription whose price doesn't map to any configured tier
+  // (price rotated/deleted in Stripe, or a priceId env var is unset) would
+  // leave the org's plan unupdated — so a previously expired/canceled/trial
+  // org would stay locked out despite paying. This is a misconfiguration, so
+  // log it loudly instead of silently no-op'ing. Verify STRIPE_PRICE_STARTER /
+  // STRIPE_PRICE_PRO / STRIPE_PRICE_ENTERPRISE match the live Stripe prices.
+  if (!tier && status === "active") {
+    const priceId = sub.items.data[0]?.price?.id ?? "(none)";
+    console.error(
+      `[billing] Subscription ${sub.id} (customer ${customerId}, org ${org.id}) is active but its price ${priceId} does not map to a configured tier — org plan was NOT updated. Check STRIPE_PRICE_* env vars.`
+    );
+  }
   const update: Record<string, unknown> = {
     plan_status: status,
     stripe_subscription_id: sub.id,
