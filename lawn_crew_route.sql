@@ -44,15 +44,32 @@ create policy "Crew update my route lawn visits" on public.lawn_visits
 -- if not in jobs.assigned_crew — so /lawn/my-route cards + the visit page show
 -- the property name/address. Same org. (Customer name embed may still be null
 -- for crew — intentional privacy; the address is what routing needs.)
+--
+-- The visit lookup MUST go through the SECURITY DEFINER helper below, NOT a
+-- direct `exists (select 1 from lawn_visits ...)`. A direct subquery enforces
+-- RLS on lawn_visits, whose crew/customer policies look the job back up
+-- DIRECTLY on jobs → RLS on jobs → this policy again → infinite recursion
+-- (PostgREST error 42P17 "infinite recursion detected in policy for relation
+-- jobs"), which breaks EVERY authenticated jobs read (dashboard jobs/photos/
+-- RFI/invoice tiles). The helper is security definer, so RLS is bypassed inside
+-- it — same pattern as same_org()/tier_*() reading profiles — and the cycle is
+-- broken. (See fix_jobs_recursion.sql for the full writeup.)
+create or replace function public.lawn_visit_assigned_to(p_job_id uuid, p_uid uuid)
+returns boolean
+language sql security definer set search_path = public stable
+as $$
+  select exists (
+    select 1 from public.lawn_visits lv
+    where lv.job_id = p_job_id and lv.crew_id = p_uid
+  );
+$$;
+
 drop policy if exists "Crew read jobs via lawn visit" on public.jobs;
 create policy "Crew read jobs via lawn visit" on public.jobs for select
   to authenticated
   using (
     public.same_org(auth.uid(), organization_id)
-    and exists (
-      select 1 from public.lawn_visits lv
-      where lv.job_id = jobs.id and lv.crew_id = auth.uid()
-    )
+    and public.lawn_visit_assigned_to(jobs.id, auth.uid())
   );
 
 -- Crew can READ the lawn_jobs property profile (gate code / pets / access notes
