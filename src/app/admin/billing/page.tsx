@@ -37,7 +37,11 @@ export default async function BillingPage() {
       )
     : null;
 
-  const tiers = PAID_TIERS.map((t) => {
+  // Only show tiers that have a Stripe price configured (env var set). Tiers
+  // without a price (e.g. Enterprise until STRIPE_PRICE_ENTERPRISE is set) are
+  // hidden from self-serve purchase but remain assignable by super_admin and
+  // their caps still apply. Setting the env var later makes the card appear.
+  const tiers = PAID_TIERS.filter((t) => PLAN_TIERS[t].priceId).map((t) => {
     const c = PLAN_TIERS[t];
     return {
       tier: t,
