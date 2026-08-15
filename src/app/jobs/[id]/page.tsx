@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
-import MapLink from "@/components/MapLink";
+import JobDetailsEditor from "@/components/JobDetailsEditor";
 import JobAssignment from "@/components/JobAssignment";
 import JobStatusControl from "@/components/JobStatusControl";
 import RfiAnswerForm from "@/components/RfiAnswerForm";
@@ -186,10 +186,13 @@ export default async function JobDetailPage({
           <div className="mb-2">
             <StatusBadge status={job.status} />
           </div>
-          {job.address && <MapLink address={job.address} />}
-          {job.description && (
-            <p className="text-sm text-gray-600 mt-2">{job.description}</p>
-          )}
+          <JobDetailsEditor
+            jobId={job.id}
+            initialName={job.name}
+            initialAddress={job.address}
+            initialDescription={job.description}
+            canEdit={OFFICE_OR_PM.has(role)}
+          />
         </section>
 
         {/* Office + project manager: assign crew (PM has authority over crews) */}
