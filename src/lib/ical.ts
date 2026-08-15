@@ -46,7 +46,7 @@ export function buildCalendar(events: FeedEvent[]): string {
   // ical-generator's toString() emits the VCALENDAR block. We suffix a
   // X-WR-CALNAME so the subscribe shows a friendly name in Apple/Outlook.
   const ics = cal.toString();
-  const calnameLine = `X-WR-CALNAME:Terra Vista`;
+  const calnameLine = 'X-WR-CALNAME:Terra Vista';
   // Insert right after the VERSION line if present (otherwise prepend).
   if (ics.includes("VERSION:2.0")) {
     return ics.replace("VERSION:2.0", `VERSION:2.0\n${calnameLine}`);
