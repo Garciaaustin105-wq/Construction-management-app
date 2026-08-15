@@ -40,7 +40,7 @@ export type SendEstimateEmailInput = {
 // ({ data, error }); the caller decides how to surface a failure. Throws if
 // RESEND_API_KEY is unset so the route returns a clear 500 instead of a silent
 // no-op.
-export async function sendEstimateEmail(
+export function sendEstimateEmail(
   input: SendEstimateEmailInput
 ): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -141,7 +141,7 @@ export type SendVerificationEmailInput = {
 // delivery to non-owner inboxes. Returns Resend's { data, error }; the caller
 // (signup route) treats a failed send as non-fatal (workspace is already
 // created) and surfaces an emailSent:false flag to the client.
-export async function sendVerificationEmail(
+export function sendVerificationEmail(
   input: SendVerificationEmailInput
 ): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -167,6 +167,15 @@ export async function sendVerificationEmail(
         </td></tr>
         <tr><td style="padding:28px;">
           <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${name},</p>
+`;
+
+  return resend.emails.send({
+    from: fromAddress(),
+    to: input.to,
+    subject: `Verify your email — Terra Vista`,
+    html,
+  });
+}
           <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
             Thanks for creating your business workspace. Please confirm your
             email address to finish setting up your account and sign in.
