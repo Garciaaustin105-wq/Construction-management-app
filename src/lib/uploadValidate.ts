@@ -18,12 +18,9 @@ const BLUEPRINT_TYPES = [...IMAGE_TYPES, "application/pdf"];
 function isTypeOk(file: File | Blob, allowed: string[]): boolean {
   // `type` can be empty for some camera blobs; accept if it starts with image/.
   const t = file.type;
-  if (!t) return false;
-  if (allowed.includes(t)) return true;
   // Lenient fallback: any image/* counts (covers odd phone-camera MIMEs like
   // image/heic-sequence that aren't in our explicit list).
-  if (t.startsWith("image/")) return true;
-  return false;
+  return Boolean(t) && (allowed.includes(t) || t.startsWith("image/"));
 }
 
 export function validateUpload(

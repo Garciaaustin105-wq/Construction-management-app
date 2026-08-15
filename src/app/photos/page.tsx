@@ -71,11 +71,7 @@ export default async function PhotosPage({
     .sort((a, b) => a.name.localeCompare(b.name));
 
   // Apply filters in memory.
-  const filtered = all.filter((p) => {
-    if (jobFilter && p.job?.name === null) return false;
-    if (uploaderFilter && p.uploaded_by !== uploaderFilter) return false;
-    return true;
-  });
+  const filtered = all.filter((p) => !(jobFilter && p.job?.name === null) && !(uploaderFilter && p.uploaded_by !== uploaderFilter));
   // Job filter is by job id — but we only fetched job name. Resolve via jobsRes.
   const jobs = (jobsRes.data ?? []) as { id: string; name: string }[];
   let filteredById = filtered;
