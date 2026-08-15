@@ -1,7 +1,20 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import { BRAND } from "@/lib/brand";
 
-export default function HomePage() {
+// The app's root URL. A signed-in user who opens the site (e.g. a desktop
+// browser pointed at "/") should land on their dashboard, not on the marketing
+// sign-in page. The PWA manifest already sends mobile installs straight to
+// /dashboard via start_url; this mirrors that for plain browser visits so
+// desktop users aren't asked to sign in again every time they open the app.
+export default async function HomePage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user) redirect("/dashboard");
+
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full text-center">
