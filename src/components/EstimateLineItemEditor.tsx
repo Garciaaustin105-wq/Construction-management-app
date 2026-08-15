@@ -37,6 +37,12 @@ type TemplateRow = {
   }[];
 };
 
+export type ServiceOption = {
+  id: string;
+  name: string;
+  default_price: number;
+};
+
 const UNITS = ["EA", "LF", "SF", "CF", "HR", "DAY", "LOT", "GAL", "TON", "%"];
 
 // <datalist> id is shared across all line-item description inputs so the
@@ -51,6 +57,7 @@ export default function EstimateLineItemEditor({
   priorItems = [],
   disabled = false,
   allowTemplates = true,
+  services = [],
 }: {
   items: EstimateLine[];
   onChange: (next: EstimateLine[]) => void;
@@ -60,6 +67,7 @@ export default function EstimateLineItemEditor({
   // Template load/save is office-only. The editor already only renders at
   // office call sites, but this gate lets a future read-only reuse hide it.
   allowTemplates?: boolean;
+  services?: ServiceOption[];
 }) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -140,6 +148,23 @@ export default function EstimateLineItemEditor({
         quantity: 1,
         unit: "EA",
         unit_price: 0,
+        section: "",
+        internal_cost: null,
+      },
+    ]);
+  }
+
+  function addFromService(svcId: string) {
+    const svc = services.find((s) => s.id === svcId);
+    if (!svc) return;
+    onChange([
+      ...items,
+      {
+        cost_code_id: null,
+        description: svc.name,
+        quantity: 1,
+        unit: "EA",
+        unit_price: svc.default_price,
         section: "",
         internal_cost: null,
       },
@@ -287,6 +312,34 @@ export default function EstimateLineItemEditor({
             <Save className="w-3.5 h-3.5" />
             {savingTpl ? "Saving…" : "Save current lines as template"}
           </button>
+        </div>
+      )}
+
+      {services && services.length > 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-gray-900 flex-shrink-0">
+              Service Catalog
+            </span>
+            <select
+              onChange={(e) => {
+                const svcId = e.target.value;
+                if (svcId) {
+                  addFromService(svcId);
+                  e.target.value = "";
+                }
+              }}
+              defaultValue=""
+              className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded-lg text-xs bg-white"
+            >
+              <option value="">Pick a service to add a line…</option>
+              {services.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} - ${s.default_price.toFixed(2)}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 

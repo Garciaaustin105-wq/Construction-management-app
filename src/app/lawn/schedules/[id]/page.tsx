@@ -12,6 +12,7 @@ import LawnPropertyDetails, {
   type LawnJob,
 } from "@/components/LawnPropertyDetails";
 import JobDetailsEditor from "@/components/JobDetailsEditor";
+import LawnJobFinancials from "@/components/LawnJobFinancials";
 
 type Schedule = {
   id: string;
@@ -396,6 +397,10 @@ export default function ScheduleDetailPage({
           initial={property}
           canEdit={authorized}
         />
+
+        {/* Estimates & invoices for this lawn job — create + manage from the
+            Lawn tab via deep-links to the shared creators (?job=). */}
+        <LawnJobFinancials jobId={schedule.job_id} canEdit={authorized} />
 
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">

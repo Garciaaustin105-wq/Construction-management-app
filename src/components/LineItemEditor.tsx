@@ -6,14 +6,25 @@ import NumberInput from "@/components/NumberInput";
 
 export type { LineItem };
 
+// A lawn-services catalog entry offered as a line-item quick-pick (only passed
+// when invoicing a lawn job — see NewInvoiceForm). Picking one appends a line
+// pre-filled with the service name + default price so the user doesn't retype.
+export type ServiceOption = {
+  id: string;
+  name: string;
+  default_price: number;
+};
+
 export default function LineItemEditor({
   items,
   onChange,
   disabled = false,
+  services,
 }: {
   items: LineItem[];
   onChange: (next: LineItem[]) => void;
   disabled?: boolean;
+  services?: ServiceOption[];
 }) {
   function update(idx: number, patch: Partial<LineItem>) {
     onChange(
@@ -29,6 +40,18 @@ export default function LineItemEditor({
     onChange(items.filter((_, i) => i !== idx));
   }
 
+  // "Add from service catalog" — appends a line from a lawn_services row, then
+  // resets the select so the same service can be picked again. Free-text lines
+  // are still available via the "Add line" button.
+  function addFromCatalog(svcId: string) {
+    const svc = services?.find((s) => s.id === svcId);
+    if (!svc) return;
+    onChange([
+      ...items,
+      { description: svc.name, quantity: 1, unit_price: svc.default_price },
+    ]);
+  }
+
   const total = items.reduce(
     (sum, item) => sum + (item.quantity || 0) * (item.unit_price || 0),
     0
@@ -36,6 +59,28 @@ export default function LineItemEditor({
 
   return (
     <div className="space-y-2">
+      {services && services.length > 0 && (
+        <label className="block">
+          <span className="text-xs text-gray-500">Add from service catalog</span>
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addFromCatalog(e.target.value);
+              e.target.value = "";
+            }}
+            disabled={disabled}
+            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white disabled:opacity-50"
+          >
+            <option value="">Pick a service to add a line…</option>
+            {services.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       {items.length === 0 && (
         <div className="text-center py-6 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg">
           No line items. Tap &ldquo;Add line&rdquo; below.

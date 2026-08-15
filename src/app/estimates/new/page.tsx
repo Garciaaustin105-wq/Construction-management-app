@@ -8,6 +8,7 @@ import EstimateLineItemEditor, {
   type EstimateLine,
   type CostCodeOption,
 } from "@/components/EstimateLineItemEditor";
+import { type ServiceOption } from "@/components/LineItemEditor";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
 
 function NewEstimateForm() {
@@ -17,9 +18,12 @@ function NewEstimateForm() {
   const toast = useToast();
 
   const [jobs, setJobs] = useState<
-    { id: string; name: string; customer_id: string | null }[]
+    { id: string; name: string; customer_id: string | null; type: string }[]
   >([]);
   const [jobId, setJobId] = useState(preselectedJob);
+  // Lawn-services catalog — only passed to the line-item editor when the
+  // selected job is a lawn job (deep-linked from the Lawn tab).
+  const [services, setServices] = useState<ServiceOption[]>([]);
   // mode: "job" = link to a job (customer derived from the job); "customer" =
   // standalone estimate for a customer with no job profile (prospect → estimate).
   // A ?job= preselect forces job mode (you're creating from a job's context).
@@ -82,19 +86,43 @@ function NewEstimateForm() {
       setAuthorized(true);
       if (profile?.organization_id) setOrgId(profile.organization_id);
 
-      const [{ data: jobRows }, { data: codeRows }] = await Promise.all([
+      const [{ data: jobRows }, { data: codeRows }, { data: servicesData }] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, name, customer_id")
+          .select("id, name, customer_id, type")
           .eq("type", "construction")
           .order("created_at", { ascending: false }),
         supabase.from("cost_codes").select("id, code, name").order("code"),
+        supabase
+          .from("lawn_services")
+          .select("id, name, default_price")
+          .eq("active", true)
+          .order("name"),
       ]);
-      setJobs(jobRows ?? []);
+
+      let jobsList = (jobRows as { id: string; name: string; customer_id: string | null; type: string }[]) ?? [];
+      // When deep-linked from a lawn job (?job=), that job is type='lawn' and
+      // isn't in the construction-only list — fetch it by id (any type) and
+      // merge it in so it resolves + shows in the job picker.
+      if (preselectedJob && !jobsList.some((x) => x.id === preselectedJob)) {
+        const { data: preJob } = await supabase
+          .from("jobs")
+          .select("id, name, customer_id, type")
+          .eq("id", preselectedJob)
+          .maybeSingle();
+        if (preJob) {
+          jobsList = [
+            preJob as { id: string; name: string; customer_id: string | null; type: string },
+            ...jobsList,
+          ];
+        }
+      }
+      setJobs(jobsList);
       setCostCodes((codeRows as CostCodeOption[]) ?? []);
+      setServices((servicesData as ServiceOption[]) ?? []);
       setPriorItems(await fetchPriorLineItems());
     })();
-  }, [router]);
+  }, [router, preselectedJob]);
 
   // Load the org's customers whenever standalone mode is active, and again when
   // the window regains focus — so a customer just created in the directory (or
@@ -339,31 +367,35 @@ function NewEstimateForm() {
 
       <main className="max-w-md lg:max-w-2xl mx-auto p-4">
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Mode toggle: link to a job, or quote a customer with no job yet. */}
-          <div className="bg-white rounded-lg p-1 grid grid-cols-2 gap-1 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setMode("job")}
-              className={`py-2.5 rounded-md text-sm font-semibold ${
-                mode === "job"
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-600"
-              }`}
-            >
-              Linked to a job
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("customer")}
-              className={`py-2.5 rounded-md text-sm font-semibold ${
-                mode === "customer"
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-600"
-              }`}
-            >
-              Customer only
-            </button>
-          </div>
+          {/* Mode toggle: link to a job, or quote a customer with no job yet.
+              Hidden when deep-linked from a job (?job=) — the job context is
+              fixed, so locking to job mode prevents dropping it accidentally. */}
+          {!preselectedJob && (
+            <div className="bg-white rounded-lg p-1 grid grid-cols-2 gap-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setMode("job")}
+                className={`py-2.5 rounded-md text-sm font-semibold ${
+                  mode === "job"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-600"
+                }`}
+              >
+                Linked to a job
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("customer")}
+                className={`py-2.5 rounded-md text-sm font-semibold ${
+                  mode === "customer"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-600"
+                }`}
+              >
+                Customer only
+              </button>
+            </div>
+          )}
 
           {mode === "job" ? (
             <label className="block">
@@ -468,6 +500,12 @@ function NewEstimateForm() {
                 onChange={setItems}
                 costCodes={costCodes}
                 priorItems={priorItems}
+                services={
+                  mode === "job" &&
+                  jobs.find((j) => j.id === jobId)?.type === "lawn"
+                    ? services
+                    : undefined
+                }
               />
             </div>
           </div>

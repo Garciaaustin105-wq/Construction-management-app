@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import LineItemEditor, { LineItem } from "@/components/LineItemEditor";
+import LineItemEditor, { LineItem, type ServiceOption } from "@/components/LineItemEditor";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
 export default function NewInvoiceForm({
@@ -16,11 +16,14 @@ export default function NewInvoiceForm({
   const toast = useToast();
   const [authorized, setAuthorized] = useState(false);
   const [jobs, setJobs] = useState<
-    Array<{ id: string; name: string; customer_id: string | null }>
+    Array<{ id: string; name: string; customer_id: string | null; type: string }>
   >([]);
   const [customers, setCustomers] = useState<
     Array<{ id: string; name: string }>
   >([]);
+  // Lawn-services catalog — only passed to LineItemEditor when the selected
+  // job is a lawn job (deep-linked from the Lawn tab). Empty for construction.
+  const [services, setServices] = useState<ServiceOption[]>([]);
   const [jobId, setJobId] = useState<string>(preselectedJobId);
   const [customerId, setCustomerId] = useState<string>("");
   const [notes, setNotes] = useState("");
@@ -51,26 +54,54 @@ export default function NewInvoiceForm({
       }
       setAuthorized(true);
 
-      const [{ data: jobsData }, { data: customersData }] = await Promise.all([
+      const [{ data: jobsData }, { data: customersData }, { data: servicesData }] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, name, customer_id")
+          .select("id, name, customer_id, type")
           .eq("type", "construction")
           .order("created_at", { ascending: false }),
         supabase
           .from("customers")
           .select("id, name")
           .order("name"),
+        supabase
+          .from("lawn_services")
+          .select("id, name, default_price")
+          .eq("active", true)
+          .order("name"),
       ]);
-      setJobs(jobsData ?? []);
+
+      let jobsList = (jobsData as { id: string; name: string; customer_id: string | null; type: string }[]) ?? [];
+      // When deep-linked from a lawn job (?job=), that job is type='lawn' and
+      // isn't in the construction-only list — fetch it by id (any type) and
+      // merge it in so it resolves + shows in the picker.
+      if (preselectedJobId && !jobsList.some((x) => x.id === preselectedJobId)) {
+        const { data: preJob } = await supabase
+          .from("jobs")
+          .select("id, name, customer_id, type")
+          .eq("id", preselectedJobId)
+          .maybeSingle();
+        if (preJob) {
+          jobsList = [
+            preJob as { id: string; name: string; customer_id: string | null; type: string },
+            ...jobsList,
+          ];
+        }
+      }
+      setJobs(jobsList);
       setCustomers(customersData ?? []);
+      setServices((servicesData as ServiceOption[]) ?? []);
 
       if (preselectedJobId) {
-        const j = (jobsData ?? []).find((x) => x.id === preselectedJobId);
+        const j = jobsList.find((x) => x.id === preselectedJobId);
         if (j?.customer_id) setCustomerId(j.customer_id);
       }
     })();
   }, [preselectedJobId, router]);
+
+  // Lawn-services quick-pick is only shown when the selected job is a lawn job
+  // (construction invoices keep the plain free-text editor).
+  const isLawn = jobs.find((j) => j.id === jobId)?.type === "lawn";
 
   // When job changes, default the customer from that job
   function onJobChange(newJobId: string) {
@@ -237,7 +268,11 @@ export default function NewInvoiceForm({
               Line items *
             </span>
             <div className="mt-2">
-              <LineItemEditor items={items} onChange={setItems} />
+              <LineItemEditor
+                items={items}
+                onChange={setItems}
+                services={isLawn ? services : undefined}
+              />
             </div>
           </div>
 
