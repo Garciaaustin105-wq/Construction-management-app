@@ -20,7 +20,9 @@ export default async function OrgsPage() {
 
   const { data: orgs } = await supabase
     .from("organizations")
-    .select("id, name, email, plan, created_at")
+    .select(
+      "id, name, email, plan, plan_status, trial_ends_at, subscription_amount_cents, created_at"
+    )
     .order("created_at", { ascending: false });
 
   // Member count per org (one round-trip via a grouped count is not supported
@@ -42,14 +44,31 @@ export default async function OrgsPage() {
     name: string;
     email: string | null;
     plan: string | null;
+    plan_status: string | null;
+    trial_ends_at: string | null;
+    subscription_amount_cents: number | null;
     created_at: string;
   }[];
+
+  // Platform MRR: sum of active subscriptions' monthly amount.
+  const mrrCents = list.reduce(
+    (sum, o) =>
+      o.plan_status === "active"
+        ? sum + (o.subscription_amount_cents ?? 0)
+        : sum,
+    0
+  );
+  const mrr = (mrrCents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar
         title="Platform"
-        subtitle={`${list.length} organization${list.length === 1 ? "" : "s"}`}
+        subtitle={`${list.length} organization${list.length === 1 ? "" : "s"} · ${mrr}/mo`}
       />
       <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <div className="space-y-2">
@@ -75,7 +94,7 @@ export default async function OrgsPage() {
                       {org.email}
                     </p>
                   )}
-                  <div className="flex items-center gap-3 mt-2">
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <span className="text-xs text-gray-600 inline-flex items-center gap-1">
                       <UsersIcon className="w-3 h-3" />
                       {counts.get(org.id) ?? 0} members
@@ -83,6 +102,24 @@ export default async function OrgsPage() {
                     {org.plan && (
                       <span className="text-[10px] uppercase tracking-wide bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
                         {org.plan}
+                      </span>
+                    )}
+                    {org.plan_status && org.plan_status !== "trial" && (
+                      <span
+                        className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                          org.plan_status === "active"
+                            ? "bg-green-100 text-green-700"
+                            : org.plan_status === "past_due"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {org.plan_status}
+                      </span>
+                    )}
+                    {org.plan === "trial" && org.trial_ends_at && (
+                      <span className="text-[10px] text-gray-500">
+                        trial ends {new Date(org.trial_ends_at).toLocaleDateString()}
                       </span>
                     )}
                   </div>

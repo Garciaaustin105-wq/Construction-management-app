@@ -19,6 +19,7 @@ import {
   Sprout,
   Users,
   Building,
+  CreditCard,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -44,6 +45,11 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/lawn", label: "Lawn", Icon: Sprout },
       { href: "/admin/users", label: "Admin", Icon: Users },
     );
+  }
+  // Only the org admin manages billing (checkout + Customer Portal routes are
+  // admin-only). office/super_admin don't get the tab.
+  if (role === "admin") {
+    items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
   }
   // Field crew get their own scoped Lawn tab (their assigned route), not the
   // office hub (which would redirect them).

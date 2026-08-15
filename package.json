@@ -20,6 +20,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "resend": "^6.19.0",
+    "stripe": "^22.5.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

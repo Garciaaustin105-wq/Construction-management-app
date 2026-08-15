@@ -11,6 +11,10 @@ export type MyTenant = {
   orgId: string | null; // null for super_admin (platform, no org)
   role: string; // falls back to "crew" when the profile row is missing
   isSuperAdmin: boolean;
+  // Billing (populated only when orgId is non-null; null for super_admin).
+  plan: string | null;
+  planStatus: string | null;
+  trialEndsAt: string | null;
 };
 
 export async function getMyOrg(
@@ -29,10 +33,30 @@ export async function getMyOrg(
 
   const role = profile?.role ?? "crew";
   const orgId = (profile?.organization_id as string | null) ?? null;
+
+  // Load the org's billing columns when scoped to an org (one extra round-trip;
+  // skipped for super_admin, whose orgId is null). RLS allows same_org reads.
+  let plan: string | null = null;
+  let planStatus: string | null = null;
+  let trialEndsAt: string | null = null;
+  if (orgId) {
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("plan, plan_status, trial_ends_at")
+      .eq("id", orgId)
+      .maybeSingle();
+    plan = org?.plan ?? null;
+    planStatus = org?.plan_status ?? null;
+    trialEndsAt = org?.trial_ends_at ?? null;
+  }
+
   return {
     orgId,
     role,
     isSuperAdmin: role === "super_admin",
+    plan,
+    planStatus,
+    trialEndsAt,
   };
 }
 

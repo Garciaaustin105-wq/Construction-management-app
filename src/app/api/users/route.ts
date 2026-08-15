@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getMyOrg } from "@/lib/tenant";
 import { ASSIGNABLE_ROLES, isOfficeLike, isSuperAdmin } from "@/lib/roles";
+import { getOrgBilling, createGate, effectiveStatus } from "@/lib/billing";
+import { getLimits } from "@/lib/plans";
 
 // Create a new user (auth + profile, + customer row when role=customer).
 //
@@ -107,6 +109,35 @@ export async function POST(request: Request) {
         { error: "Target organization not found" },
         { status: 400 }
       );
+    }
+  }
+
+  // ── Billing gate: block user creation when the org's plan is expired/canceled
+  //    or at its seat cap. Customers (portal users) are excluded from the count.
+  //    Uses the service-role admin client so super_admin targeting another org
+  //    still reads that org's billing row (RLS would scope the user client).
+  const billing = await getOrgBilling(admin, targetOrgId);
+  if (billing) {
+    const gate = createGate(billing);
+    if (gate) {
+      return NextResponse.json({ error: gate.error }, { status: gate.status });
+    }
+    const eff = effectiveStatus(billing);
+    const { maxUsers } = getLimits(eff.plan);
+    if (maxUsers !== null) {
+      const { count } = await admin
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", targetOrgId)
+        .neq("role", "customer");
+      if ((count ?? 0) >= maxUsers) {
+        return NextResponse.json(
+          {
+            error: `Seat limit reached (${maxUsers} users on the ${eff.plan} plan). Upgrade to add more users.`,
+          },
+          { status: 402 }
+        );
+      }
     }
   }
 

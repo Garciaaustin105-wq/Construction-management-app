@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendVerificationEmail } from "@/lib/email";
+import { ensureStripeCustomer, TRIAL_DAYS } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
 
@@ -178,6 +179,31 @@ export async function POST(request: Request) {
 
   // 4. Link the org's owner_id back to the new admin profile.
   await admin.from("organizations").update({ owner_id: newUserId }).eq("id", org.id);
+
+  // 4b. Create the Stripe customer + start the 14-day trial. NON-FATAL: if
+  //     Stripe isn't configured (e.g. local dev) or errors, the workspace still
+  //     works — plan stays 'trial' with trial_ends_at null, which effectiveStatus
+  //     treats as an open (non-expiring) trial. The customer is backfilled on the
+  //     first billing interaction via ensureStripeCustomer.
+  if (process.env.STRIPE_SECRET_KEY) {
+    try {
+      await ensureStripeCustomer({
+        id: org.id,
+        name: bizName,
+        email: mail,
+        stripeCustomerId: null,
+      });
+      const trialEndsAt = new Date(
+        Date.now() + TRIAL_DAYS * 86_400_000
+      ).toISOString();
+      await admin
+        .from("organizations")
+        .update({ trial_ends_at: trialEndsAt })
+        .eq("id", org.id);
+    } catch {
+      // Stripe error — workspace is still usable; billing can be set up later.
+    }
+  }
 
   // 5. Send the verification email. NON-FATAL: by this point the workspace is
   //    fully created (unconfirmed). If the email send fails we do NOT roll back —
