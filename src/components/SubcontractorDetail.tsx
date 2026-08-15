@@ -18,7 +18,7 @@ import {
   Mail,
   Briefcase,
 } from "lucide-react";
-import { customAlert, customConfirm, customPrompt } from "@/components/CustomDialogs";
+import { customConfirm } from "@/components/CustomDialogs";
 
 export type SubDetail = {
   id: string;

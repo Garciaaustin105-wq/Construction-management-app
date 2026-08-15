@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { customAlert, customConfirm, customPrompt } from "@/lib/dialogs";
+import { customConfirm } from "@/lib/dialogs";
 
 // Logged-in customer Approve/Reject for an estimate awaiting their decision.
 // Calls the approve_estimate / reject_estimate SECURITY DEFINER RPCs (customer-
