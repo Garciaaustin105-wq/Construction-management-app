@@ -180,7 +180,7 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
         ) : (
           <>
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-              No estimate for this job — actuals show but there&rsquo;s no budget to
+              No estimate for this job — actuals show but there’s no budget to
               compare against.{" "}
               <Link href={`/estimates/new?job=${jobId}`} className="underline font-medium">
                 Create an estimate
@@ -205,7 +205,7 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
               <tr>
                 <th className="text-left font-semibold px-2 py-2">Code</th>
                 <th className="text-right font-semibold px-2 py-2">Budget</th>
-                <th className="text-right font-semibold px-2 py-2">Labor {laborRate != null ? `$` : "hrs"}</th>
+                <th className="text-right font-semibold px-2 py-2">Labor {laborRate != null ? "$" : "hrs"}</th>
                 <th className="text-right font-semibold px-2 py-2">Receipts</th>
                 <th className="text-right font-semibold px-2 py-2">Actual</th>
                 <th className="text-right font-semibold px-2 py-2">Var</th>

@@ -114,7 +114,7 @@ export default function PhotoLightbox({
   const current = photos_[index];
 
   async function handleDelete() {
-    if (!customConfirm(`Delete this photo? This can't be undone.`)) return;
+    if (!customConfirm("Delete this photo? This can't be undone.")) return;
     const victim = current;
     // Remove the storage object, then the DB row. We gate on the DB delete —
     // if it fails, leave the photo in place and surface the error instead of
