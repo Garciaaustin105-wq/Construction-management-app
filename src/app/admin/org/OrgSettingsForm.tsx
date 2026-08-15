@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Upload, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { createClient } from "@/lib/supabase/client";
+import { invalidateOrgBranding } from "@/lib/useOrgBranding";
+import { validateUpload } from "@/lib/uploadValidate";
 
 type Org = {
   id: string;
@@ -11,6 +14,7 @@ type Org = {
   address: string | null;
   phone: string | null;
   email: string | null;
+  logo_path: string | null;
 };
 
 export default function OrgSettingsForm({
@@ -26,7 +30,12 @@ export default function OrgSettingsForm({
   const [address, setAddress] = useState(org.address ?? "");
   const [phone, setPhone] = useState(org.phone ?? "");
   const [email, setEmail] = useState(org.email ?? "");
+  const [logoPath, setLogoPath] = useState<string | null>(org.logo_path);
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const logoRef = useRef<HTMLInputElement>(null);
+  const supabase = createClient();
+  const logoUrl = logoPath ? supabase.storage.from("org-logos").getPublicUrl(logoPath).data.publicUrl : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,10 +58,80 @@ export default function OrgSettingsForm({
       return;
     }
     toast.success("Organization updated");
-    // Send the user back to the dashboard so the save is clearly confirmed
-    // (otherwise the form just sits there with the edited values still in the
-    // boxes, which reads as "nothing happened").
     router.push("/dashboard");
+  }
+
+  async function handleLogoUpload(e: React.FormEvent) {
+    e.preventDefault();
+    const file = logoRef.current?.files?.[0];
+    if (!file) {
+      toast.warning("Pick an image first");
+      return;
+    }
+    const v = validateUpload(file, "image");
+    if (!v.ok) {
+      toast.error(v.error);
+      return;
+    }
+    setUploading(true);
+    const ext = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/webp": "webp",
+      "image/gif": "gif",
+    }[file.type] || "img";
+    const oldPath = logoPath;
+    const path = `${org.id}/logo-${crypto.randomUUID()}.${ext}`;
+    const { error: upError } = await supabase.storage.from("org-logos").upload(path, file, { upsert: false });
+    if (upError) {
+      toast.error(`Upload failed: ${upError.message}`);
+      setUploading(false);
+      return;
+    }
+    const res = await fetch("/api/org", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organization_id: org.id,
+        logo_path: path,
+      }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      toast.error(d.error ?? "Save failed");
+      setUploading(false);
+      return;
+    }
+    setLogoPath(path);
+    invalidateOrgBranding();
+    if (oldPath && oldPath !== path) {
+      void supabase.storage.from("org-logos").remove([oldPath]);
+    }
+    if (logoRef.current) logoRef.current.value = "";
+    toast.success("Logo updated");
+    setUploading(false);
+  }
+
+  async function handleLogoRemove() {
+    const path = logoPath;
+    if (!path) return;
+    const res = await fetch("/api/org", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        organization_id: org.id,
+        logo_path: null,
+      }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      toast.error(d.error ?? "Failed");
+      return;
+    }
+    setLogoPath(null);
+    invalidateOrgBranding();
+    void supabase.storage.from("org-logos").remove([path]);
+    toast.success("Logo removed");
   }
 
   return (
@@ -77,6 +156,24 @@ export default function OrgSettingsForm({
             onSubmit={handleSubmit}
             className="bg-white rounded-lg p-4 shadow-sm space-y-4"
           >
+            <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+              <span className="text-sm font-medium text-gray-700">Logo</span>
+              <p className="text-xs text-gray-500">Shown in the app header and on estimates you send to customers. PNG, JPG, or WebP.</p>
+              {logoUrl ? (
+                <div className="flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={logoUrl} alt="Logo" className="h-12 w-auto max-w-[180px] object-contain rounded border border-gray-100" />
+                  <button type="button" onClick={handleLogoRemove} className="text-xs text-red-600 font-semibold flex items-center gap-1"><Trash2 className="w-4 h-4" /> Remove</button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 italic">No logo set — the default Terra Vista icon is shown.</p>
+              )}
+              <input ref={logoRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="block w-full text-sm text-gray-900 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:font-semibold" />
+              <button type="button" onClick={handleLogoUpload} disabled={uploading} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-semibold active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {uploading ? "Uploading..." : "Upload logo"}
+              </button>
+            </div>
             <label className="block">
               <span className="text-sm font-medium text-gray-700">
                 Business name
@@ -127,6 +224,10 @@ export default function OrgSettingsForm({
           </form>
         ) : (
           <div className="bg-white rounded-lg p-4 shadow-sm space-y-2 text-sm">
+            {logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logoUrl} alt="Logo" className="h-12 w-auto max-w-[180px] object-contain rounded border border-gray-100" />
+            )}
             <p className="font-semibold text-gray-900 text-base">{name}</p>
             {address && <p className="text-gray-600">{address}</p>}
             {phone && <p className="text-gray-600">{phone}</p>}

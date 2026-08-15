@@ -9,6 +9,8 @@ import { useUnreadCount } from "@/lib/useUnreadCount";
 import { useIsDesktop } from "@/lib/useIsDesktop";
 import { BRAND } from "@/lib/brand";
 import { buildNavItems, isPublicRoute, type NavItem } from "@/lib/navItems";
+import { useOrgBranding } from "@/lib/useOrgBranding";
+import OrgLogo from "@/components/OrgLogo";
 import type { Role } from "@/lib/roles";
 
 // Desktop primary navigation. Persistent fixed-left sidebar, visible only at
@@ -24,6 +26,7 @@ export default function Sidebar() {
   const [role, setRole] = useState<Role | null>(null);
   const isDesktop = useIsDesktop();
   const unread = useUnreadCount(isDesktop);
+  const branding = useOrgBranding();
 
   useEffect(() => {
     let active = true;
@@ -59,16 +62,13 @@ export default function Sidebar() {
     <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-200 z-30 flex-col">
       {/* Brand header - sits under the sticky per-page TopBar (z-40 > z-30). */}
       <div className="h-14 flex items-center gap-2 px-4 border-b border-gray-200 shrink-0">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/terra-vista-icon.svg"
-          alt={BRAND.shortName}
-          width={28}
-          height={28}
-          className="shrink-0 rounded-md"
+        <OrgLogo
+          logoUrl={branding.logoUrl}
+          alt={branding.orgName ?? BRAND.shortName}
+          size={28}
         />
         <span className="font-bold text-gray-900 truncate">
-          {BRAND.shortName}
+          {branding.logoUrl ? branding.orgName ?? BRAND.shortName : BRAND.shortName}
         </span>
       </div>
 

@@ -36,7 +36,7 @@ export default async function OrgSettingsPage({
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("id, name, address, phone, email")
+    .select("id, name, address, phone, email, logo_path")
     .eq("id", targetOrgId)
     .single();
 

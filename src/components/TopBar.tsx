@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { LogOut, ChevronLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BRAND } from "@/lib/brand";
+import { useOrgBranding } from "@/lib/useOrgBranding";
+import OrgLogo from "@/components/OrgLogo";
 
 export default function TopBar({
   title,
@@ -24,6 +26,7 @@ export default function TopBar({
 }) {
   const router = useRouter();
   const supabase = createClient();
+  const branding = useOrgBranding();
 
   async function handleSignOut() {
     await supabase.auth.signOut();
@@ -45,13 +48,10 @@ export default function TopBar({
             </span>
           </Link>
         ) : (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src="/terra-vista-icon.svg"
+          <OrgLogo
+            logoUrl={branding.logoUrl}
             alt={BRAND.shortName}
-            width={28}
-            height={28}
-            className="shrink-0 rounded-md"
+            size={28}
           />
         )}
         <div className="min-w-0">

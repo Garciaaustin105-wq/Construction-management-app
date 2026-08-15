@@ -62,10 +62,11 @@ export default async function PublicEstimatePage({
   let orgAddress: string | null = null;
   let orgPhone: string | null = null;
   let orgEmail: string | null = null;
+  let orgLogoUrl: string | null = null;
   if (estimate.organization_id) {
     const { data: o } = await admin
       .from("organizations")
-      .select("name, address, phone, email")
+      .select("name, address, phone, email, logo_path")
       .eq("id", estimate.organization_id)
       .maybeSingle();
     if (o) {
@@ -73,6 +74,13 @@ export default async function PublicEstimatePage({
       orgAddress = o.address;
       orgPhone = o.phone;
       orgEmail = o.email;
+      // Public bucket → getPublicUrl builds a stable URL (no signed-URL
+      // expiry), so the logo renders on this unauthenticated customer page.
+      if (o.logo_path) {
+        orgLogoUrl = admin.storage
+          .from("org-logos")
+          .getPublicUrl(o.logo_path).data.publicUrl;
+      }
     }
   }
 
@@ -107,6 +115,7 @@ export default async function PublicEstimatePage({
         orgAddress={orgAddress}
         orgPhone={orgPhone}
         orgEmail={orgEmail}
+        orgLogoUrl={orgLogoUrl}
         customerName={customerName}
         jobName={jobName}
         status={estimate.status}

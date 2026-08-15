@@ -29,6 +29,10 @@ export type EstimateDocumentProps = {
   orgAddress?: string | null;
   orgPhone?: string | null;
   orgEmail?: string | null;
+  // White-label: the org's uploaded logo public URL. When set, shown in the
+  // document header beside the org name (on a white chip so colored logos stay
+  // readable against the dark header). Null → orgName text only (default).
+  orgLogoUrl?: string | null;
   customerName: string;
   jobName: string;
   status: string;
@@ -58,6 +62,7 @@ export default function EstimateDocument({
   orgAddress,
   orgPhone,
   orgEmail,
+  orgLogoUrl,
   customerName,
   jobName,
   status,
@@ -108,11 +113,22 @@ export default function EstimateDocument({
       {/* Branded header */}
       <header className="bg-blue-900 px-5 py-5 text-white">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-lg font-bold tracking-tight">{orgName}</p>
-            <p className="text-blue-200 text-[11px] uppercase tracking-wider mt-0.5">
-              Estimate for your review
-            </p>
+          <div className="min-w-0 flex items-center gap-3">
+            {orgLogoUrl && (
+              // White chip so a colored logo stays readable on the dark header.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={orgLogoUrl}
+                alt={orgName}
+                className="h-10 w-auto max-w-[150px] shrink-0 object-contain rounded bg-white p-1"
+              />
+            )}
+            <div className="min-w-0">
+              <p className="text-lg font-bold tracking-tight">{orgName}</p>
+              <p className="text-blue-200 text-[11px] uppercase tracking-wider mt-0.5">
+                Estimate for your review
+              </p>
+            </div>
           </div>
           {estimateNumber && (
             <p className="text-blue-100 text-xs font-semibold flex-shrink-0">

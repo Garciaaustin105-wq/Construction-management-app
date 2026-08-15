@@ -56,6 +56,9 @@ type OrgInfo = {
   address: string | null;
   phone: string | null;
   email: string | null;
+  // White-label logo public URL (resolved once when the org loads, so render
+  // doesn't need a live supabase client — getPublicUrl only builds a string).
+  logoUrl: string | null;
 };
 
 type LineRow = {
@@ -98,6 +101,7 @@ export default function EstimateDetailPage({
     address: null,
     phone: null,
     email: null,
+    logoUrl: null,
   });
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -227,7 +231,7 @@ export default function EstimateDetailPage({
       if (e.organization_id) {
         const { data: o } = await supabase
           .from("organizations")
-          .select("name, address, phone, email")
+          .select("name, address, phone, email, logo_path")
           .eq("id", e.organization_id)
           .maybeSingle();
         if (o) {
@@ -236,6 +240,10 @@ export default function EstimateDetailPage({
             address: o.address,
             phone: o.phone,
             email: o.email,
+            logoUrl: o.logo_path
+              ? supabase.storage.from("org-logos").getPublicUrl(o.logo_path)
+                  .data.publicUrl
+              : null,
           });
         }
       }
@@ -355,6 +363,7 @@ export default function EstimateDetailPage({
             orgAddress={org.address}
             orgPhone={org.phone}
             orgEmail={org.email}
+            orgLogoUrl={org.logoUrl}
             customerName={customerName}
             jobName={jobName}
             status={estimate.status}
@@ -410,6 +419,7 @@ export default function EstimateDetailPage({
             orgAddress={org.address}
             orgPhone={org.phone}
             orgEmail={org.email}
+            orgLogoUrl={org.logoUrl}
             customerName={customerName}
             jobName={jobName}
             status={estimate.status}
