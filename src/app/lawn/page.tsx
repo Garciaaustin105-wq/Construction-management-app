@@ -5,7 +5,7 @@ import EmptyState from "@/components/EmptyState";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import Link from "next/link";
-import { Plus, Sprout, CalendarDays, Calendar, Scissors, CloudSun } from "lucide-react";
+import { Plus, Sprout, CalendarDays, Calendar, Scissors, CloudSun, FileText } from "lucide-react";
 
 // Row shapes for the relation joins (Supabase types these loosely, so we cast
 // via `as unknown as Row[]` — same pattern as estimates/page.tsx).
@@ -123,6 +123,13 @@ export default async function LawnPage() {
           >
             <CloudSun className="w-5 h-5" />
             Weather
+          </Link>
+          <Link
+            href="/lawn/billing"
+            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+          >
+            <FileText className="w-5 h-5" />
+            Billing
           </Link>
         </div>
 
