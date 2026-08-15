@@ -127,6 +127,26 @@ export default async function DashboardPage() {
   const rfis = rfisRes.data;
   const unpaidInvoices = invoicesRes.data;
 
+  // TEMP DEBUG — surface swallowed PostgREST errors so we can see why the jobs
+  // list renders empty for an admin whom RLS admits (same_org + is_management
+  // both verified true). Remove once the root cause is fixed.
+  const __debugErrors = (
+    [
+      { q: "jobs", res: jobsRes },
+      { q: "photos", res: photosRes },
+      { q: "rfis", res: rfisRes },
+      { q: "invoices", res: invoicesRes },
+    ] as unknown as {
+      q: string;
+      res: { error?: { code?: string; message?: string; details?: string; hint?: string } };
+    }[]
+  )
+    .map((x) => (x.res.error ? { q: x.q, e: x.res.error } : null))
+    .filter(Boolean) as {
+      q: string;
+      e: { code?: string; message?: string; details?: string; hint?: string };
+    }[];
+
   // Visiting Home marks every visible job as "seen" so the notification badge
   // only counts activity that happens AFTER this visit (not old photos/RFIs on
   // jobs the user simply hasn't opened individually). Fire-and-forget so it
@@ -161,6 +181,11 @@ export default async function DashboardPage() {
       <TopBar title={orgName} subtitle={`Signed in as ${role}`} />
 
       <main className="max-w-md mx-auto p-4 space-y-6">
+        {(__debugErrors.length > 0 || jobs === null) && (
+          <pre className="bg-red-50 border border-red-300 text-red-800 text-xs p-3 rounded-lg whitespace-pre-wrap break-words">
+{`DEBUG — jobs: ${jobs === null ? "null (QUERY ERRORED)" : jobs.length} · photos: ${photos === null ? "null (QUERY ERRORED)" : photos.length}\nQUERY ERRORS:\n${JSON.stringify(__debugErrors, null, 2)}`}
+          </pre>
+        )}
         <ClientPullToRefresh>
         {/* Super admin: platform view (no org, so no office grid). */}
         {showPlatform && (
