@@ -51,9 +51,12 @@ export async function GET(req: Request) {
     "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us,ca&q=" +
     encodeURIComponent(address);
 
-  let nominRes: Response;
-  try {
-    nominRes = await fetch(url, {
+  // Nominatim's public instance enforces ~1 request/second. A rapid second
+  // geocode from the office (or a bulk-run collision) gets 429. Wait and retry
+  // once before surfacing a failure so quick back-to-back clicks "just work"
+  // instead of erroring on every stop after the first.
+  const doFetch = () =>
+    fetch(url, {
       headers: {
         "User-Agent": "TerraVerdeLawnApp/1.0 (route planning)",
         Accept: "application/json",
@@ -61,10 +64,33 @@ export async function GET(req: Request) {
       // Don't cache — addresses change and Nominatim results shouldn't be stale.
       cache: "no-store",
     });
+
+  let nominRes: Response;
+  try {
+    nominRes = await doFetch();
   } catch {
     return NextResponse.json(
       { error: "Geocoding service unreachable" },
       { status: 502 }
+    );
+  }
+  if (nominRes.status === 429 || nominRes.status === 503) {
+    await new Promise((r) => setTimeout(r, 1200));
+    try {
+      nominRes = await doFetch();
+    } catch {
+      return NextResponse.json(
+        { error: "Geocoding service unreachable" },
+        { status: 502 }
+      );
+    }
+  }
+  // Still rate-limited after the retry — tell the client clearly (not a generic
+  // 502) so it can toast "wait a moment and try again" instead of "failed".
+  if (nominRes.status === 429 || nominRes.status === 503) {
+    return NextResponse.json(
+      { error: "Geocoder rate-limited — wait a moment and try again" },
+      { status: 429 }
     );
   }
   if (!nominRes.ok) {

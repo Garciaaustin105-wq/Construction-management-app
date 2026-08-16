@@ -99,6 +99,10 @@ export default function RouteMapPlanner({
         toast.error(`No geocoding match for ${stop.jobName}`);
         return false;
       }
+      if (r.status === 429) {
+        toast.warning(`Geocoder rate-limited — wait a moment and retry ${stop.jobName}`);
+        return false;
+      }
       if (!r.ok) {
         toast.error("Geocoding failed");
         return false;
