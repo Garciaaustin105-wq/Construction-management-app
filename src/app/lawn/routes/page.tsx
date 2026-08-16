@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { OFFICE_LIKE } from "@/lib/roles";
-import RoutePlanner from "@/components/RoutePlanner";
+import RouteMapPlanner from "@/components/RouteMapPlanner";
 import type { RouteStop, CrewInfo } from "@/lib/lawnRouting";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -16,9 +16,11 @@ import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 
 type VisitRow = {
   id: string;
+  job_id: string;
   due_date: string;
   status: string;
   crew_id: string | null;
+  route_order: number | null;
   jobs: {
     name: string;
     address: string | null;
@@ -62,10 +64,13 @@ export default async function LawnRoutesPage({
     supabase
       .from("lawn_visits")
       .select(
-        "id, due_date, status, crew_id, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng)), recurring_schedules(service_type)"
+        "id, job_id, due_date, status, crew_id, route_order, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng)), recurring_schedules(service_type)"
       )
       .eq("due_date", date)
-      .order("status", { ascending: true }),
+      // Pending first, then by any saved route order (nulls last) so the planner
+      // list opens in the order the office last saved.
+      .order("status", { ascending: true })
+      .order("route_order", { ascending: true, nullsFirst: false }),
     supabase
       .from("profiles")
       .select("id, full_name, email")
@@ -78,6 +83,7 @@ export default async function LawnRoutesPage({
       const lj = v.jobs?.lawn_jobs ?? null;
       return {
         id: v.id,
+        jobId: v.job_id,
         jobName: v.jobs?.name ?? "—",
         address: v.jobs?.address ?? null,
         customerName: v.jobs?.customers?.name ?? null,
@@ -85,6 +91,7 @@ export default async function LawnRoutesPage({
         crewId: v.crew_id,
         status: v.status,
         dueDate: v.due_date,
+        routeOrder: v.route_order,
         pos:
           lj && lj.map_lat != null && lj.map_lng != null
             ? { lat: Number(lj.map_lat), lng: Number(lj.map_lng) }
@@ -99,7 +106,7 @@ export default async function LawnRoutesPage({
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Route Planner" subtitle="Zone grouping + optimized order" />
+      <TopBar title="Route Planner" subtitle="Map + drag to order" />
 
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <Link
@@ -139,7 +146,7 @@ export default async function LawnRoutesPage({
 
         {/* key={date} remounts the planner so local crew-assignment state
             resets cleanly when the dispatcher changes days. */}
-        <RoutePlanner key={date} date={date} stops={stops} crews={crews} />
+        <RouteMapPlanner key={date} date={date} stops={stops} crews={crews} />
       </main>
     </div>
   );

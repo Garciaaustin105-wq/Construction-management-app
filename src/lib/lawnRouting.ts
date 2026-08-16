@@ -12,6 +12,7 @@ export type LatLng = { lat: number; lng: number };
 
 export type RouteStop = {
   id: string;
+  jobId: string;
   jobName: string;
   address: string | null;
   customerName: string | null;
@@ -20,6 +21,10 @@ export type RouteStop = {
   status: string;
   dueDate: string;
   pos: LatLng | null; // null = no map pin (unmapped)
+  // Previously-saved per-crew sequence for the day (lawn_visits.route_order).
+  // The map planner seeds its list order from this (falls back to nearest-neighbor),
+  // so a saved plan isn't lost on reload.
+  routeOrder: number | null;
 };
 
 export type CrewInfo = { id: string; name: string };
