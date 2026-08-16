@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
-import { isLawn } from "@/lib/variant";
+import { isLawn, APP_VARIANT, APP_URLS, type AppVariant } from "@/lib/variant";
 
 function Banner() {
   // Reads query flags set by /auth/callback and /reset-password and surfaces
@@ -39,13 +39,46 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // When a user signs into the wrong app (auth is shared across both deploys),
+  // we sign them back out and set this so the form shows a banner pointing them
+  // to their home app. null = no mismatch.
+  const [wrongApp, setWrongApp] = useState<AppVariant | null>(null);
   const supabase = createClient();
   const toast = useToast();
   const router = useRouter();
 
+  // After a successful sign-in, confirm the account's org belongs to THIS
+  // variant. Both apps share one Supabase auth backend, so without this check a
+  // construction-org user could sign into the lawn app (or vice versa) and see
+  // the wrong brand over their own data. Cookies are per-domain, so the only
+  // way into the wrong app is re-entering credentials here — gate it at the
+  // sign-in event. Super_admin (platform, no org) may use either app. Returns
+  // the user's home variant on mismatch, or null if the account belongs here
+  // (or its variant can't be determined — fail open, the app's RLS still scopes
+  // data to the user's own org either way).
+  async function homeVariantIfMismatched(userId: string): Promise<AppVariant | null> {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, organization_id")
+      .eq("id", userId)
+      .maybeSingle();
+    if (!profile || profile.role === "super_admin") return null;
+    const orgId = (profile.organization_id as string | null) ?? null;
+    if (!orgId) return null;
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("app_variant")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (!org) return null;
+    const home: AppVariant = org.app_variant === "lawn" ? "lawn" : "construction";
+    return home === APP_VARIANT ? null : home;
+  }
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setWrongApp(null);
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -55,8 +88,16 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
-    if (!data.session) {
+    if (!data.session || !data.user) {
       toast.error("Logged in but no session. Try again.");
+      setLoading(false);
+      return;
+    }
+    // Affinity check: refuse + bounce if this account belongs to the other app.
+    const wrongHome = await homeVariantIfMismatched(data.user.id);
+    if (wrongHome) {
+      await supabase.auth.signOut();
+      setWrongApp(wrongHome);
       setLoading(false);
       return;
     }
@@ -88,6 +129,23 @@ export default function LoginPage() {
         <Suspense>
           <Banner />
         </Suspense>
+        {wrongApp && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p className="font-semibold">
+              This account belongs to the{" "}
+              {wrongApp === "lawn" ? "Terra Verde (lawn)" : "Terra Vista (construction)"} app.
+            </p>
+            <p className="mt-1">
+              You&apos;ve been signed out here. Sign in on the correct app:
+            </p>
+            <a
+              href={`${APP_URLS[wrongApp]}/login`}
+              className="mt-2 inline-block font-semibold text-brand active:text-brand-dark underline"
+            >
+              Go to {wrongApp === "lawn" ? "Terra Verde" : "Terra Vista"} →
+            </a>
+          </div>
+        )}
         <div>
           <label htmlFor="email" className="sr-only">
             Email

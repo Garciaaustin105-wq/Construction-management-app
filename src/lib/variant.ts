@@ -23,3 +23,14 @@ export const APP_VARIANT: AppVariant =
 export const isLawn = (): boolean => APP_VARIANT === "lawn";
 
 export const isConstruction = (): boolean => APP_VARIANT === "construction";
+
+// Public prod URLs per variant — used by the sign-in affinity guard to send a
+// user who signed into the wrong app to the correct one (auth is shared across
+// both deploys via one Supabase project, but cookies are per-domain, so the only
+// way into the wrong app is re-entering credentials on its /login; the guard
+// catches that and bounces them to their home app). Keep in sync with the actual
+// domains if they ever change.
+export const APP_URLS: Record<AppVariant, string> = {
+  construction: "https://terravistaconstructionmanagement.com",
+  lawn: "https://terraverdelawnmanagement.com",
+};
