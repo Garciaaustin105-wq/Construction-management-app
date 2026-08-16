@@ -4,23 +4,32 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import { Send, Trash2, Loader2, Receipt, X } from "lucide-react";
+import { Send, Trash2, Loader2, Receipt, X, Mail, MessageSquare } from "lucide-react";
 
-// Office actions for an estimate on the Preview & Send tab. Owns the optional
-// personal note shown at the top of the send email. Send hits the service-role
-// /api/estimates/[id]/send route (email first, then mark sent); Mark Rejected
-// and Delete are direct client writes (office RLS allows both). Resend rotates
-// the share_token (old links stop working) and re-emails.
+type Channel = "email" | "sms" | "both";
+
+// Office actions for an estimate on the Preview & Send tab. Owns the send
+// channel (Email / Text / Both) + the optional personal note shown at the top
+// of the send email. Send hits the service-role /api/estimates/[id]/send route
+// (delivers, then marks sent); Mark Rejected and Delete are direct client
+// writes (office RLS allows both). Resend rotates the share_token (old links
+// stop working) and re-delivers. Text (SMS) goes via Twilio and won't deliver
+// until TWILIO_* env vars are set — the route returns a clear "not configured"
+// error in that case; email is unaffected.
 export default function EstimateOfficeActions({
   estimateId,
   status,
   invoiceId,
   jobId,
+  customerEmail,
+  customerPhone,
 }: {
   estimateId: string;
   status: string;
   invoiceId: string | null;
   jobId?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -29,19 +38,34 @@ export default function EstimateOfficeActions({
   const [message, setMessage] = useState("");
   const jobQuery = jobId ? `?job=${jobId}` : "";
 
+  const hasEmail = !!customerEmail?.trim();
+  const hasPhone = !!customerPhone?.trim();
+  // Default to email when available, else text, else email (so the empty case
+  // still shows the email hint rather than a dead text control).
+  const [via, setVia] = useState<Channel>(hasEmail ? "email" : hasPhone ? "sms" : "email");
+
   async function sendToCustomer() {
     setBusy(true);
     try {
       const res = await fetch(`/api/estimates/${estimateId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: message.trim() || null }),
+        body: JSON.stringify({ via, message: message.trim() || null }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data?.error ?? `Send failed (${res.status})`);
       } else {
-        toast.success(`Sent to ${data.sentTo ?? "customer"}`);
+        const channels = (data.sentVia as string[] | undefined)?.join(" + ") ?? "customer";
+        const dest = [data.sentTo?.email, data.sentTo?.phone].filter(Boolean).join(" / ") || "customer";
+        toast.success(`Sent via ${channels} to ${dest}`);
+        // Surface partial failures (e.g. email failed because Resend isn't
+        // verified yet, while the text went out) without erasing the success.
+        if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+          for (const w of data.warnings) {
+            toast.warning(`${w.channel} failed: ${w.message}`);
+          }
+        }
         router.refresh();
       }
     } catch {
@@ -83,28 +107,91 @@ export default function EstimateOfficeActions({
   }
 
   const canSend = status === "draft" || status === "sent";
+  const canSendAny = canSend && (hasEmail || hasPhone);
+
+  // Send button label reflects the chosen channel (and Resend vs Send).
+  const sendLabel = (() => {
+    const prefix = status === "sent" ? "Resend" : "Send";
+    if (via === "sms") return `${prefix} via Text`;
+    if (via === "both") return `${prefix} via Email & Text`;
+    return `${prefix} via Email`;
+  })();
 
   return (
     <div className="space-y-3">
       {canSend && (
-        <label className="block">
-          <span className="text-sm font-medium text-gray-700">
-            Personal note (optional)
-          </span>
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            rows={2}
-            placeholder="Added to the top of the email, e.g. &ldquo;Hi Jane, here&rsquo;s the estimate we discussed&hellip;&rdquo;"
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
-          />
-        </label>
+        <>
+          {/* Channel selector — gated on what's on file. Text/Both need a
+              phone; Email/Both need an email. Disabling the option (rather
+              than hiding it) keeps the layout stable and tells the office
+              exactly which contact field is missing. */}
+          <div>
+            <span className="text-sm font-medium text-gray-700">Send via</span>
+            <div className="mt-1 grid grid-cols-3 gap-1 bg-gray-100 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setVia("email")}
+                disabled={!hasEmail}
+                className={`py-2 rounded-md text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  via === "email" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"
+                }`}
+              >
+                <Mail className="w-3.5 h-3.5" /> Email
+              </button>
+              <button
+                type="button"
+                onClick={() => setVia("sms")}
+                disabled={!hasPhone}
+                className={`py-2 rounded-md text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  via === "sms" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" /> Text
+              </button>
+              <button
+                type="button"
+                onClick={() => setVia("both")}
+                disabled={!hasEmail || !hasPhone}
+                className={`py-2 rounded-md text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed ${
+                  via === "both" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"
+                }`}
+              >
+                Both
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {hasEmail && hasPhone
+                ? `To ${customerEmail} and ${customerPhone}`
+                : hasEmail
+                ? `To ${customerEmail}`
+                : hasPhone
+                ? `To ${customerPhone}`
+                : "No email or phone on file — add one in Customers first."}
+            </p>
+          </div>
+
+          {/* Personal note is email-only (an SMS is too short to carry it). */}
+          {via !== "sms" && (
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Personal note (added to the email)
+              </span>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={2}
+                placeholder="Added to the top of the email, e.g. &ldquo;Hi Jane, here&rsquo;s the estimate we discussed&hellip;&rdquo;"
+                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
+              />
+            </label>
+          )}
+        </>
       )}
 
       {canSend && (
         <button
           onClick={sendToCustomer}
-          disabled={busy}
+          disabled={busy || !canSendAny}
           className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {busy ? (
@@ -112,7 +199,7 @@ export default function EstimateOfficeActions({
           ) : (
             <Send className="w-5 h-5" />
           )}
-          {status === "sent" ? "Resend to Customer" : "Send to Customer"}
+          {sendLabel}
         </button>
       )}
 

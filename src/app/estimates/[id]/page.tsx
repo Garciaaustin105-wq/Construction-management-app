@@ -48,7 +48,7 @@ type Estimate = {
   show_itemized: boolean;
   viewed_at: string | null;
   jobs: { name: string; address: string | null } | null;
-  customers: { name: string | null; contact_email: string | null; address: string | null } | null;
+  customers: { name: string | null; contact_email: string | null; phone: string | null; address: string | null } | null;
 };
 
 type OrgInfo = {
@@ -172,8 +172,8 @@ export default function EstimateDetailPage({
       // deep row-inference doesn't blow up (TS2589) on the long column list —
       // we cast the result to `Estimate` below regardless.
       const estSelect: string = isOffice
-        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, jobs(name, address), customers(name, contact_email, address)"
-        : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email, address)";
+        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, jobs(name, address), customers(name, contact_email, phone, address)"
+        : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email, phone, address)";
       const { data: est } = await supabase
         .from("estimates")
         .select(estSelect)
@@ -1031,6 +1031,8 @@ export default function EstimateDetailPage({
               status={estimate.status}
               invoiceId={invoiceId}
               jobId={backJobId || null}
+              customerEmail={estimate.customers?.contact_email ?? null}
+              customerPhone={estimate.customers?.phone ?? null}
             />
 
             <p className="text-xs text-gray-400 text-center">
