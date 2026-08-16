@@ -629,3 +629,222 @@ export async function sendEstimateDecisionEmail(
     };
   }
 }
+
+// ── Change order email (to the customer/owner) ──────────────────────────────
+//
+// "You have a change order to review" — sent when the office hits Send on a
+// change order (mints a share_token → /co/{token} portal). NON-FATAL like the
+// invoice/lawn emails: returns { data: null, error } (never throws) when
+// RESEND_API_KEY is unset, so the send route treats an unconfigured Resend as a
+// hard failure to deliver (it won't mark the CO sent) without a 500 crash.
+// Mirrors sendEstimateEmail's template style.
+
+export type SendChangeOrderEmailInput = {
+  to: string;
+  customerName: string;
+  orgName: string;
+  jobName: string;
+  coNumber?: string | null; // e.g. "CO-0003"
+  title: string;
+  amount: string; // pre-formatted money, e.g. "$1,234.50"
+  isCredit: boolean;
+  changeOrderUrl: string; // public /co/{token} link
+  message?: string | null;
+};
+
+export async function sendChangeOrderEmail(
+  input: SendChangeOrderEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+
+  const resend = new Resend(apiKey);
+  const org = escapeHtml(input.orgName);
+  const job = escapeHtml(input.jobName);
+  const customer = escapeHtml(input.customerName || "there");
+  const title = escapeHtml(input.title);
+  const amount = escapeHtml(input.amount);
+  const numberLine = input.coNumber
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Change Order #${escapeHtml(
+        input.coNumber
+      )}</p>`
+    : "";
+  const messageLine = input.message && input.message.trim()
+    ? `<p style="margin:0 0 20px;color:#111827;font-size:15px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(
+        input.message.trim()
+      )}</p>`
+    : "";
+  const kind = input.isCredit ? "credit" : "change order";
+  const kindLabel = input.isCredit ? "Credit to review" : "Change order for your review";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#7c2d12;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:#fed7aa;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">${kindLabel}</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${customer},</p>
+          ${messageLine}
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            You have a ${kind} from <strong>${org}</strong> for
+            <strong>${job}</strong> ready for your review. Please open it below
+            to see the details and approve or decline.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:16px 20px;">
+              ${numberLine}
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Project</p>
+              <p style="margin:0 0 12px;color:#111827;font-size:15px;font-weight:600;">${job}</p>
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">${input.isCredit ? "Credit" : "Amount"}</p>
+              <p style="margin:0;color:#111827;font-size:28px;font-weight:700;">${amount}</p>
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${input.changeOrderUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review &amp; Approve Change Order</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This link is private — anyone with it can view and act on this change order.
+            If you weren't expecting a change order from ${org}, you can safely ignore
+            this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: input.coNumber
+        ? `Change Order #${input.coNumber} from ${input.orgName} — ${input.jobName}`
+        : `Change Order from ${input.orgName} — ${input.jobName}`,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}
+
+// ── Submittal email (to the architect/owner reviewer) ───────────────────────
+//
+// "You have a submittal to review" — sent when the office hits Send on a
+// submittal (mints a share_token → /s/{token} portal). The reviewer (architect
+// or owner) returns a disposition at the portal. NON-FATAL: returns
+// { data: null, error } (never throws) when RESEND_API_KEY is unset.
+
+export type SendSubmittalEmailInput = {
+  to: string; // the reviewer's email (entered by the office)
+  orgName: string;
+  jobName: string;
+  submittalNumber?: string | null; // e.g. "SUB-0012"
+  title: string;
+  csiSection?: string | null;
+  submittalUrl: string; // public /s/{token} link
+  message?: string | null;
+};
+
+export async function sendSubmittalEmail(
+  input: SendSubmittalEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+
+  const resend = new Resend(apiKey);
+  const org = escapeHtml(input.orgName);
+  const job = escapeHtml(input.jobName);
+  const title = escapeHtml(input.title);
+  const csi = input.csiSection ? escapeHtml(input.csiSection) : null;
+  const numberLine = input.submittalNumber
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Submittal #${escapeHtml(
+        input.submittalNumber
+      )}</p>`
+    : "";
+  const csiLine = csi
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">CSI Section</p><p style="margin:0 0 12px;color:#111827;font-size:15px;font-weight:600;">${csi}</p>`
+    : "";
+  const messageLine = input.message && input.message.trim()
+    ? `<p style="margin:0 0 20px;color:#111827;font-size:15px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(
+        input.message.trim()
+      )}</p>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#4338ca;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:#c7d2fe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Submittal for your review</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            You have a submittal from <strong>${org}</strong> for
+            <strong>${job}</strong> ready for your review.
+          </p>
+          ${messageLine}
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:16px 20px;">
+              ${numberLine}
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Project</p>
+              <p style="margin:0 0 12px;color:#111827;font-size:15px;font-weight:600;">${job}</p>
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Submittal</p>
+              <p style="margin:0;color:#111827;font-size:18px;font-weight:600;">${title}</p>
+              ${csiLine}
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${input.submittalUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review Submittal</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This link is private — anyone with it can view and return this submittal.
+            If you weren't expecting a submittal from ${org}, you can safely ignore
+            this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: input.submittalNumber
+        ? `Submittal #${input.submittalNumber} from ${input.orgName} — ${input.jobName}`
+        : `Submittal from ${input.orgName} — ${input.jobName}`,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}

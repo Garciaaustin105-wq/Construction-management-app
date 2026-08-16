@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { CheckCircle2, XCircle, DollarSign, Bell } from "lucide-react";
+import { CheckCircle2, XCircle, DollarSign, Bell, ClipboardList, FileCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export type NotificationItem = {
   id: string;
-  type: string; // estimate_approved | estimate_rejected | invoice_paid
+  type: string; // estimate_approved | estimate_rejected | invoice_paid | daily_log_submitted | punch_item_completed | change_order_approved | change_order_rejected | submittal_returned
   title: string;
   body: string | null;
   href: string | null;
@@ -33,6 +33,16 @@ function iconFor(type: string): { Icon: LucideIcon; color: string } {
       return { Icon: XCircle, color: "text-red-600" };
     case "invoice_paid":
       return { Icon: DollarSign, color: "text-green-600" };
+    case "daily_log_submitted":
+      return { Icon: ClipboardList, color: "text-blue-600" };
+    case "punch_item_completed":
+      return { Icon: CheckCircle2, color: "text-green-600" };
+    case "change_order_approved":
+      return { Icon: CheckCircle2, color: "text-green-600" };
+    case "change_order_rejected":
+      return { Icon: XCircle, color: "text-red-600" };
+    case "submittal_returned":
+      return { Icon: FileCheck, color: "text-indigo-600" };
     default:
       return { Icon: Bell, color: "text-gray-400" };
   }

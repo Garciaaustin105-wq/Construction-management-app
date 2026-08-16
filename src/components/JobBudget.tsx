@@ -25,6 +25,12 @@ type EstimateLine = {
   unit_price: number;
   internal_cost: number | null;
 };
+type ChangeOrderLine = {
+  cost_code_id: string | null;
+  quantity: number;
+  unit_price: number;
+};
+type ChangeOrderRow = { is_credit: boolean; change_order_lines: ChangeOrderLine[] | null };
 type TimeRow = { cost_code_id: string | null; clock_in_at: string; clock_out_at: string | null };
 type ReceiptRow = { cost_code_id: string | null; amount: number | null };
 type CodeRow = { id: string; code: string; name: string };
@@ -46,6 +52,7 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
     { data: costCodes },
     { data: timeRows },
     { data: receiptRows },
+    { data: changeOrders },
   ] = await Promise.all([
     // Job labor rate (for converting hours → dollars).
     supabase.from("jobs").select("labor_rate").eq("id", jobId).single(),
@@ -66,6 +73,13 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
       .from("receipts")
       .select("cost_code_id, amount")
       .eq("job_id", jobId),
+    // Approved change orders for the job → their lines raise/lower the budget
+    // per cost code (credits are negative). Pending/rejected COs are ignored.
+    supabase
+      .from("change_orders")
+      .select("id, is_credit, change_order_lines(cost_code_id, quantity, unit_price)")
+      .eq("job_id", jobId)
+      .eq("status", "approved"),
   ]);
   const laborRate = job?.labor_rate != null ? Number(job.labor_rate) : null;
 
@@ -88,6 +102,22 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
     const line = (Number(l.quantity) || 0) * unitCost;
     budgetByCode.set(key, (budgetByCode.get(key) ?? 0) + line);
     estimateTotal += line;
+  }
+
+  // Approved change orders raise (or lower, for credits) the cost budget per
+  // cost code. They're additive to the estimate budget so the office sees the
+  // updated contract value after approved changes.
+  const coRows = (changeOrders as ChangeOrderRow[] | null) ?? [];
+  let coCount = 0;
+  for (const co of coRows) {
+    coCount += 1;
+    const sign = co.is_credit ? -1 : 1;
+    for (const l of (co.change_order_lines ?? [])) {
+      const key = l.cost_code_id ?? "__uncoded__";
+      const line = sign * (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+      budgetByCode.set(key, (budgetByCode.get(key) ?? 0) + line);
+      estimateTotal += line;
+    }
   }
 
   // Actuals: labor hours + receipts, per cost code.
@@ -274,8 +304,9 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
       </div>
 
       <p className="text-[10px] text-gray-400 mt-1">
-        Cost budget = latest estimate (internal cost, falling back to sell price) · Labor = closed
-        time entries × rate · Receipts = shared expenses. Positive variance = under budget.
+        Cost budget = latest estimate (internal cost, falling back to sell price)
+        {coCount > 0 ? ` + ${coCount} approved change order${coCount > 1 ? "s" : ""}` : ""}
+        {" · "}Labor = closed time entries × rate · Receipts = shared expenses. Positive variance = under budget.
       </p>
     </section>
   );

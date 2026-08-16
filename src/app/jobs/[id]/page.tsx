@@ -22,6 +22,7 @@ import ScheduleEventsManager, {
 import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
 import { MANAGEMENT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
+import { formatMoney } from "@/lib/money";
 
 export default async function JobDetailPage({
   params,
@@ -44,7 +45,7 @@ export default async function JobDetailPage({
 
   // Fan out all per-job reads in parallel (was sequential awaits, so the job
   // page waited on job → photos → rfis → blueprints → receipts → crew).
-  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes, schedEventsRes] = await Promise.all([
+  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes, schedEventsRes, dailyLogsRes, punchRes, changeOrdersRes, submittalsRes] = await Promise.all([
     supabase
       .from("jobs")
       .select("id, name, address, description, status, created_at, assigned_crew, customers(name), type")
@@ -103,6 +104,50 @@ export default async function JobDetailPage({
       .select("id, title, start_at, end_at, kind, notes")
       .eq("job_id", id)
       .order("start_at", { ascending: true }),
+    // Daily logs — office + assigned crew (customers have no RLS read, so the
+    // query is skipped for them). RLS scopes the rest.
+    role !== "customer"
+      ? supabase
+          .from("daily_logs")
+          .select(
+            "id, log_date, weather, status, created_at, created_by, creator:profiles!created_by(full_name)"
+          )
+          .eq("job_id", id)
+          .order("log_date", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    // Punch items — office + assigned crew + customer (RLS). Skipped for
+    // customer here as the job-page section is office/crew only in v1.
+    role !== "customer"
+      ? supabase
+          .from("punch_items")
+          .select(
+            "id, title, location, status, priority, due_date, assigned_to, assignee:profiles!assigned_to(full_name)"
+          )
+          .eq("job_id", id)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    // Change orders — office/PM only (management read exists at RLS but the
+    // job-page section is gated to office/PM).
+    OFFICE_OR_PM.has(role)
+      ? supabase
+          .from("change_orders")
+          .select(
+            "id, co_number, title, amount, is_credit, status, sent_at, viewed_at, created_at"
+          )
+          .eq("job_id", id)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    // Submittals — office/PM only on the job page (crew/customer read exists
+    // at RLS but isn't surfaced here in v1).
+    OFFICE_OR_PM.has(role)
+      ? supabase
+          .from("submittals")
+          .select(
+            "id, submittal_number, title, csi_section, status, disposition, ball_in_court, created_at"
+          )
+          .eq("job_id", id)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
   ]);
 
   const job = jobRes.data;
@@ -153,6 +198,42 @@ export default async function JobDetailPage({
     });
   const allSubs = (allSubsRes.data ?? []) as { id: string; company: string }[];
   const schedEvents = (schedEventsRes.data ?? []) as ScheduleEvent[];
+  const dailyLogs = (dailyLogsRes.data ?? []) as unknown as {
+    id: string;
+    log_date: string;
+    weather: string | null;
+    status: string;
+    created_at: string;
+    creator: { full_name: string | null } | null;
+  }[];
+  const punchItems = (punchRes.data ?? []) as unknown as {
+    id: string;
+    title: string;
+    location: string | null;
+    status: string;
+    priority: string;
+    due_date: string | null;
+    assignee: { full_name: string | null } | null;
+  }[];
+  const changeOrders = (changeOrdersRes.data ?? []) as {
+    id: string;
+    co_number: string | null;
+    title: string;
+    amount: number;
+    is_credit: boolean;
+    status: string;
+    created_at: string;
+  }[];
+  const submittals = (submittalsRes.data ?? []) as {
+    id: string;
+    submittal_number: string | null;
+    title: string;
+    csi_section: string | null;
+    status: string;
+    disposition: string | null;
+    ball_in_court: string;
+    created_at: string;
+  }[];
 
   // Mark this job as viewed (fire-and-forget; doesn't block render)
   void supabase
@@ -285,6 +366,134 @@ export default async function JobDetailPage({
         {/* Budget vs Actual — office only */}
         {isOfficeLike(role) && <JobBudget jobId={job.id} />}
 
+        {/* Change Orders — office/PM */}
+        {OFFICE_OR_PM.has(role) && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                Change Orders ({changeOrders.length})
+              </h2>
+              <Link
+                href={`/change-orders/new?job=${job.id}`}
+                className="text-xs text-blue-600 font-medium"
+              >
+                + New
+              </Link>
+            </div>
+            <div className="bg-white rounded-lg shadow-sm divide-y">
+              {changeOrders.map((c) => {
+                const amt = Number(c.amount) || 0;
+                const statusCls =
+                  c.status === "approved"
+                    ? "bg-green-100 text-green-700"
+                    : c.status === "rejected"
+                    ? "bg-red-100 text-red-700"
+                    : c.status === "sent" || c.status === "submitted"
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-gray-100 text-gray-700";
+                return (
+                  <Link
+                    key={c.id}
+                    href={`/change-orders/${c.id}`}
+                    className="block p-3 active:bg-gray-50"
+                  >
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {c.co_number ? `${c.co_number} · ` : ""}
+                          {c.title}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(c.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <span
+                          className={`text-sm font-semibold ${
+                            c.is_credit ? "text-red-600" : "text-gray-900"
+                          }`}
+                        >
+                          {c.is_credit ? "-" : ""}
+                          {formatMoney(amt)}
+                        </span>
+                        <span
+                          className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusCls}`}
+                        >
+                          {c.status}
+                        </span>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+              {changeOrders.length === 0 && (
+                <div className="py-6 text-center">
+                  <p className="text-sm text-gray-500">No change orders yet</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Submittals — office/PM */}
+        {OFFICE_OR_PM.has(role) && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                Submittals ({submittals.length})
+              </h2>
+              <Link
+                href={`/submittals/new?job=${job.id}`}
+                className="text-xs text-blue-600 font-medium"
+              >
+                + New
+              </Link>
+            </div>
+            <div className="bg-white rounded-lg shadow-sm divide-y">
+              {submittals.map((s) => {
+                const statusCls =
+                  s.status === "closed"
+                    ? "bg-green-100 text-green-700"
+                    : s.status === "returned"
+                    ? "bg-amber-100 text-amber-800"
+                    : s.status === "submitted"
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-gray-100 text-gray-700";
+                return (
+                  <Link
+                    key={s.id}
+                    href={`/submittals/${s.id}`}
+                    className="block p-3 active:bg-gray-50"
+                  >
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {s.submittal_number ? `${s.submittal_number} · ` : ""}
+                          {s.title}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {s.csi_section ? `${s.csi_section} · ` : ""}Ball:{" "}
+                          {s.ball_in_court}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusCls}`}
+                      >
+                        {s.status}
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+              {submittals.length === 0 && (
+                <div className="py-6 text-center">
+                  <p className="text-sm text-gray-500">No submittals yet</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* RFIs — office and assigned crew */}
         {(isOfficeLike(role) || (job.assigned_crew ?? []).includes(user.id)) && (
           <section>
@@ -315,6 +524,123 @@ export default async function JobDetailPage({
                   <p className="text-xs text-gray-400 mt-1">
                     Questions submitted from the field will appear here.
                   </p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Daily Logs — office and assigned crew */}
+        {(isOfficeLike(role) || (job.assigned_crew ?? []).includes(user.id)) && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                Daily Logs ({dailyLogs.length})
+              </h2>
+              {OFFICE_OR_PM.has(role) && (
+                <Link
+                  href={`/daily-logs/new?job=${job.id}`}
+                  className="text-xs text-blue-600 font-medium"
+                >
+                  + New
+                </Link>
+              )}
+            </div>
+            <div className="bg-white rounded-lg shadow-sm divide-y">
+              {dailyLogs.map((l) => (
+                <Link
+                  key={l.id}
+                  href={`/daily-logs/${l.id}`}
+                  className="block p-3 active:bg-gray-50"
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900">
+                        {new Date(l.log_date).toLocaleDateString()}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {l.weather ?? "No weather noted"}
+                        {l.creator?.full_name ? ` · ${l.creator.full_name}` : ""}
+                      </p>
+                    </div>
+                    <span
+                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                        l.status === "reviewed"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-blue-100 text-blue-700"
+                      }`}
+                    >
+                      {l.status}
+                    </span>
+                  </div>
+                </Link>
+              ))}
+              {dailyLogs.length === 0 && (
+                <div className="py-6 text-center">
+                  <p className="text-sm text-gray-500">No daily logs yet</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Punch List — office and assigned crew */}
+        {(isOfficeLike(role) || (job.assigned_crew ?? []).includes(user.id)) && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase">
+                Punch List ({punchItems.length})
+              </h2>
+              {OFFICE_OR_PM.has(role) && (
+                <Link
+                  href={`/punch/new?job=${job.id}`}
+                  className="text-xs text-blue-600 font-medium"
+                >
+                  + New
+                </Link>
+              )}
+            </div>
+            <div className="bg-white rounded-lg shadow-sm divide-y">
+              {punchItems.map((p) => {
+                const statusCls =
+                  p.status === "complete"
+                    ? "bg-green-100 text-green-700"
+                    : p.status === "in_progress"
+                    ? "bg-amber-100 text-amber-800"
+                    : p.status === "void"
+                    ? "bg-gray-100 text-gray-500"
+                    : "bg-gray-100 text-gray-700";
+                return (
+                  <Link
+                    key={p.id}
+                    href={`/punch/${p.id}`}
+                    className="block p-3 active:bg-gray-50"
+                  >
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {p.title}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {p.location ? `${p.location} · ` : ""}
+                          {p.assignee?.full_name ?? "Unassigned"}
+                          {p.due_date
+                            ? ` · due ${new Date(p.due_date).toLocaleDateString()}`
+                            : ""}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusCls}`}
+                      >
+                        {p.status.replace("_", " ")}
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
+              {punchItems.length === 0 && (
+                <div className="py-6 text-center">
+                  <p className="text-sm text-gray-500">No punch items yet</p>
                 </div>
               )}
             </div>

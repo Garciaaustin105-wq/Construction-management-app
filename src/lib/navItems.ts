@@ -29,6 +29,9 @@ import {
   CreditCard,
   HardHat,
   ClipboardList,
+  CheckSquare,
+  FileDiff,
+  FileText,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -56,6 +59,10 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
   if (role === "office" || role === "admin" || role === "super_admin") {
     items.push(
       { href: "/receipts", label: "Receipts", Icon: Receipt },
+      { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
+      { href: "/punch", label: "Punch List", Icon: CheckSquare },
+      { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
+      { href: "/submittals", label: "Submittals", Icon: FileText },
       { href: "/lawn", label: "Lawn", Icon: Sprout },
       { href: "/admin/users", label: "Admin", Icon: Users },
     );
@@ -99,14 +106,28 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
         href: "/field",
         label: "Field",
         Icon: HardHat,
-        aliases: ["/crew/photo", "/crew/time", "/crew/rfi"],
+        aliases: [
+          "/crew/photo",
+          "/crew/time",
+          "/crew/rfi",
+          "/crew/daily-log",
+          "/crew/punch",
+        ],
       },
       { href: "/lawn", label: "Lawn", Icon: Sprout, aliases: ["/lawn"] },
       {
         href: "/office",
         label: "Office",
         Icon: ClipboardList,
-        aliases: ["/receipts", "/admin/reports", "/calendar"],
+        aliases: [
+          "/receipts",
+          "/admin/reports",
+          "/calendar",
+          "/daily-logs",
+          "/punch",
+          "/change-orders",
+          "/submittals",
+        ],
       },
       {
         href: "/manage",
@@ -148,6 +169,8 @@ export function isPublicRoute(pathname: string): boolean {
     PUBLIC_EXACT.includes(pathname) ||
     pathname.startsWith("/q/") || // customer estimate portal (token link)
     pathname.startsWith("/invoices/view/") || // customer invoice portal (token link)
+    pathname.startsWith("/co/") || // customer change-order portal (token link)
+    pathname.startsWith("/s/") || // reviewer submittal portal (token link)
     pathname.startsWith("/customer/") // customer portal sub-routes
   );
 }
