@@ -6,9 +6,11 @@
 // page shell + whatever was in memory, but fresh data still needs a connection.
 //
 // Bumping CACHE below purges the previous cache on activate. Do this whenever a
-// precached asset (icon, manifest, logo) changes so installed clients drop the
-// stale copy and pick up the new one on the next visit — no reinstall needed.
-const CACHE = "terra-vista-v3";
+// precached asset (icon, manifest, logo) OR the app-shell JS/CSS changes — the
+// nav, layout, and components live in the cached bundle, so a nav restructure
+// (e.g. the mobile section-hubs) needs a bump too or installed clients keep
+// showing the old tab bar. No reinstall needed — the new SW purges on activate.
+const CACHE = "terra-vista-v4";
 // Only precache public, auth-free assets. /dashboard etc. get cached on first
 // visit via the navigation handler (they require a session, so precaching them
 // at install time would store a login redirect).
