@@ -69,10 +69,14 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     if (role === "project_manager") {
       return base;
     }
-    // office / admin / super_admin
+    // office / admin / super_admin — in the lawn app /lawn IS the home
+    // dashboard (the lawn office landing page), so Home points there directly
+    // and there is no separate "Lawn" tab (it would just duplicate Home).
+    // /dashboard still redirects to /lawn as a safety net for typed/old links.
     const items: NavItem[] = [
-      ...base,
-      { href: "/lawn", label: "Lawn", Icon: Sprout },
+      { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/crew/photo", label: "Photos", Icon: Camera },
+      { href: "/crew/time", label: "Time", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
       { href: "/estimates", label: "Estimates", Icon: FileText },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
@@ -142,8 +146,16 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
     // middleware, so it is not a hub here.
     if (isLawn()) {
       return [
-        { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
-        { href: "/lawn", label: "Lawn", Icon: Sprout, aliases: ["/lawn"] },
+        // In the lawn app /lawn IS the home dashboard, so the Home hub points
+        // there directly (no separate Lawn hub — it would duplicate Home).
+        // aliases keep Home active on /lawn sub-routes (schedules/visits/etc).
+        {
+          href: "/lawn",
+          label: "Home",
+          Icon: Home,
+          badge: "unread",
+          aliases: ["/lawn"],
+        },
         {
           href: "/office",
           label: "Office",
