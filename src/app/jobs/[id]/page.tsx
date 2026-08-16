@@ -12,6 +12,7 @@ import ActivityTimeline from "@/components/ActivityTimeline";
 import DeleteJobButton from "@/components/DeleteJobButton";
 import JobFinancials from "@/components/JobFinancials";
 import JobBudget from "@/components/JobBudget";
+import JobGanttInspectionsSummary from "@/components/JobGanttInspectionsSummary";
 import ReceiptsSection from "@/components/ReceiptsSection";
 import JobSubcontractors, {
   type JobSub,
@@ -275,6 +276,10 @@ export default async function JobDetailPage({
             canEdit={OFFICE_OR_PM.has(role)}
           />
         </section>
+
+        {/* Schedule (Gantt) + Inspections summary — all roles can view (RLS scopes
+            read); office/PM edit on the dedicated pages. */}
+        <JobGanttInspectionsSummary jobId={job.id} />
 
         {/* Office + project manager: assign crew (PM has authority over crews) */}
         {(OFFICE_OR_PM.has(role)) && (

@@ -28,6 +28,7 @@ export default function NewProjectPage() {
   const [assigned, setAssigned] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [orgId, setOrgId] = useState<string>("");
+  const [projectType, setProjectType] = useState<"commercial" | "residential">("residential");
   const toast = useToast();
 
   useEffect(() => {
@@ -83,6 +84,7 @@ export default function NewProjectPage() {
       scheduled_end: scheduledEnd || null,
       assigned_crew: assigned,
       organization_id: orgId,
+      project_type: projectType,
     }).select().single();
     if (error) {
       toast.error(`Failed to create: ${error.message}`);
@@ -158,6 +160,18 @@ export default function NewProjectPage() {
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
               placeholder="40 Cat6 drops, terminate and test..."
             />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Project Type</span>
+            <select
+              value={projectType}
+              onChange={(e) => setProjectType(e.target.value as "commercial" | "residential")}
+              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+            >
+              <option value="residential">Residential</option>
+              <option value="commercial">Commercial</option>
+            </select>
           </label>
 
           <div className="grid grid-cols-2 gap-2">
