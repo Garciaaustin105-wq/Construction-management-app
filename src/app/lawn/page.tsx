@@ -4,6 +4,7 @@ import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
+import NotificationsFeed from "@/components/NotificationsFeed";
 import Link from "next/link";
 import { Plus, Sprout, CalendarDays, Calendar, Route, Scissors, CloudSun, FileText } from "lucide-react";
 
@@ -69,26 +70,47 @@ export default async function LawnPage() {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // Today's Route: pending visits due today or overdue, newest job context.
-  // RLS scopes both reads to this user's org (no manual org filter).
-  const [{ data: visits }, { data: schedules }] = await Promise.all([
-    supabase
-      .from("lawn_visits")
-      .select("id, due_date, status, jobs(name, address, customers(name))")
-      .eq("status", "pending")
-      .lte("due_date", today)
-      .order("due_date", { ascending: true }),
-    supabase
-      .from("recurring_schedules")
-      .select(
-        "id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, jobs(name, customers(name))"
-      )
-      .order("active", { ascending: false })
-      .order("created_at", { ascending: false }),
-  ]);
+  // Today's Route + recurring schedules + the office notifications feed. RLS
+  // scopes all three to this user's org. The notifications query mirrors
+  // /dashboard: lawn office users redirect to /lawn and never load /dashboard,
+  // so the customer-action feed (estimate accepted/declined, invoice paid) is
+  // surfaced here instead. (A lawn org can't produce the construction-typed
+  // notifications — those routes are 404'd by the variant proxy and the DB
+  // trigger blocks construction jobs — so this naturally shows only the
+  // lawn-relevant estimate/invoice alerts.)
+  const [{ data: visits }, { data: schedules }, { data: notificationsData }] =
+    await Promise.all([
+      supabase
+        .from("lawn_visits")
+        .select("id, due_date, status, jobs(name, address, customers(name))")
+        .eq("status", "pending")
+        .lte("due_date", today)
+        .order("due_date", { ascending: true }),
+      supabase
+        .from("recurring_schedules")
+        .select(
+          "id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, jobs(name, customers(name))"
+        )
+        .order("active", { ascending: false })
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("notifications")
+        .select("id, type, title, body, href, read_at, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10),
+    ]);
 
   const visitRows = (visits as unknown as VisitRow[] | null) ?? [];
   const scheduleRows = (schedules as unknown as ScheduleRow[] | null) ?? [];
+  const notifications = (notificationsData ?? []) as Array<{
+    id: string;
+    type: string;
+    title: string;
+    body: string | null;
+    href: string | null;
+    read_at: string | null;
+    created_at: string;
+  }>;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -139,6 +161,13 @@ export default async function LawnPage() {
             Billing
           </Link>
         </div>
+
+        {/* ── Notifications — customer actions (estimate accepted/declined,
+            invoice paid). Surfaced here because lawn office users land on
+            /lawn, not /dashboard. RLS-scoped to this org. */}
+        <section className="space-y-2">
+          <NotificationsFeed notifications={notifications} />
+        </section>
 
         {/* ── Today's Route ─────────────────────────────────────────────── */}
         <section className="space-y-2">
