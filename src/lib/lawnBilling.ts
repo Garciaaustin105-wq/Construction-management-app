@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { deliverInvoice, publicBaseUrl } from "@/lib/invoiceSend";
 
 // Monthly lawn cycle billing. Shared by the on-demand office route (user
 // session, RLS-enforced) and the nightly cron (service role, RLS bypassed) —
@@ -24,6 +25,7 @@ export type CycleBillingResult = {
   invoicesCreated: number;
   visitsBilled: number;
   skippedNoCustomer: number;
+  invoicesSent: number;
   details: { customer: string | null; invoiceId: string; visits: number }[];
 };
 
@@ -79,6 +81,7 @@ export async function runCycleBilling(
   const details: CycleBillingResult["details"] = [];
   let invoicesCreated = 0;
   let visitsBilled = 0;
+  let invoicesSent = 0;
 
   for (const [customerId, group] of byCustomer) {
     // job_id on the invoice: MUST be non-null — the trg_invoices_org trigger
@@ -158,6 +161,18 @@ export async function runCycleBilling(
       continue;
     }
 
+    // Auto-deliver the cycle invoice to the customer (whichever channel is on
+    // file). Best-effort + non-fatal: a not-yet-configured Resend/Twilio or a
+    // missing contact records a warning but never voids the invoice — the
+    // billing already succeeded, so the customer simply owes it (re-sendable
+    // manually from the invoice detail page once a channel is configured).
+    try {
+      const delivered = await deliverInvoice(invoiceId, { origin: publicBaseUrl() });
+      if (delivered.delivered) invoicesSent += 1;
+    } catch {
+      // Swallow — delivery must not roll back a successfully billed invoice.
+    }
+
     invoicesCreated += 1;
     visitsBilled += claimed.length;
     details.push({ customer: customerId, invoiceId, visits: claimed.length });
@@ -168,6 +183,7 @@ export async function runCycleBilling(
     invoicesCreated,
     visitsBilled,
     skippedNoCustomer,
+    invoicesSent,
     details,
   };
 }

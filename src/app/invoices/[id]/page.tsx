@@ -33,7 +33,7 @@ export default async function InvoiceDetailPage({
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, status, paid_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, jobs(name), customers(name)"
+      "id, status, paid_at, sent_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, jobs(name), customers(name, contact_email, phone)"
     )
     .eq("id", id)
     .single();
@@ -55,7 +55,12 @@ export default async function InvoiceDetailPage({
   const amountPaid = Number(invoice.amount_paid ?? 0) || 0;
   const balanceDue = Math.max(0, total - amountPaid);
   const jobName = (invoice.jobs as unknown as { name: string } | null)?.name ?? "—";
-  const customerName = (invoice.customers as unknown as { name: string } | null)?.name ?? "—";
+  const customerRow = invoice.customers as unknown as
+    | { name: string | null; contact_email: string | null; phone: string | null }
+    | null;
+  const customerName = customerRow?.name ?? "—";
+  const customerEmail = customerRow?.contact_email?.trim() || null;
+  const customerPhone = customerRow?.phone?.trim() || null;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -101,6 +106,9 @@ export default async function InvoiceDetailPage({
           />
           <p className="text-xs text-gray-400 mt-2">
             Issued {new Date(invoice.created_at).toLocaleDateString()}
+            {invoice.sent_at && (
+              <> · Sent {new Date(invoice.sent_at).toLocaleDateString()}</>
+            )}
             {invoice.paid_at && (
               <> · Paid {new Date(invoice.paid_at).toLocaleDateString()}</>
             )}
@@ -176,7 +184,12 @@ export default async function InvoiceDetailPage({
         </section>
 
         {(role === "office" || role === "admin" || role === "project_manager") && (
-          <InvoiceActions invoiceId={invoice.id} status={invoice.status} />
+          <InvoiceActions
+            invoiceId={invoice.id}
+            status={invoice.status}
+            customerEmail={customerEmail}
+            customerPhone={customerPhone}
+          />
         )}
       </main>
 

@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { deliverInvoice } from "@/lib/invoiceSend";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,35 @@ export const dynamic = "force-dynamic";
 // session. Guards: token must resolve + status must be 'sent' + (for approve)
 // no existing invoice — so a draft, an already-decided estimate, or a double-
 // click can't act twice.
+//
+// On APPROVE the invoice shape depends on the job type (matches the
+// approve_estimate RPC):
+//   • Lawn job          → approve ONLY (no invoice). Lawn is billed by monthly
+//     cycle billing, so an invoice here would double-bill.
+//   • Construction      → a DEPOSIT-ONLY invoice (one "Deposit to start work"
+//     line for the deposit, amount_paid 0) when a deposit split is set, else a
+//     full-total invoice (all line items + markup/contingency/tax summary
+//     lines, amount_paid 0).
+// After a construction invoice is created it's auto-delivered to the customer
+// (email/SMS, whichever is on file) via deliverInvoice — non-fatal, so an
+// unconfigured Resend/Twilio never fails the approval itself.
+
+function requestOrigin(request: Request): string {
+  const xfhost = request.headers.get("x-forwarded-host");
+  const host =
+    xfhost ||
+    request.headers.get("host") ||
+    (() => {
+      try {
+        return new URL(request.url).host;
+      } catch {
+        return "localhost";
+      }
+    })();
+  const scheme = host.startsWith("localhost") ? "http" : "https";
+  return `${scheme}://${host}`;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> }
@@ -37,7 +67,9 @@ export async function POST(
 
   const { data: estimate } = await admin
     .from("estimates")
-    .select("id, status, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount")
+    .select(
+      "id, status, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(type)"
+    )
     .eq("share_token", token)
     .maybeSingle();
 
@@ -69,9 +101,7 @@ export async function POST(
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 
-  // approve — mirror approve_estimate: guard against an existing invoice, create
-  // the invoice (status 'sent'), snapshot the line items, then flip the
-  // estimate. Snapshot selects only customer-safe columns (no cost_code_id).
+  // approve — guard against an existing invoice (double-click / re-open).
   const { data: existing } = await admin
     .from("invoices")
     .select("id")
@@ -84,43 +114,61 @@ export async function POST(
     );
   }
 
+  const jobType =
+    (estimate.jobs as unknown as { type: string } | null)?.type ?? "construction";
+
   // Round to cents, half away from zero (matches Postgres round(numeric, 2)).
   const round2 = (n: number) =>
     (Math.round(Math.abs(n) * 100) / 100) * (n < 0 ? -1 : 1);
 
-  // Deposit = explicit $ when > 0, else % of the grand total — same math as
-  // approve_estimate + computeEstimateTotals. Seeded as amount_paid so the
-  // invoice balance reflects the deposit without a manual step. Computed from
-  // the same subtotal/summary figures used for the invoice lines below.
-  const markupPct0 = Number(estimate.markup_pct) || 0;
-  const contingencyPct0 = Number(estimate.contingency_pct) || 0;
-  const taxPct0 = Number(estimate.tax_pct) || 0;
-  const depositPct0 = Number(estimate.deposit_pct) || 0;
-  const depositAmt0 = Number(estimate.deposit_amount) || 0;
+  const markupPct = Number(estimate.markup_pct) || 0;
+  const contingencyPct = Number(estimate.contingency_pct) || 0;
+  const taxPct = Number(estimate.tax_pct) || 0;
+  const depositPct = Number(estimate.deposit_pct) || 0;
+  const depositAmt = Number(estimate.deposit_amount) || 0;
 
-  // We need the line items to compute the subtotal anyway (below), so fetch
-  // them now and reuse for the deposit.
   const { data: items } = await admin
     .from("estimate_line_items")
     .select("description, quantity, unit_price, position")
     .eq("estimate_id", estimate.id)
     .order("position");
-  const subtotal0 = (items ?? []).reduce(
+  const subtotal = (items ?? []).reduce(
     (s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
     0
   );
-  const mkAmt0 = markupPct0 > 0 ? round2((subtotal0 * markupPct0) / 100) : 0;
-  const ctAmt0 = contingencyPct0 > 0 ? round2((subtotal0 * contingencyPct0) / 100) : 0;
-  const preTax0 = round2(subtotal0 + mkAmt0 + ctAmt0);
-  const txAmt0 = taxPct0 > 0 ? round2((preTax0 * taxPct0) / 100) : 0;
-  const grandTotal0 = round2(preTax0 + txAmt0);
-  const deposit0 =
-    depositAmt0 > 0
-      ? round2(depositAmt0)
-      : depositPct0 > 0
-      ? round2((grandTotal0 * depositPct0) / 100)
+  const markupAmt = markupPct > 0 ? round2((subtotal * markupPct) / 100) : 0;
+  const contAmt = contingencyPct > 0 ? round2((subtotal * contingencyPct) / 100) : 0;
+  const preTax = round2(subtotal + markupAmt + contAmt);
+  const taxAmt = taxPct > 0 ? round2((preTax * taxPct) / 100) : 0;
+  const grandTotal = round2(preTax + taxAmt);
+  const deposit =
+    depositAmt > 0
+      ? round2(depositAmt)
+      : depositPct > 0
+      ? round2((grandTotal * depositPct) / 100)
       : 0;
 
+  // Lawn → approve only, no invoice (cycle billing handles lawn invoicing).
+  if (jobType === "lawn") {
+    const { error: eError } = await admin
+      .from("estimates")
+      .update({
+        status: "approved",
+        approved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", estimate.id);
+    if (eError) {
+      return NextResponse.json(
+        { error: `Failed: ${eError.message}` },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ ok: true, status: "approved" });
+  }
+
+  // Construction → deposit-only (or full-total when no deposit split) invoice,
+  // amount_paid 0 (the deposit is now owed, not pre-paid).
   const { data: invoice, error: invError } = await admin
     .from("invoices")
     .insert({
@@ -128,7 +176,7 @@ export async function POST(
       job_id: estimate.job_id,
       customer_id: estimate.customer_id,
       status: "sent",
-      amount_paid: deposit0,
+      amount_paid: 0,
     })
     .select("id")
     .single();
@@ -139,91 +187,96 @@ export async function POST(
     );
   }
 
-  if (items && items.length > 0) {
-    const { error: linesError } = await admin.from("invoice_line_items").insert(
-      items.map((i) => ({
-        invoice_id: invoice.id,
-        description: i.description,
-        quantity: i.quantity,
-        unit_price: i.unit_price,
-        position: i.position,
-      }))
-    );
-    if (linesError) {
-      return NextResponse.json(
-        { error: `Invoice created but line items failed: ${linesError.message}` },
-        { status: 500 }
-      );
-    }
-  }
-
-  // Pricing-summary invoice lines so the invoice total equals the estimate
-  // grand total (subtotal + markup + contingency + tax). Mirrors the
-  // approve_estimate RPC math exactly. Deposit is estimate-only (never an
-  // invoice line). Only added when that pct > 0.
-  const markupPct = Number(estimate.markup_pct) || 0;
-  const contingencyPct = Number(estimate.contingency_pct) || 0;
-  const taxPct = Number(estimate.tax_pct) || 0;
-  const subtotal = (items ?? []).reduce(
-    (s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0),
-    0
-  );
-  let pos = (items ?? []).reduce((m, i) => Math.max(m, Number(i.position) || 0), 0);
-  const summaryRows: {
-    invoice_id: string;
-    description: string;
-    quantity: number;
-    unit_price: number;
-    position: number;
-  }[] = [];
-  let markupAmt = 0;
-  let contAmt = 0;
-  if (markupPct > 0) {
-    markupAmt = round2((subtotal * markupPct) / 100);
-    pos += 1;
-    summaryRows.push({
-      invoice_id: invoice.id,
-      description: `Overhead & Profit (${markupPct}%)`,
-      quantity: 1,
-      unit_price: markupAmt,
-      position: pos,
-    });
-  }
-  if (contingencyPct > 0) {
-    contAmt = round2((subtotal * contingencyPct) / 100);
-    pos += 1;
-    summaryRows.push({
-      invoice_id: invoice.id,
-      description: `Contingency (${contingencyPct}%)`,
-      quantity: 1,
-      unit_price: contAmt,
-      position: pos,
-    });
-  }
-  if (taxPct > 0) {
-    const preTax = round2(subtotal + markupAmt + contAmt);
-    const taxAmt = round2((preTax * taxPct) / 100);
-    pos += 1;
-    summaryRows.push({
-      invoice_id: invoice.id,
-      description: `Sales Tax (${taxPct}%)`,
-      quantity: 1,
-      unit_price: taxAmt,
-      position: pos,
-    });
-  }
-  if (summaryRows.length > 0) {
-    const { error: summaryError } = await admin
+  if (deposit > 0) {
+    // Single deposit line — the invoice total IS the deposit to start work.
+    const { error: lineError } = await admin
       .from("invoice_line_items")
-      .insert(summaryRows);
-    if (summaryError) {
+      .insert({
+        invoice_id: invoice.id,
+        description: "Deposit to start work",
+        quantity: 1,
+        unit_price: deposit,
+        position: 0,
+      });
+    if (lineError) {
       return NextResponse.json(
-        { error: `Invoice created but summary lines failed: ${summaryError.message}` },
+        { error: `Invoice created but deposit line failed: ${lineError.message}` },
         { status: 500 }
       );
     }
+  } else {
+    // No deposit split → full-total invoice: snapshot the line items.
+    if (items && items.length > 0) {
+      const { error: linesError } = await admin.from("invoice_line_items").insert(
+        items.map((i) => ({
+          invoice_id: invoice.id,
+          description: i.description,
+          quantity: i.quantity,
+          unit_price: i.unit_price,
+          position: i.position,
+        }))
+      );
+      if (linesError) {
+        return NextResponse.json(
+          { error: `Invoice created but line items failed: ${linesError.message}` },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Pricing-summary lines so the invoice total == estimate grand total.
+    let pos = (items ?? []).reduce((m, i) => Math.max(m, Number(i.position) || 0), 0);
+    const summaryRows: {
+      invoice_id: string;
+      description: string;
+      quantity: number;
+      unit_price: number;
+      position: number;
+    }[] = [];
+    if (markupPct > 0) {
+      pos += 1;
+      summaryRows.push({
+        invoice_id: invoice.id,
+        description: `Overhead & Profit (${markupPct}%)`,
+        quantity: 1,
+        unit_price: markupAmt,
+        position: pos,
+      });
+    }
+    if (contingencyPct > 0) {
+      pos += 1;
+      summaryRows.push({
+        invoice_id: invoice.id,
+        description: `Contingency (${contingencyPct}%)`,
+        quantity: 1,
+        unit_price: contAmt,
+        position: pos,
+      });
+    }
+    if (taxPct > 0) {
+      pos += 1;
+      summaryRows.push({
+        invoice_id: invoice.id,
+        description: `Sales Tax (${taxPct}%)`,
+        quantity: 1,
+        unit_price: taxAmt,
+        position: pos,
+      });
+    }
+    if (summaryRows.length > 0) {
+      const { error: summaryError } = await admin
+        .from("invoice_line_items")
+        .insert(summaryRows);
+      if (summaryError) {
+        return NextResponse.json(
+          { error: `Invoice created but summary lines failed: ${summaryError.message}` },
+          { status: 500 }
+        );
+      }
+    }
   }
 
+  // Flip the estimate to approved.
   const { error: eError } = await admin
     .from("estimates")
     .update({
@@ -237,6 +290,16 @@ export async function POST(
       { error: `Invoice created but estimate status failed: ${eError.message}` },
       { status: 500 }
     );
+  }
+
+  // Auto-deliver the invoice to the customer (whichever channel is on file).
+  // Non-fatal — a not-yet-configured Resend/Twilio records a warning but the
+  // approval + invoice creation already succeeded; the invoice is re-sendable
+  // manually from the invoice detail page once the provider is set up.
+  try {
+    await deliverInvoice(invoice.id, { origin: requestOrigin(request) });
+  } catch {
+    // Swallow — delivery is best-effort on this public path.
   }
 
   return NextResponse.json({ ok: true, status: "approved" });

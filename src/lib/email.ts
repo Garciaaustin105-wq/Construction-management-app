@@ -425,3 +425,108 @@ export async function sendLawnVisitEmail(
     };
   }
 }
+
+// ── Invoice email ───────────────────────────────────────────────────────────
+//
+// "You have an invoice to view" — sent when an invoice is delivered to a
+// customer (auto on construction approval + lawn cycle billing, or manually
+// from the invoice detail page). NON-FATAL like the lawn emails: returns
+// { data: null, error } (never throws) when RESEND_API_KEY is unset, so the
+// auto-send flow treats an unconfigured Resend as a soft skip rather than a
+// 500. Mirrors sendEstimateEmail's template style (same header/footer tables).
+
+export type SendInvoiceEmailInput = {
+  to: string;
+  customerName: string;
+  orgName: string;
+  jobName: string;
+  total: string; // pre-formatted money, e.g. "$1,234.50"
+  balanceDue: string; // pre-formatted money
+  dueDate?: string | null; // pre-formatted date or null
+  invoiceUrl: string; // public /invoices/view/{token} link
+  message?: string | null; // optional personal note, shown up top
+};
+
+export async function sendInvoiceEmail(
+  input: SendInvoiceEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+
+  const resend = new Resend(apiKey);
+  const org = escapeHtml(input.orgName);
+  const job = escapeHtml(input.jobName);
+  const customer = escapeHtml(input.customerName || "there");
+  const balanceDue = escapeHtml(input.balanceDue);
+  const dueLine = input.dueDate
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Due ${escapeHtml(
+        input.dueDate
+      )}</p>`
+    : "";
+  const messageLine = input.message && input.message.trim()
+    ? `<p style="margin:0 0 20px;color:#111827;font-size:15px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(
+        input.message.trim()
+      )}</p>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Invoice</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${customer},</p>
+          ${messageLine}
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            You have an invoice from <strong>${org}</strong> for
+            <strong>${job}</strong>.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:16px 20px;">
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Project</p>
+              <p style="margin:0 0 12px;color:#111827;font-size:15px;font-weight:600;">${job}</p>
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Amount due</p>
+              <p style="margin:0;color:#111827;font-size:28px;font-weight:700;">${balanceDue}</p>
+              ${dueLine}
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${input.invoiceUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">View Invoice</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This link is private — anyone with it can view this invoice.
+            If you weren't expecting an invoice from ${org}, you can safely ignore
+            this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: `Invoice from ${input.orgName} — ${input.jobName}`,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}

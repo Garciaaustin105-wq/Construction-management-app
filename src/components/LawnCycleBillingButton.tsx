@@ -33,17 +33,26 @@ export default function LawnCycleBillingButton() {
       invoicesCreated?: number;
       visitsBilled?: number;
       skippedNoCustomer?: number;
+      invoicesSent?: number;
     };
     const inv = data.invoicesCreated ?? 0;
     const vis = data.visitsBilled ?? 0;
+    const sent = data.invoicesSent ?? 0;
     if (inv === 0) {
       toast.info("No new visits to bill this cycle");
     } else {
+      const sentNote =
+        sent > 0 ? ` · ${sent} sent to customer${sent === 1 ? "" : "s"}` : "";
       toast.success(
         `Created ${inv} invoice${inv === 1 ? "" : "s"} · ${vis} visit${
           vis === 1 ? "" : "s"
-        } billed`
+        } billed${sentNote}`
       );
+      if (inv > sent) {
+        toast.warning(
+          `${inv - sent} invoice${inv - sent === 1 ? "" : "s"} not sent — add customer email/phone or configure email/text, then resend from Invoices.`
+        );
+      }
     }
     router.refresh();
   }

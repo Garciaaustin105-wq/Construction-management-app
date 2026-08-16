@@ -114,3 +114,85 @@ export async function sendEstimateSms(
     };
   }
 }
+
+export type SendInvoiceSmsInput = {
+  to: string; // E.164, e.g. +15551234567
+  orgName: string;
+  jobName: string;
+  balanceDue: string; // pre-formatted money, e.g. "$1,234.50"
+  invoiceUrl: string; // public /invoices/view/{token} link
+};
+
+// Sends the "you have an invoice to view" text. Mirrors sendEstimateSms: same
+// env gate (non-fatal "not configured" error when TWILIO_* unset), same
+// raw-fetch Twilio call with HTTP Basic auth, same parse-body-once pattern, and
+// the same ≤2-segment (~306 char) truncation. Never throws.
+export async function sendInvoiceSms(
+  input: SendInvoiceSmsInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+  if (!sid || !token || !fromNumber) {
+    return {
+      data: null,
+      error: {
+        message:
+          "Text messaging isn't configured yet — add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Vercel to enable SMS.",
+      },
+    };
+  }
+
+  let message = `${input.orgName}: Invoice for ${input.jobName} — ${input.balanceDue} due. View: ${input.invoiceUrl}`;
+  if (message.length > 306) {
+    const overflow = message.length - 306;
+    const cutJob = input.jobName.slice(0, Math.max(0, input.jobName.length - overflow - 1));
+    message = `${input.orgName}: Invoice for ${cutJob}… — ${input.balanceDue} due. View: ${input.invoiceUrl}`;
+    if (message.length > 306) message = message.slice(0, 303) + "…";
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(
+        sid
+      )}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Basic " + Buffer.from(sid + ":" + token).toString("base64"),
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          From: fromNumber,
+          To: input.to,
+          Body: message,
+        }).toString(),
+      }
+    );
+
+    let body: { sid?: string; message?: string } | null = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+
+    if (res.ok && body?.sid) {
+      return { data: { id: body.sid }, error: null };
+    }
+    return {
+      data: null,
+      error: {
+        message: body?.message || `Twilio SMS failed (${res.status})`,
+      },
+    };
+  } catch (err) {
+    return {
+      data: null,
+      error: {
+        message: err instanceof Error ? err.message : "SMS send failed",
+      },
+    };
+  }
+}

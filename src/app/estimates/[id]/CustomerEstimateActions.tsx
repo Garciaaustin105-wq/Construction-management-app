@@ -23,15 +23,48 @@ export default function CustomerEstimateActions({
   async function approve() {
     if (!confirm("Approve this estimate? An invoice will be created.")) return;
     setBusy("approve");
-    const { error } = await supabase.rpc("approve_estimate", {
+    // approve_estimate returns the new invoice id (construction) or null (lawn
+    // jobs approve-only — cycle billing handles their invoicing).
+    const { data: invoiceId, error } = await supabase.rpc("approve_estimate", {
       p_estimate_id: estimateId,
     });
     if (error) {
       toast.error(`Failed: ${error.message}`);
-    } else {
-      toast.success("Estimate approved. Invoice created.");
-      router.refresh();
+      setBusy(null);
+      return;
     }
+    if (invoiceId) {
+      // Construction: auto-deliver the deposit invoice to the customer
+      // (whichever channel is on file). Best-effort — approval already
+      // succeeded, so a not-yet-configured email/text is a warning, not a
+      // failure.
+      toast.success("Estimate approved. Invoice created — sending to customer…");
+      try {
+        const res = await fetch(`/api/invoices/${invoiceId}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ via: "auto" }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data?.delivered) {
+          const channels = (data.sentVia as string[] | undefined)?.join(" + ") ?? "customer";
+          const dest =
+            [data.sentTo?.email, data.sentTo?.phone].filter(Boolean).join(" / ") ||
+            "customer";
+          toast.success(`Invoice sent via ${channels} to ${dest}`);
+        } else if (Array.isArray(data?.warnings) && data.warnings.length > 0) {
+          for (const w of data.warnings) {
+            toast.warning(`${w.channel}: ${w.message}`);
+          }
+        }
+      } catch {
+        toast.warning("Invoice created, but we couldn't auto-send it — resend it from the Invoices tab once email/text is configured.");
+      }
+    } else {
+      // Lawn: approve-only (no invoice). Cycle billing invoices the visits.
+      toast.success("Estimate approved.");
+    }
+    router.refresh();
     setBusy(null);
   }
 
