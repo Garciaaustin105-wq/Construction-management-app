@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { Loader2, Save, Phone, Mail, Briefcase, Building2 } from "lucide-react";
+import { isLawn } from "@/lib/variant";
 
 export type CustomerDetailRow = {
   id: string;
@@ -74,10 +75,14 @@ export default function CustomerDetail({
     else toast.success("Saved");
   }
 
+  // Subcontractors are a construction surface — don't show the "Subs" tab in
+  // the lawn variant (the page also has no sub data there; this drops the label).
   const TABS: { key: Tab; label: string }[] = [
     { key: "info", label: "Info" },
     { key: "jobs", label: `Jobs (${jobs.length})` },
-    { key: "subs", label: `Subs (${subs.length})` },
+    ...(isLawn()
+      ? []
+      : [{ key: "subs" as Tab, label: `Subs (${subs.length})` }]),
   ];
 
   return (

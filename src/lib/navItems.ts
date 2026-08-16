@@ -166,6 +166,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
             "/admin/reports",
             "/calendar",
             "/admin/customers",
+            "/crew/time",
           ],
         },
         {

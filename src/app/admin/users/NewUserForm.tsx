@@ -13,6 +13,7 @@ import {
   Crown,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { isLawn } from "@/lib/variant";
 
 type Role =
   | "crew"
@@ -179,7 +180,9 @@ export default function NewUserForm({
             </div>
             {role !== "customer" && (
               <p className="text-xs text-gray-400 mt-2">
-                Crew members cannot view subcontractor or customer info.
+                {isLawn()
+                  ? "Crew members cannot view customer info."
+                  : "Crew members cannot view subcontractor or customer info."}
               </p>
             )}
           </div>

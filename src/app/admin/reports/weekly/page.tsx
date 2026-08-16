@@ -12,6 +12,7 @@ import {
 import { resolveReportRange, rangeDayCount } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
 import { Download, Camera, Receipt, Briefcase } from "lucide-react";
+import { isLawn } from "@/lib/variant";
 
 export const dynamic = "force-dynamic";
 
@@ -60,11 +61,18 @@ export default async function WeeklyReportPage({
 
   // Dropdown data + report queries in parallel. Filters apply to time_entries
   // + receipts (job/worker/code) and photos (job/worker only — no cost code).
+  // Jobs filter is variant-aware: lawn jobs in the lawn variant (the old
+  // `type=construction` filter left the dropdown empty + made the report show
+  // "No activity" in a lawn deploy). Cost codes are a construction surface —
+  // skipped in lawn.
+  const jobType = isLawn() ? "lawn" : "construction";
   const [jobsRes, workersRes, codesRes, timeRes, photoRes, receiptRes, profileRes] =
     await Promise.all([
-      supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
+      supabase.from("jobs").select("id, name").eq("type", jobType).order("name"),
       supabase.from("profiles").select("id, full_name").order("full_name"),
-      supabase.from("cost_codes").select("id, code, name").order("code"),
+      isLawn()
+        ? Promise.resolve({ data: [] })
+        : supabase.from("cost_codes").select("id, code, name").order("code"),
       (() => {
         let q = supabase
           .from("time_entries")
@@ -136,6 +144,10 @@ export default async function WeeklyReportPage({
       name: string;
       role: string;
       ms: number;
+      // Per-day ms bucketed by the clock-in date — drives the on-screen
+      // timesheet grid. (A shift spanning midnight is attributed to its
+      // clock-in day; same convention as the Excel "Daily Hours" sheet.)
+      byDay: Record<string, number>;
       projects: Set<string>;
       photos: number;
       submitted: number;
@@ -150,6 +162,7 @@ export default async function WeeklyReportPage({
         name: p?.name ?? "Unknown",
         role: p?.role ?? "—",
         ms: 0,
+        byDay: {},
         projects: new Set(),
         photos: 0,
         submitted: 0,
@@ -162,8 +175,11 @@ export default async function WeeklyReportPage({
 
   for (const t of (timeRes.data ?? []) as unknown as TimeRow[]) {
     const end = t.clock_out_at ? new Date(t.clock_out_at).getTime() : now;
+    const elapsed = Math.max(0, end - new Date(t.clock_in_at).getTime());
     const w = ensure(t.user_id);
-    w.ms += Math.max(0, end - new Date(t.clock_in_at).getTime());
+    w.ms += elapsed;
+    const day = toISODate(new Date(t.clock_in_at));
+    w.byDay[day] = (w.byDay[day] ?? 0) + elapsed;
     const j = t.job?.name;
     if (j) w.projects.add(j);
   }
@@ -192,6 +208,18 @@ export default async function WeeklyReportPage({
   const totalPhotos = rows.reduce((s, r) => s + r.photos, 0);
   const totalSubmitted = rows.reduce((s, r) => s + r.submitted, 0);
   const totalOwed = rows.reduce((s, r) => s + r.owed, 0);
+
+  // Day columns for the on-screen timesheet grid (one per day in the range).
+  // The grid is only rendered for ranges of 2 weeks or shorter — longer ranges
+  // are too wide on mobile; the Excel export still has the Daily Hours sheet.
+  const showTimesheet = dayCount <= 14;
+  const dayColumns: string[] = [];
+  for (let d = 0; d < dayCount; d++) dayColumns.push(toISODate(addDays(from, d)));
+  const dayTotals: Record<string, number> = {};
+  for (const iso of dayColumns) dayTotals[iso] = 0;
+  for (const r of rows) {
+    for (const iso of dayColumns) dayTotals[iso] += r.byDay[iso] ?? 0;
+  }
 
   // Filter query string for the Excel download link.
   const exportQs = new URLSearchParams();
@@ -228,6 +256,7 @@ export default async function WeeklyReportPage({
             workers={workerOptions}
             costCodes={costCodes}
             current={current}
+            showCostCode={!isLawn()}
           />
         </div>
 
@@ -273,6 +302,94 @@ export default async function WeeklyReportPage({
             </p>
           </div>
         </div>
+
+        {/* On-screen timesheet — day × worker hours grid (the in-app
+            "timesheet"; the Excel export already has a Daily Hours sheet).
+            Only for ranges ≤ 14 days so it stays readable on mobile. */}
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+            Timesheet
+          </h2>
+          {rows.length === 0 ? (
+            <div className="bg-white rounded-lg p-6 text-center shadow-sm">
+              <p className="text-sm text-gray-500">
+                No activity in this range{jobId || workerId || codeId ? " for these filters" : ""}.
+              </p>
+            </div>
+          ) : !showTimesheet ? (
+            <div className="bg-white rounded-lg p-4 shadow-sm">
+              <p className="text-sm text-gray-500">
+                This range is {dayCount} days — too wide for the on-screen grid.
+                Switch to a 2-week or shorter range to see the day-by-day
+                timesheet, or download the Excel (Daily Hours sheet).
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg shadow-sm overflow-x-auto">
+              <table className="w-full text-sm border-collapse min-w-[640px]">
+                <thead>
+                  <tr className="text-[10px] uppercase text-gray-500">
+                    <th className="text-left font-semibold px-2 py-2 sticky left-0 bg-white">
+                      Worker
+                    </th>
+                    {dayColumns.map((iso) => {
+                      const d = new Date(iso + "T00:00:00");
+                      return (
+                        <th key={iso} className="font-semibold px-2 py-2 text-center">
+                          {d.toLocaleDateString([], { weekday: "short" })}
+                          <br />
+                          {d.getDate()}
+                        </th>
+                      );
+                    })}
+                    <th className="font-semibold px-2 py-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((w, i) => (
+                    <tr key={i} className="border-t border-gray-100">
+                      <td className="px-2 py-2 font-medium text-gray-900 sticky left-0 bg-white truncate max-w-[140px]">
+                        {w.name}
+                      </td>
+                      {dayColumns.map((iso) => {
+                        const ms = w.byDay[iso] ?? 0;
+                        return (
+                          <td
+                            key={iso}
+                            className={`px-2 py-2 text-center font-mono tabular-nums ${
+                              ms > 0 ? "text-gray-900" : "text-gray-300"
+                            }`}
+                          >
+                            {ms > 0 ? fmtDuration(ms) : "—"}
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-2 text-right font-mono font-semibold tabular-nums text-gray-900">
+                        {fmtDuration(w.ms)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
+                    <td className="px-2 py-2 text-gray-600 sticky left-0 bg-gray-50">
+                      Daily total
+                    </td>
+                    {dayColumns.map((iso) => (
+                      <td
+                        key={iso}
+                        className="px-2 py-2 text-center font-mono tabular-nums text-gray-900"
+                      >
+                        {dayTotals[iso] > 0 ? fmtDuration(dayTotals[iso]) : "—"}
+                      </td>
+                    ))}
+                    <td className="px-2 py-2 text-right font-mono tabular-nums text-gray-900">
+                      {fmtDuration(totalHours * 3_600_000)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
         {/* Per-worker cards */}
         <section>

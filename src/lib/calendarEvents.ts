@@ -8,12 +8,13 @@
 // have no SELECT policy). So this layer does NOT replicate the feed's manual
 // `orgFilter`/role branching — it just queries each table and normalizes.
 //
-// Variant gating mirrors the feed exactly: the construction sources (jobs
-// filtered to type=construction, schedule_events, job_subcontractors, invoices,
-// estimates) run unconditionally — they're empty for lawn orgs (the DB trigger
-// blocks construction jobs in lawn orgs, so their job-anchored sub/event rows
-// don't exist). The lawn_visits block runs only when isLawn(). invoices +
-// estimates are shared (both variants legitimately have them).
+// Variant gating mirrors the feed, tightened so construction-only sources
+// don't even run in the lawn variant: jobs (filtered to type=construction),
+// schedule_events, invoices, estimates run unconditionally (jobs + their
+// job-anchored event rows are empty for lawn orgs via the DB trigger; invoices
+// + estimates are shared). job_subcontractors is construction-only and is
+// skipped entirely when isLawn() (no lawn UI creates those rows). The
+// lawn_visits block runs only when isLawn().
 //
 // Only org-scoped users should call this (the /calendar page short-circuits
 // super_admin-without-org to a notice). super_admin WITH an org is scoped by
@@ -130,13 +131,17 @@ export async function getCalendarEvents(
         .limit(500),
 
       // Subcontractor on-site dates (office/PM only — RLS denies crew/customer,
-      // returning an empty set). Lawn orgs have none.
-      supabase
-        .from("job_subcontractors")
-        .select(
-          "id, scheduled_date, role_on_job, job_id, subcontractor:subcontractors(company), jobs(name)"
-        )
-        .not("scheduled_date", "is", null),
+      // returning an empty set). Construction variant only — lawn orgs have no
+      // subcontractors (no UI to create them; construction jobs are trigger-
+      // blocked), so skip the query entirely rather than rely on data-absence.
+      !isLawn()
+        ? supabase
+            .from("job_subcontractors")
+            .select(
+              "id, scheduled_date, role_on_job, job_id, subcontractor:subcontractors(company), jobs(name)"
+            )
+            .not("scheduled_date", "is", null)
+        : Promise.resolve({ data: null, error: null }),
 
       // Invoice due dates (office/PM all; customer own; crew none — RLS).
       supabase

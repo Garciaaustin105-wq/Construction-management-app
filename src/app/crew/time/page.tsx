@@ -6,6 +6,7 @@ import TopBar from "@/components/TopBar";
 import { useToast } from "@/components/Toast";
 import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucide-react";
 import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
+import { isLawn } from "@/lib/variant";
 
 type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
@@ -61,9 +62,16 @@ export default function CrewTimePage() {
     const { data: { user } } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
+    // Jobs to clock against: lawn jobs in the lawn variant, construction jobs
+    // otherwise. (The old `type=construction` filter left the dropdown empty in
+    // a lawn deploy, so crew could never clock in — time_entries.job_id is
+    // NOT NULL.) Cost codes are a construction surface; skip them in lawn.
+    const jobType = isLawn() ? "lawn" : "construction";
     const [jobsR, codesR, entriesR] = await Promise.all([
-      supabase.from("jobs").select("id, name").eq("type", "construction").order("name"),
-      supabase.from("cost_codes").select("id, code, name").order("code"),
+      supabase.from("jobs").select("id, name").eq("type", jobType).order("name"),
+      isLawn()
+        ? Promise.resolve({ data: [] })
+        : supabase.from("cost_codes").select("id, code, name").order("code"),
       user?.id
         ? supabase
             .from("time_entries")
@@ -262,19 +270,21 @@ export default function CrewTimePage() {
               </select>
             </label>
 
-            <label className="block">
-              <span className="text-sm font-medium text-gray-700">Cost code (optional)</span>
-              <select
-                value={costCodeId}
-                onChange={(e) => setCostCodeId(e.target.value)}
-                className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white"
-              >
-                <option value="">No code</option>
-                {costCodes.map((c) => (
-                  <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
-                ))}
-              </select>
-            </label>
+            {!isLawn() && (
+              <label className="block">
+                <span className="text-sm font-medium text-gray-700">Cost code (optional)</span>
+                <select
+                  value={costCodeId}
+                  onChange={(e) => setCostCodeId(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white"
+                >
+                  <option value="">No code</option>
+                  {costCodes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Note (optional)</span>

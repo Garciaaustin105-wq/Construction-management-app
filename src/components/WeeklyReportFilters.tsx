@@ -10,6 +10,7 @@ export default function WeeklyReportFilters({
   workers,
   costCodes,
   current,
+  showCostCode = true,
 }: {
   jobs: { id: string; name: string }[];
   workers: { id: string; name: string }[];
@@ -21,6 +22,8 @@ export default function WeeklyReportFilters({
     from: string;
     to: string;
   };
+  // Cost codes are a construction surface — the lawn variant hides this filter.
+  showCostCode?: boolean;
 }) {
   const router = useRouter();
 
@@ -61,7 +64,7 @@ export default function WeeklyReportFilters({
           />
         </label>
       </div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className={`grid ${showCostCode ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
         <label className="block">
           <span className="text-[10px] uppercase font-semibold text-gray-500">Job</span>
           <select
@@ -92,21 +95,23 @@ export default function WeeklyReportFilters({
             ))}
           </select>
         </label>
-        <label className="block">
-          <span className="text-[10px] uppercase font-semibold text-gray-500">Code</span>
-          <select
-            value={current.code}
-            onChange={(e) => go({ code: e.target.value })}
-            className={selectCls}
-          >
-            <option value="">All</option>
-            {costCodes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {showCostCode && (
+          <label className="block">
+            <span className="text-[10px] uppercase font-semibold text-gray-500">Code</span>
+            <select
+              value={current.code}
+              onChange={(e) => go({ code: e.target.value })}
+              className={selectCls}
+            >
+              <option value="">All</option>
+              {costCodes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
     </div>
   );
