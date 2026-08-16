@@ -10,6 +10,13 @@
 // Whether PM should get more tabs is a product decision, not a layout one, so
 // it is intentionally left as-is here. See the desktop-layout plan's
 // "PM discrepancy" note.
+//
+// `buildMobileNav` is the MOBILE bar: office/admin/super_admin collapse into
+// 5 section hubs (Home/Field/Lawn/Office/Manage) instead of the flat 7-8 cell
+// row. Crew/superintendent/PM keep a flat bar (not crowded). The desktop
+// Sidebar still uses buildNavItems (flat, expanded - it has room). Hub
+// `aliases` drive the mobile active-state (prefix match) and are ignored by
+// the Sidebar.
 
 import {
   Home,
@@ -20,6 +27,9 @@ import {
   Users,
   Building,
   CreditCard,
+  HardHat,
+  ClipboardList,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -31,6 +41,10 @@ export type NavItem = {
   // "unread" => the consuming chrome renders the unread-notifications count
   // on this row (Home only).
   badge?: "unread";
+  // Hub active-state prefixes (mobile only; ignored by the desktop Sidebar).
+  // A row is active when pathname === href OR any alias matches exactly or as
+  // a path prefix (pathname === alias || pathname.startsWith(alias + "/")).
+  aliases?: string[];
 };
 
 export function buildNavItems(role: Role | string | null): NavItem[] {
@@ -60,6 +74,58 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
   }
   return items;
+}
+
+// Mobile bottom-nav items. Office/admin/super_admin collapse the flat 7-8 cell
+// row into 5 section hubs; crew/superintendent/PM keep a flat bar. Sign Out
+// for hub roles lives in the Manage hub page (not the bar), so it is NOT an
+// item here. See plan: mobile bottom-nav cleanup.
+export function buildMobileNav(role: Role | string | null): NavItem[] {
+  const base: NavItem[] = [
+    { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+    { href: "/crew/photo", label: "Photos", Icon: Camera },
+    { href: "/crew/time", label: "Time", Icon: Clock },
+  ];
+  if (role === "crew" || role === "superintendent") {
+    return [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }];
+  }
+  if (role === "project_manager") {
+    return base;
+  }
+  if (role === "office" || role === "admin" || role === "super_admin") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      {
+        href: "/field",
+        label: "Field",
+        Icon: HardHat,
+        aliases: ["/crew/photo", "/crew/time", "/crew/rfi"],
+      },
+      { href: "/lawn", label: "Lawn", Icon: Sprout, aliases: ["/lawn"] },
+      {
+        href: "/office",
+        label: "Office",
+        Icon: ClipboardList,
+        aliases: ["/receipts", "/admin/reports", "/calendar"],
+      },
+      {
+        href: "/manage",
+        label: "Manage",
+        Icon: Settings,
+        aliases: [
+          "/admin/users",
+          "/admin/customers",
+          "/admin/subcontractors",
+          "/admin/cost-codes",
+          "/admin/billing",
+          "/admin/orgs",
+        ],
+      },
+    ];
+  }
+  // Unknown/null role (before the profile load resolves): minimal flat bar,
+  // same as the pre-hub initial render - avoids flashing office hubs at crew.
+  return base;
 }
 
 // Routes that must NOT get the desktop sidebar or the lg:pl-64 content offset -

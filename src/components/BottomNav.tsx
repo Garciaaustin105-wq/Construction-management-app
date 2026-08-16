@@ -7,8 +7,8 @@ import { LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
 import { useIsDesktop } from "@/lib/useIsDesktop";
-import { buildNavItems, isPublicRoute, type NavItem } from "@/lib/navItems";
-import type { Role } from "@/lib/roles";
+import { buildMobileNav, isPublicRoute, type NavItem } from "@/lib/navItems";
+import { isOfficeLike, type Role } from "@/lib/roles";
 
 export default function BottomNav() {
   const pathname = usePathname();
@@ -60,7 +60,11 @@ export default function BottomNav() {
     router.refresh();
   }
 
-  const items = buildNavItems(role);
+  const items = buildMobileNav(role);
+  // Hub roles (office/admin/super_admin) put Sign Out inside the Manage hub
+  // page, so the bar shows only the 5 hub cells. Flat roles keep the trailing
+  // Sign Out button.
+  const showSignOutCell = role !== null && !isOfficeLike(role);
 
   // The bottom nav is persistent (rendered from the root layout) but should
   // not appear on public/portal routes that have their own chrome.
@@ -73,8 +77,13 @@ export default function BottomNav() {
       }`}
     >
       <div className="max-w-md mx-auto flex">
-        {items.map(({ href, label, Icon, badge }: NavItem) => {
-          const active = pathname === href;
+        {items.map(({ href, label, Icon, badge, aliases }: NavItem) => {
+          const active =
+            pathname === href ||
+            (aliases?.some(
+              (a) => pathname === a || pathname.startsWith(a + "/"),
+            ) ??
+              false);
           const showBadge = badge === "unread" && unread > 0;
           return (
             <Link
@@ -97,13 +106,15 @@ export default function BottomNav() {
             </Link>
           );
         })}
-        <button
-          onClick={handleSignOut}
-          className="flex-1 flex flex-col items-center justify-center py-3 text-xs text-gray-600"
-        >
-          <LogOut className="w-6 h-6 mb-0.5" />
-          <span>Sign Out</span>
-        </button>
+        {showSignOutCell && (
+          <button
+            onClick={handleSignOut}
+            className="flex-1 flex flex-col items-center justify-center py-3 text-xs text-gray-600"
+          >
+            <LogOut className="w-6 h-6 mb-0.5" />
+            <span>Sign Out</span>
+          </button>
+        )}
       </div>
     </nav>
   );

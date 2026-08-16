@@ -1,16 +1,27 @@
 "use client";
 
 // Resolves the signed-in user's org branding (logo URL + org name) for app
-// chrome (Sidebar/TopBar). White-label: when an org has uploaded a logo it is
+// chrome (Sidebar + TopBar). White-label: when an org has uploaded a logo it is
 // shown in place of the platform icon, and the org name replaces the platform
 // short name.
 //
-// Module-level cache: both the Sidebar and TopBar mount on every authenticated
-// page, so without dedup they'd each fire a profiles + organizations round-trip.
-// The first caller kicks off loadBranding() and stores the promise; the second
-// caller awaits the same one. invalidateOrgBranding() drops the cache so a
-// freshly uploaded logo shows without a full page reload — OrgSettingsForm calls
-// it after a successful logo PATCH.
+// Implementation: a module-level store holds the current branding value plus the
+// in-flight fetch promise, and consumers subscribe via useOrgBranding(). This
+// design fixes two things a naive "cache the promise only" hook gets wrong:
+//
+//   1. No platform-default flash on navigation. TopBar is rendered per-page and
+//      remounts on every route change; Sidebar is persistent. A hook that seeds
+//      its state to EMPTY would paint the platform icon + "Terra Vista" name for
+//      one frame on every TopBar remount before the (already-resolved) promise
+//      updates it. Seeding from the store's current value instead means a
+//      remount already has the real branding on its first paint.
+//   2. Live update after a logo upload. invalidateOrgBranding() (called by
+//      OrgSettingsForm after a PATCH) re-fetches and emits to every subscriber,
+//      so even the persistent Sidebar updates without a reload.
+//
+// The store is reset on SIGNED_OUT so signing out as one tenant and back in as
+// another (same browser tab, no hard reload) never flashes the previous org's
+// logo/name.
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -22,7 +33,17 @@ export type OrgBranding = {
 
 const EMPTY: OrgBranding = { logoUrl: null, orgName: null };
 
+// Module-level store. `_branding` is the current value (seeds new subscribers so
+// they never flash the platform default after the first load); `_cache` dedups
+// the fetch; `_listeners` receive live updates.
+let _branding: OrgBranding = EMPTY;
 let _cache: Promise<OrgBranding> | null = null;
+const _listeners = new Set<(b: OrgBranding) => void>();
+let _authWatched = false;
+
+function emit() {
+  for (const l of _listeners) l(_branding);
+}
 
 async function loadBranding(): Promise<OrgBranding> {
   const supabase = createClient();
@@ -52,26 +73,46 @@ async function loadBranding(): Promise<OrgBranding> {
   return { logoUrl, orgName: org?.name ?? null };
 }
 
-// Drop the cache so the next mount re-fetches. Call after a logo upload/remove.
+// Fetch (deduped by _cache), publish the result to the store + all subscribers.
+async function refreshBranding(): Promise<OrgBranding> {
+  const result = await loadBranding();
+  _branding = result;
+  emit();
+  return result;
+}
+
+// One auth listener for the module lifetime: clears the store on sign-out so a
+// different tenant signing in afterward never sees the previous org's brand.
+function ensureAuthWatch() {
+  if (_authWatched) return;
+  _authWatched = true;
+  const supabase = createClient();
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_OUT") {
+      _branding = EMPTY;
+      _cache = null;
+      emit();
+    }
+  });
+}
+
+// Drop the cache + re-fetch so a freshly uploaded logo/name propagates to every
+// mounted chrome piece (Sidebar + TopBar) without a full reload. Called by
+// OrgSettingsForm after a successful logo PATCH/DELETE.
 export function invalidateOrgBranding() {
-  _cache = null;
+  _cache = refreshBranding();
 }
 
 export function useOrgBranding(): OrgBranding {
-  const [branding, setBranding] = useState<OrgBranding>(EMPTY);
+  // Seed from the store's current value so a remount (e.g. TopBar on each page)
+  // already shows the real logo+name on its first paint — no Terra Vista flash.
+  const [branding, setBranding] = useState<OrgBranding>(_branding);
   useEffect(() => {
-    if (!_cache) _cache = loadBranding();
-    let active = true;
-    _cache
-      .then((b) => {
-        if (active) setBranding(b);
-      })
-      .catch(() => {
-        // Non-fatal: chrome just falls back to the platform icon.
-        if (active) setBranding(EMPTY);
-      });
+    _listeners.add(setBranding);
+    if (!_cache) _cache = refreshBranding();
+    ensureAuthWatch();
     return () => {
-      active = false;
+      _listeners.delete(setBranding);
     };
   }, []);
   return branding;
