@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Terra Verde app icon — green sprout on a brand-green rounded tile.
+     Rasterized by scripts/rasterize-icons.mjs into terra-verde-apple-icon.png
+     (180), terra-verde-icon-192.png, terra-verde-icon-512.png. v1 hand-authored
+     mark; safe to replace with a designer vector later (re-run rasterize after). -->
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="96" fill="#15803d" />
+  <g fill="#ffffff">
+    <!-- stem -->
+    <rect x="246" y="238" width="20" height="178" rx="10" />
+    <!-- left leaf -->
+    <ellipse cx="194" cy="252" rx="84" ry="40" transform="rotate(-32 194 252)" />
+    <!-- right leaf -->
+    <ellipse cx="318" cy="252" rx="84" ry="40" transform="rotate(32 318 252)" />
+    <!-- top bud -->
+    <circle cx="256" cy="230" r="16" />
+  </g>
+</svg>

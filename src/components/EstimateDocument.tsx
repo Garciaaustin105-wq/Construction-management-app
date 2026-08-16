@@ -111,7 +111,7 @@ export default function EstimateDocument({
   return (
     <div className="bg-gray-50">
       {/* Branded header */}
-      <header className="bg-blue-900 px-5 py-5 text-white">
+      <header className="bg-brand-dark px-5 py-5 text-white">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex items-center gap-3">
             {orgLogoUrl && (
@@ -125,7 +125,7 @@ export default function EstimateDocument({
             )}
             <div className="min-w-0">
               <p className="text-lg font-bold tracking-tight">{orgName}</p>
-              <p className="text-blue-200 text-[11px] uppercase tracking-wider mt-0.5">
+              <p className="text-brand-bg text-[11px] uppercase tracking-wider mt-0.5">
                 Estimate for your review
               </p>
             </div>

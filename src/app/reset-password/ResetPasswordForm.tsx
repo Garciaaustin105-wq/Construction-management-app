@@ -73,7 +73,7 @@ export default function ResetPasswordForm({ token }: { token: string }) {
         </p>
         <Link
           href="/login"
-          className="block w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700"
+          className="block w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark"
         >
           Continue to sign in
         </Link>
@@ -90,7 +90,7 @@ export default function ResetPasswordForm({ token }: { token: string }) {
       <div className="text-center mb-2">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/terra-vista-logo.svg"
+          src={BRAND.logoPath}
           alt={BRAND.company}
           width={260}
           height={72}
@@ -138,7 +138,7 @@ export default function ResetPasswordForm({ token }: { token: string }) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
       >
         {loading && <Loader2 className="w-4 h-4 animate-spin" />}
         {loading ? "Updating..." : "Update password"}
@@ -146,7 +146,7 @@ export default function ResetPasswordForm({ token }: { token: string }) {
 
       <Link
         href="/login"
-        className="block text-center text-sm text-blue-600 active:text-blue-700 flex items-center justify-center gap-1"
+        className="block text-center text-sm text-brand active:text-brand-dark flex items-center justify-center gap-1"
       >
         <ArrowLeft className="w-4 h-4" />
         Back to sign in

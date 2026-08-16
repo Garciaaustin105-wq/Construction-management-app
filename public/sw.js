@@ -10,18 +10,22 @@
 // nav, layout, and components live in the cached bundle, so a nav restructure
 // (e.g. the mobile section-hubs) needs a bump too or installed clients keep
 // showing the old tab bar. No reinstall needed — the new SW purges on activate.
-const CACHE = "terra-vista-v4";
+const CACHE = "terra-vista-v5";
 // Only precache public, auth-free assets. /dashboard etc. get cached on first
 // visit via the navigation handler (they require a session, so precaching them
 // at install time would store a login redirect).
 const APP_SHELL = [
   "/",
-  "/manifest.json",
+  "/manifest.webmanifest",
   "/icon.svg",
   "/terra-vista-icon.svg",
+  "/terra-verde-icon.svg",
   "/apple-icon.png",
   "/icon-192.png",
   "/icon-512.png",
+  "/terra-verde-apple-icon.png",
+  "/terra-verde-icon-192.png",
+  "/terra-verde-icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -72,7 +76,7 @@ self.addEventListener("fetch", (event) => {
           const shell = await caches.match("/");
           if (shell) return shell;
           return new Response(
-            "You're offline and this page isn't cached yet. Reconnect to load Terra Vista.",
+            "You're offline and this page isn't cached yet. Reconnect to load the app.",
             { status: 503, headers: { "Content-Type": "text/plain" } }
           );
         }

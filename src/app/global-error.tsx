@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { BRAND } from "@/lib/brand";
 
 /**
  * Replaces the root layout entirely when the layout itself throws, so it
@@ -45,7 +46,7 @@ export default function GlobalError({
           <button
             onClick={reset}
             style={{
-              background: "#2563eb",
+              background: BRAND.themeColor,
               color: "white",
               border: "none",
               padding: "10px 20px",

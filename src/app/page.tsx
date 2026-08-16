@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BRAND } from "@/lib/brand";
+import { isLawn } from "@/lib/variant";
 
 // The app's root URL. A signed-in user who opens the site (e.g. a desktop
 // browser pointed at "/") should land on their dashboard, not on the marketing
@@ -13,14 +14,14 @@ export default async function HomePage() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (user) redirect("/dashboard");
+  if (user) redirect(isLawn() ? "/lawn" : "/dashboard");
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/terra-vista-logo.svg"
+          src={BRAND.logoPath}
           alt={BRAND.company}
           width={300}
           height={83}
@@ -31,7 +32,7 @@ export default async function HomePage() {
         </p>
         <Link
           href="/login"
-          className="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
+          className="inline-block bg-brand text-white px-6 py-3 rounded-lg hover:bg-brand-dark"
         >
           Sign In
         </Link>

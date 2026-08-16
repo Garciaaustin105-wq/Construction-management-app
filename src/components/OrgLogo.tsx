@@ -2,6 +2,8 @@
 // when one is set, otherwise falls back to the platform icon. Imported by the
 // client Sidebar/TopBar; pure presentational (no hooks, no "use client" needed).
 
+import { BRAND } from "@/lib/brand";
+
 type OrgLogoProps = {
   logoUrl: string | null;
   alt: string;
@@ -30,7 +32,7 @@ export default function OrgLogo({
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/terra-vista-icon.svg"
+      src={BRAND.iconPath}
       alt={alt}
       width={size}
       height={size}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
+import { isLawn } from "@/lib/variant";
 
 // Client form for the public self-serve signup. The org + admin creation
 // happens server-side in /api/signup (service role, env-gated by SAAS_OPEN).
@@ -40,6 +41,10 @@ export default function SignupForm() {
         email,
         password,
         company_website: companyWebsite,
+        // Stamp the org's platform variant at signup so the DB guard +
+        // tenant.ts know whether this is a lawn org. The form knows the deploy
+        // variant at build time (NEXT_PUBLIC_APP_VARIANT inlined).
+        variant: isLawn() ? "lawn" : "construction",
       }),
     });
     const data = await res.json();
@@ -79,7 +84,7 @@ export default function SignupForm() {
         )}
         <Link
           href="/login"
-          className="block w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700"
+          className="block w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark"
         >
           Continue to sign in
         </Link>
@@ -96,7 +101,7 @@ export default function SignupForm() {
       <div className="text-center mb-2">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/terra-vista-logo.svg"
+          src={BRAND.logoPath}
           alt={BRAND.company}
           width={260}
           height={72}
@@ -183,7 +188,7 @@ export default function SignupForm() {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
       >
         {loading && <Loader2 className="w-4 h-4 animate-spin" />}
         {loading ? "Creating your workspace..." : "Create workspace"}
@@ -191,7 +196,7 @@ export default function SignupForm() {
 
       <Link
         href="/login"
-        className="block text-center text-sm text-blue-600 active:text-blue-700 flex items-center justify-center gap-1"
+        className="block text-center text-sm text-brand active:text-brand-dark flex items-center justify-center gap-1"
       >
         <ArrowLeft className="w-4 h-4" />
         Back to sign in

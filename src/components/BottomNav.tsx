@@ -90,7 +90,7 @@ export default function BottomNav() {
               key={href}
               href={href}
               className={`flex-1 flex flex-col items-center justify-center py-3 text-xs relative ${
-                active ? "text-blue-600" : "text-gray-600"
+                active ? "text-brand" : "text-gray-600"
               }`}
             >
               <Icon

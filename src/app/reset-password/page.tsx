@@ -42,13 +42,13 @@ function InvalidLink() {
       </p>
       <Link
         href="/forgot-password"
-        className="block w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700"
+        className="block w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark"
       >
         Send a new link
       </Link>
       <Link
         href="/login"
-        className="block text-center text-sm text-blue-600 active:text-blue-700"
+        className="block text-center text-sm text-brand active:text-brand-dark"
       >
         Back to sign in
       </Link>

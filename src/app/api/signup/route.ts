@@ -62,13 +62,14 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { business_name, full_name, email, password, company_website } =
+  const { business_name, full_name, email, password, company_website, variant } =
     body as {
       business_name?: string;
       full_name?: string;
       email?: string;
       password?: string;
       company_website?: string;
+      variant?: string;
     };
 
   // Honeypot: a real user never fills the hidden "company_website" field. Bots
@@ -119,7 +120,15 @@ export async function POST(request: Request) {
   // 1. Create the organization.
   const { data: org, error: orgErr } = await admin
     .from("organizations")
-    .insert({ name: bizName, email: mail, plan: "trial" })
+    .insert({
+      name: bizName,
+      email: mail,
+      plan: "trial",
+      // Stamp the platform variant sent by the signup form (construction app
+      // sends "construction", lawn app sends "lawn"). Drives the DB trigger
+      // guard + tenant.ts appVariant. Defaults to construction if absent.
+      app_variant: variant === "lawn" ? "lawn" : "construction",
+    })
     .select("id")
     .single();
   if (orgErr || !org) {

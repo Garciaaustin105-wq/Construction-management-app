@@ -78,7 +78,7 @@ export async function sendEstimateEmail(
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
-        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+        <tr><td style="padding:24px 28px;background:${BRAND.themeColorDark};">
           <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
           <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Estimate for your review</p>
         </td></tr>
@@ -102,7 +102,7 @@ export async function sendEstimateEmail(
           ${validLine}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${input.estimateUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review &amp; Approve Estimate</a>
+              <a href="${input.estimateUrl}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review &amp; Approve Estimate</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
@@ -162,7 +162,7 @@ export async function sendVerificationEmail(
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
-        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+        <tr><td style="padding:24px 28px;background:${BRAND.themeColorDark};">
           <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${BRAND.shortName}</p>
           <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Verify your email</p>
         </td></tr>
@@ -174,7 +174,7 @@ export async function sendVerificationEmail(
           </p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${href}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Verify email</a>
+              <a href="${href}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Verify email</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
@@ -231,7 +231,7 @@ export async function sendPasswordResetEmail(
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
-        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+        <tr><td style="padding:24px 28px;background:${BRAND.themeColorDark};">
           <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${BRAND.shortName}</p>
           <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Reset your password</p>
         </td></tr>
@@ -242,7 +242,7 @@ export async function sendPasswordResetEmail(
           </p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${href}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Reset password</a>
+              <a href="${href}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Reset password</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
@@ -311,7 +311,7 @@ export async function sendOnMyWayEmail(
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
         <tr><td style="padding:24px 28px;background:#15803d;">
-          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">Terra Vista</p>
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${BRAND.shortName}</p>
           <p style="margin:4px 0 0;color:#bbf7d0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Your crew is on the way</p>
         </td></tr>
         <tr><td style="padding:28px;">
@@ -322,11 +322,11 @@ export async function sendOnMyWayEmail(
           </p>
           ${addressLine}
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
-            This is an automated heads-up from Terra Vista Construction Management.
+            This is an automated heads-up from ${BRAND.company}.
           </p>
         </td></tr>
         <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by Terra Vista Construction Management.</p>
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${BRAND.company}.</p>
         </td></tr>
       </table>
     </td></tr>
@@ -389,7 +389,7 @@ export async function sendLawnVisitEmail(
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
         <tr><td style="padding:24px 28px;background:#15803d;">
-          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">Terra Vista</p>
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${BRAND.shortName}</p>
           <p style="margin:4px 0 0;color:#bbf7d0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Lawn service update</p>
         </td></tr>
         <tr><td style="padding:28px;">
@@ -400,11 +400,11 @@ export async function sendLawnVisitEmail(
           ${bodyLines}
           ${addressLine}
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
-            This is an automated notice from Terra Vista Construction Management.
+            This is an automated notice from ${BRAND.company}.
           </p>
         </td></tr>
         <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by Terra Vista Construction Management.</p>
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${BRAND.company}.</p>
         </td></tr>
       </table>
     </td></tr>
@@ -477,7 +477,7 @@ export async function sendInvoiceEmail(
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
-        <tr><td style="padding:24px 28px;background:#1e3a8a;">
+        <tr><td style="padding:24px 28px;background:${BRAND.themeColorDark};">
           <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
           <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Invoice</p>
         </td></tr>
@@ -499,7 +499,7 @@ export async function sendInvoiceEmail(
           </table>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${input.invoiceUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">View Invoice</a>
+              <a href="${input.invoiceUrl}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">View Invoice</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
@@ -598,7 +598,7 @@ export async function sendEstimateDecisionEmail(
           </table>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${input.estimateUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Open estimate</a>
+              <a href="${input.estimateUrl}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Open estimate</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
@@ -708,7 +708,7 @@ export async function sendChangeOrderEmail(
           </table>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${input.changeOrderUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review &amp; Approve Change Order</a>
+              <a href="${input.changeOrderUrl}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review &amp; Approve Change Order</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
@@ -815,7 +815,7 @@ export async function sendSubmittalEmail(
           </table>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
             <tr><td align="center">
-              <a href="${input.submittalUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review Submittal</a>
+              <a href="${input.submittalUrl}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Review Submittal</a>
             </td></tr>
           </table>
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">

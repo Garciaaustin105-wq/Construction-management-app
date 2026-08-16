@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
+import { isLawn } from "@/lib/variant";
 
 function Banner() {
   // Reads query flags set by /auth/callback and /reset-password and surfaces
@@ -63,7 +64,7 @@ export default function LoginPage() {
     // Use a small delay so the auth cookie is fully set before navigating.
     // router.replace (not window.location) so it's a proper Next navigation.
     setTimeout(() => {
-      router.replace("/dashboard");
+      router.replace(isLawn() ? "/lawn" : "/dashboard");
     }, 200);
   }
 
@@ -76,7 +77,7 @@ export default function LoginPage() {
         <div className="text-center mb-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/terra-vista-logo.svg"
+            src={BRAND.logoPath}
             alt={BRAND.company}
             width={260}
             height={72}
@@ -120,7 +121,7 @@ export default function LoginPage() {
         <div className="text-right -mt-2">
           <Link
             href="/forgot-password"
-            className="text-xs text-blue-600 active:text-blue-700"
+            className="text-xs text-brand active:text-brand-dark"
           >
             Forgot password?
           </Link>
@@ -128,7 +129,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
           {loading ? "Signing in..." : "Sign In"}
@@ -136,7 +137,7 @@ export default function LoginPage() {
 
         <Link
           href="/signup"
-          className="block text-center text-sm text-blue-600 active:text-blue-700"
+          className="block text-center text-sm text-brand active:text-brand-dark"
         >
           Sign up your business
         </Link>

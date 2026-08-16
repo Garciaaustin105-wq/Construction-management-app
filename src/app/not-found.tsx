@@ -7,7 +7,7 @@ export default function NotFound() {
       <div className="max-w-sm w-full text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/terra-vista-icon.svg"
+          src={BRAND.iconPath}
           alt={BRAND.shortName}
           width={56}
           height={56}
@@ -22,7 +22,7 @@ export default function NotFound() {
         </p>
         <Link
           href="/dashboard"
-          className="inline-block bg-blue-600 text-white px-6 py-2.5 rounded-lg font-semibold active:bg-blue-700"
+          className="inline-block bg-brand text-white px-6 py-2.5 rounded-lg font-semibold active:bg-brand-dark"
         >
           Go to dashboard
         </Link>

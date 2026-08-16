@@ -33,9 +33,12 @@ import {
   FileDiff,
   FileText,
   Settings,
+  Contact,
+  Calendar,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
 
 export type NavItem = {
   href: string;
@@ -51,6 +54,41 @@ export type NavItem = {
 };
 
 export function buildNavItems(role: Role | string | null): NavItem[] {
+  // Lawn variant: lawn-only desktop sidebar — no construction GC-pro surfaces
+  // (receipts/daily-logs/punch/change-orders/submittals all dropped). Crew keep
+  // their flat route tab; PM keeps the base 3.
+  if (isLawn()) {
+    const base: NavItem[] = [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/crew/photo", label: "Photos", Icon: Camera },
+      { href: "/crew/time", label: "Time", Icon: Clock },
+    ];
+    if (role === "crew" || role === "superintendent") {
+      return [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }];
+    }
+    if (role === "project_manager") {
+      return base;
+    }
+    // office / admin / super_admin
+    const items: NavItem[] = [
+      ...base,
+      { href: "/lawn", label: "Lawn", Icon: Sprout },
+      { href: "/admin/customers", label: "Customers", Icon: Contact },
+      { href: "/estimates", label: "Estimates", Icon: FileText },
+      { href: "/invoices", label: "Invoices", Icon: Receipt },
+      { href: "/calendar", label: "Calendar", Icon: Calendar },
+      { href: "/admin/users", label: "Admin", Icon: Users },
+    ];
+    if (role === "admin") {
+      items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
+    }
+    if (role === "super_admin") {
+      items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
+    }
+    return items;
+  }
+
+  // Construction variant (unchanged): full GC + lawn nav.
   const items: NavItem[] = [
     { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
     { href: "/crew/photo", label: "Photos", Icon: Camera },
@@ -100,6 +138,34 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
     return base;
   }
   if (role === "office" || role === "admin" || role === "super_admin") {
+    // Lawn variant mobile hubs: Home / Lawn / Office / Manage (drop Field).
+    // Office hub drops construction doc links; Manage hub drops
+    // subcontractors/cost-codes. /field itself is redirected to /lawn by
+    // middleware, so it is not a hub here.
+    if (isLawn()) {
+      return [
+        { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+        { href: "/lawn", label: "Lawn", Icon: Sprout, aliases: ["/lawn"] },
+        {
+          href: "/office",
+          label: "Office",
+          Icon: ClipboardList,
+          aliases: [
+            "/estimates",
+            "/invoices",
+            "/admin/reports",
+            "/calendar",
+            "/admin/customers",
+          ],
+        },
+        {
+          href: "/manage",
+          label: "Manage",
+          Icon: Settings,
+          aliases: ["/admin/users", "/admin/billing", "/admin/orgs", "/admin/org"],
+        },
+      ];
+    }
     return [
       { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
       {

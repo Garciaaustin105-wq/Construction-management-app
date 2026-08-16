@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { OFFICE_LIKE } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
 import Link from "next/link";
@@ -32,13 +33,13 @@ export default async function ManagePage() {
               <span>Customers</span>
             </Link>
           )}
-          {isOfficeOrAdmin && (
+          {isOfficeOrAdmin && !isLawn() && (
             <Link href="/admin/subcontractors" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Briefcase className="w-5 h-5" />
               <span>Subcontractors</span>
             </Link>
           )}
-          {isOfficeOrAdmin && (
+          {isOfficeOrAdmin && !isLawn() && (
             <Link href="/admin/cost-codes" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Tag className="w-5 h-5" />
               <span>Cost Codes</span>

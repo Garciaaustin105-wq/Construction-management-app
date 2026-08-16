@@ -9,6 +9,7 @@ import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
 import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, Sprout } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
 import PlanBanner from "@/components/PlanBanner";
 import NotificationsFeed from "@/components/NotificationsFeed";
 
@@ -24,6 +25,14 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 }
 
 export default async function DashboardPage() {
+  // Lawn variant: the lawn landing is /lawn (schedules + today's route). The
+  // construction-oriented dashboard (construction jobs / RFIs / receipts tiles)
+  // doesn't apply to a lawn org, so redirect lawn users to /lawn instead of
+  // rendering a construction dashboard. v1 note: the notifications feed lives
+  // on /dashboard, so lawn office users don't see it here — TODO surface
+  // notifications on /lawn.
+  if (isLawn()) redirect("/lawn");
+
   const supabase = await createClient();
   const {
     data: { user },

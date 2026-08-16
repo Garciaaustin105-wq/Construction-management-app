@@ -15,6 +15,11 @@ export type MyTenant = {
   plan: string | null;
   planStatus: string | null;
   trialEndsAt: string | null;
+  // Platform variant this org signed up under. Defaults to "construction" for
+  // super_admin (no org) and any pre-column org. Lets server routes that create
+  // construction jobs/docs 403 on lawn orgs (belt-and-suspenders behind the
+  // middleware page redirect + the DB trigger guard).
+  appVariant: "construction" | "lawn";
 };
 
 export async function getMyOrg(
@@ -39,15 +44,17 @@ export async function getMyOrg(
   let plan: string | null = null;
   let planStatus: string | null = null;
   let trialEndsAt: string | null = null;
+  let appVariant: "construction" | "lawn" = "construction";
   if (orgId) {
     const { data: org } = await supabase
       .from("organizations")
-      .select("plan, plan_status, trial_ends_at")
+      .select("plan, plan_status, trial_ends_at, app_variant")
       .eq("id", orgId)
       .maybeSingle();
     plan = org?.plan ?? null;
     planStatus = org?.plan_status ?? null;
     trialEndsAt = org?.trial_ends_at ?? null;
+    appVariant = org?.app_variant === "lawn" ? "lawn" : "construction";
   }
 
   return {
@@ -57,6 +64,7 @@ export async function getMyOrg(
     plan,
     planStatus,
     trialEndsAt,
+    appVariant,
   };
 }
 

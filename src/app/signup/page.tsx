@@ -26,7 +26,7 @@ export default function SignupPage() {
           <div className="mb-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/terra-vista-logo.svg"
+              src={BRAND.logoPath}
               alt={BRAND.company}
               width={260}
               height={72}
@@ -43,7 +43,7 @@ export default function SignupPage() {
           </p>
           <Link
             href="/login"
-            className="inline-flex items-center justify-center gap-1 text-sm text-blue-600 active:text-blue-700"
+            className="inline-flex items-center justify-center gap-1 text-sm text-brand active:text-brand-dark"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to sign in

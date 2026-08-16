@@ -40,7 +40,7 @@ export default function TopBar({
         {backHref ? (
           <Link
             href={backHref}
-            className="flex items-center gap-0.5 text-blue-600 active:text-blue-700 flex-shrink-0 -ml-1 pr-1"
+            className="flex items-center gap-0.5 text-brand active:text-brand-dark flex-shrink-0 -ml-1 pr-1"
           >
             <ChevronLeft className="w-6 h-6" />
             <span className="text-sm font-semibold truncate max-w-[40vw]">

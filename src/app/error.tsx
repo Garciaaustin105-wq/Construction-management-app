@@ -23,7 +23,7 @@ export default function Error({
       <div className="max-w-sm w-full text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/terra-vista-icon.svg"
+          src={BRAND.iconPath}
           alt={BRAND.shortName}
           width={56}
           height={56}
@@ -41,7 +41,7 @@ export default function Error({
         <div className="flex gap-2 justify-center mt-5">
           <button
             onClick={reset}
-            className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-semibold active:bg-blue-700"
+            className="bg-brand text-white px-5 py-2.5 rounded-lg font-semibold active:bg-brand-dark"
           >
             Try again
           </button>
