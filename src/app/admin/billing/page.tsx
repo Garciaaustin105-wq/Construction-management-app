@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { getMyOrg } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
+import { isOfficeLike } from "@/lib/roles";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
 import BillingForm from "./BillingForm";
 import ConnectStripeButton from "./ConnectStripeButton";
@@ -21,7 +22,7 @@ export default async function BillingPage() {
 
   const tenant = await getMyOrg(supabase);
   if (!tenant) redirect("/login");
-  if (tenant.role !== "admin" || !tenant.orgId) redirect("/dashboard");
+  if (!isOfficeLike(tenant.role) || !tenant.orgId) redirect("/dashboard");
 
   const billing = await getEffectiveBilling(supabase, tenant.orgId);
   if (!billing) redirect("/dashboard");

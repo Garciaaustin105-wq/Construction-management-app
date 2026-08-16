@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getMyOrg } from "@/lib/tenant";
+import { isOfficeLike } from "@/lib/roles";
 import { getStripe } from "@/lib/billing";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -26,9 +27,9 @@ export async function POST(request: Request) {
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  if (tenant.role !== "admin" || !tenant.orgId) {
+  if (!isOfficeLike(tenant.role) || !tenant.orgId) {
     return NextResponse.json(
-      { error: "Only the organization admin can set up payments" },
+      { error: "Only an organization admin can set up online payments" },
       { status: 403 }
     );
   }
@@ -43,36 +44,45 @@ export async function POST(request: Request) {
   }
 
   const origin = new URL(request.url).origin;
-  const stripe = await getStripe();
   const admin = createAdminClient();
 
   let accountId = (org.stripe_connect_account_id as string) ?? null;
 
-  // Create the Express connected account once.
-  if (!accountId) {
-    const account = await stripe.accounts.create({
-      type: "express",
-      metadata: { organization_id: org.id },
-      ...(org.email ? { email: org.email } : {}),
-    });
-    accountId = account.id;
-    await admin
-      .from("organizations")
-      .update({ stripe_connect_account_id: accountId })
-      .eq("id", org.id);
-  }
+  try {
+    const stripe = await getStripe();
 
-  const accountLink = await stripe.accountLinks.create({
-    account: accountId,
-    refresh_url: `${origin}/admin/billing?connect=refresh`,
-    return_url: `${origin}/admin/billing?connect=return`,
-    type: "account_onboarding",
-  });
-  if (!accountLink.url) {
-    return NextResponse.json(
-      { error: "Stripe did not return an onboarding URL" },
-      { status: 500 }
-    );
+    // Create the Express connected account once.
+    if (!accountId) {
+      const account = await stripe.accounts.create({
+        type: "express",
+        metadata: { organization_id: org.id },
+        ...(org.email ? { email: org.email } : {}),
+      });
+      accountId = account.id;
+      await admin
+        .from("organizations")
+        .update({ stripe_connect_account_id: accountId })
+        .eq("id", org.id);
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account: accountId,
+      refresh_url: `${origin}/admin/billing?connect=refresh`,
+      return_url: `${origin}/admin/billing?connect=return`,
+      type: "account_onboarding",
+    });
+    if (!accountLink.url) {
+      return NextResponse.json(
+        { error: "Stripe did not return an onboarding URL" },
+        { status: 502 }
+      );
+    }
+    return NextResponse.json({ url: accountLink.url });
+  } catch (err) {
+    // Surface the real Stripe error (e.g. the platform account hasn't accepted
+    // the Connect agreement / set onboarding URLs) instead of a generic 500 so
+    // the admin sees exactly what to fix in the Stripe Dashboard.
+    const msg = err instanceof Error ? err.message : "Could not reach Stripe";
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
-  return NextResponse.json({ url: accountLink.url });
 }

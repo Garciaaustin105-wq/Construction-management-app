@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getMyOrg } from "@/lib/tenant";
+import { isOfficeLike } from "@/lib/roles";
 import { getStripe } from "@/lib/billing";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -25,9 +26,9 @@ export async function POST() {
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  if (tenant.role !== "admin" || !tenant.orgId) {
+  if (!isOfficeLike(tenant.role) || !tenant.orgId) {
     return NextResponse.json(
-      { error: "Only the organization admin can view payment setup" },
+      { error: "Only an organization admin can view payment setup" },
       { status: 403 }
     );
   }

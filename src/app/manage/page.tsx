@@ -14,7 +14,7 @@ export default async function ManagePage() {
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
   const isOfficeOrAdmin = role === "office" || role === "admin";
-  const showBilling = role === "admin";
+  const showBilling = role === "office" || role === "admin";
   const showPlatform = role === "super_admin";
 
   return (
