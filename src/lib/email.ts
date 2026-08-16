@@ -11,10 +11,20 @@ import { Resend } from "resend";
 import { BRAND } from "@/lib/brand";
 
 function fromAddress(): string {
-  return (
-    process.env.RESEND_FROM ||
-    `${BRAND.company} <onboarding@resend.com>`
-  );
+  // RESEND_FROM holds the verified sending address (shared across both variant
+  // deploys — e.g. noreply@terravistaconstructionmanagement.com — because both
+  // apps use one Resend account and only that domain is verified). To keep the
+  // sender identity on-brand per variant, we strip any display name already in
+  // RESEND_FROM and re-wrap the bare address with THIS variant's brand name:
+  //   construction → "Terra Vista Construction Management <noreply@…>"
+  //   lawn         → "Terra Verde Lawn Management <noreply@…>"
+  // The underlying address stays the verified one, so delivery is unchanged;
+  // only the display name the recipient sees flips with the variant.
+  const raw = process.env.RESEND_FROM;
+  if (!raw) return `${BRAND.company} <onboarding@resend.com>`;
+  const match = raw.match(/<([^>]+)>/);
+  const addr = (match?.[1] ?? raw).trim();
+  return `${BRAND.company} <${addr}>`;
 }
 
 function escapeHtml(s: string): string {
