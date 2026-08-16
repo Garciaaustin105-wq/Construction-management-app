@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, Sprout } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import PlanBanner from "@/components/PlanBanner";
@@ -28,9 +28,9 @@ export default async function DashboardPage() {
   // Lawn variant: the lawn landing is /lawn (schedules + today's route). The
   // construction-oriented dashboard (construction jobs / RFIs / receipts tiles)
   // doesn't apply to a lawn org, so redirect lawn users to /lawn instead of
-  // rendering a construction dashboard. v1 note: the notifications feed lives
-  // on /dashboard, so lawn office users don't see it here — TODO surface
-  // notifications on /lawn.
+  // rendering a construction dashboard. The notifications feed (customer
+  // actions) is surfaced on /lawn for lawn office users — see /lawn/page.tsx —
+  // so nothing is lost by redirecting.
   if (isLawn()) redirect("/lawn");
 
   const supabase = await createClient();
@@ -297,15 +297,6 @@ export default async function DashboardPage() {
                 >
                   <Tag className="w-5 h-5" />
                   Codes
-                </Link>
-              )}
-              {showOfficeSurface && (
-                <Link
-                  href="/lawn"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Sprout className="w-5 h-5 text-green-600" />
-                  Lawn
                 </Link>
               )}
               {MANAGEMENT.has(role) && (

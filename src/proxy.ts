@@ -1,22 +1,29 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
-import { isLawn } from "@/lib/variant";
+import { isLawn, isConstruction } from "@/lib/variant";
 
 // Next 16 root proxy. Two jobs, in order:
-//   1. Variant gate (lawn deploy only) — redirect construction-only PAGES to
-//      /lawn and 404 construction-only APIs. This is defense-in-depth BEHIND the
-//      UI hiding: the nav, hub pages, and dashboard already omit these surfaces
-//      for lawn; this just ensures a user who types /change-orders or /jobs/<id>
-//      (or fetches a construction API) can't reach them.
+//   1. Variant gate — a CLEAN TWO-WAY split. Each deploy hides the OTHER
+//      variant's surfaces (defense-in-depth BEHIND the UI hiding: the nav, hub
+//      pages, and dashboard already omit them; this ensures a user who types the
+//      URL or fetches the API can't reach them either):
+//        lawn deploy (isLawn())         → redirect construction PAGES to /lawn,
+//                                          404 construction APIs.
+//        construction deploy (isConstruction()) → redirect lawn PAGES to
+//                                          /dashboard, 404 lawn APIs.
 //   2. Refresh the Supabase auth session cookie on every allowed request — the
 //      standard Supabase SSR pattern that keeps signed-in users' sessions alive.
 //      (This was the proxy's original and only job before the Terra Verde split.)
 //
 // The gate runs BEFORE updateSession: a blocked page redirects without doing
-// session work (the browser then loads /lawn, an allowed route, which refreshes
-// the session there). In the construction build isLawn() is false at build time
-// (NEXT_PUBLIC_APP_VARIANT inlined), so the gate is a dead branch the compiler
-// drops — no runtime cost, construction behavior unchanged.
+// session work (the browser then loads the allowed landing, which refreshes the
+// session there). The inactive variant's branch is a dead branch the compiler
+// drops (NEXT_PUBLIC_APP_VARIANT is inlined at build time) — no runtime cost.
+//
+// The lawn cron routes (/api/lawn/cron/*) are NOT blocked in either variant:
+// they are CRON_SECRET-protected (not a UI surface) and idempotent (the
+// unique(recurring_schedule_id, due_date) index ignores duplicate inserts), so
+// both deploys running them is safe and redundant.
 //
 // Per-page server guards still handle auth; this proxy does NOT gate on the
 // session, only on the build variant. See src/lib/variant.ts + navItems.ts.
@@ -29,6 +36,7 @@ const BLOCKED_PAGE_PREFIXES = [
   "/daily-logs", // /daily-logs, /new, /[id]
   "/punch", // /punch, /new, /[id]
   "/receipts", // construction material receipts
+  "/admin/reports/receipts", // construction receipts report (lawn has no receipts)
   "/photos", // construction photo library (lawn uses /crew/photo)
   "/field", // construction field hub (lawn uses /lawn/my-route)
   "/crew/rfi", // construction crew RFI
@@ -50,10 +58,27 @@ const BLOCKED_API_PREFIXES = [
   "/api/reports/job-schedule",
 ];
 
+// Mirror blocklists for the CONSTRUCTION deploy: lawn surfaces hidden there.
+// Lawn pages redirect to /dashboard (the construction home); lawn user-facing
+// APIs 404. /api/lawn/cron/* is intentionally NOT here (see header comment).
+const LAWN_BLOCKED_PAGE_PREFIXES = [
+  "/lawn", // covers /lawn, /lawn/new, /lawn/schedules/[id], /lawn/calendar,
+  // /lawn/routes, /lawn/services, /lawn/weather, /lawn/billing,
+  // /lawn/my-route, /lawn/visits/[id]
+];
+
+const LAWN_BLOCKED_API_PREFIXES = [
+  "/api/lawn/visits",
+  "/api/lawn/weather",
+  "/api/lawn/billing",
+];
+
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const isApi = pathname.startsWith("/api/");
+
   if (isLawn()) {
-    const { pathname } = request.nextUrl;
-    if (pathname.startsWith("/api/")) {
+    if (isApi) {
       // Construction API route: 404 (page routes redirect, but a direct fetch
       // shouldn't reach construction data either).
       if (BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
@@ -66,9 +91,22 @@ export async function proxy(request: NextRequest) {
       url.search = "";
       return NextResponse.redirect(url);
     }
+  } else if (isConstruction()) {
+    if (isApi) {
+      // Lawn API route: 404 (direct fetch shouldn't reach lawn data).
+      if (LAWN_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
+        return new NextResponse("Not Found", { status: 404 });
+      }
+    } else if (LAWN_BLOCKED_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) {
+      // Lawn page: redirect to the construction landing.
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
-  // Allowed route (or construction variant): refresh the Supabase session.
+  // Allowed route: refresh the Supabase session.
   return updateSession(request);
 }
 

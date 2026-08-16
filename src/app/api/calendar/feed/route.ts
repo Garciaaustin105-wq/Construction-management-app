@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { buildCalendar, feedUid, type FeedEvent } from "@/lib/ical";
+import { isLawn } from "@/lib/variant";
 
 export const dynamic = "force-dynamic";
 
@@ -355,11 +356,15 @@ export async function GET(request: Request) {
     }
   }
 
-  // ── Lawn visits (all-day) ─────────────────────────────────────────────────
+  // ── Lawn visits (all-day) — LAWN VARIANT ONLY ─────────────────────────────
   // management / super_admin → all org; crew → assigned; customer → own.
   // Pending + done visits surface on their due_date (a done visit still shows on
   // the day it was completed). Reuses the visibleJobIds set computed above.
-  {
+  // Gated to the lawn variant so construction calendars don't surface lawn
+  // visits (construction is construction-only). The construction event sections
+  // above are already empty in the lawn variant (Jobs filters type=construction
+  // + the DB trigger blocks construction jobs in lawn orgs), so no reverse gate.
+  if (isLawn()) {
     let visitQ = admin
       .from("lawn_visits")
       .select(

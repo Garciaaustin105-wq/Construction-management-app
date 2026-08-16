@@ -154,17 +154,13 @@ export default async function JobDetailPage({
   const job = jobRes.data;
   if (!job) notFound();
 
-  // Lawn jobs belong to the Lawn tab — bounce to the schedule detail (or the
-  // Lawn hub if no schedule is attached yet) so the construction job page never
-  // surfaces a recurring-service property.
+  // Lawn jobs don't exist in the construction app (construction is
+  // construction-only; /lawn is blocked there). The lawn variant never reaches
+  // /jobs/[id] (the proxy blocks /jobs in that variant), so this branch only
+  // runs in construction — surface a 404 rather than bouncing to a blocked
+  // /lawn route.
   if ((job as unknown as { type?: string }).type === "lawn") {
-    const { data: sched } = await supabase
-      .from("recurring_schedules")
-      .select("id")
-      .eq("job_id", id)
-      .limit(1)
-      .maybeSingle();
-    redirect(sched ? `/lawn/schedules/${(sched as { id: string }).id}` : "/lawn");
+    notFound();
   }
   const photos = photosRes.data;
   const rfis = rfisRes.data;

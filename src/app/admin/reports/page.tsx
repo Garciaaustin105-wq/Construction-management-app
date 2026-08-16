@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
 import { FileSpreadsheet, Receipt, ChevronRight } from "lucide-react";
+import { isLawn } from "@/lib/variant";
 
 export const dynamic = "force-dynamic";
 
@@ -30,12 +31,19 @@ export default async function ReportsIndexPage() {
       title: "Per-Worker Report",
       desc: "Hours, receipts, and payments per worker for a date range. Excel export.",
     },
-    {
-      href: "/admin/reports/receipts",
-      icon: Receipt,
-      title: "Receipts Report",
-      desc: "Itemized receipts with photos, location, and paid/owed status. Excel + PDF export.",
-    },
+    // Receipts are a construction-only surface (material receipts with photos /
+    // cost codes). Lawn orgs have no receipts, so hide the card in the lawn
+    // variant; the URL is also blocked by the variant proxy as defense-in-depth.
+    ...(isLawn()
+      ? []
+      : [
+          {
+            href: "/admin/reports/receipts",
+            icon: Receipt,
+            title: "Receipts Report",
+            desc: "Itemized receipts with photos, location, and paid/owed status. Excel + PDF export.",
+          },
+        ]),
   ];
 
   return (

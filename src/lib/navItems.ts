@@ -101,7 +101,6 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/punch", label: "Punch List", Icon: CheckSquare },
       { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
       { href: "/submittals", label: "Submittals", Icon: FileText },
-      { href: "/lawn", label: "Lawn", Icon: Sprout },
       { href: "/admin/users", label: "Admin", Icon: Users },
     );
   }
@@ -109,11 +108,6 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
   // admin-only). office/super_admin don't get the tab.
   if (role === "admin") {
     items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
-  }
-  // Field crew get their own scoped Lawn tab (their assigned route), not the
-  // office hub (which would redirect them).
-  if (role === "crew" || role === "superintendent") {
-    items.push({ href: "/lawn/my-route", label: "Route", Icon: Sprout });
   }
   if (role === "super_admin") {
     items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
@@ -132,7 +126,11 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
     { href: "/crew/time", label: "Time", Icon: Clock },
   ];
   if (role === "crew" || role === "superintendent") {
-    return [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }];
+    // Lawn crew get their Route tab; construction crew don't (construction is
+    // construction-only now — /lawn is blocked there, so the tab would bounce).
+    return isLawn()
+      ? [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }]
+      : base;
   }
   if (role === "project_manager") {
     return base;
@@ -180,7 +178,6 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
           "/crew/punch",
         ],
       },
-      { href: "/lawn", label: "Lawn", Icon: Sprout, aliases: ["/lawn"] },
       {
         href: "/office",
         label: "Office",
