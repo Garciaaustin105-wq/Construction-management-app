@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import { useToast } from "@/components/Toast";
-import { Loader2, Plus, Scissors, Trash2 } from "lucide-react";
+import { Loader2, Plus, Scissors, Trash2, Pencil } from "lucide-react";
 
 type Service = {
   id: string;
@@ -24,9 +24,10 @@ export default function LawnServicesPage() {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("0");
   const [adding, setAdding] = useState(false);
-  // lawn_services is a ROOT table (no job_id → no set_org_from_job trigger), so
-  // the app MUST send organization_id on insert or the row's org is null and the
-  // `with check tier_office(organization_id)` RLS policy rejects it.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [saving, setSaving] = useState(false);
   const [orgId, setOrgId] = useState<string>("");
 
   async function load() {
@@ -136,6 +137,51 @@ export default function LawnServicesPage() {
     toast.success("Service deleted");
   }
 
+  function startEdit(svc: Service) {
+    setEditingId(svc.id);
+    setEditName(svc.name);
+    setEditPrice(String(svc.default_price));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditName("");
+    setEditPrice("0");
+  }
+
+  async function saveEdit() {
+    if (!editingId) return;
+    if (!editName.trim()) {
+      toast.warning("Service name is required");
+      return;
+    }
+    const p = parseFloat(editPrice);
+    if (isNaN(p) || p < 0) {
+      toast.warning("Price must be 0 or more");
+      return;
+    }
+    setSaving(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("lawn_services")
+      .update({ name: editName.trim(), default_price: p })
+      .eq("id", editingId)
+      .select("id, name, default_price, active")
+      .single();
+    setSaving(false);
+    if (error || !data) {
+      toast.error(`Failed: ${error?.message ?? "error"}`);
+      return;
+    }
+    setServices((prev) =>
+      [...prev.map((s) => (s.id === editingId ? (data as Service) : s))].sort((a, b) => a.name.localeCompare(b.name))
+    );
+    setEditingId(null);
+    setEditName("");
+    setEditPrice("0");
+    toast.success("Service updated");
+  }
+
   if (!authorized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -200,39 +246,88 @@ export default function LawnServicesPage() {
             <div className="bg-white rounded-lg shadow-sm divide-y">
               {services.map((s) => (
                 <div key={s.id} className="p-3 flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {s.name}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {new Intl.NumberFormat("en-US", {
-                        style: "currency",
-                        currency: "USD",
-                      }).format(Number(s.default_price) || 0)}
-                      /visit
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toggleActive(s)}
-                      disabled={busy}
-                      className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                        s.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      {s.active ? "Active" : "Inactive"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeService(s)}
-                      disabled={busy}
-                      className="text-gray-400 active:text-red-600 p-1"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {editingId === s.id ? (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={editPrice}
+                          onChange={(e) => setEditPrice(e.target.value)}
+                          className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={saveEdit}
+                          disabled={saving}
+                          className="bg-green-600 text-white py-2 px-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          className="border border-gray-300 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-100"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {s.name}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {new Intl.NumberFormat("en-US", {
+                            style: "currency",
+                            currency: "USD",
+                          }).format(Number(s.default_price) || 0)}
+                          /visit
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleActive(s)}
+                          disabled={busy || saving}
+                          className={`text-[10px] font-semibold px-2 py-1 rounded ${
+                            s.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                          }`}
+                        >
+                          {s.active ? "Active" : "Inactive"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(s)}
+                          disabled={busy || saving}
+                          className="text-gray-400 active:text-blue-600 p-1"
+                          title="Edit"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeService(s)}
+                          disabled={busy || saving}
+                          className="text-gray-400 active:text-red-600 p-1"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
