@@ -10,6 +10,7 @@ import Link from "next/link";
 import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, Sprout } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 import PlanBanner from "@/components/PlanBanner";
+import NotificationsFeed from "@/components/NotificationsFeed";
 
 // Small overline label that groups the dashboard tiles into named sections
 // (Create / Manage / Track / Your Work). Kept deliberately understated so it
@@ -90,43 +91,64 @@ export default async function DashboardPage() {
   const showCreate = showOfficeSurface || role === "project_manager";
   const showManage = MANAGEMENT.has(role);
   const showTrack = showOfficeSurface || !showPlatform;
+  // Office-like (office/admin/super_admin) see the customer-action feed
+  // (estimate accepted/declined, invoice paid). RLS (tier_office) scopes the
+  // query to the caller's org (super_admin sees the platform-wide feed).
+  const showNotifications = showOfficeSurface || showPlatform;
 
   // Fan out the independent reads in parallel (was sequential awaits, so the
   // dashboard waited on jobs → photos → rfis → invoices one after another).
-  const [jobsRes, photosRes, rfisRes, invoicesRes] = await Promise.all([
-    supabase
-      .from("jobs")
-      .select("id, name, status, customers(name)")
-      .eq("type", "construction")
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("photos")
-      .select("id, storage_path, caption, created_at, jobs(name)")
-      .order("created_at", { ascending: false })
-      .limit(12),
-    showOfficeSurface
-      ? supabase
-          .from("rfis")
-          .select("id, question, status, created_at, jobs(name)")
-          .order("created_at", { ascending: false })
-          .limit(10)
-      : Promise.resolve({ data: [] }),
-    showOfficeSurface
-      ? supabase
-          .from("invoices")
-          .select(
-            "id, status, paid_at, created_at, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
-          )
-          .eq("status", "sent")
-          .order("created_at", { ascending: false })
-          .limit(5)
-      : Promise.resolve({ data: [] }),
-  ]);
+  const [jobsRes, photosRes, rfisRes, invoicesRes, notificationsRes] =
+    await Promise.all([
+      supabase
+        .from("jobs")
+        .select("id, name, status, customers(name)")
+        .eq("type", "construction")
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("photos")
+        .select("id, storage_path, caption, created_at, jobs(name)")
+        .order("created_at", { ascending: false })
+        .limit(12),
+      showOfficeSurface
+        ? supabase
+            .from("rfis")
+            .select("id, question, status, created_at, jobs(name)")
+            .order("created_at", { ascending: false })
+            .limit(10)
+        : Promise.resolve({ data: [] }),
+      showOfficeSurface
+        ? supabase
+            .from("invoices")
+            .select(
+              "id, status, paid_at, created_at, jobs(name), customers(name), invoice_line_items(quantity, unit_price)"
+            )
+            .eq("status", "sent")
+            .order("created_at", { ascending: false })
+            .limit(5)
+        : Promise.resolve({ data: [] }),
+      showNotifications
+        ? supabase
+            .from("notifications")
+            .select("id, type, title, body, href, read_at, created_at")
+            .order("created_at", { ascending: false })
+            .limit(10)
+        : Promise.resolve({ data: [] }),
+    ]);
 
   const jobs = jobsRes.data;
   const photos = photosRes.data;
   const rfis = rfisRes.data;
   const unpaidInvoices = invoicesRes.data;
+  const notifications = (notificationsRes.data ?? []) as Array<{
+    id: string;
+    type: string;
+    title: string;
+    body: string | null;
+    href: string | null;
+    read_at: string | null;
+    created_at: string;
+  }>;
 
   // Visiting Home marks every visible job as "seen" so the notification badge
   // only counts activity that happens AFTER this visit (not old photos/RFIs on
@@ -359,6 +381,14 @@ export default async function DashboardPage() {
             lg:items-start stops shorter cards from stretching to match a tall
             neighbor. */}
         <div className="space-y-6 lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0 lg:items-start xl:grid-cols-3">
+
+        {/* Notifications — office-like feed of customer actions (estimate
+            accepted/declined, invoice paid). RLS-scoped to the caller's org. */}
+        {showNotifications && (
+          <section>
+            <NotificationsFeed notifications={notifications} />
+          </section>
+        )}
 
         {/* Jobs as cards — tap to view detail */}
         <section>

@@ -138,7 +138,9 @@ export async function applyInvoicePayment(
   const admin = createAdminClient();
   const { data: invoice } = await admin
     .from("invoices")
-    .select("id, status, organization_id, amount_paid")
+    .select(
+      "id, status, organization_id, amount_paid, jobs(name), customers(name)"
+    )
     .eq("id", invoiceId)
     .maybeSingle();
   if (!invoice) return;
@@ -178,4 +180,33 @@ export async function applyInvoicePayment(
   }
 
   await admin.from("invoices").update(update).eq("id", invoiceId);
+
+  // Record an in-app "invoice paid" notification for the office feed ONLY when
+  // the payment fully settled the invoice (partial payments don't notify — they
+  // already surface in Unpaid Invoices). Service role (bypasses RLS). Non-fatal:
+  // the invoice is already marked paid by the time this runs, so a DB hiccup
+  // must never throw back up to the webhook. The unique (type, entity_id) index
+  // makes a redelivered webhook a no-op.
+  if (newAmountPaid >= total) {
+    try {
+      const customerName =
+        (invoice.customers as unknown as { name: string | null } | null)?.name ??
+        "";
+      const jobName =
+        (invoice.jobs as unknown as { name: string } | null)?.name ?? "";
+      const body = [customerName, jobName, `$${paidAmount.toFixed(2)}`]
+        .filter(Boolean)
+        .join(" · ");
+      await admin.from("notifications").insert({
+        organization_id: invoice.organization_id,
+        type: "invoice_paid",
+        title: "Invoice paid",
+        body,
+        href: `/invoices/${invoiceId}`,
+        entity_id: invoiceId,
+      });
+    } catch {
+      // Swallow — feed is best-effort; payment already recorded.
+    }
+  }
 }

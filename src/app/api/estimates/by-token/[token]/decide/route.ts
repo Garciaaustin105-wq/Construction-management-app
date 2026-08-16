@@ -128,6 +128,28 @@ export async function POST(
     }
   };
 
+  // Record an in-app notification for the office feed on the dashboard. Service
+  // role (bypasses RLS). Non-fatal — the estimate/invoice state change already
+  // succeeded by the time this runs; a DB hiccup must never fail the decision.
+  // The unique (type, entity_id) index makes a double-click a no-op.
+  const recordNotification = async (
+    type: "estimate_approved" | "estimate_rejected",
+    title: string
+  ) => {
+    try {
+      await admin.from("notifications").insert({
+        organization_id: estimate.organization_id,
+        type,
+        title,
+        body: [customerName, jobName].filter(Boolean).join(" · "),
+        href: `/estimates/${estimate.id}`,
+        entity_id: estimate.id,
+      });
+    } catch {
+      // Swallow — feed is best-effort.
+    }
+  };
+
   if (decision === "reject") {
     const { error } = await admin
       .from("estimates")
@@ -144,6 +166,7 @@ export async function POST(
       );
     }
     await notifyOffice("rejected");
+    await recordNotification("estimate_rejected", "Estimate declined");
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 
@@ -211,6 +234,7 @@ export async function POST(
       );
     }
     await notifyOffice("approved");
+    await recordNotification("estimate_approved", "Estimate approved");
     return NextResponse.json({ ok: true, status: "approved" });
   }
 
@@ -350,5 +374,6 @@ export async function POST(
   }
 
   await notifyOffice("approved");
+  await recordNotification("estimate_approved", "Estimate approved");
   return NextResponse.json({ ok: true, status: "approved" });
 }
