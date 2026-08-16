@@ -1,8 +1,11 @@
+import type Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { getStripe, syncSubscriptionFromEvent } from "@/lib/billing";
+import { applyInvoicePayment } from "@/lib/invoicePay";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Stripe webhook — syncs the org's plan/status from subscription events.
+// Stripe webhook — syncs the org's plan/status from subscription events AND
+// records customer invoice payments (Stripe Connect destination charges).
 // Must read the raw body (request.text()) to verify the signature. Idempotent
 // via the billing_events.stripe_event_id unique key.
 
@@ -43,10 +46,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true, duplicate: true });
   }
 
-  // Sync first. If it throws, return 500 WITHOUT recording the event so Stripe
-  // retries and we re-attempt (syncs are idempotent — re-applying is safe).
+  // Route the event. A one-time invoice payment (Stripe Connect destination
+  // charge) is a checkout.session.completed with mode === "payment" — handled
+  // by applyInvoicePayment (records amount_paid/status on the invoice). Every
+  // other event (subscription lifecycle) goes through the SaaS sync. If it
+  // throws, return 500 WITHOUT recording the event so Stripe retries (both
+  // paths are idempotent — re-applying is safe).
   try {
-    await syncSubscriptionFromEvent(event);
+    if (
+      event.type === "checkout.session.completed" &&
+      (event.data.object as Stripe.Checkout.Session).mode === "payment"
+    ) {
+      await applyInvoicePayment(event.data.object as Stripe.Checkout.Session);
+    } else {
+      await syncSubscriptionFromEvent(event);
+    }
   } catch (err) {
     console.error("billing sync failed:", err);
     return NextResponse.json({ error: "Sync failed" }, { status: 500 });

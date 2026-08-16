@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Check } from "lucide-react";
 import { useToast } from "@/components/Toast";
@@ -19,6 +19,7 @@ export default function BillingForm({
   isExpired,
   hasSubscription,
   tiers,
+  connectSection,
 }: {
   currentPlan: string;
   planStatus: string;
@@ -26,6 +27,7 @@ export default function BillingForm({
   isExpired: boolean;
   hasSubscription: boolean;
   tiers: Tier[];
+  connectSection?: ReactNode;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -189,6 +191,10 @@ export default function BillingForm({
             )}
           </button>
         )}
+
+        {/* Receive customer invoice payments online (Stripe Connect). Rendered
+            by the server page as a self-contained client component. */}
+        {connectSection}
       </main>
     </div>
   );

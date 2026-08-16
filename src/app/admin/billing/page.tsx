@@ -4,6 +4,7 @@ import { getMyOrg } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
 import BillingForm from "./BillingForm";
+import ConnectStripeButton from "./ConnectStripeButton";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,25 @@ export default async function BillingPage() {
     };
   });
 
+  // Stripe Connect status (receiving customer invoice payments). The cached
+  // flags drive the initial render; ConnectStripeButton refreshes them live.
+  const { data: orgRow } = await supabase
+    .from("organizations")
+    .select(
+      "stripe_connect_account_id, connect_charges_enabled, connect_details_submitted"
+    )
+    .eq("id", tenant.orgId)
+    .maybeSingle();
+  const connectSection = (
+    <ConnectStripeButton
+      initialConnectAccountId={
+        (orgRow?.stripe_connect_account_id as string) ?? null
+      }
+      initialChargesEnabled={!!orgRow?.connect_charges_enabled}
+      initialDetailsSubmitted={!!orgRow?.connect_details_submitted}
+    />
+  );
+
   return (
     <BillingForm
       currentPlan={billing.plan}
@@ -60,6 +80,7 @@ export default async function BillingPage() {
       isExpired={billing.isExpired}
       hasSubscription={!!billing.stripeSubscriptionId}
       tiers={tiers}
+      connectSection={connectSection}
     />
   );
 }
