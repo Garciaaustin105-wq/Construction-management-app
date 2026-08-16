@@ -81,6 +81,7 @@ export function isPublicRoute(pathname: string): boolean {
   return (
     PUBLIC_EXACT.includes(pathname) ||
     pathname.startsWith("/q/") || // customer estimate portal (token link)
+    pathname.startsWith("/invoices/view/") || // customer invoice portal (token link)
     pathname.startsWith("/customer/") // customer portal sub-routes
   );
 }
