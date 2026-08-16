@@ -530,3 +530,102 @@ export async function sendInvoiceEmail(
     };
   }
 }
+
+// ── Estimate decision notification (internal, to the office) ────────────────
+//
+// Fired when a customer approves or declines an estimate on the public view
+// (/api/estimates/by-token/[token]/decide). Unlike the customer-facing emails
+// above, this goes to the BUSINESS (org.email) so the office learns a customer
+// just acted — no polling needed. NON-FATAL like the invoice/lawn emails:
+// returns { data: null, error } (never throws) when RESEND_API_KEY is unset, so
+// an unconfigured Resend never breaks the approval flow. The estimateUrl is the
+// logged-in office detail link (/estimates/<id>), not the public /q/{token} link.
+
+export type SendEstimateDecisionEmailInput = {
+  to: string; // the org/office email to notify
+  orgName: string;
+  customerName: string;
+  jobName: string;
+  estimateNumber?: string | null; // e.g. "EST-0007"
+  decision: "approved" | "rejected";
+  estimateUrl: string; // logged-in office link to open the estimate
+};
+
+export async function sendEstimateDecisionEmail(
+  input: SendEstimateDecisionEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+
+  const resend = new Resend(apiKey);
+  const org = escapeHtml(input.orgName);
+  const customer = escapeHtml(input.customerName || "your customer");
+  const job = escapeHtml(input.jobName);
+  const approved = input.decision === "approved";
+  const headerBackground = approved ? "#15803d" : "#b91c1c";
+  const headerSubtitle = approved ? "Estimate approved" : "Estimate declined";
+  const headerSubtitleColor = approved ? "#bbf7d0" : "#fecaca";
+  const numberLine = input.estimateNumber
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Estimate #${escapeHtml(
+        input.estimateNumber
+      )}</p>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:${headerBackground};">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:${headerSubtitleColor};font-size:12px;text-transform:uppercase;letter-spacing:.08em;">${headerSubtitle}</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi team,</p>
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            Your customer <strong>${customer}</strong> has <strong>${input.decision}</strong> the estimate for
+            <strong>${job}</strong>.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:16px 20px;">
+              ${numberLine}
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Project</p>
+              <p style="margin:0;color:#111827;font-size:15px;font-weight:600;">${job}</p>
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${input.estimateUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">Open estimate</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This is an automated notification from ${BRAND.company}.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: input.estimateNumber
+        ? `Estimate #${input.estimateNumber} ${input.decision} by ${input.customerName} — ${input.jobName}`
+        : `Estimate ${input.decision} by ${input.customerName} — ${input.jobName}`,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}

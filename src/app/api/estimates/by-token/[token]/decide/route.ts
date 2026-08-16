@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { deliverInvoice } from "@/lib/invoiceSend";
+import { sendEstimateDecisionEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +69,7 @@ export async function POST(
   const { data: estimate } = await admin
     .from("estimates")
     .select(
-      "id, status, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(type)"
+      "id, status, organization_id, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, estimate_number, title, jobs(name, type), customers(name)"
     )
     .eq("share_token", token)
     .maybeSingle();
@@ -82,6 +83,50 @@ export async function POST(
       { status: 400 }
     );
   }
+
+  // Resolve the org (office) to notify + display names, for the decision email.
+  const customerRow = estimate.customers as unknown as { name: string | null } | null;
+  const customerName = customerRow?.name ?? "";
+  const jobName =
+    (estimate.jobs as unknown as { name: string } | null)?.name ??
+    (estimate.title as string | null) ??
+    "your project";
+  const estimateNumber = (estimate.estimate_number as string | null) ?? null;
+
+  let orgName = "";
+  let orgEmail: string | null = null;
+  if (estimate.organization_id) {
+    const { data: orgRow } = await admin
+      .from("organizations")
+      .select("name, email")
+      .eq("id", estimate.organization_id)
+      .maybeSingle();
+    if (orgRow?.name) orgName = orgRow.name as string;
+    orgEmail = (orgRow?.email as string | null)?.trim() || null;
+  }
+
+  const origin = requestOrigin(request);
+  const estimateOfficeUrl = `${origin}/estimates/${estimate.id}`;
+
+  // Notify the office that the customer acted. Non-fatal — never block the
+  // decision; the estimate/invoice state change already succeeded by the time
+  // this runs. A missing org email or unconfigured Resend is silently skipped.
+  const notifyOffice = async (decision: "approved" | "rejected") => {
+    if (!orgEmail) return;
+    try {
+      await sendEstimateDecisionEmail({
+        to: orgEmail,
+        orgName,
+        customerName,
+        jobName,
+        estimateNumber,
+        decision,
+        estimateUrl: estimateOfficeUrl,
+      });
+    } catch {
+      // Swallow — delivery is best-effort.
+    }
+  };
 
   if (decision === "reject") {
     const { error } = await admin
@@ -98,6 +143,7 @@ export async function POST(
         { status: 500 }
       );
     }
+    await notifyOffice("rejected");
     return NextResponse.json({ ok: true, status: "rejected" });
   }
 
@@ -164,6 +210,7 @@ export async function POST(
         { status: 500 }
       );
     }
+    await notifyOffice("approved");
     return NextResponse.json({ ok: true, status: "approved" });
   }
 
@@ -297,10 +344,11 @@ export async function POST(
   // approval + invoice creation already succeeded; the invoice is re-sendable
   // manually from the invoice detail page once the provider is set up.
   try {
-    await deliverInvoice(invoice.id, { origin: requestOrigin(request) });
+    await deliverInvoice(invoice.id, { origin });
   } catch {
     // Swallow — delivery is best-effort on this public path.
   }
 
+  await notifyOffice("approved");
   return NextResponse.json({ ok: true, status: "approved" });
 }
