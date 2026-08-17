@@ -36,6 +36,7 @@ import {
   Contact,
   Calendar,
   TrendingUp,
+  Bell,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -82,6 +83,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/estimates", label: "Estimates", Icon: FileText },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
       { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+      { href: "/lawn/notifications", label: "Notifications", Icon: Bell },
       { href: "/calendar", label: "Calendar", Icon: Calendar },
       { href: "/admin/users", label: "Admin", Icon: Users },
     ];
@@ -170,6 +172,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
             "/admin/customers",
             "/crew/time",
             "/lawn/insights",
+            "/lawn/notifications",
           ],
         },
         {
@@ -250,6 +253,7 @@ export function isPublicRoute(pathname: string): boolean {
     pathname.startsWith("/invoices/view/") || // customer invoice portal (token link)
     pathname.startsWith("/co/") || // customer change-order portal (token link)
     pathname.startsWith("/s/") || // reviewer submittal portal (token link)
+    pathname.startsWith("/v/") || // customer lawn visit photo portal (token link)
     pathname.startsWith("/customer/") // customer portal sub-routes
   );
 }

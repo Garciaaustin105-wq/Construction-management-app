@@ -1,17 +1,17 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { OFFICE_OR_PM } from "@/lib/roles";
-import { sendOnMyWayEmail } from "@/lib/email";
+import { sendCustomerNotification, anySent } from "@/lib/customerNotifications";
 
 export const dynamic = "force-dynamic";
 
-// One-tap "your crew is on the way" email to the job's customer. Reachable from
-// the visit page. The caller must be office/admin/PM (OFFICE_OR_PM). Customer
-// email is resolved job → customers.email, falling back to the portal profile
-// email (profiles.email where customer_id = …). A missing email is NON-FATAL —
-// the route returns 200 { ok:false, reason:"no email" } so the client can toast
-// "No email on file" without erroring. The Resend send itself is also
-// non-fatal (sendOnMyWayEmail never throws).
+// One-tap "your crew is on the way" notice to the job's customer. Reachable
+// from the visit page. The caller must be office/admin/PM (OFFICE_OR_PM).
+// Sends the on_my_way notification (templated, opt-in gated, both email+sms
+// attempted, logged) via the notification suite. Each tap sends — there is no
+// one-shot gate, as before. A customer with no contact on file / opted out /
+// notifications disabled resolves to a soft skip (200 { ok:false, reason }),
+// never a 500; the senders themselves never throw.
 
 export async function POST(
   _request: Request,
@@ -40,82 +40,72 @@ export async function POST(
   // Visit → job → customer.
   const { data: visit } = await supabase
     .from("lawn_visits")
-    .select("job_id")
+    .select("job_id, organization_id")
     .eq("id", id)
     .maybeSingle();
-  const jobId = (visit as unknown as { job_id: string | null } | null)?.job_id;
+  const visitRow = visit as unknown as
+    | { job_id: string | null; organization_id: string | null }
+    | null;
+  const jobId = visitRow?.job_id;
   if (!jobId) {
     return NextResponse.json({ error: "Visit not found" }, { status: 404 });
   }
 
   const { data: job } = await supabase
     .from("jobs")
-    .select("customer_id, name, address")
+    .select("customer_id, name, address, organization_id")
     .eq("id", jobId)
     .maybeSingle();
   const jobRow = job as unknown as
-    | { customer_id: string | null; name: string | null; address: string | null }
+    | {
+        customer_id: string | null;
+        name: string | null;
+        address: string | null;
+        organization_id: string | null;
+      }
     | null;
   if (!jobRow) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 
-  const jobName = jobRow.name ?? "your property";
-  const address = jobRow.address ?? null;
   const customerId = jobRow.customer_id ?? null;
+  const organizationId = visitRow?.organization_id ?? jobRow.organization_id ?? null;
 
-  let customerEmail: string | null = null;
-  let customerName: string | null = null;
-
-  if (customerId) {
-    const { data: customer } = await supabase
-      .from("customers")
-      .select("contact_email, name")
-      .eq("id", customerId)
-      .maybeSingle();
-    const c = customer as unknown as
-      | { contact_email: string | null; name: string | null }
-      | null;
-    customerName = c?.name ?? null;
-    customerEmail = c?.contact_email?.trim() || null;
-
-    // Fall back to the portal profile email if the customer row has no email.
-    if (!customerEmail) {
-      const { data: portalProfile } = await supabase
-        .from("profiles")
-        .select("email")
-        .eq("customer_id", customerId)
-        .limit(1)
-        .maybeSingle();
-      const p = portalProfile as unknown as { email: string | null } | null;
-      customerEmail = p?.email?.trim() || null;
-    }
+  if (!customerId || !organizationId) {
+    // No customer to notify (e.g. an internal/yard job) — soft skip.
+    return NextResponse.json({ ok: false, reason: "no customer" });
   }
 
-  if (!customerEmail) {
-    // Non-fatal — no email on file is a soft skip, not an error.
-    return NextResponse.json({ ok: false, reason: "no email" });
-  }
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", organizationId)
+    .maybeSingle();
+  const orgName =
+    (org as unknown as { name: string | null } | null)?.name ?? null;
 
-  try {
-    const { error } = await sendOnMyWayEmail({
-      to: customerEmail,
-      customerName: customerName ?? "",
-      jobName,
-      address,
-    });
-    if (error) {
-      // Distinguish "not configured" so the client can toast the right message.
-      if (error.message === "email not configured") {
-        return NextResponse.json({ ok: false, reason: "not configured" });
-      }
-      return NextResponse.json({ ok: false, error: error.message });
-    }
+  // sendCustomerNotification resolves the customer contact + name + opt-ins,
+  // applies the gate chain, renders the on_my_way template, sends email+sms,
+  // and logs. Never throws. anySent → at least one channel delivered.
+  const results = await sendCustomerNotification({
+    supabase,
+    event: "on_my_way",
+    organizationId,
+    visitId: id,
+    customerId,
+    jobName: jobRow.name ?? null,
+    address: jobRow.address ?? null,
+    orgName,
+  });
+
+  if (anySent(results)) {
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : "email failed" },
-      { status: 502 }
-    );
   }
+
+  // Soft skip reasons (opted out / no contact / notifications disabled /
+  // template inactive). Surface a short reason so the client can toast the
+  // right message without erroring.
+  const reason =
+    results.find((r) => r.reason)?.reason ?? "not sent";
+  return NextResponse.json({ ok: false, reason });
 }

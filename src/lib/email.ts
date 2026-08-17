@@ -436,6 +436,97 @@ export async function sendLawnVisitEmail(
   }
 }
 
+// ── Generic customer email (notification suite) ────────────────────────────
+//
+// Used by src/lib/customerNotifications.ts for the templated visit-milestone
+// sends (reminder / on-my-way / service-complete / review request). Unlike the
+// fixed lawn-visit emails above, the caller supplies the full subject + body
+// (plain text, {{tokens}} already substituted, \n separates paragraphs) so the
+// office-managed templates drive the copy. Threads the tenant's orgName for the
+// customer-facing header/footer (organizations.name) so a customer sees the
+// lawn company's name, not the platform brand — closing the branding gap noted
+// on sendLawnVisitEmail. Non-fatal: returns an error object when RESEND_API_KEY
+// is unset instead of throwing.
+
+function linkify(s: string): string {
+  // escapeHtml() has already run; turn bare URLs into clickable anchors. URL
+  // characters (:/._-~) are not altered by escaping, so this is safe to apply
+  // after escaping.
+  return s.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    (u) => `<a href="${u}" style="color:#15803d;font-weight:600;text-decoration:none;">${u}</a>`
+  );
+}
+
+export type SendCustomerEmailInput = {
+  to: string;
+  subject: string;
+  body: string; // plain text; \n separates paragraphs; tokens already substituted
+  orgName?: string | null; // tenant org name (falls back to BRAND.company)
+};
+
+export async function sendCustomerEmail(
+  input: SendCustomerEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const resend = new Resend(apiKey);
+  const orgName = input.orgName?.trim() || BRAND.company;
+  const bodyParas = input.body
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map(
+      (l) =>
+        `<p style="margin:0 0 12px;color:#111827;font-size:16px;line-height:1.5;">${linkify(
+          escapeHtml(l)
+        )}</p>`
+    )
+    .join("");
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:#15803d;">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${escapeHtml(
+            orgName
+          )}</p>
+          <p style="margin:4px 0 0;color:#bbf7d0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Lawn service</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          ${bodyParas}
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This is an automated message from ${escapeHtml(orgName)}.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${escapeHtml(orgName)}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: input.subject,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}
+
 // ── Invoice email ───────────────────────────────────────────────────────────
 //
 // "You have an invoice to view" — sent when an invoice is delivered to a

@@ -15,6 +15,8 @@ export type CustomerDetailRow = {
   phone: string | null;
   address: string | null;
   notes: string | null;
+  sms_opt_in: boolean | null;
+  email_opt_in: boolean | null;
 };
 
 export type CustomerJob = { id: string; name: string; status: string };
@@ -50,6 +52,8 @@ export default function CustomerDetail({
   const [phone, setPhone] = useState(customer.phone ?? "");
   const [address, setAddress] = useState(customer.address ?? "");
   const [notes, setNotes] = useState(customer.notes ?? "");
+  const [smsOptIn, setSmsOptIn] = useState(customer.sms_opt_in ?? false);
+  const [emailOptIn, setEmailOptIn] = useState(customer.email_opt_in ?? true);
   const [saving, setSaving] = useState(false);
 
   async function save(e: React.FormEvent) {
@@ -59,16 +63,24 @@ export default function CustomerDetail({
       return;
     }
     setSaving(true);
+    const patch: Record<string, unknown> = {
+      name: name.trim(),
+      contact_name: contactName.trim() || null,
+      contact_email: contactEmail.trim() || null,
+      phone: phone.trim() || null,
+      address: address.trim() || null,
+      notes: notes.trim() || null,
+    };
+    // Only the lawn variant has the notification suite — write the opt-in flags
+    // there so the construction form never touches them (both apps share one
+    // DB; a customer could in principle be seen by both deploys).
+    if (isLawn()) {
+      patch.sms_opt_in = smsOptIn;
+      patch.email_opt_in = emailOptIn;
+    }
     const { error } = await supabase
       .from("customers")
-      .update({
-        name: name.trim(),
-        contact_name: contactName.trim() || null,
-        contact_email: contactEmail.trim() || null,
-        phone: phone.trim() || null,
-        address: address.trim() || null,
-        notes: notes.trim() || null,
-      })
+      .update(patch)
       .eq("id", customer.id);
     setSaving(false);
     if (error) toast.error(`Failed: ${error.message}`);
@@ -153,6 +165,36 @@ export default function CustomerDetail({
               rows={3}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
+            {isLawn() && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+                <p className="text-xs font-semibold text-green-800">
+                  Customer notifications
+                </p>
+                <label className="flex items-start gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={emailOptIn}
+                    onChange={(e) => setEmailOptIn(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-green-600"
+                  />
+                  <span>
+                    <b>Email</b> — receive service updates by email (default on).
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={smsOptIn}
+                    onChange={(e) => setSmsOptIn(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-green-600"
+                  />
+                  <span>
+                    <b>Text (SMS)</b> — receive service updates by text. Only
+                    enable with the customer&rsquo;s consent.
+                  </span>
+                </label>
+              </div>
+            )}
             <button
               type="submit"
               disabled={saving}

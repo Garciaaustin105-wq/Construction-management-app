@@ -7,6 +7,10 @@
     {
       "path": "/api/lawn/cron/bill-cycle",
       "schedule": "22 3 1 * *"
+    },
+    {
+      "path": "/api/lawn/cron/remind",
+      "schedule": "8 13 * * *"
     }
   ]
 }

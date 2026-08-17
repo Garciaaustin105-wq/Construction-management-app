@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { runCycleBilling } from "@/lib/lawnBilling";
+import { isLawn } from "@/lib/variant";
 
 // Monthly cycle billing cron. Same logic as the on-demand office route but runs
 // unattended under the service role (RLS bypassed; triggers still fire). CRON_SECRET
@@ -20,6 +21,16 @@ export async function POST(request: Request) {
   const auth = request.headers.get("authorization") ?? "";
   if (auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // One shared database, two Vercel deploys: both schedule these crons (same
+  // vercel.json), so without a guard the lawn + construction invocations would
+  // BOTH bill against the shared DB → double invoices. The construction deploy
+  // is the established cron owner (it's where Vercel Cron has been running these
+  // against the real data); the lawn deploy's scheduled invocation no-ops here.
+  // If cron ownership ever moves to the lawn deploy, flip this gate.
+  if (isLawn()) {
+    return NextResponse.json({ ok: true, skipped: "construction owns cron" });
   }
 
   if (

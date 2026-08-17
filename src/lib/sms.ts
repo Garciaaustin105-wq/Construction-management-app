@@ -28,6 +28,86 @@ export function normalizePhoneToE164(raw: string): string | null {
   return null;
 }
 
+export type SendCustomerSmsInput = {
+  to: string; // raw or E.164 phone; normalized here
+  body: string; // {{tokens}} already substituted
+};
+
+// Generic customer SMS for the notification suite (visit reminder / on-my-way /
+// service-complete / review request). Mirrors the estimate/invoice senders: same
+// env gate (non-fatal "not configured" when TWILIO_* unset), same raw-fetch Twilio
+// call, same parse-once pattern, ≤2-segment (~306 char) truncation. Normalizes the
+// recipient to E.164 here so callers can pass a raw phone. Never throws.
+export async function sendCustomerSms(
+  input: SendCustomerSmsInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+  if (!sid || !token || !fromNumber) {
+    return {
+      data: null,
+      error: {
+        message:
+          "Text messaging isn't configured yet — add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Vercel to enable SMS.",
+      },
+    };
+  }
+
+  const to = normalizePhoneToE164(input.to);
+  if (!to) {
+    return { data: null, error: { message: "Invalid phone number" } };
+  }
+
+  let message = input.body;
+  if (message.length > 306) message = message.slice(0, 303) + "…";
+
+  try {
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(
+        sid
+      )}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Basic " + Buffer.from(sid + ":" + token).toString("base64"),
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          From: fromNumber,
+          To: to,
+          Body: message,
+        }).toString(),
+      }
+    );
+
+    let body: { sid?: string; message?: string } | null = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+
+    if (res.ok && body?.sid) {
+      return { data: { id: body.sid }, error: null };
+    }
+    return {
+      data: null,
+      error: {
+        message: body?.message || `Twilio SMS failed (${res.status})`,
+      },
+    };
+  } catch (err) {
+    return {
+      data: null,
+      error: {
+        message: err instanceof Error ? err.message : "SMS send failed",
+      },
+    };
+  }
+}
+
 export type SendEstimateSmsInput = {
   to: string; // E.164, e.g. +15551234567
   orgName: string;

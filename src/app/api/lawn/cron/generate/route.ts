@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { generateDueDates } from "@/lib/lawnRecurrence";
+import { isLawn } from "@/lib/variant";
 
 // Nightly lawn-visit auto-generation. For every ACTIVE recurring schedule,
 // extend lawn_visits from the day after the last existing visit (or today) through
@@ -51,6 +52,17 @@ export async function POST(request: Request) {
   const auth = request.headers.get("authorization") ?? "";
   if (auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // One shared database, two Vercel deploys: both schedule these crons (same
+  // vercel.json). The construction deploy is the established cron owner (Vercel
+  // Cron has been running these against the real data); the lawn deploy's
+  // scheduled invocation no-ops here to avoid double generation. (Generation is
+  // also idempotent via the unique(recurring_schedule_id, due_date) index, but
+  // skipping the lawn invocation keeps it clean.) If ownership ever moves to the
+  // lawn deploy, flip this gate.
+  if (isLawn()) {
+    return NextResponse.json({ ok: true, skipped: "construction owns cron" });
   }
 
   if (

@@ -4,7 +4,7 @@ import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
-import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, Contact, FileSpreadsheet, Clock, TrendingUp } from "lucide-react";
+import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, Contact, FileSpreadsheet, Clock, TrendingUp, Bell } from "lucide-react";
 
 export default async function OfficePage() {
   const supabase = await createClient();
@@ -51,6 +51,10 @@ export default async function OfficePage() {
               <Link href="/lawn/insights" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
                 <TrendingUp className="w-5 h-5" />
                 Insights
+              </Link>
+              <Link href="/lawn/notifications" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+                <Bell className="w-5 h-5" />
+                Notifications
               </Link>
             </>
           ) : (
