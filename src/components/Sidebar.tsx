@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
@@ -10,8 +9,8 @@ import { useIsDesktop } from "@/lib/useIsDesktop";
 import { BRAND } from "@/lib/brand";
 import { buildNavItems, isPublicRoute, type NavItem } from "@/lib/navItems";
 import { useOrgBranding } from "@/lib/useOrgBranding";
+import { useRole } from "@/lib/useRole";
 import OrgLogo from "@/components/OrgLogo";
-import type { Role } from "@/lib/roles";
 
 // Desktop primary navigation. Persistent fixed-left sidebar, visible only at
 // lg+ (the mobile BottomNav takes over below that). Shares the nav item source
@@ -23,29 +22,10 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
-  const [role, setRole] = useState<Role | null>(null);
+  const role = useRole();
   const isDesktop = useIsDesktop();
   const unread = useUnreadCount(isDesktop);
   const branding = useOrgBranding();
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-      if (active) setRole((data?.role as Role) ?? null);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [supabase]);
 
   // No chrome on public/portal routes - the sidebar would leave an empty gap.
   if (isPublicRoute(pathname)) return null;

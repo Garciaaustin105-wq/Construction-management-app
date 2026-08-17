@@ -8,33 +8,19 @@ import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
 import { useIsDesktop } from "@/lib/useIsDesktop";
 import { buildMobileNav, isPublicRoute, type NavItem } from "@/lib/navItems";
-import { isOfficeLike, type Role } from "@/lib/roles";
+import { isOfficeLike } from "@/lib/roles";
+import { useRole } from "@/lib/useRole";
 
 export default function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
-  const [role, setRole] = useState<Role | null>(null);
+  const role = useRole();
   const [hidden, setHidden] = useState(false);
   const isDesktop = useIsDesktop();
   // Only poll on mobile (desktop uses the Sidebar's poller). Both chrome
   // pieces stay mounted via CSS, so this guard keeps it to one poller.
   const unread = useUnreadCount(!isDesktop);
-
-  useEffect(() => {
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-      setRole((data?.role as Role) ?? null);
-    })();
-  }, [supabase]);
 
   // Auto-hide on scroll down, reveal on scroll up (Facebook-style).
   useEffect(() => {
