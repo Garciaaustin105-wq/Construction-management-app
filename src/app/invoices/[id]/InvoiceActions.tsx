@@ -42,6 +42,7 @@ export default function InvoiceActions({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendingReceipt, setSendingReceipt] = useState(false);
 
   const hasEmail = !!customerEmail?.trim();
   const hasPhone = !!customerPhone?.trim();
@@ -86,6 +87,33 @@ export default function InvoiceActions({
       toast.error("Send failed — please try again.");
     } finally {
       setSending(false);
+    }
+  }
+
+  // Email a payment receipt to the customer (manual path for offline payments
+  // — cash/check — the office recorded by marking the invoice paid). Online
+  // (Stripe) payments get Stripe's own receipt, so this is office-triggered.
+  // The route recomputes totals server-side and only sends for paid invoices.
+  async function sendReceipt() {
+    setSendingReceipt(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/receipt`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data?.error ?? `Send failed (${res.status})`);
+      } else if (data.ok) {
+        toast.success(`Receipt sent to ${data.sentTo?.email ?? "customer"}`);
+      } else {
+        // Non-fatal provider error (e.g. "email not configured" while Resend
+        // is pending) — surface as a warning, not a hard failure.
+        toast.warning(data?.error ?? "Receipt not sent");
+      }
+    } catch {
+      toast.error("Send failed — please try again.");
+    } finally {
+      setSendingReceipt(false);
     }
   }
 
@@ -226,18 +254,34 @@ export default function InvoiceActions({
       )}
 
       {status === "paid" && (
-        <button
-          onClick={() => updateStatus("sent", null)}
-          disabled={busy}
-          className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {busy ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RotateCcw className="w-4 h-4" />
+        <>
+          {hasEmail && (
+            <button
+              onClick={sendReceipt}
+              disabled={sendingReceipt || busy}
+              className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {sendingReceipt ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Mail className="w-4 h-4" />
+              )}
+              Send receipt
+            </button>
           )}
-          Mark Unpaid
-        </button>
+          <button
+            onClick={() => updateStatus("sent", null)}
+            disabled={busy}
+            className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {busy ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RotateCcw className="w-4 h-4" />
+            )}
+            Mark Unpaid
+          </button>
+        </>
       )}
 
       {status === "void" && (

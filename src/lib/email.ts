@@ -645,6 +645,113 @@ export async function sendInvoiceEmail(
   }
 }
 
+// ── Invoice receipt email (manual, offline payments) ────────────────────────
+//
+// "Payment receipt" — emailed to the customer when the office hits Send receipt
+// on a PAID invoice (the manual path for cash/check payments the office recorded
+// by marking the invoice paid). Online (Stripe) payments get Stripe's own
+// receipt, so this is NOT auto-fired from the webhook — only the office (or the
+// owning customer) triggers it via /api/invoices/[id]/receipt. NON-FATAL like
+// the other invoice emails: returns { data: null, error } (never throws) when
+// RESEND_API_KEY is unset, so the route surfaces a clear warning instead of a
+// 500. A paid invoice is paid in full, so the caller always passes amountPaid =
+// the invoice total and balanceDue = "$0.00" (this email renders a "Paid in
+// full" badge when balanceDue is "$0.00"). Mirrors sendInvoiceEmail's template
+// style (same 560-max responsive table) so it renders correctly on desktop +
+// mobile.
+
+export type SendInvoiceReceiptEmailInput = {
+  to: string;
+  customerName: string;
+  orgName: string;
+  jobName: string;
+  amountPaid: string; // pre-formatted money, e.g. "$1,234.50"
+  balanceDue: string; // pre-formatted money, e.g. "$0.00"
+  paidAt: string | null; // pre-formatted date or null
+  invoiceUrl: string; // public /invoices/view/{token} link
+};
+
+export async function sendInvoiceReceiptEmail(
+  input: SendInvoiceReceiptEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const resend = new Resend(apiKey);
+  const org = escapeHtml(input.orgName);
+  const customer = escapeHtml(input.customerName || "there");
+  const job = escapeHtml(input.jobName);
+  const amountPaid = escapeHtml(input.amountPaid);
+  const balanceDue = escapeHtml(input.balanceDue);
+  const paidFull = input.balanceDue.trim() === "$0.00";
+  const badge = paidFull
+    ? '<span style="display:inline-block;margin-left:8px;background:#dcfce7;color:#15803d;padding:3px 10px;border-radius:9999px;font-size:11px;font-weight:700;letter-spacing:.02em;">Paid in full</span>'
+    : "";
+  const dateRow = input.paidAt
+    ? `<p style="margin:12px 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Date paid</p><p style="margin:0;color:#111827;font-size:15px;font-weight:600;">${escapeHtml(
+        input.paidAt
+      )}</p>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:${BRAND.themeColorDark};">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Payment receipt</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${customer},</p>
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            We received your payment of <strong>${amountPaid}</strong> for
+            <strong>${job}</strong>. Thank you!
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr><td style="padding:16px 20px;">
+              <p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Amount paid</p>
+              <p style="margin:0;color:#111827;font-size:28px;font-weight:700;">${amountPaid}</p>
+              <p style="margin:12px 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Balance due</p>
+              <p style="margin:0;color:#111827;font-size:15px;font-weight:600;">${balanceDue}${badge}</p>
+              ${dateRow}
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 8px;">
+            <tr><td align="center">
+              <a href="${input.invoiceUrl}" style="display:inline-block;background:${BRAND.themeColor};color:#ffffff;text-decoration:none;font-size:16px;font-weight:600;padding:14px 28px;border-radius:10px;">View invoice</a>
+            </td></tr>
+          </table>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            This is your payment receipt from ${org}. If you have any questions,
+            please contact ${org} directly.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject: `Payment receipt from ${input.orgName} — ${input.jobName}`,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}
+
 // ── Estimate decision notification (internal, to the office) ────────────────
 //
 // Fired when a customer approves or declines an estimate on the public view
