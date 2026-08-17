@@ -7,6 +7,7 @@ import AddressInput from "@/components/AddressInput";
 import { useToast } from "@/components/Toast";
 import { Loader2, Save, Phone, Mail, Briefcase, Building2 } from "lucide-react";
 import { isLawn } from "@/lib/variant";
+import { SMS_ENABLED } from "@/lib/smsFeature";
 
 export type CustomerDetailRow = {
   id: string;
@@ -76,8 +77,10 @@ export default function CustomerDetail({
     // there so the construction form never touches them (both apps share one
     // DB; a customer could in principle be seen by both deploys).
     if (isLawn()) {
-      patch.sms_opt_in = smsOptIn;
       patch.email_opt_in = emailOptIn;
+      // Don't touch sms_opt_in while SMS is "coming soon" — preserve whatever
+      // value is already on the row (the checkbox is disabled below).
+      if (SMS_ENABLED) patch.sms_opt_in = smsOptIn;
     }
     const { error } = await supabase
       .from("customers")
@@ -186,11 +189,17 @@ export default function CustomerDetail({
                     type="checkbox"
                     checked={smsOptIn}
                     onChange={(e) => setSmsOptIn(e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-green-600"
+                    disabled={!SMS_ENABLED}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <span>
                     <b>Text (SMS)</b> — receive service updates by text. Only
-                    enable with the customer&rsquo;s consent.
+                    enable with the customer&rsquo;s consent.{" "}
+                    {!SMS_ENABLED && (
+                      <span className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 align-middle">
+                        Coming soon
+                      </span>
+                    )}
                   </span>
                 </label>
               </div>

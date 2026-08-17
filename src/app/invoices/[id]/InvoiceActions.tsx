@@ -14,6 +14,7 @@ import {
   Mail,
   MessageSquare,
 } from "lucide-react";
+import { SMS_ENABLED } from "@/lib/smsFeature";
 
 type Channel = "email" | "sms" | "both";
 
@@ -44,7 +45,10 @@ export default function InvoiceActions({
 
   const hasEmail = !!customerEmail?.trim();
   const hasPhone = !!customerPhone?.trim();
-  const [via, setVia] = useState<Channel>(hasEmail ? "email" : hasPhone ? "sms" : "email");
+  // Never default to a channel that requires SMS while SMS is "coming soon".
+  const [via, setVia] = useState<Channel>(
+    hasEmail ? "email" : SMS_ENABLED && hasPhone ? "sms" : "email"
+  );
 
   async function sendToCustomer() {
     setSending(true);
@@ -113,7 +117,9 @@ export default function InvoiceActions({
     setBusy(false);
   }
 
-  const canSend = status !== "void" && (hasEmail || hasPhone);
+  // When SMS is "coming soon", only email can deliver — a phone-only customer
+  // can't be sent to until SMS is enabled.
+  const canSend = status !== "void" && (hasEmail || (SMS_ENABLED && hasPhone));
   const sendLabel = (() => {
     if (via === "sms") return "Send via Text";
     if (via === "both") return "Send via Email & Text";
@@ -141,7 +147,7 @@ export default function InvoiceActions({
               <button
                 type="button"
                 onClick={() => setVia("sms")}
-                disabled={!hasPhone}
+                disabled={!hasPhone || !SMS_ENABLED}
                 className={`py-2 rounded-md text-xs font-semibold flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed ${
                   via === "sms" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"
                 }`}
@@ -151,7 +157,7 @@ export default function InvoiceActions({
               <button
                 type="button"
                 onClick={() => setVia("both")}
-                disabled={!hasEmail || !hasPhone}
+                disabled={!hasEmail || !hasPhone || !SMS_ENABLED}
                 className={`py-2 rounded-md text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed ${
                   via === "both" ? "bg-white text-blue-700 shadow-sm" : "text-gray-600"
                 }`}
@@ -159,6 +165,11 @@ export default function InvoiceActions({
                 Both
               </button>
             </div>
+            {!SMS_ENABLED && (
+              <p className="text-[11px] text-amber-600 mt-1">
+                Text (SMS) is coming soon — only Email is available right now.
+              </p>
+            )}
             <p className="text-xs text-gray-500 mt-1">
               {hasEmail && hasPhone
                 ? `To ${customerEmail} and ${customerPhone}`

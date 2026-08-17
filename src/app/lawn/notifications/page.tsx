@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import { useToast } from "@/components/Toast";
 import { Loader2, Save, Bell, MessageSquare, Mail } from "lucide-react";
+import { SMS_ENABLED } from "@/lib/smsFeature";
 
 // Office-only notification settings + template editor (lawn variant). Manages
 // two org-scoped tables via the browser session client (RLS tier_office for
@@ -296,6 +297,36 @@ export default function LawnNotificationsPage() {
                 (t.channel === "email"
                   ? (t.subject ?? "") !== draft.subject.trim()
                   : false) || t.body !== draft.body;
+              // SMS isn't live yet — render a read-only "Coming soon" card and
+              // skip the editable controls so the office can't toggle/edit a
+              // channel that won't deliver.
+              if (t.channel === "sms" && !SMS_ENABLED) {
+                return (
+                  <div
+                    key={t.id}
+                    className="bg-white rounded-lg p-3 shadow-sm space-y-2 opacity-80"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
+                        <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
+                        Text (SMS)
+                      </span>
+                      <span className="text-[10px] font-semibold px-2 py-1 rounded bg-amber-100 text-amber-700">
+                        Coming soon
+                      </span>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={draft.body}
+                      rows={2}
+                      className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono bg-gray-50 text-gray-400 cursor-not-allowed"
+                    />
+                    <p className="text-[11px] text-gray-400">
+                      Text messaging arrives once Twilio is configured.
+                    </p>
+                  </div>
+                );
+              }
               return (
                 <div
                   key={t.id}

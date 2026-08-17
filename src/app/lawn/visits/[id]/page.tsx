@@ -263,12 +263,28 @@ export default function VisitDetailPage({
     };
     if (data.ok) {
       toast.success("On-my-way sent");
-    } else if (data.reason === "no email") {
-      toast.warning("No email on file");
-    } else if (data.reason === "not configured") {
-      toast.warning("Email not configured");
     } else {
-      toast.error(`Failed: ${data.error ?? "email not sent"}`);
+      // Surface the real skip/failure reason from the notification suite. The
+      // route returns one of: disabled | opt-out | no-contact | no-template |
+      // "no customer" | a send error message (e.g. "email not configured") |
+      // "not sent". Map the known ones to friendly text; fall back to showing
+      // the raw reason so nothing is ever hidden behind "email not sent".
+      const reason = data.reason ?? data.error ?? "email not sent";
+      const friendly: Record<string, string> = {
+        "no customer": "No customer on this job",
+        disabled: "Notifications are turned off — enable them in Settings",
+        "opt-out": "Customer opted out of email notifications",
+        "no-contact": "No email on file for this customer",
+        "no-template": "No active email template — add one in Notifications",
+        "not sent": "Email not sent",
+        "email not configured":
+          "Email not configured — set RESEND_API_KEY + RESEND_FROM in Vercel",
+      };
+      const msg = friendly[reason] ?? `Failed: ${reason}`;
+      // Soft skips (no customer / no contact / opt-out) are expected, not errors.
+      const soft = reason === "no customer" || reason === "no-contact" || reason === "opt-out";
+      if (soft) toast.warning(msg);
+      else toast.error(msg);
     }
   }
 
