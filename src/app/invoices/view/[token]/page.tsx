@@ -46,10 +46,13 @@ export default async function PublicInvoicePage({
   let orgEmail: string | null = null;
   let orgLogoUrl: string | null = null;
   let orgConnectChargesEnabled = false;
+  let orgConnectPayoutsEnabled = false;
   if (invoice.organization_id) {
     const { data: o } = await admin
       .from("organizations")
-      .select("name, address, phone, email, logo_path, connect_charges_enabled")
+      .select(
+        "name, address, phone, email, logo_path, connect_charges_enabled, connect_payouts_enabled"
+      )
       .eq("id", invoice.organization_id)
       .maybeSingle();
     if (o) {
@@ -58,6 +61,7 @@ export default async function PublicInvoicePage({
       orgPhone = o.phone;
       orgEmail = o.email;
       orgConnectChargesEnabled = !!o.connect_charges_enabled;
+      orgConnectPayoutsEnabled = !!o.connect_payouts_enabled;
       if (o.logo_path) {
         orgLogoUrl = admin.storage
           .from("org-logos")
@@ -88,7 +92,11 @@ export default async function PublicInvoicePage({
   const justPaid = paidParam === "1";
   const canceled = canceledParam === "1";
   const canPay =
-    !isPaid && invoice.status !== "void" && balanceDue > 0 && orgConnectChargesEnabled;
+    !isPaid &&
+    invoice.status !== "void" &&
+    balanceDue > 0 &&
+    orgConnectChargesEnabled &&
+    orgConnectPayoutsEnabled;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">

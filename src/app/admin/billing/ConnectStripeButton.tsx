@@ -8,10 +8,12 @@ export default function ConnectStripeButton({
   initialConnectAccountId,
   initialChargesEnabled,
   initialDetailsSubmitted,
+  initialPayoutsEnabled,
 }: {
   initialConnectAccountId: string | null;
   initialChargesEnabled: boolean;
   initialDetailsSubmitted: boolean;
+  initialPayoutsEnabled: boolean;
 }) {
   const toast = useToast();
   const searchParams = useSearchParams();
@@ -19,6 +21,7 @@ export default function ConnectStripeButton({
   const [connectAccountId] = useState<string | null>(initialConnectAccountId);
   const [chargesEnabled, setChargesEnabled] = useState(initialChargesEnabled);
   const [detailsSubmitted, setDetailsSubmitted] = useState(initialDetailsSubmitted);
+  const [payoutsEnabled, setPayoutsEnabled] = useState(initialPayoutsEnabled);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -35,6 +38,7 @@ export default function ConnectStripeButton({
         if (data.connected) {
           setChargesEnabled(!!data.chargesEnabled);
           setDetailsSubmitted(!!data.detailsSubmitted);
+          setPayoutsEnabled(!!data.payoutsEnabled);
         }
         if (data.error && !silent) toast.warning(data.error);
       } catch {
@@ -100,9 +104,22 @@ export default function ConnectStripeButton({
 
       {connectAccountId && (
         <>
-          {chargesEnabled ? (
+          {/* "Fully verified" = charges AND payouts both enabled. An Express
+              account can have charges_enabled but payouts disabled (bank/
+              identity not finished) — in that state Pay Here is OFF (funds
+              would strand in the Stripe balance), so we warn explicitly. */}
+          {chargesEnabled && payoutsEnabled ? (
             <div className="flex items-center gap-2 text-green-700">
               <CheckCircle2 className="w-4 h-4" /> <span className="text-sm font-medium">Stripe connected — ready to accept payments</span>
+            </div>
+          ) : chargesEnabled && !payoutsEnabled ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-amber-700">
+                <AlertCircle className="w-4 h-4" /> <span className="text-sm font-medium">Almost there — payouts not enabled yet</span>
+              </div>
+              <p className="text-xs text-amber-600">
+                Customers cannot pay online until your account is fully verified. Finish your bank account + identity verification in Stripe so payouts are enabled — until then the Pay button is hidden on invoices.
+              </p>
             </div>
           ) : !detailsSubmitted ? (
             <div className="flex items-center gap-2 text-amber-700">
@@ -114,7 +131,7 @@ export default function ConnectStripeButton({
             </div>
           )}
 
-          {chargesEnabled ? (
+          {chargesEnabled && payoutsEnabled ? (
             <button
               onClick={() => refreshStatus(false)}
               disabled={refreshing}

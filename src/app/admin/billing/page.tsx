@@ -59,7 +59,7 @@ export default async function BillingPage() {
   const { data: orgRow } = await supabase
     .from("organizations")
     .select(
-      "stripe_connect_account_id, connect_charges_enabled, connect_details_submitted"
+      "stripe_connect_account_id, connect_charges_enabled, connect_details_submitted, connect_payouts_enabled"
     )
     .eq("id", tenant.orgId)
     .maybeSingle();
@@ -70,6 +70,7 @@ export default async function BillingPage() {
       }
       initialChargesEnabled={!!orgRow?.connect_charges_enabled}
       initialDetailsSubmitted={!!orgRow?.connect_details_submitted}
+      initialPayoutsEnabled={!!orgRow?.connect_payouts_enabled}
     />
   );
 

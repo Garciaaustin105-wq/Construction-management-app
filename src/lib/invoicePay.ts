@@ -23,16 +23,23 @@ import { computeTotal } from "@/lib/money";
 // ── Connected-account lookup ───────────────────────────────────────────────
 export async function getConnectAccount(
   orgId: string
-): Promise<{ connectAccountId: string | null; chargesEnabled: boolean }> {
+): Promise<{
+  connectAccountId: string | null;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+}> {
   const admin = createAdminClient();
   const { data } = await admin
     .from("organizations")
-    .select("stripe_connect_account_id, connect_charges_enabled")
+    .select(
+      "stripe_connect_account_id, connect_charges_enabled, connect_payouts_enabled"
+    )
     .eq("id", orgId)
     .maybeSingle();
   return {
     connectAccountId: (data?.stripe_connect_account_id as string) ?? null,
     chargesEnabled: !!data?.connect_charges_enabled,
+    payoutsEnabled: !!data?.connect_payouts_enabled,
   };
 }
 
@@ -72,14 +79,19 @@ export async function createInvoiceCheckoutSession(input: {
   const balanceDue = Math.max(0, total - amountPaid);
   if (balanceDue <= 0) throw new Error("This invoice has no balance due");
 
-  // Org must have a connected, charges-enabled Stripe account.
-  const { connectAccountId, chargesEnabled } = await getConnectAccount(
-    invoice.organization_id
-  );
+  // Org must be FULLY verified to accept online payments: a connected account
+  // with both charges_enabled AND payouts_enabled. Gating on payouts too
+  // prevents a charge from landing in an account whose bank/identity setup
+  // isn't finished — which would strand the money in the Stripe balance with
+  // no payout path to the org's bank.
+  const { connectAccountId, chargesEnabled, payoutsEnabled } =
+    await getConnectAccount(invoice.organization_id);
   if (!connectAccountId)
     throw new Error("This business hasn't set up online payments yet");
-  if (!chargesEnabled)
-    throw new Error("This business hasn't finished setting up online payments yet");
+  if (!chargesEnabled || !payoutsEnabled)
+    throw new Error(
+      "This business hasn't finished verifying its account for online payments yet"
+    );
 
   const customer = invoice.customers as unknown as
     | { name: string | null; contact_email: string | null; phone: string | null }

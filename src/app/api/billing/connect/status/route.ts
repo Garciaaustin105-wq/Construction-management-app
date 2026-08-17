@@ -35,7 +35,9 @@ export async function POST() {
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("stripe_connect_account_id, connect_charges_enabled, connect_details_submitted")
+    .select(
+      "stripe_connect_account_id, connect_charges_enabled, connect_details_submitted, connect_payouts_enabled"
+    )
     .eq("id", tenant.orgId)
     .maybeSingle();
 
@@ -45,22 +47,29 @@ export async function POST() {
       connected: false,
       chargesEnabled: false,
       detailsSubmitted: false,
+      payoutsEnabled: false,
     });
   }
 
-  // Pull the live status from Stripe and cache it.
+  // Pull the live status from Stripe and cache it. payouts_enabled is tracked
+  // alongside charges_enabled — an Express account can have charges_enabled
+  // but payouts disabled (bank/identity not finished), which strands money in
+  // the Stripe balance. Pay Here is gated on BOTH being true.
   const stripe = await getStripe();
   let chargesEnabled = !!org?.connect_charges_enabled;
   let detailsSubmitted = !!org?.connect_details_submitted;
+  let payoutsEnabled = !!org?.connect_payouts_enabled;
   try {
     const account = await stripe.accounts.retrieve(accountId);
     chargesEnabled = !!account.charges_enabled;
     detailsSubmitted = !!account.details_submitted;
+    payoutsEnabled = !!account.payouts_enabled;
     await createAdminClient()
       .from("organizations")
       .update({
         connect_charges_enabled: chargesEnabled,
         connect_details_submitted: detailsSubmitted,
+        connect_payouts_enabled: payoutsEnabled,
       })
       .eq("id", tenant.orgId);
   } catch (err) {
@@ -70,6 +79,7 @@ export async function POST() {
       connected: true,
       chargesEnabled,
       detailsSubmitted,
+      payoutsEnabled,
       error: err instanceof Error ? err.message : "Could not reach Stripe",
     });
   }
@@ -78,5 +88,6 @@ export async function POST() {
     connected: true,
     chargesEnabled,
     detailsSubmitted,
+    payoutsEnabled,
   });
 }
