@@ -463,6 +463,11 @@ export type SendCustomerEmailInput = {
   subject: string;
   body: string; // plain text; \n separates paragraphs; tokens already substituted
   orgName?: string | null; // tenant org name (falls back to BRAND.company)
+  // Optional Google Static Maps property image (built from the job's lawn_jobs
+  // pin via buildStaticMapUrl). Rendered as a real <img> in the template — NOT
+  // through the escaped plain-text body (which would escape the tag). Omitted
+  // when null/empty (no pin or GOOGLE_MAPS_STATIC_KEY unset).
+  mapImageUrl?: string | null;
 };
 
 export async function sendCustomerEmail(
@@ -486,6 +491,13 @@ export async function sendCustomerEmail(
     )
     .join("");
 
+  // Optional Static Maps property image. Rendered as a real <img> (NOT through
+  // the escaped body). URL is built server-side by buildStaticMapUrl from our
+  // own key — trusted, so it goes into src unescaped.
+  const mapImg = input.mapImageUrl
+    ? `<img src="${input.mapImageUrl}" width="300" height="160" alt="Property map" style="display:block;width:100%;max-width:300px;height:auto;border-radius:8px;margin:16px 0;border:1px solid #e5e7eb;" />`
+    : "";
+
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
@@ -500,6 +512,7 @@ export async function sendCustomerEmail(
         </td></tr>
         <tr><td style="padding:28px;">
           ${bodyParas}
+          ${mapImg}
           <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
             This is an automated message from ${escapeHtml(orgName)}.
           </p>

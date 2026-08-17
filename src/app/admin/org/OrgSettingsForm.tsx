@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Upload, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { createClient } from "@/lib/supabase/client";
+import AddressInput from "@/components/AddressInput";
 import { invalidateOrgBranding } from "@/lib/useOrgBranding";
 import { validateUpload } from "@/lib/uploadValidate";
 
@@ -188,10 +189,9 @@ export default function OrgSettingsForm({
             </label>
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Address</span>
-              <input
-                type="text"
+              <AddressInput
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                onChange={setAddress}
                 className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
               />
             </label>

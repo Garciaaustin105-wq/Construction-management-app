@@ -1,6 +1,7 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { sendCustomerNotification } from "@/lib/customerNotifications";
+import { buildStaticMapUrl } from "@/lib/staticMap";
 import { isLawn } from "@/lib/variant";
 
 // Morning-of customer reminders for today's lawn visits. Fires ~8 AM local
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
     try {
       const { data: job } = await admin
         .from("jobs")
-        .select("customer_id, name, address, organization_id")
+        .select("customer_id, name, address, organization_id, lawn_jobs(map_lat, map_lng)")
         .eq("id", v.job_id)
         .maybeSingle();
       const j = job as unknown as
@@ -94,6 +95,7 @@ export async function POST(request: Request) {
             name: string | null;
             address: string | null;
             organization_id: string | null;
+            lawn_jobs: { map_lat: number | null; map_lng: number | null } | null;
           }
         | null;
       const customerId = j?.customer_id;
@@ -109,6 +111,11 @@ export async function POST(request: Request) {
         .maybeSingle();
       const orgName = (org as unknown as { name: string | null } | null)?.name ?? null;
 
+      // Property map image for the email (Static Maps). null when the job has no
+      // pin or GOOGLE_MAPS_STATIC_KEY is unset → email sends without the image.
+      const pin = j?.lawn_jobs;
+      const mapImageUrl = buildStaticMapUrl(pin?.map_lat ?? null, pin?.map_lng ?? null);
+
       const results = await sendCustomerNotification({
         supabase: admin,
         event: "visit_reminder",
@@ -120,6 +127,7 @@ export async function POST(request: Request) {
         address: j?.address ?? null,
         serviceDate: v.due_date,
         orgName,
+        mapImageUrl,
       });
       if (results.some((r) => r.status === "sent")) sent += 1;
     } catch (e) {

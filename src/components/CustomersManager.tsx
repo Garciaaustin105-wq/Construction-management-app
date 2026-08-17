@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import AddressInput from "@/components/AddressInput";
 import { useToast } from "@/components/Toast";
 import { Plus, Trash2, Loader2, Phone, Mail, Building2 } from "lucide-react";
 
@@ -151,11 +152,10 @@ export default function CustomersManager({
             onChange={(e) => setContactEmail(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
-          <input
-            type="text"
+          <AddressInput
             placeholder="Address"
             value={address}
-            onChange={(e) => setAddress(e.target.value)}
+            onChange={setAddress}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
           <button

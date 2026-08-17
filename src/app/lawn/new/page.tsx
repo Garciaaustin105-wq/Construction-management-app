@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Sprout } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { createClient } from "@/lib/supabase/client";
+import AddressInput from "@/components/AddressInput";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 import { generateDueDates } from "@/lib/lawnRecurrence";
 
@@ -325,10 +326,9 @@ export default function NewLawnJobPage() {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Service Address</span>
-            <input
-              type="text"
+            <AddressInput
               value={address}
-              onChange={(e) => setAddress(e.target.value)}
+              onChange={setAddress}
               className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
               placeholder="123 Main St, City"
             />

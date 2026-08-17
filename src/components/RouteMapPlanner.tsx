@@ -1,18 +1,22 @@
 "use client";
 
-// Map-first route planner for /lawn/routes. Replaces the old zone-list
-// RoutePlanner. Two panes: a Leaflet map (pins per mapped stop, numbered by
-// list position) + a @dnd-kit drag-to-reorder stop list with crew assignment.
+// Map-first route planner for /lawn/routes. Two panes: a Google map (pins per
+// mapped stop, numbered by list position, plus a real DRIVING route line via
+// the Directions API) + a @dnd-kit drag-to-reorder stop list with crew
+// assignment.
 //
-// The save contract is unchanged from the old planner: per-visit
-// `lawn_visits.update({ crew_id, route_order })` in Promise.all, where
-// route_order is a per-crew 1..n for the day (null = unassigned). The crew
-// "My Route" sorts by (due_date, route_order nullsLast) — preserved.
+// The save contract is unchanged: per-visit `lawn_visits.update({ crew_id,
+// route_order })` in Promise.all, where route_order is a per-crew 1..n for the
+// day (null = unassigned). The crew "My Route" sorts by (due_date, route_order
+// nullsLast) — preserved.
 //
-// Pin setting: "Geocode" geocodes the job's address via /api/lawn/geocode
-// (Nominatim, server-side) and writes lawn_jobs.map_lat/map_lng; "On map"
-// enters a drop mode where the next map click sets the pin. "Geocode all
-// unpinned" does the address batch (throttled ~1/s to respect Nominatim).
+// Pin setting: "Geocode" geocodes the job's address in-browser via the Google
+// Maps Geocoder (client-side, under NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) and writes
+// lawn_jobs.map_lat/map_lng through POST /api/lawn/geocode; "On map" enters a
+// drop mode where the next map click sets the pin. "Geocode all unpinned" does
+// the address batch (concurrency-capped ~4 — the Geocoder has no Nominatim
+// 1 req/s limit). Real drive minutes/miles come back from the Directions API
+// via onDirectionsResult; the straight-line estimate is the fallback.
 
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
@@ -20,17 +24,19 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import RouteList from "@/components/RouteList";
+import { loadGoogleMaps } from "@/lib/googleMaps";
 import {
   nearestNeighborRoute,
+  nearestNeighborByMatrix,
   routeMiles,
   estDriveMinutes,
   type RouteStop,
   type CrewInfo,
 } from "@/lib/lawnRouting";
-import { Save, Loader2, Search, MapPin, X, Info, RouteIcon } from "lucide-react";
+import { Save, Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles } from "lucide-react";
 
-// Leaflet touches window on import — load the map client-only.
-const RouteMapView = dynamic(() => import("@/components/RouteMapView"), {
+// Google Maps touches window — load the map client-only.
+const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
   ssr: false,
   loading: () => (
     <div className="w-full h-[320px] lg:h-[560px] rounded-lg bg-gray-100 animate-pulse" />
@@ -73,7 +79,13 @@ export default function RouteMapPlanner({
   const [geocoding, setGeocoding] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [helpOpen, setHelpOpen] = useState(true);
+  // Real drive time/distance from the Directions API (null until the route
+  // resolves, or when it can't be computed — then we fall back to the
+  // straight-line estimate below).
+  const [realMinutes, setRealMinutes] = useState<number | null>(null);
+  const [realMiles, setRealMiles] = useState<number | null>(null);
 
   const mappedCount = ordered.filter((s) => s.pos).length;
   const unmapped = ordered.filter((s) => !s.pos);
@@ -92,25 +104,22 @@ export default function RouteMapPlanner({
     }
     setGeocoding((g) => ({ ...g, [stop.id]: true }));
     try {
-      const r = await fetch(
-        `/api/lawn/geocode?address=${encodeURIComponent(stop.address)}`
-      );
-      if (r.status === 404) {
+      const gmaps = await loadGoogleMaps();
+      const geocoder = new gmaps.maps.Geocoder();
+      const res = await geocoder.geocode({ address: stop.address, region: "us" });
+      const loc = res.results?.[0]?.geometry?.location;
+      if (!loc) {
         toast.error(`No geocoding match for ${stop.jobName}`);
         return false;
       }
-      if (r.status === 429) {
-        toast.warning(`Geocoder rate-limited — wait a moment and retry ${stop.jobName}`);
-        return false;
-      }
-      if (!r.ok) {
-        toast.error("Geocoding failed");
-        return false;
-      }
-      const { lat, lng } = (await r.json()) as { lat: number; lng: number };
+      const lat = loc.lat();
+      const lng = loc.lng();
       const ok = await savePin(stop.jobId, lat, lng);
       if (ok) setStopPos(stop.id, { lat, lng });
       return ok;
+    } catch {
+      toast.error("Geocoding failed");
+      return false;
     } finally {
       setGeocoding((g) => ({ ...g, [stop.id]: false }));
     }
@@ -138,14 +147,69 @@ export default function RouteMapPlanner({
     }
     setBulkBusy(true);
     let done = 0;
-    // Sequential + throttled (~1.1s) to respect Nominatim's 1 req/s policy.
-    for (const s of targets) {
-      const ok = await geocodeOne(s);
-      if (ok) done += 1;
-      await new Promise((res) => setTimeout(res, 1100));
+    // The Google Geocoder has no Nominatim 1 req/s limit; cap concurrency to
+    // ~4 in flight so a big batch is quick without hammering the service.
+    const CHUNK = 4;
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const slice = targets.slice(i, i + CHUNK);
+      const results = await Promise.all(slice.map((s) => geocodeOne(s)));
+      done += results.filter(Boolean).length;
     }
     setBulkBusy(false);
     toast.success(`Geocoded ${done} of ${targets.length} stop${targets.length === 1 ? "" : "s"}.`);
+  }
+
+  // Reorder the MAPPED stops by real DRIVE time (Distance Matrix API), keeping
+  // any previously-saved crew assignments (keyed by stop id). Unmapped stops
+  // can't be sequenced by distance, so they stay appended in their current
+  // order. Non-destructive: only mutates local `ordered` state — the dispatcher
+  // still has to hit Save to persist. Distance Matrix caps at 25
+  // origins/destinations per request, so we gate at 25 mapped stops.
+  async function optimizeOrder() {
+    const mapped = ordered.filter((s) => s.pos);
+    if (mapped.length < 2) {
+      toast.info("Pin at least 2 stops to optimize the order.");
+      return;
+    }
+    if (mapped.length > 25) {
+      toast.warning("Too many pinned stops to optimize (max 25).");
+      return;
+    }
+    setOptimizing(true);
+    try {
+      const gmaps = await loadGoogleMaps();
+      const positions = mapped.map((s) => ({ lat: s.pos!.lat, lng: s.pos!.lng }));
+      const service = new gmaps.maps.DistanceMatrixService();
+      const res = await service.getDistanceMatrix({
+        origins: positions,
+        destinations: positions,
+        travelMode: gmaps.maps.TravelMode.DRIVING,
+      });
+      // Build an N×N duration matrix (seconds). Unreachable pairs (status !==
+      // OK) are left as Infinity so nearestNeighborByMatrix falls back to
+      // haversine for that leg instead of stalling.
+      const n = mapped.length;
+      const matrix: number[][] = Array.from({ length: n }, () =>
+        new Array(n).fill(Infinity)
+      );
+      for (let i = 0; i < n; i++) {
+        const elements = res.rows[i]?.elements ?? [];
+        for (let j = 0; j < n; j++) {
+          const el = elements[j];
+          if (el && el.status === "OK" && typeof el.duration?.value === "number") {
+            matrix[i][j] = el.duration.value;
+          }
+        }
+      }
+      const optimized = nearestNeighborByMatrix(mapped, matrix);
+      const unmapped = ordered.filter((s) => !s.pos);
+      setOrdered([...optimized, ...unmapped]);
+      toast.success("Reordered by real drive time — review and Save.");
+    } catch {
+      toast.error("Could not optimize the order — please try again.");
+    } finally {
+      setOptimizing(false);
+    }
   }
 
   async function onMapClick(lat: number, lng: number) {
@@ -229,20 +293,38 @@ export default function RouteMapPlanner({
           {mappedCount}/{ordered.length} pinned
           {mappedCount >= 2 && (
             <span className="text-gray-400">
-              · ~{miles.toFixed(1)} mi · ~{Math.round(estDriveMinutes(miles))} min
+              · ~{(realMiles ?? miles).toFixed(1)} mi · ~
+              {Math.round(realMinutes ?? estDriveMinutes(miles))} min
+              {realMinutes == null ? " (est.)" : ""}
             </span>
           )}
         </span>
-        {unmapped.length > 0 && (
-          <button
-            onClick={geocodeAll}
-            disabled={bulkBusy}
-            className="inline-flex items-center gap-1 text-green-700 font-semibold disabled:opacity-50"
-          >
-            {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-            Geocode all unpinned ({unmapped.length})
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {mappedCount >= 2 && (
+            <button
+              onClick={optimizeOrder}
+              disabled={optimizing}
+              className="inline-flex items-center gap-1 text-green-700 font-semibold disabled:opacity-50"
+            >
+              {optimizing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              Optimize order
+            </button>
+          )}
+          {unmapped.length > 0 && (
+            <button
+              onClick={geocodeAll}
+              disabled={bulkBusy}
+              className="inline-flex items-center gap-1 text-green-700 font-semibold disabled:opacity-50"
+            >
+              {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              Geocode all unpinned ({unmapped.length})
+            </button>
+          )}
+        </div>
       </div>
 
       {unmapped.length > 0 && (
@@ -254,12 +336,17 @@ export default function RouteMapPlanner({
       )}
 
       {/* Map */}
-      <RouteMapView
+      <GoogleRouteMap
         stops={ordered}
         highlightId={highlightId}
         dropTargetId={dropTargetId}
         onMarkerClick={(id) => setHighlightId((h) => (h === id ? null : id))}
         onMapClick={onMapClick}
+        showDirections
+        onDirectionsResult={(min, mi) => {
+          setRealMinutes(min);
+          setRealMiles(mi);
+        }}
       />
 
       {/* Drag-to-reorder list */}

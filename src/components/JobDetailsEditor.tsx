@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import AddressInput from "@/components/AddressInput";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/Toast";
 import { Spinner } from "@/components/Skeleton";
@@ -102,9 +103,9 @@ export default function JobDetailsEditor({
             <label className="block text-xs font-medium text-gray-500 mb-1">
               Location / address
             </label>
-            <input
+            <AddressInput
               value={address}
-              onChange={(e) => setAddress(e.target.value)}
+              onChange={setAddress}
               placeholder="123 Main St, Austin, TX"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
             />

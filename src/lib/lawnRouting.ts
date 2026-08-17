@@ -99,6 +99,78 @@ export function nearestNeighborRoute(stops: RouteStop[]): RouteStop[] {
   return [...ordered, ...unmapped];
 }
 
+/**
+ * Greedy nearest-neighbor ordering of MAPPED stops keyed on a real drive-
+ * duration matrix (seconds) from the Distance Matrix API, instead of straight-
+ * line haversine. `durationSec[i][j]` is the drive duration from mappedStops[i]
+ * to mappedStops[j]. The seed is the stop closest (haversine) to the centroid —
+ * the same starting heuristic as nearestNeighborRoute — then each step picks
+ * the not-yet-visited stop with the shortest DRIVE time from the current one.
+ *
+ * If a matrix cell is missing/invalid (Distance Matrix returns null for
+ * unreachable pairs), that leg falls back to haversine so the walk never stalls.
+ *
+ * Returns only the mapped stops in optimized order; the CALLER appends unmapped
+ * stops (which have no matrix row) after this, exactly as nearestNeighborRoute
+ * appends them. If the matrix is undersized for the stop list, bail safe and
+ * return the input order unchanged.
+ */
+export function nearestNeighborByMatrix(
+  mappedStops: RouteStop[],
+  durationSec: number[][]
+): RouteStop[] {
+  const n = mappedStops.length;
+  if (n <= 1) return [...mappedStops];
+  if (durationSec.length < n) return [...mappedStops];
+
+  const centroid: LatLng = {
+    lat: mappedStops.reduce((s, p) => s + (p.pos!.lat), 0) / n,
+    lng: mappedStops.reduce((s, p) => s + (p.pos!.lng), 0) / n,
+  };
+  let seedIdx = 0;
+  let seedDist = Infinity;
+  for (let i = 0; i < n; i++) {
+    const d = haversineMiles(centroid, mappedStops[i].pos!);
+    if (d < seedDist) {
+      seedDist = d;
+      seedIdx = i;
+    }
+  }
+
+  const visited = new Set<number>([seedIdx]);
+  const ordered: RouteStop[] = [mappedStops[seedIdx]];
+  let cursor = seedIdx;
+  while (ordered.length < n) {
+    let bestIdx = -1;
+    let bestDur = Infinity;
+    const row = durationSec[cursor] ?? [];
+    for (let j = 0; j < n; j++) {
+      if (visited.has(j)) continue;
+      const d = row[j];
+      if (typeof d === "number" && d >= 0 && d < bestDur) {
+        bestDur = d;
+        bestIdx = j;
+      }
+    }
+    if (bestIdx === -1) {
+      // No usable drive duration from the cursor — fall back to haversine among
+      // the remaining stops so we never get stuck mid-walk.
+      for (let j = 0; j < n; j++) {
+        if (visited.has(j)) continue;
+        const d = haversineMiles(mappedStops[cursor].pos!, mappedStops[j].pos!);
+        if (d < bestDur) {
+          bestDur = d;
+          bestIdx = j;
+        }
+      }
+    }
+    visited.add(bestIdx);
+    ordered.push(mappedStops[bestIdx]);
+    cursor = bestIdx;
+  }
+  return ordered;
+}
+
 /** Total straight-line miles along an ordered stop list (sum of legs). */
 export function routeMiles(ordered: RouteStop[]): number {
   let total = 0;

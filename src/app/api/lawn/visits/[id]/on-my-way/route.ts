@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { OFFICE_OR_PM } from "@/lib/roles";
 import { sendCustomerNotification, anySent } from "@/lib/customerNotifications";
+import { buildStaticMapUrl } from "@/lib/staticMap";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ export async function POST(
 
   const { data: job } = await supabase
     .from("jobs")
-    .select("customer_id, name, address, organization_id")
+    .select("customer_id, name, address, organization_id, lawn_jobs(map_lat, map_lng)")
     .eq("id", jobId)
     .maybeSingle();
   const jobRow = job as unknown as
@@ -62,6 +63,7 @@ export async function POST(
         name: string | null;
         address: string | null;
         organization_id: string | null;
+        lawn_jobs: { map_lat: number | null; map_lng: number | null } | null;
       }
     | null;
   if (!jobRow) {
@@ -84,6 +86,11 @@ export async function POST(
   const orgName =
     (org as unknown as { name: string | null } | null)?.name ?? null;
 
+  // Property map image for the email (Static Maps). null when the job has no
+  // pin or GOOGLE_MAPS_STATIC_KEY is unset → email sends without the image.
+  const pin = jobRow?.lawn_jobs;
+  const mapImageUrl = buildStaticMapUrl(pin?.map_lat ?? null, pin?.map_lng ?? null);
+
   // sendCustomerNotification resolves the customer contact + name + opt-ins,
   // applies the gate chain, renders the on_my_way template, sends email+sms,
   // and logs. Never throws. anySent → at least one channel delivered.
@@ -96,6 +103,7 @@ export async function POST(
     jobName: jobRow.name ?? null,
     address: jobRow.address ?? null,
     orgName,
+    mapImageUrl,
   });
 
   if (anySent(results)) {

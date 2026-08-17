@@ -3,11 +3,21 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
-import { Loader2, Check, CalendarDays, Sprout, Camera } from "lucide-react";
+import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation } from "lucide-react";
+import type { RouteStop } from "@/lib/lawnRouting";
+
+// Google Maps touches window — load the map client-only.
+const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[300px] rounded-lg bg-gray-100 animate-pulse" />
+  ),
+});
 
 // Field crew's own route. Lists lawn_visits where crew_id = the signed-in crew
 // member (crew / superintendent), grouped Overdue / Today / Upcoming. Crew can
@@ -15,6 +25,9 @@ import { Loader2, Check, CalendarDays, Sprout, Camera } from "lucide-react";
 // office-only and would 403 for crew; crew done does NOT auto-email the
 // customer, office reviews completed visits). Tapping a card opens the visit
 // page for before/after photos + details (opened to crew for their own visits).
+//
+// A read-only Google driving-path map of today's pinned stops sits above the
+// list, with an "Open in Google Maps" link that launches turn-by-turn nav.
 
 type Visit = {
   id: string;
@@ -23,10 +36,12 @@ type Visit = {
   status: string;
   route_order: number | null;
   // customers reached through jobs (lawn_visits has job_id, no customer_id).
+  // lawn_jobs carries the map pin (map_lat/map_lng) set by the office planner.
   jobs: {
     name: string;
     address: string | null;
     customers: { name: string | null } | null;
+    lawn_jobs: { map_lat: number | null; map_lng: number | null } | null;
   } | null;
 };
 
@@ -130,6 +145,10 @@ function Section({
   );
 }
 
+// Google Maps' dir URL caps at 9 stops total (origin + up to 8 waypoints-ish).
+// Slice before splitting so a long day still produces a valid nav link.
+const MAX_DIR_STOPS = 9;
+
 export default function MyRoutePage() {
   const router = useRouter();
   const toast = useToast();
@@ -160,13 +179,16 @@ export default function MyRoutePage() {
       setAuthorized(true);
 
       // My pending visits due within the next 14 days (RLS crew-read keyed on
-      // crew_id = auth.uid() admits exactly my rows).
+      // crew_id = auth.uid() admits exactly my rows). Nests the job's map pin
+      // (lawn_jobs) so the driving-path map can plot today's stops.
       const horizon = new Date();
       horizon.setDate(horizon.getDate() + 14);
       const horizonDate = horizon.toISOString().slice(0, 10);
       const { data: rows } = await supabase
         .from("lawn_visits")
-        .select("id, job_id, due_date, status, route_order, jobs(name, address, customers(name))")
+        .select(
+          "id, job_id, due_date, status, route_order, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))"
+        )
         .eq("crew_id", user.id)
         .eq("status", "pending")
         .lte("due_date", horizonDate)
@@ -205,6 +227,38 @@ export default function MyRoutePage() {
   const todays = visits.filter((v) => v.due_date === today);
   const upcoming = visits.filter((v) => v.due_date > today);
 
+  // Today's stops that have a map pin, as RouteStop[] for the driving-path map.
+  const todayStops: RouteStop[] = todays
+    .map((v): RouteStop | null => {
+      const lj = v.jobs?.lawn_jobs;
+      if (!lj || lj.map_lat == null || lj.map_lng == null) return null;
+      return {
+        id: v.id,
+        jobId: v.job_id,
+        jobName: v.jobs?.name ?? "—",
+        address: v.jobs?.address ?? null,
+        customerName: v.jobs?.customers?.name ?? null,
+        serviceType: null,
+        crewId: null,
+        status: v.status,
+        dueDate: v.due_date,
+        pos: { lat: Number(lj.map_lat), lng: Number(lj.map_lng) },
+        routeOrder: v.route_order,
+      };
+    })
+    .filter((s): s is RouteStop => s !== null);
+
+  // Turn-by-turn nav link: origin = first stop, destination = last, middle as
+  // waypoints. Capped to MAX_DIR_STOPS so the URL stays valid.
+  const capped = todayStops.slice(0, MAX_DIR_STOPS);
+  const dirUrl =
+    capped.length >= 2
+      ? `https://www.google.com/maps/dir/?api=1&origin=${capped[0].pos!.lat},${capped[0].pos!.lng}&destination=${capped[capped.length - 1].pos!.lat},${capped[capped.length - 1].pos!.lng}&waypoints=${capped
+          .slice(1, -1)
+          .map((s) => `${s.pos!.lat},${s.pos!.lng}`)
+          .join("|")}&travelmode=driving`
+      : null;
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="My Route" subtitle="Your assigned lawn visits" />
@@ -220,6 +274,21 @@ export default function MyRoutePage() {
           </div>
         ) : (
           <>
+            {todayStops.length >= 2 && (
+              <div className="space-y-2">
+                <GoogleRouteMap stops={todayStops} readOnly showDirections />
+                {dirUrl && (
+                  <a
+                    href={dirUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 bg-green-600 text-white py-2 px-3 rounded-lg font-semibold text-sm active:bg-green-700"
+                  >
+                    <Navigation className="w-4 h-4" /> Open in Google Maps
+                  </a>
+                )}
+              </div>
+            )}
             <Section
               label="Overdue"
               list={overdue}

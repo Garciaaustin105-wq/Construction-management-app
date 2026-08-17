@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { createClient } from "@/lib/supabase/client";
+import AddressInput from "@/components/AddressInput";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
 // Construction-job creator (office/admin). Recurring lawn service used to live
@@ -142,10 +143,9 @@ export default function NewProjectPage() {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Address</span>
-            <input
-              type="text"
+            <AddressInput
               value={address}
-              onChange={(e) => setAddress(e.target.value)}
+              onChange={setAddress}
               className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
               placeholder="123 Main St, City"
             />

@@ -200,6 +200,10 @@ export type SendCustomerNotificationInput = {
   photoLink?: string | null;
   // review_request links to the Google review URL (resolved here when omitted).
   reviewLink?: string | null;
+  // Optional Google Static Maps property image for the EMAIL (built by the
+  // caller from the job's lawn_jobs pin via buildStaticMapUrl). Email-only —
+  // SMS has no image. Omitted when null (no pin / GOOGLE_MAPS_STATIC_KEY unset).
+  mapImageUrl?: string | null;
 };
 
 // Send one event to the visit's customer across both channels, gated + logged.
@@ -311,6 +315,7 @@ export async function sendCustomerNotification(
         subject: template.subject ?? `${event}`,
         body,
         orgName: input.orgName,
+        mapImageUrl: input.mapImageUrl,
       });
       if (res.data) status = "sent";
       else errMsg = res.error?.message ?? "email send failed";
