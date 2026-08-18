@@ -1,10 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { BookOpen } from "lucide-react";
 import { getMyOrg } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 import { isOfficeLike } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
+import { listProviderOptions } from "@/lib/accounting/provider";
+import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import BillingForm from "./BillingForm";
 import ConnectStripeButton from "./ConnectStripeButton";
 import AccountingConnectButton from "./AccountingConnectButton";
@@ -71,27 +74,56 @@ export default async function BillingPage() {
 
   // ── Bookkeeping integration (payments pivot) ──────────────────────────────
   // The platform never touches customer money; the org connects its OWN
-  // bookkeeping provider (QuickBooks first). RLS tier_office lets the office
-  // user read their own org's connection row directly (session client).
-  const { data: accountingRow } = await supabase
+  // bookkeeping provider. The menu is IDENTICAL on both variants (construction
+  // + lawn): QuickBooks now, Xero/FreshBooks/Wave/Stripe-BYO as they ship.
+  // listProviderOptions() reads the adapter registry populated by the
+  // providers.ts side-effect import above, so a newly-registered provider shows
+  // up here automatically. RLS tier_office lets the office user read their own
+  // org's connection rows directly via the session client; one query returns
+  // every row, keyed by provider for the per-card status.
+  const { data: accountingRows } = await supabase
     .from("accounting_connections")
-    .select("status, metadata")
-    .eq("organization_id", tenant.orgId)
-    .eq("provider", "quickbooks")
-    .maybeSingle();
-  const accountingConnected =
-    !!accountingRow && (accountingRow as { status: string }).status === "active";
-  const accountingStatus = (accountingRow as { status: string } | null)?.status ?? null;
-  const accountingMetadata =
-    (accountingRow as { metadata: Record<string, unknown> | null } | null)?.metadata ?? null;
+    .select("provider, status, metadata")
+    .eq("organization_id", tenant.orgId);
+  const byProvider = new Map<
+    string,
+    { status: string; metadata: Record<string, unknown> | null }
+  >();
+  for (const r of (accountingRows ?? []) as Array<{
+    provider: string;
+    status: string;
+    metadata: Record<string, unknown> | null;
+  }>) {
+    byProvider.set(r.provider, { status: r.status, metadata: r.metadata });
+  }
+  const providerOptions = listProviderOptions();
   const accountingSection = (
-    <AccountingConnectButton
-      provider="quickbooks"
-      label="QuickBooks Online"
-      initialConnected={accountingConnected}
-      initialStatus={accountingStatus}
-      initialMetadata={accountingMetadata}
-    />
+    <div className="space-y-4">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="flex items-center gap-2 text-slate-700">
+          <BookOpen className="h-5 w-5" />
+          <h2 className="text-base font-semibold">Bookkeeping integration</h2>
+        </div>
+        <p className="mt-1 text-sm text-slate-600">
+          Connect the bookkeeping app you already use. We sync your customers,
+          invoices, and estimates to it — and never touch your customers&apos;
+          money. Connect one now and switch any time.
+        </p>
+      </div>
+      {providerOptions.map((opt) => {
+        const row = byProvider.get(opt.id);
+        return (
+          <AccountingConnectButton
+            key={opt.id}
+            provider={opt.id}
+            label={opt.label}
+            initialConnected={row?.status === "active"}
+            initialStatus={row?.status ?? null}
+            initialMetadata={row?.metadata ?? null}
+          />
+        );
+      })}
+    </div>
   );
 
   // ── Stripe Connect (Pay Here) ───────────────────────────────────────────────

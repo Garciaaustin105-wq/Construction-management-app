@@ -126,7 +126,7 @@ export default function AccountingConnectButton({
     <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
       <div className="flex items-center gap-2">
         <BookOpen className="w-4 h-4 text-emerald-600" />
-        <h2 className="text-sm font-semibold text-gray-700">Bookkeeping integration — {label}</h2>
+        <h2 className="text-sm font-semibold text-gray-700">{label}</h2>
       </div>
       <p className="text-xs text-gray-500">
         Connect your {label} account. The app syncs your customers, invoices, estimates, and payments to {label} and reads payment status back — so your books stay current without double entry. The platform never touches your customer money.

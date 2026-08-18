@@ -63,6 +63,21 @@ export async function getConnection(
   return (data as AccountingConnectionRow | null) ?? null;
 }
 
+/** Read ALL of the org's connection rows (one query, for the billing menu). */
+export async function getConnections(
+  organizationId: string
+): Promise<AccountingConnectionRow[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("accounting_connections")
+    .select(
+      "id, organization_id, provider, status, realm_id, access_token_encrypted, refresh_token_encrypted, access_expires_at, refresh_expires_at, metadata"
+    )
+    .eq("organization_id", organizationId);
+  if (error) throw error;
+  return (data as AccountingConnectionRow[] | null) ?? [];
+}
+
 /** Encrypt + persist a freshly obtained/refreshed TokenSet for an org+provider. */
 export async function saveTokens(
   organizationId: string,

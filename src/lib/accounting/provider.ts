@@ -163,3 +163,8 @@ export function getProvider(id: AccountingProviderId): AccountingProvider {
 export function listAvailableProviders(): AccountingProviderId[] {
   return Array.from(registry.keys());
 }
+
+/** Each registered provider's id + display label, for the billing-page menu. */
+export function listProviderOptions(): { id: AccountingProviderId; label: string }[] {
+  return Array.from(registry.values()).map((p) => ({ id: p.id, label: p.label }));
+}
