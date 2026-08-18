@@ -10,7 +10,17 @@ type Tier = {
   blurb: string;
   maxUsers: number | null;
   maxJobs: number | null;
+  maxCrewMembers: number | null;
+  maxCustomers: number | null;
+  maxLineItemsPerDoc: number | null;
+  storage: string;
+  storageCustom: boolean;
+  priceMonthly: number;
 };
+
+function cap(n: number | null, noun: string): string {
+  return n === null ? `Unlimited ${noun}*` : `Up to ${n} ${noun}${n === 1 ? "" : "s"}`;
+}
 
 export default function BillingForm({
   currentPlan,
@@ -20,6 +30,7 @@ export default function BillingForm({
   hasSubscription,
   tiers,
   connectSection,
+  accountingSection,
 }: {
   currentPlan: string;
   planStatus: string;
@@ -28,6 +39,7 @@ export default function BillingForm({
   hasSubscription: boolean;
   tiers: Tier[];
   connectSection?: ReactNode;
+  accountingSection?: ReactNode;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -138,18 +150,20 @@ export default function BillingForm({
               key={tier.tier}
               className="bg-white rounded-lg p-4 shadow-sm space-y-2"
             >
-              <p className="font-bold">{tier.label}</p>
+              <div className="flex items-baseline justify-between">
+                <p className="font-bold">{tier.label}</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  ${tier.priceMonthly}<span className="text-xs font-normal text-gray-500">/mo</span>
+                </p>
+              </div>
               <p className="text-xs text-gray-500">{tier.blurb}</p>
-              <p className="text-sm text-gray-500">
-                {tier.maxUsers !== null
-                  ? `Up to ${tier.maxUsers} users`
-                  : "Unlimited users"}
-              </p>
-              <p className="text-sm text-gray-500">
-                {tier.maxJobs !== null
-                  ? `Up to ${tier.maxJobs} jobs`
-                  : "Unlimited jobs"}
-              </p>
+              <ul className="text-xs text-gray-600 space-y-0.5">
+                <li>{cap(tier.maxUsers, "user")}</li>
+                <li>{cap(tier.maxJobs, "job")}</li>
+                <li>{cap(tier.maxCrewMembers, "crew member")}</li>
+                <li>{cap(tier.maxCustomers, "customer")}</li>
+                <li>{tier.storage}</li>
+              </ul>
               <button
                 disabled={loadingTier !== null || currentPlan === tier.tier}
                 onClick={() => subscribe(tier.tier)}
@@ -192,9 +206,21 @@ export default function BillingForm({
           </button>
         )}
 
-        {/* Receive customer invoice payments online (Stripe Connect). Rendered
-            by the server page as a self-contained client component. */}
+        {/* Bookkeeping integration (payments pivot). The org connects its own
+            provider (QuickBooks first); the platform never touches customer
+            money. Rendered by the server page as a self-contained client comp. */}
+        {accountingSection}
+
+        {/* Receive customer invoice payments online (Stripe Connect). Lawn only
+            — deprecated on construction (receivables → QuickBooks). Rendered by
+            the server page as a self-contained client component. */}
         {connectSection}
+
+        {tiers.some((t) => t.storageCustom || t.maxUsers === null || t.maxJobs === null) && (
+          <p className="text-xs text-gray-400 px-1">
+            *Unlimited dimensions on the Business tier are a soft ceiling — need more? Call or email us.
+          </p>
+        )}
       </main>
     </div>
   );
