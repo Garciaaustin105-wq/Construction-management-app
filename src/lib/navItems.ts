@@ -112,15 +112,20 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/punch", label: "Punch List", Icon: CheckSquare },
       { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
       { href: "/submittals", label: "Submittals", Icon: FileText },
+      { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
       { href: "/admin/users", label: "Admin", Icon: Users },
     );
   }
-  // PM gets Reports (org-wide per-worker + receipts reports; admitted via
-  // tier_office_or_pm RLS — see pm_reports_rls.sql). Scoped to reports only;
-  // the other office doc surfaces stay office/admin per the pre-existing PM
-  // discrepancy (product decision 2026-08-17: PM gets reports, nothing more).
+  // PM gets Reports + Insights (org-wide per-worker/receipts reports + the
+  // construction command center; both admitted via tier_office_or_pm RLS —
+  // see pm_reports_rls.sql). PM runs jobs, so job-profitability insights are
+  // admitted too. The other office doc surfaces stay office/admin per the
+  // pre-existing PM discrepancy (product decision 2026-08-17).
   if (role === "project_manager") {
-    items.push({ href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet });
+    items.push(
+      { href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet },
+      { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+    );
   }
   // Only the org admin manages billing (checkout + Customer Portal routes are
   // admin-only). office/super_admin don't get the tab.
@@ -216,6 +221,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
         aliases: [
           "/receipts",
           "/admin/reports",
+          "/admin/insights",
           "/calendar",
           "/daily-logs",
           "/punch",

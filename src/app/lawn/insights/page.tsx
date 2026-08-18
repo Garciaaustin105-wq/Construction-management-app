@@ -11,6 +11,7 @@ import {
   formatMoney,
 } from "@/lib/money";
 import { startOfWeek, addDays, toISODate, hoursFromMs } from "@/lib/weekUtils";
+import { arAgingBuckets, overdueTotal } from "@/lib/insights";
 import TopBar from "@/components/TopBar";
 import KpiTile from "@/components/charts/KpiTile";
 import BarChart, { type BarDatum } from "@/components/charts/BarChart";
@@ -198,9 +199,8 @@ export default async function LawnInsightsPage() {
   const outstandingAR = invoices
     .filter((i) => i.status === "sent")
     .reduce((s, i) => s + invoiceBalance(i), 0);
-  const overdueAR = invoices
-    .filter((i) => i.status === "sent" && i.due_date && i.due_date < todayISO)
-    .reduce((s, i) => s + invoiceBalance(i), 0);
+  const aging = arAgingBuckets(invoices, todayISO);
+  const overdueAR = overdueTotal(aging);
   const collectedThisMonth = invoices
     .filter((i) => i.status === "paid" && i.paid_at && monthKey(new Date(i.paid_at)) === currentMonthKey)
     .reduce((s, i) => s + invoiceTotal(i), 0);
@@ -379,6 +379,21 @@ export default async function LawnInsightsPage() {
 
           <ChartCard title="Invoices by status" subtitle="All invoices in range">
             <BarChart data={invoicesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
+          </ChartCard>
+
+          <ChartCard title="A/R aging" subtitle="Open invoice balances by days past due">
+            <BarChart
+              data={[
+                { label: "Current", segments: [{ value: aging.current, color: "#16a34a" }] },
+                { label: "0-30", segments: [{ value: aging.d0_30, color: "#f59e0b" }] },
+                { label: "31-60", segments: [{ value: aging.d31_60, color: "#f97316" }] },
+                { label: "61-90", segments: [{ value: aging.d61_90, color: "#ef4444" }] },
+                { label: "90+", segments: [{ value: aging.d90_plus, color: "#7f1d1d" }] },
+              ]}
+              formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)}
+              showTotals
+              emptyText="No open invoices"
+            />
           </ChartCard>
 
           <ChartCard title="Estimates by status" subtitle="All estimates">
