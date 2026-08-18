@@ -9,6 +9,6 @@
 
 import "./quickbooks";
 import "./xero";
-// import "./freshbooks";  // when shipped
-// import "./wave";        // when shipped
-// import "./stripe_byo";  // when shipped
+import "./freshbooks";
+// import "./wave";        // deferred — GraphQL product-ID dance; build on user demand
+// import "./stripe_byo";  // deferred — paste-key flow (Stripe classic OAuth deprecated)
