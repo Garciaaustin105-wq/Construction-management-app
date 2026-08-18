@@ -101,21 +101,20 @@ export default async function LawnCalendarPage({
       .lte("due_date", monthEnd)
       .order("due_date", { ascending: true }),
     supabase
-      .from("profiles")
-      .select("id, full_name, email")
-      .in("role", ["crew", "superintendent"])
-      .order("full_name"),
+      .from("crew_members")
+      .select("id, name")
+      .order("name"),
   ]);
 
   const visits = (visitRows as unknown as CalVisit[] | null) ?? [];
-  const crew = (crewRows as { id: string; full_name: string | null; email: string }[] | null) ?? [];
+  const crew = (crewRows as { id: string; name: string }[] | null) ?? [];
 
   // Stable crew color assignment (sorted crew order). crew_id referencing a
-  // profile outside this query falls back to the Unassigned bucket.
+  // crew_members row outside this query falls back to the Unassigned bucket.
   const crewById = new Map<string, { name: string; colorIdx: number }>();
   crew.forEach((c, i) => {
     crewById.set(c.id, {
-      name: c.full_name?.trim() || c.email,
+      name: c.name?.trim() || "Crew",
       colorIdx: i % CREW_COLORS.length,
     });
   });

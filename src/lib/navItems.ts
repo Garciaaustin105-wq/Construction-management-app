@@ -38,6 +38,7 @@ import {
   Calendar,
   TrendingUp,
   Bell,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -81,6 +82,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/crew/photo", label: "Photos", Icon: Camera },
       { href: "/crew/time", label: "Time", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
+      { href: "/admin/crew-members", label: "Crew", Icon: UsersRound },
       { href: "/estimates", label: "Estimates", Icon: FileText },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
       { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
@@ -179,6 +181,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
             "/admin/reports",
             "/calendar",
             "/admin/customers",
+            "/admin/crew-members",
             "/crew/time",
             "/lawn/insights",
             "/lawn/notifications",

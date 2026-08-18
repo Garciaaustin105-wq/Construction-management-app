@@ -29,7 +29,7 @@ type VisitRow = {
   } | null;
   recurring_schedules: { service_type: string | null } | null;
 };
-type CrewRow = { id: string; full_name: string | null; email: string | null };
+type CrewRow = { id: string; name: string };
 
 function shiftDate(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00.000Z`);
@@ -72,10 +72,9 @@ export default async function LawnRoutesPage({
       .order("status", { ascending: true })
       .order("route_order", { ascending: true, nullsFirst: false }),
     supabase
-      .from("profiles")
-      .select("id, full_name, email")
-      .in("role", ["crew", "superintendent"])
-      .order("full_name", { ascending: true }),
+      .from("crew_members")
+      .select("id, name")
+      .order("name", { ascending: true }),
   ]);
 
   const stops: RouteStop[] = ((visitRows as unknown as VisitRow[]) ?? []).map(
@@ -101,7 +100,7 @@ export default async function LawnRoutesPage({
   );
 
   const crews: CrewInfo[] = ((crewRows as unknown as CrewRow[]) ?? []).map(
-    (c) => ({ id: c.id, name: c.full_name || c.email || "Crew" })
+    (c) => ({ id: c.id, name: c.name || "Crew" })
   );
 
   return (

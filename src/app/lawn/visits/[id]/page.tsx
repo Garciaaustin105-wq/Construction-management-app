@@ -62,7 +62,11 @@ export default function VisitDetailPage({
 
   const [visit, setVisit] = useState<Visit | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
-  const [crew, setCrew] = useState<{ id: string; full_name: string | null; email: string }[]>([]);
+  // Crew picker reads crew_members (not profiles) so scheduling-only members
+  // (no app login, user_id null) appear alongside linked app-user crew. See
+  // crew_members.sql: linked members keep id === profiles.id, so crew_id still
+  // equals auth.uid() for the My-Route ownership check.
+  const [crew, setCrew] = useState<{ id: string; name: string; user_id: string | null }[]>([]);
   const [authorized, setAuthorized] = useState(false);
   const [isOffice, setIsOffice] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -91,10 +95,9 @@ export default function VisitDetailPage({
         .eq("visit_id", id)
         .order("created_at", { ascending: false }),
       supabase
-        .from("profiles")
-        .select("id, full_name, email")
-        .in("role", ["crew", "superintendent"])
-        .order("full_name"),
+        .from("crew_members")
+        .select("id, name, user_id")
+        .order("name"),
       supabase
         .from("lawn_jobs")
         .select("*")
@@ -102,7 +105,7 @@ export default function VisitDetailPage({
         .maybeSingle(),
     ]);
     setPhotos((photoRows as unknown as Photo[]) ?? []);
-    setCrew((crewRows as { id: string; full_name: string | null; email: string }[]) ?? []);
+    setCrew((crewRows as { id: string; name: string; user_id: string | null }[]) ?? []);
     setProperty((lawnJob as unknown as LawnJob | null) ?? null);
   }
 
@@ -496,7 +499,8 @@ export default function VisitDetailPage({
                 <option value="">— Unassigned —</option>
                 {crew.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.full_name ?? c.email}
+                    {c.name}
+                    {c.user_id ? "" : " — no app login"}
                   </option>
                 ))}
               </select>

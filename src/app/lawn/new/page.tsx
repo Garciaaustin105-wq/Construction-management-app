@@ -31,7 +31,7 @@ const INTERVAL_BY_FREQUENCY: Record<string, number> = {
 export default function NewLawnJobPage() {
   const router = useRouter();
   const [customers, setCustomers] = useState<{ id: string; name: string }[]>([]);
-  const [crew, setCrew] = useState<{ id: string; full_name: string | null; email: string }[]>([]);
+  const [crew, setCrew] = useState<{ id: string; name: string; user_id: string | null }[]>([]);
   const [lawnServices, setLawnServices] = useState<
     { id: string; name: string; default_price: number }[]
   >([]);
@@ -83,7 +83,7 @@ export default function NewLawnJobPage() {
       setOrgId(profile.organization_id as string);
       const [{ data: custs }, { data: crews }, { data: services }] = await Promise.all([
         supabase.from("customers").select("id, name").order("name"),
-        supabase.from("profiles").select("id, full_name, email").in("role", ["crew", "superintendent"]).order("full_name"),
+        supabase.from("crew_members").select("id, name, user_id").order("name"),
         supabase.from("lawn_services").select("id, name, default_price").eq("active", true).order("name"),
       ]);
       setCustomers(custs ?? []);
@@ -361,10 +361,10 @@ export default function NewLawnJobPage() {
                       className="w-5 h-5"
                     />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900">
-                        {c.full_name ?? c.email}
+                      <p className="text-sm font-medium text-gray-900">{c.name}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {c.user_id ? "App user" : "Scheduling only — no app login"}
                       </p>
-                      <p className="text-xs text-gray-500 truncate">{c.email}</p>
                     </div>
                   </label>
                 ))}

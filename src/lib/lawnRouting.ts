@@ -310,10 +310,10 @@ export function clusterZones(stops: RouteStop[], k: number): Zone[] {
   return zones;
 }
 
-/** Crew display name from a profiles row (first name preferred). */
+/** Crew display name from a crew_members row (linked app user or scheduling-only). */
 export function crewDisplayName(
-  crew: { id: string; full_name?: string | null; email?: string | null } | null
+  crew: { id: string; name?: string | null } | null
 ): string {
   if (!crew) return "Unassigned";
-  return crew.full_name || crew.email || "Crew";
+  return crew.name || "Crew";
 }
