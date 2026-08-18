@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { deliverInvoice } from "@/lib/invoiceSend";
 import { sendEstimateDecisionEmail } from "@/lib/email";
 import { createInvoiceFromEstimate } from "@/lib/estimateInvoice";
+import { pushInvoiceToAllConnectedProviders } from "@/lib/accounting/pushInvoice";
 import {
   computeEstimateTotals,
   formatMoney,
@@ -600,7 +601,29 @@ export async function POST(
 
   const origin = requestOrigin(request);
 
-  // Deliver the invoice (best-effort) — only if we created/found one.
+  // Payments pivot: the platform never touches customer money. The customer
+  // pays on their OWN accounting provider's pay page (QBO/Xero/FreshBooks), so
+  // the signed-proposal invoice is auto-pushed (one-way) to every provider the
+  // org has connected. The office then sends it from the provider; paid status
+  // flows back. Best-effort + non-fatal — a provider failure never undoes the
+  // signature or the invoice (same rule as the PDF/invoice artifacts above);
+  // the office is just notified to re-sync manually.
+  let syncFailedLabel: string | null = null;
+  if (invoiceId) {
+    const syncResults = await pushInvoiceToAllConnectedProviders(
+      admin,
+      orgId,
+      invoiceId
+    );
+    const failed = syncResults.find((r) => r.error && !r.externalId);
+    if (failed) {
+      syncFailedLabel = failed.provider;
+    }
+  }
+
+  // Deliver the invoice (best-effort) — only if we created/found one. This
+  // emails the customer a link to our read-only invoice view (a statement);
+  // payment happens on the provider's pay page (or offline if no provider).
   if (invoiceId) {
     try {
       await deliverInvoice(invoiceId, { origin });
@@ -639,6 +662,22 @@ export async function POST(
         body: `${customerName} · ${jobName} — ${invoiceWarning}. Create the invoice manually.`,
         href: `/estimates/${id}`,
         entity_id: id,
+      });
+    } catch {
+      // best-effort
+    }
+  }
+  if (syncFailedLabel && invoiceId) {
+    const label =
+      syncFailedLabel.charAt(0).toUpperCase() + syncFailedLabel.slice(1);
+    try {
+      await admin.from("notifications").insert({
+        organization_id: orgId,
+        type: "estimate_approved",
+        title: `Invoice sync to ${label} failed for signed proposal`,
+        body: `${customerName} · ${jobName} — the invoice was created but could not be pushed to ${label}. Re-sync it from the invoice.`,
+        href: `/invoices/${invoiceId}`,
+        entity_id: invoiceId,
       });
     } catch {
       // best-effort

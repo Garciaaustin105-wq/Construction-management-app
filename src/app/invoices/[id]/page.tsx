@@ -4,6 +4,8 @@ import TopBar from "@/components/TopBar";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
+import { listProviderOptions } from "@/lib/accounting/provider";
+import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import InvoiceActions from "./InvoiceActions";
 import InvoiceDueDate from "./InvoiceDueDate";
 import Link from "next/link";
@@ -33,7 +35,7 @@ export default async function InvoiceDetailPage({
   const { data: invoice } = await supabase
     .from("invoices")
     .select(
-      "id, status, paid_at, sent_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, jobs(name), customers(name, contact_email, phone)"
+      "id, status, paid_at, sent_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, accounting_external_id, jobs(name), customers(name, contact_email, phone)"
     )
     .eq("id", id)
     .single();
@@ -61,6 +63,27 @@ export default async function InvoiceDetailPage({
   const customerName = customerRow?.name ?? "—";
   const customerEmail = customerRow?.contact_email?.trim() || null;
   const customerPhone = customerRow?.phone?.trim() || null;
+  const accountingExternalId =
+    (invoice.accounting_external_id as string | null) ?? null;
+
+  // Office-only: which accounting providers this org has connected, so the
+  // office can push the invoice to its bookkeeping (QBO/Xero/FreshBooks).
+  // accounting_connections RLS is tier_office, so the session read returns only
+  // this office's rows (empty for non-office roles). listProviderOptions reads
+  // the adapter registry populated by the providers.ts side-effect import.
+  const isOffice =
+    role === "office" || role === "admin" || role === "project_manager";
+  let connectedProviders: { id: string; label: string }[] = [];
+  if (isOffice) {
+    const { data: conns } = await supabase
+      .from("accounting_connections")
+      .select("provider, status")
+      .eq("status", "active");
+    const activeIds = new Set((conns ?? []).map((c) => c.provider as string));
+    connectedProviders = listProviderOptions().filter((p) =>
+      activeIds.has(p.id)
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -189,6 +212,8 @@ export default async function InvoiceDetailPage({
             status={invoice.status}
             customerEmail={customerEmail}
             customerPhone={customerPhone}
+            connectedProviders={connectedProviders}
+            accountingExternalId={accountingExternalId}
           />
         )}
       </main>

@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   XCircle,
   RotateCcw,
+  RefreshCw,
   Loader2,
   Trash2,
   Send,
@@ -31,11 +32,15 @@ export default function InvoiceActions({
   status,
   customerEmail,
   customerPhone,
+  connectedProviders,
+  accountingExternalId,
 }: {
   invoiceId: string;
   status: string;
   customerEmail?: string | null;
   customerPhone?: string | null;
+  connectedProviders: { id: string; label: string }[];
+  accountingExternalId?: string | null;
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -43,6 +48,32 @@ export default function InvoiceActions({
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendingReceipt, setSendingReceipt] = useState(false);
+  const [syncing, setSyncing] = useState<string | null>(null);
+
+  // Push this invoice to the org's connected bookkeeping provider (one-way:
+  // app authors → provider receives + processes payment; paid status flows
+  // back). The /api/accounting/sync route is office-gated server-side too.
+  async function syncToProvider(providerId: string, label: string) {
+    setSyncing(providerId);
+    try {
+      const res = await fetch(`/api/accounting/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerId, entity: "invoice", id: invoiceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.externalId) {
+        toast.error(data?.error ?? `Sync failed (${res.status})`);
+      } else {
+        toast.success(`Synced to ${label}`);
+        router.refresh();
+      }
+    } catch {
+      toast.error("Sync failed — please try again.");
+    } finally {
+      setSyncing(null);
+    }
+  }
 
   const hasEmail = !!customerEmail?.trim();
   const hasPhone = !!customerPhone?.trim();
@@ -156,6 +187,45 @@ export default function InvoiceActions({
 
   return (
     <div className="space-y-2">
+      {/* Sync to bookkeeping — one button per connected provider. */}
+      {connectedProviders.length > 0 ? (
+        <div className="space-y-1">
+          <span className="text-sm font-medium text-gray-700">
+            Sync to bookkeeping
+          </span>
+          {connectedProviders.map((p) => {
+            const synced = !!accountingExternalId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => syncToProvider(p.id, p.label)}
+                disabled={syncing !== null || busy}
+                className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {syncing === p.id ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : synced ? (
+                  <CheckCircle2 className="w-4 h-4 text-green-600" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
+                {synced ? `Re-sync to ${p.label}` : `Sync to ${p.label}`}
+              </button>
+            );
+          })}
+          {accountingExternalId && (
+            <p className="text-[11px] text-green-600">
+              Synced ✓ — the invoice is in your bookkeeping. Re-sync to push updates.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400">
+          Connect a bookkeeping provider in Settings to sync this invoice.
+        </p>
+      )}
+
       {/* Send to customer — gated on what's on file (mirror estimate send). */}
       {canSend && (
         <>

@@ -1,20 +1,17 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { notFound } from "next/navigation";
 import InvoiceDocument from "@/components/InvoiceDocument";
-import InvoicePayPanel from "./InvoicePayPanel";
+import InvoiceStatusBanner from "./InvoiceStatusBanner";
 import { computeTotal, formatMoney } from "@/lib/money";
 
 export const dynamic = "force-dynamic";
 
 export default async function PublicInvoicePage({
   params,
-  searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ paid?: string; canceled?: string }>;
 }) {
   const { token } = await params;
-  const { paid: paidParam, canceled: canceledParam } = await searchParams;
 
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -45,14 +42,10 @@ export default async function PublicInvoicePage({
   let orgPhone: string | null = null;
   let orgEmail: string | null = null;
   let orgLogoUrl: string | null = null;
-  let orgConnectChargesEnabled = false;
-  let orgConnectPayoutsEnabled = false;
   if (invoice.organization_id) {
     const { data: o } = await admin
       .from("organizations")
-      .select(
-        "name, address, phone, email, logo_path, connect_charges_enabled, connect_payouts_enabled"
-      )
+      .select("name, address, phone, email, logo_path")
       .eq("id", invoice.organization_id)
       .maybeSingle();
     if (o) {
@@ -60,8 +53,6 @@ export default async function PublicInvoicePage({
       orgAddress = o.address;
       orgPhone = o.phone;
       orgEmail = o.email;
-      orgConnectChargesEnabled = !!o.connect_charges_enabled;
-      orgConnectPayoutsEnabled = !!o.connect_payouts_enabled;
       if (o.logo_path) {
         orgLogoUrl = admin.storage
           .from("org-logos")
@@ -89,14 +80,7 @@ export default async function PublicInvoicePage({
   const balanceDue = Math.max(0, total - amountPaid);
 
   const isPaid = invoice.status === "paid";
-  const justPaid = paidParam === "1";
-  const canceled = canceledParam === "1";
-  const canPay =
-    !isPaid &&
-    invoice.status !== "void" &&
-    balanceDue > 0 &&
-    orgConnectChargesEnabled &&
-    orgConnectPayoutsEnabled;
+  const isVoid = invoice.status === "void";
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -117,13 +101,10 @@ export default async function PublicInvoicePage({
         items={items}
       />
       <div className="max-w-md mx-auto px-4 pb-8">
-        <InvoicePayPanel
-          token={token}
-          balanceDueStr={formatMoney(balanceDue)}
-          canPay={canPay}
+        <InvoiceStatusBanner
           paid={isPaid}
-          justPaid={justPaid}
-          canceled={canceled}
+          balanceDueStr={formatMoney(balanceDue)}
+          isVoid={isVoid}
         />
       </div>
     </div>

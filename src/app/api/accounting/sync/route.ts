@@ -7,6 +7,12 @@ import { getUsableTokens } from "@/lib/accounting/connections";
 import { getProvider } from "@/lib/accounting/provider";
 import type { AccountingProviderId, TokenSet, AccountingProvider } from "@/lib/accounting/provider";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  pushInvoiceToProvider,
+  syncCustomer,
+  loadInvoice,
+  persistExtId,
+} from "@/lib/accounting/pushInvoice";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +69,7 @@ export async function POST(request: Request) {
     const tokens = await getUsableTokens(orgId, providerId);
     const provider = getProvider(providerId);
     if (entity === "customer") return NextResponse.json(await syncCustomer(admin, tokens, provider, orgId, id));
-    if (entity === "invoice") return NextResponse.json(await syncInvoice(admin, tokens, provider, orgId, id));
+    if (entity === "invoice") return NextResponse.json(await pushInvoiceToProvider(admin, orgId, id, providerId));
     if (entity === "estimate") return NextResponse.json(await syncEstimate(admin, tokens, provider, orgId, id));
     if (entity === "payment") return NextResponse.json(await recordPayment(admin, tokens, provider, orgId, id, body));
     return NextResponse.json({ error: "Unknown entity" }, { status: 400 });
@@ -76,83 +82,9 @@ export async function POST(request: Request) {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-async function loadCustomer(admin: Admin, orgId: string, id: string) {
-  const { data, error } = await admin
-    .from("customers")
-    .select("id, organization_id, name, contact_email, phone, address, accounting_external_id")
-    .eq("id", id)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data || data.organization_id !== orgId) return null;
-  return data as {
-    id: string; organization_id: string; name: string;
-    contact_email: string | null; phone: string | null; address: string | null;
-    accounting_external_id: string | null;
-  };
-}
-
-async function persistExtId(admin: Admin, table: "customers" | "invoices" | "estimates", id: string, externalId: string, orgId: string) {
-  // Defense-in-depth: the service role bypasses RLS `with check`, so scope the
-  // update to the caller's org too (not just the id). The entity was already
-  // org-verified before this call, but a double filter guarantees a cross-org
-  // id can never be stamped here even if the verification ordering changes.
-  await admin.from(table).update({ accounting_external_id: externalId }).eq("id", id).eq("organization_id", orgId);
-}
-
-async function syncCustomer(admin: Admin, tokens: TokenSet, provider: AccountingProvider, orgId: string, id: string) {
-  const c = await loadCustomer(admin, orgId, id);
-  if (!c) return { externalId: null, error: "Customer not found in your organization" };
-  const res = await provider.syncCustomer({
-    supabase: admin as SupabaseClient, tokens, organizationId: orgId,
-    existingExternalId: c.accounting_external_id,
-    name: c.name, email: c.contact_email, phone: c.phone,
-    billingAddress: c.address ? { line1: c.address } : null,
-  });
-  if (res.externalId) await persistExtId(admin, "customers", c.id, res.externalId, orgId);
-  return res;
-}
-
-async function loadInvoice(admin: Admin, orgId: string, id: string) {
-  const { data, error } = await admin
-    .from("invoices")
-    .select("id, organization_id, customer_id, status, due_date, accounting_external_id")
-    .eq("id", id)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data || data.organization_id !== orgId) return null;
-  const inv = data as {
-    id: string; organization_id: string; customer_id: string;
-    status: string; due_date: string | null; accounting_external_id: string | null;
-  };
-  const { data: lines } = await admin
-    .from("invoice_line_items")
-    .select("description, quantity, unit_price")
-    .eq("invoice_id", inv.id);
-  return { inv, lines: (lines ?? []) as Array<{ description: string; quantity: number; unit_price: number }> };
-}
-
-async function syncInvoice(admin: Admin, tokens: TokenSet, provider: AccountingProvider, orgId: string, id: string) {
-  const loaded = await loadInvoice(admin, orgId, id);
-  if (!loaded) return { externalId: null, error: "Invoice not found in your organization" };
-  const { inv, lines } = loaded;
-  if (!inv.customer_id) return { externalId: null, error: "Invoice has no customer" };
-
-  // Chain a customer sync first so we have a QBO CustomerRef.
-  const custRes = await syncCustomer(admin, tokens, provider, orgId, inv.customer_id);
-  if (!custRes.externalId) return { externalId: null, error: `Customer sync failed: ${custRes.error}` };
-
-  const res = await provider.syncInvoice({
-    supabase: admin as SupabaseClient, tokens, organizationId: orgId,
-    existingExternalId: inv.accounting_external_id,
-    customerExternalId: custRes.externalId,
-    docNumber: inv.id.slice(0, 8).toUpperCase(),
-    dueDate: inv.due_date,
-    lineItems: lines.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unit_price })),
-  });
-  if (res.externalId) await persistExtId(admin, "invoices", inv.id, res.externalId, orgId);
-  return res;
-}
+// customer/invoice push + the org-scoped loaders + persistExtId live in the
+// shared @/lib/accounting/pushInvoice module (reused by the proposal e-sign
+// route's auto-sync). Only estimate + payment sync remain here.
 
 async function syncEstimate(admin: Admin, tokens: TokenSet, provider: AccountingProvider, orgId: string, id: string) {
   const { data, error } = await admin
