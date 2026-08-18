@@ -253,8 +253,17 @@ export async function POST(
   };
 
   // ── 4. sign_proposal RPC (atomic signature record + status flip) ──────────
+  // Call via the RLS SESSION client, NOT the service-role admin. sign_proposal
+  // uses auth.uid() to resolve the signer (select customer_id from profiles
+  // where id = auth.uid()) — the service-role key carries no user JWT, so
+  // auth.uid() would be NULL inside the RPC and the guard raises "Only customer
+  // accounts may sign proposals" even for a valid customer session. The function
+  // is SECURITY DEFINER (runs as the DB owner, bypasses RLS), so it can still
+  // INSERT portal_approvals + UPDATE estimates — it only needs the caller's JWT
+  // for the auth.uid() claim. Storage uploads above keep using `admin` (the
+  // proposal-docs bucket is service-role-only).
   const ip = signerIp(request);
-  const { data: approvalId, error: rpcError } = await admin.rpc(
+  const { data: approvalId, error: rpcError } = await supabase.rpc(
     "sign_proposal",
     {
       p_estimate_id: id,
