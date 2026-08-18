@@ -1,5 +1,7 @@
 # Construction Management Feature Scoping — Terra Vista (Aug 2026)
 
+> **⚠️ Partially superseded 2026-08-17 by `docs/construction-competitor-deep-dive-2026-08-17.md`.** A deeper dig corrected two factual errors here: (1) Contractor Foreman **does** have lien waivers (Document Writer) and OSHA safety logs (300 auto-entries + toolbox talks) — the matrix below originally said "No"; (2) JobTread is a full all-in-one at $16–20/user (AIA, retainage, sub portal+billing, POs, selections, customer portal, CRM, takeoff) — not the one-line "~$159 simplicity" treatment. Net effect: **compliance and the broad feature set are NOT differentiators** (Foreman + JobTread already have them); our real wedge narrows to **multi-provider sync + in-app insights + two variants**. The matrix below has been corrected for Foreman/OSHA/lien waivers + AIA/certified-payroll/sub-compliance rows added; see the deep-dive for the full revised analysis.
+
 ## Executive Summary
 Terra Vista is a construction SaaS targeting small to mid-sized residential and commercial general contractors (GCs) at $49-$399/month. Our goal is to offer the **correct** features a GC company actually needs — practical operational + commercial-compliance depth — at Contractor-Foreman prices ($49–399). We are deliberately **not** trying to be Procore (no BIM, portfolio, bid management, fleet, takeoff, or enterprise bloat). The founding customer is a commercial GC, so commercial compliance (AIA progress billing, subcontractor compliance, lien waivers, certified payroll, OSHA safety logs) is a real, needed priority — and a differentiator, since most low-cost tools lack certified payroll and AIA billing. This document scopes the current feature set, gaps, and roadmap.
 
@@ -18,6 +20,10 @@ Terra Vista is a construction SaaS targeting small to mid-sized residential and 
 | Estimating (cost codes+markup) | Yes                    | Yes                    | Yes                  | No        | No     | Yes                        |
 | Invoices                       | Yes                    | Yes                    | Yes                  | No        | No     | Yes                        |
 | Online payment processing      | Yes                    | Yes                    | Yes                  | No        | No     | No (customer pays)         |
+| AIA G702/G703 progress billing | Yes                   | Yes                    | Yes (G702/G703)       | No        | No     | No                         |
+| Retainage tracking             | Yes                    | Yes                    | Yes (sub + prime)    | Yes       | No     | No                         |
+| Certified payroll (WH-347)     | Yes                    | No                     | No                   | No        | No     | No                         |
+| Subcontractor compliance (COI/W9/expiry) | Yes        | Yes                    | Yes (Directory alerts) | No      | No     | No                         |
 | Job profitability/budget-vs-actual | Yes | Yes | Yes | No | No | Yes |
 | Per-job cost-code budgeting    | Yes                    | Yes                    | Yes                  | No        | No     | Yes                        |
 | Cost codes                     | Yes                    | Yes                    | Yes                  | No        | No     | Yes                        |
@@ -29,8 +35,8 @@ Terra Vista is a construction SaaS targeting small to mid-sized residential and 
 | Selections (finishes+running total) | No | Yes | No | No | No | No |
 | Subcontractor mgmt/portal    | Yes                    | Yes                    | Yes                  | No        | No     | No                         |
 | Subcontractor invoicing        | Yes                    | Yes                    | Yes                  | No        | No     | No                         |
-| Lien waivers                   | Yes                    | No                     | No                   | No        | No     | No (commercial focus)      |
-| OSHA/safety logs               | Yes                    | No                     | No                   | No        | No     | No (commercial focus)      |
+| Lien waivers                   | Yes                    | No                     | Yes (Document Writer) | No       | No     | No                         |
+| OSHA/safety logs               | Yes                    | No                     | Yes (300 + toolbox)  | No        | No     | No                         |
 | Document mgmt + versioning     | Yes                    | Yes                    | No                   | No        | No     | No                         |
 | Takeoff                        | Yes                    | Yes                    | No                   | No        | No     | No                         |
 | Bid management                 | Yes                    | No                     | No                   | No        | No     | No                         |
