@@ -5,7 +5,7 @@ import { getMyOrg } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 import { isOfficeLike } from "@/lib/roles";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
-import { listProviderOptions } from "@/lib/accounting/provider";
+import { listProviderOptions, getProvider } from "@/lib/accounting/provider";
 import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import BillingForm from "./BillingForm";
 import AccountingConnectButton from "./AccountingConnectButton";
@@ -79,6 +79,11 @@ export default async function BillingPage() {
   // up here automatically. RLS tier_office lets the office user read their own
   // org's connection rows directly via the session client; one query returns
   // every row, keyed by provider for the per-card status.
+  //
+  // `configured` is computed server-side per provider from the adapter (env
+  // vars are server-only): when a provider's OAuth client credentials aren't
+  // set, the card renders a "Not set up yet" hint instead of looking broken on
+  // click. getProvider() never throws here — opt.id comes from the registry.
   const { data: accountingRows } = await supabase
     .from("accounting_connections")
     .select("provider, status, metadata")
@@ -115,6 +120,7 @@ export default async function BillingPage() {
             key={opt.id}
             provider={opt.id}
             label={opt.label}
+            configured={getProvider(opt.id).isConfigured()}
             initialConnected={row?.status === "active"}
             initialStatus={row?.status ?? null}
             initialMetadata={row?.metadata ?? null}

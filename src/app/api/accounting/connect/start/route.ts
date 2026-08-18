@@ -45,6 +45,41 @@ export async function POST(request: Request) {
 
   const origin = new URL(request.url).origin;
   const redirectUri = `${origin}/api/accounting/callback`;
+
+  // Resolve the adapter up front so a misconfiguration returns a FRIENDLY 409
+  // instead of either (a) building a malformed auth URL with an empty client_id
+  // (redirects the user to an Intuit/Xero/FreshBooks error page) or (b) calling
+  // signState() which throws "ACCOUNTING_TOKEN_ENCRYPTION_KEY is not set" — an
+  // opaque error toast. Both look like "the button is broken" to an office user.
+  let provider;
+  try {
+    provider = getProvider(providerId);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Unknown provider" },
+      { status: 400 }
+    );
+  }
+
+  if (!provider.isConfigured()) {
+    return NextResponse.json(
+      {
+        error: `${provider.label} isn't configured yet. An admin needs to add the ${provider.label} API credentials (client id + secret) before you can connect.`,
+      },
+      { status: 409 }
+    );
+  }
+
+  if (!process.env.ACCOUNTING_TOKEN_ENCRYPTION_KEY) {
+    return NextResponse.json(
+      {
+        error:
+          "Accounting integration isn't fully configured yet (missing token encryption key). Contact your admin.",
+      },
+      { status: 409 }
+    );
+  }
+
   // state = `${orgId}|${provider}.${hmac(orgId|provider)}` — the callback splits
   // + verifies the HMAC. Provider rides along because Intuit doesn't echo custom
   // params back on the redirect.
@@ -52,7 +87,6 @@ export async function POST(request: Request) {
   const state = `${signed}.${signState(signed)}`;
 
   try {
-    const provider = getProvider(providerId);
     const url = provider.getAuthUrl(redirectUri, state);
     return NextResponse.json({ url, provider: providerId });
   } catch (err) {

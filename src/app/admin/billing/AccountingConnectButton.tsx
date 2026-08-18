@@ -14,12 +14,19 @@ import type { AccountingProviderId } from "@/lib/accounting/provider";
 export default function AccountingConnectButton({
   provider,
   label,
+  configured = true,
   initialConnected = false,
   initialStatus = null,
   initialMetadata = null,
 }: {
   provider: AccountingProviderId;
   label: string;
+  // True when the provider's OAuth client credentials are set in env (computed
+  // server-side on the billing page). When false + not connected, the card
+  // renders a "Not set up yet" hint so a misconfigured provider doesn't look
+  // broken on click. The connect/start route is still the authority — it
+  // returns a friendly 409 if credentials are missing at request time.
+  configured?: boolean;
   initialConnected?: boolean;
   initialStatus?: string | null;
   initialMetadata?: Record<string, unknown> | null;
@@ -133,14 +140,27 @@ export default function AccountingConnectButton({
       </p>
 
       {!connected && (
-        <button
-          onClick={startConnect}
-          disabled={loading}
-          className="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          Connect {label}
-        </button>
+        <>
+          {!configured && (
+            <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 p-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-700">
+                <span className="font-semibold">Not set up yet.</span> An admin
+                needs to add the {label} API credentials (client id + secret) to
+                enable connections. Clicking connect will show the exact missing
+                setting.
+              </p>
+            </div>
+          )}
+          <button
+            onClick={startConnect}
+            disabled={loading}
+            className="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+            Connect {label}
+          </button>
+        </>
       )}
 
       {connected && (

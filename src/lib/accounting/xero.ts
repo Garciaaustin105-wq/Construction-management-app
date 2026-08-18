@@ -132,6 +132,11 @@ export class XeroProvider implements AccountingProvider {
   readonly id: AccountingProviderId = "xero";
   readonly label = "Xero";
 
+  // ── Configuration ──────────────────────────────────────────────────────────
+  isConfigured(): boolean {
+    return Boolean(XERO_CLIENT_ID && XERO_CLIENT_SECRET);
+  }
+
   // ── OAuth2 ────────────────────────────────────────────────────────────────
   getAuthUrl(redirectUri: string, state: string): string {
     const params = new URLSearchParams({

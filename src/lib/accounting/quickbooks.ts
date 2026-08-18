@@ -112,6 +112,11 @@ export class QuickBooksProvider implements AccountingProvider {
   readonly id: AccountingProviderId = "quickbooks";
   readonly label = "QuickBooks Online";
 
+  // ── Configuration ──────────────────────────────────────────────────────────
+  isConfigured(): boolean {
+    return Boolean(INTUIT_CLIENT_ID && INTUIT_CLIENT_SECRET);
+  }
+
   // ── OAuth2 ────────────────────────────────────────────────────────────────
   getAuthUrl(redirectUri: string, state: string): string {
     const params = new URLSearchParams({

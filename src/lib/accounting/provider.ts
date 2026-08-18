@@ -123,6 +123,15 @@ export interface AccountingProvider {
   readonly id: AccountingProviderId;
   readonly label: string;
 
+  // ── Configuration ────────────────────────────────────────────────────────
+  // True when THIS provider's OAuth client credentials are present in env.
+  // The app-owned ACCOUNTING_TOKEN_ENCRYPTION_KEY is checked separately (it's
+  // shared across all providers), not here. Used by the billing page to render
+  // a "Not set up yet" card and by the connect/start route to short-circuit
+  // with a friendly 409 BEFORE building a malformed auth URL (empty client_id)
+  // or calling signState (which throws when the key is missing).
+  isConfigured(): boolean;
+
   // ── OAuth2 ──────────────────────────────────────────────────────────────
   // Build the provider authorization URL. `state` carries our org id + a
   // nonce (verified in the callback to prevent CSRF).

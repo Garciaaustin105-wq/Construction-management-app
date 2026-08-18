@@ -162,6 +162,11 @@ export class FreshBooksProvider implements AccountingProvider {
   readonly id: AccountingProviderId = "freshbooks";
   readonly label = "FreshBooks";
 
+  // ── Configuration ──────────────────────────────────────────────────────────
+  isConfigured(): boolean {
+    return Boolean(CLIENT_ID && CLIENT_SECRET);
+  }
+
   // ── OAuth2 ────────────────────────────────────────────────────────────────
   getAuthUrl(redirectUri: string, state: string): string {
     const params = new URLSearchParams({
