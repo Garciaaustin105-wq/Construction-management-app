@@ -39,6 +39,7 @@ import {
   TrendingUp,
   Bell,
   UsersRound,
+  MessagesSquare,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -112,6 +113,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/punch", label: "Punch List", Icon: CheckSquare },
       { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
       { href: "/submittals", label: "Submittals", Icon: FileText },
+      { href: "/admin/clients", label: "Client Portal", Icon: MessagesSquare },
       { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
       { href: "/admin/users", label: "Admin", Icon: Users },
     );
@@ -240,6 +242,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
           "/admin/cost-codes",
           "/admin/billing",
           "/admin/orgs",
+          "/admin/clients",
         ],
       },
     ];

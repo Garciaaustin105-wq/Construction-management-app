@@ -6,8 +6,12 @@ import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import CustomerBlueprints from "@/components/CustomerBlueprints";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import StatusBadge from "@/components/StatusBadge";
+import CustomerEstimateActions from "@/app/estimates/[id]/CustomerEstimateActions";
+import ClientChangeOrderActions from "@/components/ClientChangeOrderActions";
+import CustomerMessages from "@/components/CustomerMessages";
 import { formatMoney, computeTotal, computeEstimateTotals } from "@/lib/money";
-import { MapPin, FileText, Receipt, Sprout } from "lucide-react";
+import { isConstruction } from "@/lib/variant";
+import { MapPin, FileText, Receipt, Sprout, FileDiff, MessagesSquare } from "lucide-react";
 import Link from "next/link";
 
 export default async function CustomerPortal() {
@@ -25,46 +29,69 @@ export default async function CustomerPortal() {
 
   const customerId = profile?.customer_id;
 
-  // Fan out the independent reads (jobs, pending estimates, invoices) in parallel.
-  const [jobsRes, estimatesRes, invoicesRes, lawnJobsRes] = await Promise.all([
-    // Construction jobs only — lawn jobs live in the Lawn section below.
-    supabase
-      .from("jobs")
-      .select("id, name, address, description, status, scheduled_start, scheduled_end")
-      .eq("type", "construction")
-      .order("created_at", { ascending: false }),
-    customerId
-      ? supabase
-          .from("estimates")
-          .select(
-            "id, status, created_at, sent_at, title, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
-          )
-          .eq("customer_id", customerId)
-          .eq("status", "sent")
-          .order("sent_at", { ascending: false })
-      : Promise.resolve({ data: [] }),
-    customerId
-      ? supabase
-          .from("invoices")
-          .select(
-            "id, status, paid_at, created_at, amount_paid, jobs(name), invoice_line_items(quantity, unit_price)"
-          )
-          .eq("customer_id", customerId)
-          .order("created_at", { ascending: false })
-      : Promise.resolve({ data: [] }),
-    // Lawn jobs (RLS restricts to the customer's own) → Lawn section below.
-    customerId
-      ? supabase
-          .from("jobs")
-          .select("id, name, address")
-          .eq("type", "lawn")
-          .order("name")
-      : Promise.resolve({ data: [] }),
-  ]);
+  // Fan out the independent reads (jobs, estimates, invoices, change orders) in
+  // parallel. Estimates are fetched across sent/approved/rejected so the summary
+  // can total signed (approved) work and the pending list can filter to 'sent'.
+  const [jobsRes, estimatesRes, invoicesRes, lawnJobsRes, changeOrdersRes] =
+    await Promise.all([
+      // Construction jobs only — lawn jobs live in the Lawn section below.
+      supabase
+        .from("jobs")
+        .select("id, name, address, description, status, scheduled_start, scheduled_end")
+        .eq("type", "construction")
+        .order("created_at", { ascending: false }),
+      customerId
+        ? supabase
+            .from("estimates")
+            .select(
+              "id, status, created_at, sent_at, title, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
+            )
+            .eq("customer_id", customerId)
+            .in("status", ["sent", "approved", "rejected"])
+            .order("sent_at", { ascending: false })
+        : Promise.resolve({ data: [] }),
+      customerId
+        ? supabase
+            .from("invoices")
+            .select(
+              "id, status, paid_at, created_at, amount_paid, jobs(name), invoice_line_items(quantity, unit_price)"
+            )
+            .eq("customer_id", customerId)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] }),
+      // Lawn jobs (RLS restricts to the customer's own) → Lawn section below.
+      customerId
+        ? supabase
+            .from("jobs")
+            .select("id, name, address")
+            .eq("type", "lawn")
+            .order("name")
+        : Promise.resolve({ data: [] }),
+      // Construction change orders awaiting this customer's approval. RLS
+      // (portal_messages.sql "Customer read own change orders") scopes to this
+      // customer's jobs + status 'sent'/'approved'/'rejected'; we filter to
+      // 'sent' for the awaiting-action list. Degrades to empty until that SQL
+      // is run.
+      customerId && isConstruction()
+        ? supabase
+            .from("change_orders")
+            .select("id, co_number, title, amount, is_credit, jobs(name)")
+            .eq("status", "sent")
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [] }),
+    ]);
 
   const jobs = jobsRes.data;
-  const pendingEstimates = estimatesRes.data;
+  const allEstimates = estimatesRes.data;
   const invoices = invoicesRes.data;
+  const pendingChangeOrders = (changeOrdersRes.data ?? []) as unknown as {
+    id: string;
+    co_number: string | null;
+    title: string;
+    amount: number | string | null;
+    is_credit: boolean | null;
+    jobs: { name: string } | null;
+  }[];
 
   // ── Lawn section ─────────────────────────────────────────────────────────
   // Pull the customer's lawn visits (upcoming pending + recently completed)
@@ -123,7 +150,7 @@ export default async function CustomerPortal() {
     })
   );
 
-  const estimateRows = (pendingEstimates ?? []).map((q) => {
+  const estimateRows = (allEstimates ?? []).map((q) => {
     const items =
       (q.estimate_line_items as unknown as { quantity: number; unit_price: number }[]) ?? [];
     const totals = computeEstimateTotals(items, {
@@ -140,6 +167,7 @@ export default async function CustomerPortal() {
       totals.depositAmount > 0;
     return {
       id: q.id,
+      status: q.status,
       estimateNumber: (q as { estimate_number?: string | null }).estimate_number ?? null,
       // Standalone (job-less) estimates fall back to the title.
       jobName:
@@ -150,6 +178,10 @@ export default async function CustomerPortal() {
       total: hasPricing ? totals.grandTotal : computeTotal(items),
     };
   });
+
+  // Pending estimates = sent (awaiting this customer's decision). Approved ones
+  // feed the "Contracted" KPI below.
+  const pendingEstimateRows = estimateRows.filter((e) => e.status === "sent");
 
   const invoiceRows = (invoices ?? []).map((inv) => {
     const items =
@@ -175,6 +207,19 @@ export default async function CustomerPortal() {
 
   const unpaidInvoices = invoiceRows.filter((i) => i.status === "sent");
 
+  // ── Financial summary KPI strip ──────────────────────────────────────────
+  // Contracted = Σ approved estimate grand totals (signed work). Outstanding =
+  // Σ balances on sent (unpaid) invoices. Paid = Σ paid-invoice totals. All from
+  // RLS-scoped rows already fetched (same customer-own policies), so no new SQL.
+  const contractedTotal = estimateRows
+    .filter((e) => e.status === "approved")
+    .reduce((sum, e) => sum + e.total, 0);
+  const paidTotal = invoiceRows
+    .filter((i) => i.status === "paid")
+    .reduce((sum, i) => sum + i.total, 0);
+  const outstandingTotal = unpaidInvoices.reduce((sum, i) => sum + i.total, 0);
+  const hasSummary = contractedTotal > 0 || paidTotal > 0 || outstandingTotal > 0;
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar
@@ -185,39 +230,112 @@ export default async function CustomerPortal() {
 
       <main className="max-w-md mx-auto p-4 space-y-4">
         <ClientPullToRefresh>
+          {/* Financial summary */}
+          {hasSummary && (
+            <section>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-white rounded-lg p-3 shadow-sm">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500">Contracted</p>
+                  <p className="text-base font-bold text-gray-900 mt-1">
+                    {formatMoney(contractedTotal)}
+                  </p>
+                </div>
+                <div className="bg-white rounded-lg p-3 shadow-sm">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500">Outstanding</p>
+                  <p className="text-base font-bold text-amber-600 mt-1">
+                    {formatMoney(outstandingTotal)}
+                  </p>
+                </div>
+                <div className="bg-white rounded-lg p-3 shadow-sm">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500">Paid</p>
+                  <p className="text-base font-bold text-green-600 mt-1">
+                    {formatMoney(paidTotal)}
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* Pending estimate approvals */}
-          {estimateRows.length > 0 && (
+          {pendingEstimateRows.length > 0 && (
             <section>
               <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
                 <FileText className="w-4 h-4" />
                 Estimates awaiting your approval
               </h2>
-              <div className="space-y-2">
-                {estimateRows.map((q) => (
-                  <Link
+              <div className="space-y-3">
+                {pendingEstimateRows.map((q) => (
+                  <div
                     key={q.id}
-                    href={`/estimates/${q.id}`}
-                    className="block bg-amber-50 border border-amber-200 rounded-lg p-3 active:bg-amber-100"
+                    className="bg-amber-50 border border-amber-200 rounded-lg p-3"
                   >
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-gray-900 truncate">
-                          {q.jobName}
-                        </p>
-                        <p className="text-xs text-amber-800 mt-0.5">
-                          {q.estimateNumber ? `#${q.estimateNumber} · ` : ""}
-                          Sent {new Date(q.sentAt).toLocaleDateString()}
-                        </p>
+                    <Link
+                      href={`/estimates/${q.id}`}
+                      className="block active:bg-amber-100 -m-3 p-3"
+                    >
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-gray-900 truncate">
+                            {q.jobName}
+                          </p>
+                          <p className="text-xs text-amber-800 mt-0.5">
+                            {q.estimateNumber ? `#${q.estimateNumber} · ` : ""}
+                            Sent {new Date(q.sentAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <span className="text-base font-bold text-gray-900">
+                          {formatMoney(q.total)}
+                        </span>
                       </div>
-                      <span className="text-base font-bold text-gray-900">
-                        {formatMoney(q.total)}
-                      </span>
+                      <p className="text-xs text-amber-900 mt-2">
+                        Tap to review the line items →
+                      </p>
+                    </Link>
+                    <div className="mt-2">
+                      <CustomerEstimateActions estimateId={q.id} />
                     </div>
-                    <p className="text-xs text-amber-900 mt-2">
-                      Tap to review and approve →
-                    </p>
-                  </Link>
+                  </div>
                 ))}
+              </div>
+            </section>
+          )}
+
+          {/* Change orders awaiting approval (construction) */}
+          {isConstruction() && pendingChangeOrders.length > 0 && (
+            <section>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
+                <FileDiff className="w-4 h-4" />
+                Change Orders awaiting your approval
+              </h2>
+              <div className="space-y-3">
+                {pendingChangeOrders.map((co) => {
+                  const amt = Number(co.amount ?? 0) || 0;
+                  return (
+                    <div
+                      key={co.id}
+                      className="bg-orange-50 border border-orange-200 rounded-lg p-3"
+                    >
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-gray-900 truncate">
+                            {co.title || "Change order"}
+                          </p>
+                          <p className="text-xs text-orange-800 mt-0.5">
+                            {co.co_number ? `#${co.co_number} · ` : ""}
+                            {co.jobs?.name ?? "—"}
+                          </p>
+                        </div>
+                        <span className="text-base font-bold text-gray-900 whitespace-nowrap">
+                          {co.is_credit ? "-" : ""}
+                          {formatMoney(amt)}
+                        </span>
+                      </div>
+                      <div className="mt-2">
+                        <ClientChangeOrderActions coId={co.id} />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -358,6 +476,17 @@ export default async function CustomerPortal() {
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          {/* Messages with the office */}
+          {customerId && (
+            <section>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
+                <MessagesSquare className="w-4 h-4" />
+                Messages
+              </h2>
+              <CustomerMessages customerId={customerId} />
             </section>
           )}
 

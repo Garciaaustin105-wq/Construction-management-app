@@ -44,6 +44,7 @@ const BLOCKED_PAGE_PREFIXES = [
   "/crew/punch", // construction crew punch list
   "/admin/subcontractors", // construction subcontractors + [id]
   "/admin/cost-codes", // construction cost codes
+  "/admin/clients", // construction Client Portal office page (lawn has no clients)
   "/co/", // change-order public portal (construction)
   "/s/", // submittal public portal (construction)
 ];
@@ -51,6 +52,7 @@ const BLOCKED_PAGE_PREFIXES = [
 const BLOCKED_API_PREFIXES = [
   "/api/change-orders",
   "/api/submittals",
+  "/api/clients", // construction client-portal invite (office invites a customer)
   "/api/reports/change-orders",
   "/api/reports/submittals",
   "/api/reports/daily-logs",

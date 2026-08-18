@@ -3,7 +3,7 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Loader2 } from "lucide-react";
+import { Loader2, Mail } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
@@ -17,7 +17,27 @@ function Banner() {
   const verified = sp.get("verified") === "1";
   const reset = sp.get("reset") === "1";
   const failed = sp.get("error") === "reset_failed";
-  if (!verified && !reset && !failed) return null;
+  const wrongAppParam = sp.get("wrong_app");
+  const wrongApp: AppVariant | null =
+    wrongAppParam === "lawn" || wrongAppParam === "construction" ? wrongAppParam : null;
+  if (!verified && !reset && !failed && !wrongApp) return null;
+  if (wrongApp) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="font-semibold">
+          This account belongs to the{" "}
+          {wrongApp === "lawn" ? "Terra Verde (lawn)" : "Terra Vista (construction)"} app.
+        </p>
+        <p className="mt-1">Sign in on the correct app:</p>
+        <a
+          href={`${APP_URLS[wrongApp]}/login`}
+          className="mt-2 inline-block font-semibold text-brand active:text-brand-dark underline"
+        >
+          Go to {wrongApp === "lawn" ? "Terra Verde" : "Terra Vista"} →
+        </a>
+      </div>
+    );
+  }
   return (
     <div
       className={`rounded-lg border px-3 py-2 text-sm ${
@@ -39,6 +59,11 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // "magic-link" mode: the office can email a passwordless sign-in link to the
+  // typed address (used by invited customers — and any user who'd rather not
+  // type a password). Supabase sends its own magic-link email; clicking it
+  // exchanges at /auth/callback?flow=client and routes by role.
+  const [linkSent, setLinkSent] = useState(false);
   // When a user signs into the wrong app (auth is shared across both deploys),
   // we sign them back out and set this so the form shows a banner pointing them
   // to their home app. null = no mismatch.
@@ -109,10 +134,36 @@ export default function LoginPage() {
     }, 200);
   }
 
+  // Passwordless sign-in: Supabase emails a magic link to the typed address.
+  // Used by invited customers (the office sends their link via /api/clients/
+  // invite, but a customer who lost it can request a fresh one here) and by any
+  // user who'd rather not type a password. The link exchanges at
+  // /auth/callback?flow=client, which routes by role (customer → /customer).
+  async function handleMagicLink(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setWrongApp(null);
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        // Relative redirect resolves to this deploy's origin; the callback
+        // routes the signed-in user by their role + org variant.
+        emailRedirectTo: `${window.location.origin}/auth/callback?flow=client`,
+      },
+    });
+    setLoading(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setLinkSent(true);
+    toast.success("Check your email for a sign-in link.");
+  }
+
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <form
-        onSubmit={handleLogin}
+        onSubmit={linkSent ? undefined : handleMagicLink}
         className="w-full max-w-sm bg-white p-6 rounded-lg shadow-sm space-y-4"
       >
         <div className="text-center mb-2">
@@ -146,59 +197,88 @@ export default function LoginPage() {
             </a>
           </div>
         )}
-        <div>
-          <label htmlFor="email" className="sr-only">
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
-            autoComplete="email"
-          />
-        </div>
-        <div>
-          <label htmlFor="password" className="sr-only">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
-            autoComplete="current-password"
-          />
-        </div>
-        <div className="text-right -mt-2">
-          <Link
-            href="/forgot-password"
-            className="text-xs text-brand active:text-brand-dark"
-          >
-            Forgot password?
-          </Link>
-        </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          {loading ? "Signing in..." : "Sign In"}
-        </button>
+        {linkSent ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800 space-y-2">
+            <p className="font-semibold flex items-center gap-2">
+              <Mail className="w-4 h-4" /> Check your email
+            </p>
+            <p>
+              We sent a sign-in link to <strong>{email}</strong>. Click it to
+              sign in — the link expires shortly.
+            </p>
+            <button
+              type="button"
+              onClick={() => setLinkSent(false)}
+              className="text-emerald-800 underline font-medium"
+            >
+              Use a different email
+            </button>
+          </div>
+        ) : (
+          <>
+            <div>
+              <label htmlFor="email" className="sr-only">
+                Email
+              </label>
+              <input
+                id="email"
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+                autoComplete="email"
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="sr-only">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="text-right -mt-2">
+              <Link
+                href="/forgot-password"
+                className="text-xs text-brand active:text-brand-dark"
+              >
+                Forgot password?
+              </Link>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogin}
+              disabled={loading}
+              className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {loading ? "Signing in..." : "Sign In"}
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+              Email me a sign-in link
+            </button>
 
-        <Link
-          href="/signup"
-          className="block text-center text-sm text-brand active:text-brand-dark"
-        >
-          Sign up your business
-        </Link>
+            <Link
+              href="/signup"
+              className="block text-center text-sm text-brand active:text-brand-dark"
+            >
+              Sign up your business
+            </Link>
+          </>
+        )}
       </form>
     </main>
   );
