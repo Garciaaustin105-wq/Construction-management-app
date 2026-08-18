@@ -2,6 +2,8 @@
 
 > Companion to `docs/construction-feature-scoping-2026-08-17.md`. This deeper dig corrects two errors in the v1 scoping doc and adds per-competitor granularity.
 
+> **Scope: CONSTRUCTION variant only.** Terra Vista ships two build-time variants off one repo/DB — construction and lawn — and they compete in **different markets against different rivals**. This document is the **construction** stack-up vs construction PM tools (Procore, Buildertrend, Contractor Foreman, JobTread, Fieldwire, PlanRadar). The **lawn** variant competes against field-service/landscape tools (Jobber, Housecall Pro, FieldEdge, RealGreen/WorkWave, Aspire) and warrants its own separate deep-dive — see `docs/lawn-competitor-deep-dive-2026-08-17.md` (to be produced). The "Terra Vista" column below refers to the **construction variant**; construction-only features (AIA billing, lien waivers, OSHA, certified payroll, retainage, submittals) are evaluated against the construction variant only and do not apply to lawn. The one cross-variant row is "Multi-variant (construction + lawn)" — the fact that one platform ships both is a construction-and-lawn shared trait, noted once.
+
 ## Executive Summary
 The deeper dig changes the competitive picture materially, and more soberly than v1 suggested. **Contractor Foreman and JobTread already cover most table-stakes *and* the compliance cluster at low prices** — Foreman ($49–332/mo flat, unlimited users) has AIA G702/G703, lien waivers, OSHA 300 auto-entries, safety meetings, submittals with approval workflows, sub-contracts with retainage, bid management, drawing markup, team chat, and subcontractor compliance tracking (COI/insurance-expiry alerts). JobTread ($16–20/user/mo, all features included) has AIA payment apps, retainage, sub/vendor portal + billing, POs, selections, customer portal, CRM, takeoff, warranties, e-sign, online payments, and two-way QuickBooks. Compliance specialists (Nexus AP $99/mo, Billitron free <$50k) additionally cover certified payroll (WH-347).
 
@@ -9,7 +11,7 @@ The deeper dig changes the competitive picture materially, and more soberly than
 
 ## Corrected Feature Availability Matrix
 
-| Feature | Procore | Buildertrend | Contractor Foreman | JobTread | Fieldwire | PlanRadar | Terra Vista |
+| Feature | Procore | Buildertrend | Contractor Foreman | JobTread | Fieldwire | PlanRadar | Terra Vista (construction) |
 |---|---|---|---|---|---|---|---|
 | Daily Logs | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Punch List | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
