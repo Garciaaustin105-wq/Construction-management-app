@@ -53,6 +53,7 @@ const BLOCKED_API_PREFIXES = [
   "/api/change-orders",
   "/api/submittals",
   "/api/clients", // construction client-portal invite (office invites a customer)
+  "/api/proposals", // construction proposals/e-sign (lawn has no contract proposals)
   "/api/reports/change-orders",
   "/api/reports/submittals",
   "/api/reports/daily-logs",

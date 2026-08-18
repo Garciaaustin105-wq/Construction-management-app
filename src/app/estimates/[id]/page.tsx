@@ -12,6 +12,7 @@ import EstimateLineItemEditor, {
 import EstimateDocument from "@/components/EstimateDocument";
 import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
+import ProposalOfficePanel from "./ProposalOfficePanel";
 import CustomerEstimateActions from "./CustomerEstimateActions";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
 import {
@@ -47,6 +48,13 @@ type Estimate = {
   payment_schedule: string | null;
   show_itemized: boolean;
   viewed_at: string | null;
+  // Proposal layer (Proposals/e-sign). requires_signature gates the e-sign
+  // flow; proposal_intro is the cover letter; proposal_accent a hex banner
+  // color; signed_proposal_url points at the signed PDF artifact (office view).
+  requires_signature: boolean;
+  proposal_intro: string | null;
+  proposal_accent: string | null;
+  signed_proposal_url: string | null;
   jobs: { name: string; address: string | null } | null;
   customers: { name: string | null; contact_email: string | null; phone: string | null; address: string | null } | null;
 };
@@ -119,6 +127,10 @@ export default function EstimateDetailPage({
   const [paymentSchedule, setPaymentSchedule] = useState("");
   const [showItemized, setShowItemized] = useState(true);
   const [viewedAt, setViewedAt] = useState<string | null>(null);
+  // Proposal & Signature panel state (office authoring).
+  const [requiresSignature, setRequiresSignature] = useState(false);
+  const [proposalIntro, setProposalIntro] = useState("");
+  const [proposalAccent, setProposalAccent] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -172,7 +184,7 @@ export default function EstimateDetailPage({
       // deep row-inference doesn't blow up (TS2589) on the long column list —
       // we cast the result to `Estimate` below regardless.
       const estSelect: string = isOffice
-        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, jobs(name, address), customers(name, contact_email, phone, address)"
+        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, requires_signature, proposal_intro, proposal_accent, signed_proposal_url, jobs(name, address), customers(name, contact_email, phone, address)"
         : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email, phone, address)";
       const { data: est } = await supabase
         .from("estimates")
@@ -202,6 +214,9 @@ export default function EstimateDetailPage({
       setPaymentSchedule(e.payment_schedule ?? "");
       setShowItemized(e.show_itemized ?? true);
       setViewedAt(e.viewed_at ?? null);
+      setRequiresSignature(!!e.requires_signature);
+      setProposalIntro(e.proposal_intro ?? "");
+      setProposalAccent(e.proposal_accent ?? "");
 
       // Line items — office reads cost-coded rows + internal_cost + section;
       // customer reads only customer-safe columns (no cost_code_id, no unit,
@@ -525,6 +540,14 @@ export default function EstimateDetailPage({
         terms: terms.trim() || null,
         payment_schedule: paymentSchedule.trim() || null,
         show_itemized: showItemized,
+        requires_signature: requiresSignature,
+        proposal_intro: proposalIntro.trim() || null,
+        // Normalize accent to a valid #rrggbb or null so a half-typed value
+        // never lands as an unparseable color on the customer sign page.
+        proposal_accent:
+          /^#[0-9a-fA-F]{6}$/.test(proposalAccent.trim())
+            ? proposalAccent.trim()
+            : null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id);
@@ -965,6 +988,35 @@ export default function EstimateDetailPage({
                 </div>
               )}
             </div>
+
+            {/* Proposal & Signature (construction) — toggle e-sign + cover letter
+                + accent, then "Send as Proposal" (auto-invites the customer to
+                the Client Portal + emails a magic-link sign-in). Office-only;
+                controlled by the parent state wired into saveEstimate. */}
+            <ProposalOfficePanel
+              estimateId={estimate.id}
+              customerEmail={estimate.customers?.contact_email ?? null}
+              requiresSignature={requiresSignature}
+              onRequiresSignatureChange={setRequiresSignature}
+              proposalIntro={proposalIntro}
+              onProposalIntroChange={setProposalIntro}
+              proposalAccent={proposalAccent}
+              onProposalAccentChange={setProposalAccent}
+              editable={editable}
+            />
+
+            {/* Signed proposal artifact — once the customer e-signs, link the
+                signed PDF (minted via /api/proposals/[id]/pdf signed URL). */}
+            {estimate.status === "approved" && estimate.signed_proposal_url && (
+              <a
+                href={`/api/proposals/${estimate.id}/pdf`}
+                target="_blank"
+                rel="noreferrer"
+                className="block bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800 active:bg-green-100"
+              >
+                View signed proposal (e-signed by customer) →
+              </a>
+            )}
 
             {editable && (
               <button

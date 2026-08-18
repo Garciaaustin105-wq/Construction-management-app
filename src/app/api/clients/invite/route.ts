@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { sendClientPortalMagicLink } from "@/lib/email";
+import { inviteClientToPortal } from "@/lib/portalInvite";
 import { isOfficeLike } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -107,106 +107,18 @@ export async function POST(request: Request) {
   );
 
   const origin = requestOrigin(request);
-  const redirectTo = `${origin}/auth/callback?flow=client`;
 
-  // 1. Create (or refresh) the auth user + mint a magic-link action_link.
-  //    generateLink({type:'magiclink'}) creates the user if absent; on resend it
-  //    returns a fresh link for the existing user. We stamp user_metadata so the
-  //    callback / profile knows this is a customer tied to this customer_id.
-  const { data: linkData, error: linkError } =
-    await admin.auth.admin.generateLink({
-      type: "magiclink",
-      email,
-      options: {
-        redirectTo,
-        data: {
-          role: "customer",
-          full_name: customer.name ?? "",
-          customer_id: customer.id,
-          organization_id: orgId,
-        },
-      },
-    });
-  if (linkError || !linkData.user || !linkData.properties?.action_link) {
-    return NextResponse.json(
-      { error: linkError?.message ?? "Failed to create sign-in link" },
-      { status: 500 }
-    );
-  }
-  const userId = linkData.user.id;
-  const signInLink = linkData.properties.action_link;
-
-  // 2. Idempotently upsert the profiles row (id = auth user id). On conflict
-  //    (resend for an already-invited customer) keep customer_id/organization_id
-  //    pinned (a customer profile must never drift to another customer). For a
-  //    brand-new invite this is an insert.
-  const { error: profileError } = await admin.from("profiles").upsert(
-    {
-      id: userId,
-      email,
-      full_name: customer.name ?? "",
-      role: "customer",
-      customer_id: customer.id,
-      organization_id: orgId,
-    },
-    { onConflict: "id" }
-  );
-  if (profileError) {
-    return NextResponse.json(
-      { error: `Profile write failed: ${profileError.message}` },
-      { status: 500 }
-    );
-  }
-
-  // 3. Deliver the magic link. NON-FATAL: prefer branded Resend; fall back to
-  //    Supabase's built-in magic-link email if Resend is unconfigured or rejects
-  //    (same strategy as /api/signup). The portal row + profile are already
-  //    created, so a delivery failure is a warning, not a rollback.
-  let sentVia: "resend" | "supabase" | "none" = "none";
-  const resendReady = !!(process.env.RESEND_API_KEY && process.env.RESEND_FROM);
-  let useSupabaseFallback = !resendReady;
-  if (resendReady) {
-    try {
-      const result = await sendClientPortalMagicLink({
-        to: email,
-        clientName: customer.name ?? "",
-        orgName,
-        signInLink,
-      });
-      if (result.error) {
-        useSupabaseFallback = true;
-      } else {
-        sentVia = "resend";
-      }
-    } catch {
-      useSupabaseFallback = true;
-    }
-  }
-  if (useSupabaseFallback) {
-    try {
-      const anon = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-      );
-      const { error: otpError } = await anon.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirectTo },
-      });
-      if (otpError) {
-        sentVia = "none";
-      } else {
-        sentVia = "supabase";
-      }
-    } catch {
-      sentVia = "none";
-    }
+  // Invite (or resend): generateLink + profiles upsert + deliver. Extracted to
+  // /lib/portalInvite so the Proposals "Send as Proposal" flow reuses it.
+  const result = await inviteClientToPortal(admin, customer, orgId, orgName, origin);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error ?? "Invite failed" }, { status: 500 });
   }
 
   return NextResponse.json({
     ok: true,
     invited: true,
-    sentVia,
-    emailed: sentVia !== "none",
+    sentVia: result.sentVia,
+    emailed: result.sentVia !== "none",
   });
 }

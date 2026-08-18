@@ -44,7 +44,7 @@ export default async function CustomerPortal() {
         ? supabase
             .from("estimates")
             .select(
-              "id, status, created_at, sent_at, title, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name), estimate_line_items(quantity, unit_price)"
+              "id, status, created_at, sent_at, title, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, requires_signature, jobs(name), estimate_line_items(quantity, unit_price)"
             )
             .eq("customer_id", customerId)
             .in("status", ["sent", "approved", "rejected"])
@@ -168,6 +168,7 @@ export default async function CustomerPortal() {
     return {
       id: q.id,
       status: q.status,
+      requiresSignature: !!(q as { requires_signature?: boolean | null }).requires_signature,
       estimateNumber: (q as { estimate_number?: string | null }).estimate_number ?? null,
       // Standalone (job-less) estimates fall back to the title.
       jobName:
@@ -264,38 +265,75 @@ export default async function CustomerPortal() {
                 Estimates awaiting your approval
               </h2>
               <div className="space-y-3">
-                {pendingEstimateRows.map((q) => (
-                  <div
-                    key={q.id}
-                    className="bg-amber-50 border border-amber-200 rounded-lg p-3"
-                  >
-                    <Link
-                      href={`/estimates/${q.id}`}
-                      className="block active:bg-amber-100 -m-3 p-3"
+                {pendingEstimateRows.map((q) =>
+                  // A proposal (requires_signature) routes to the authed
+                  // e-sign page instead of the inline one-click approve — the
+                  // customer must type their name + draw a signature, which the
+                  // sign page owns. Plain estimates keep the inline actions.
+                  q.requiresSignature ? (
+                    <div
+                      key={q.id}
+                      className="bg-amber-50 border border-amber-200 rounded-lg p-3"
                     >
-                      <div className="flex justify-between items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-gray-900 truncate">
-                            {q.jobName}
-                          </p>
-                          <p className="text-xs text-amber-800 mt-0.5">
-                            {q.estimateNumber ? `#${q.estimateNumber} · ` : ""}
-                            Sent {new Date(q.sentAt).toLocaleDateString()}
-                          </p>
+                      <Link
+                        href={`/customer/estimates/${q.id}/sign`}
+                        className="block active:bg-amber-100 -m-3 p-3"
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 truncate">
+                              {q.jobName}
+                              <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-amber-700 align-middle">
+                                Proposal
+                              </span>
+                            </p>
+                            <p className="text-xs text-amber-800 mt-0.5">
+                              {q.estimateNumber ? `#${q.estimateNumber} · ` : ""}
+                              Sent {new Date(q.sentAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <span className="text-base font-bold text-gray-900">
+                            {formatMoney(q.total)}
+                          </span>
                         </div>
-                        <span className="text-base font-bold text-gray-900">
-                          {formatMoney(q.total)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-amber-900 mt-2">
-                        Tap to review the line items →
-                      </p>
-                    </Link>
-                    <div className="mt-2">
-                      <CustomerEstimateActions estimateId={q.id} />
+                        <p className="text-xs text-amber-900 mt-2 font-medium">
+                          Tap to review &amp; sign →
+                        </p>
+                      </Link>
                     </div>
-                  </div>
-                ))}
+                  ) : (
+                    <div
+                      key={q.id}
+                      className="bg-amber-50 border border-amber-200 rounded-lg p-3"
+                    >
+                      <Link
+                        href={`/estimates/${q.id}`}
+                        className="block active:bg-amber-100 -m-3 p-3"
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 truncate">
+                              {q.jobName}
+                            </p>
+                            <p className="text-xs text-amber-800 mt-0.5">
+                              {q.estimateNumber ? `#${q.estimateNumber} · ` : ""}
+                              Sent {new Date(q.sentAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <span className="text-base font-bold text-gray-900">
+                            {formatMoney(q.total)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-amber-900 mt-2">
+                          Tap to review the line items →
+                        </p>
+                      </Link>
+                      <div className="mt-2">
+                        <CustomerEstimateActions estimateId={q.id} />
+                      </div>
+                    </div>
+                  )
+                )}
               </div>
             </section>
           )}
