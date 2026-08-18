@@ -6,10 +6,10 @@ import { useToast } from "@/components/Toast";
 import type { AccountingProviderId } from "@/lib/accounting/provider";
 
 // Bookkeeping integration connect card (QuickBooks first; Xero/FreshBooks/Wave/
-// Stripe-BYO later). Mirrors ConnectStripeButton but talks to the
-// /api/accounting/* routes. Payments pivot (2026-08-17): the platform never
-// touches customer money — the org connects ITS OWN bookkeeping provider and
-// the app syncs customers/invoices/estimates/payments to it.
+// Stripe-BYO later). Talks to the /api/accounting/* routes. Payments pivot
+// (2026-08-17): the platform never touches customer money — the org connects
+// ITS OWN bookkeeping provider and the app syncs customers/invoices/estimates/
+// payments to it.
 
 export default function AccountingConnectButton({
   provider,

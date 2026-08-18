@@ -44,7 +44,7 @@ export default function CustomerMessages({ customerId }: { customerId: string })
     // Initial thread load. Calling load() (which setState's after an await) in
     // the effect body trips react-hooks/set-state-in-effect, but this is the
     // standard "fetch on mount + poll" subscription pattern (same disable used
-    // by ConnectStripeButton / AccountingConnectButton). The setState happens
+    // by AccountingConnectButton). The setState happens
     // asynchronously after the fetch resolves, not synchronously during render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();

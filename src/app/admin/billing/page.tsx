@@ -4,12 +4,10 @@ import { BookOpen } from "lucide-react";
 import { getMyOrg } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 import { isOfficeLike } from "@/lib/roles";
-import { isLawn } from "@/lib/variant";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
 import { listProviderOptions } from "@/lib/accounting/provider";
 import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import BillingForm from "./BillingForm";
-import ConnectStripeButton from "./ConnectStripeButton";
 import AccountingConnectButton from "./AccountingConnectButton";
 
 export const dynamic = "force-dynamic";
@@ -126,32 +124,6 @@ export default async function BillingPage() {
     </div>
   );
 
-  // ── Stripe Connect (Pay Here) ───────────────────────────────────────────────
-  // DEPRECATED on construction (payments pivot): construction receivables move
-  // to QuickBooks, so the Connect card is hidden on the construction deploy.
-  // Lawn keeps it until its provider menu fully replaces it. The cached flags
-  // drive the initial render; ConnectStripeButton refreshes them live.
-  let connectSection = null;
-  if (isLawn()) {
-    const { data: orgRow } = await supabase
-      .from("organizations")
-      .select(
-        "stripe_connect_account_id, connect_charges_enabled, connect_details_submitted, connect_payouts_enabled"
-      )
-      .eq("id", tenant.orgId)
-      .maybeSingle();
-    connectSection = (
-      <ConnectStripeButton
-        initialConnectAccountId={
-          (orgRow?.stripe_connect_account_id as string) ?? null
-        }
-        initialChargesEnabled={!!orgRow?.connect_charges_enabled}
-        initialDetailsSubmitted={!!orgRow?.connect_details_submitted}
-        initialPayoutsEnabled={!!orgRow?.connect_payouts_enabled}
-      />
-    );
-  }
-
   return (
     <BillingForm
       currentPlan={billing.plan}
@@ -160,7 +132,6 @@ export default async function BillingPage() {
       isExpired={billing.isExpired}
       hasSubscription={!!billing.stripeSubscriptionId}
       tiers={tiers}
-      connectSection={connectSection}
       accountingSection={accountingSection}
     />
   );

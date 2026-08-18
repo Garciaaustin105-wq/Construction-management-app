@@ -29,7 +29,6 @@ export default function BillingForm({
   isExpired,
   hasSubscription,
   tiers,
-  connectSection,
   accountingSection,
 }: {
   currentPlan: string;
@@ -38,7 +37,6 @@ export default function BillingForm({
   isExpired: boolean;
   hasSubscription: boolean;
   tiers: Tier[];
-  connectSection?: ReactNode;
   accountingSection?: ReactNode;
 }) {
   const router = useRouter();
@@ -210,11 +208,6 @@ export default function BillingForm({
             provider (QuickBooks first); the platform never touches customer
             money. Rendered by the server page as a self-contained client comp. */}
         {accountingSection}
-
-        {/* Receive customer invoice payments online (Stripe Connect). Lawn only
-            — deprecated on construction (receivables → QuickBooks). Rendered by
-            the server page as a self-contained client component. */}
-        {connectSection}
 
         {tiers.some((t) => t.storageCustom || t.maxUsers === null || t.maxJobs === null) && (
           <p className="text-xs text-gray-400 px-1">
