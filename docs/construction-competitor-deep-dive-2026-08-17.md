@@ -43,6 +43,7 @@ The deeper dig changes the competitive picture materially, and more soberly than
 | Subcontractor compliance (COI/W9/expiry) | Yes | Partial | Yes (Directory alerts) | No | No | No | **No** |
 | Document mgmt + versioning | Yes | Yes | No | Partial | Yes | Partial (Enterprise) | **No** |
 | Drawings/PDF markup + compare | Yes | Yes | Yes (markup) | Partial | Yes | Yes | **No** |
+| Blueprint scale calibration + on-sheet measurement | Yes | Yes | Yes | Partial | Yes | Yes | **No** |
 | Takeoff | Yes | Yes | No | Yes | No | No | **No** |
 | Bid management | Yes | Yes | Yes | Yes | No | No | **No** |
 | CRM / lead mgmt | Yes | Yes | No | Yes | No | No | **No** |
@@ -87,6 +88,7 @@ The deeper dig changes the competitive picture materially, and more soberly than
 
 **Growth we lack (Buildertrend/Fieldwire/PlanRadar set the bar):**
 - Document mgmt with versioning + drawings/PDF markup + revision compare
+- **Blueprint scaling/measurement tool (desktop + mobile)** — calibrate a drawing's scale, then pull accurate on-sheet measurements (linear, area, count) so field workers can get real dimensions off a PDF plan on their phone/tablet, not just redlines. Fieldwire, PlanRadar, Foreman (sq-footage measure), and Buildertrend (takeoff) all have this; we have upload-only. High field value — pair with document versioning as one workstream.
 - In-app messaging (team/subs/clients)
 - Project templates
 - Selections (JobTread + Buildertrend)
