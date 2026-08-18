@@ -36,6 +36,17 @@ export async function GET(request: Request) {
   }
 
   const supabase = await createClient();
+
+  // Clear any existing session before exchanging the PKCE code. Without this,
+  // a browser that is already signed in (e.g. the office testing a client's
+  // magic link, or a customer clicking a fresh "Resend" link) can keep its
+  // stale session: Supabase's verify endpoint sees the live session, the
+  // exchange no-ops, and getUser() below returns the OLD identity — so a
+  // customer magic link routes the office to /dashboard instead of /customer.
+  // signOut() here guarantees the exchange establishes the NEW session from
+  // the code in the URL. (Harmless on a fresh browser — no session to clear.)
+  await supabase.auth.signOut();
+
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     // Code already consumed / expired / invalid.
