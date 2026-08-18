@@ -134,6 +134,8 @@ export default async function ProposalSignPage({
         title="Review & Sign"
         subtitle={user.email ?? ""}
         showSignOut
+        backHref="/customer"
+        backLabel="Portal"
       />
 
       <main className="max-w-md mx-auto p-4 space-y-4">
