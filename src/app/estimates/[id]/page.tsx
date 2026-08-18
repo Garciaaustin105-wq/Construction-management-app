@@ -509,14 +509,17 @@ export default function EstimateDetailPage({
   }
 
   // ── Office: Edit / Preview & Send tabs ────────────────────────────────────
-  async function saveEstimate() {
-    if (!id) return;
+  // Returns true on success, false on validation/error. `silent` skips the
+  // "Estimate saved" toast + router.refresh so a caller (sendProposal) can
+  // chain a follow-up action and its own refresh without a double toast.
+  async function saveEstimate(opts?: { silent?: boolean }): Promise<boolean> {
+    if (!id) return false;
     const validItems = items.filter(
       (i) => i.description.trim() || i.cost_code_id
     );
     if (validItems.length === 0) {
       toast.warning("Add at least one line item");
-      return;
+      return false;
     }
     setSaving(true);
     const supabaseMod = await import("@/lib/supabase/client");
@@ -562,7 +565,7 @@ export default function EstimateDetailPage({
         toast.error(`Save failed: ${estError.message}`);
       }
       setSaving(false);
-      return;
+      return false;
     }
 
     // Replace all line items (delete + reinsert with fresh positions).
@@ -583,11 +586,42 @@ export default function EstimateDetailPage({
       .insert(lineInserts);
     if (linesError) {
       toast.error(`Save failed: ${linesError.message}`);
-    } else {
-      toast.success("Estimate saved");
-      router.refresh();
+      setSaving(false);
+      return false;
     }
+    if (!opts?.silent) toast.success("Estimate saved");
     setSaving(false);
+    if (!opts?.silent) router.refresh();
+    return true;
+  }
+
+  // Send as Proposal — one click. Auto-saves the estimate first (so the
+  // proposal toggle + intro + accent + customer link are persisted before the
+  // send API reads the DB), then POSTs /send. Replaces the old "Save, then
+  // Send" two-step that confused users (the send API reads the saved row, so a
+  // toggle-then-immediately-Send used to 400 with "not set up as a proposal").
+  async function sendProposal() {
+    const ok = await saveEstimate({ silent: true });
+    if (!ok) return; // saveEstimate already toasted the validation/error.
+    try {
+      const res = await fetch(`/api/proposals/${id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data?.error ?? `Send failed (${res.status})`);
+        return;
+      }
+      toast.success(
+        `Proposal sent — ${
+          data.emailed ? "magic-link sign-in emailed" : "customer invited"
+        }`
+      );
+      router.refresh();
+    } catch {
+      toast.error("Send failed — please try again.");
+    }
   }
 
   return (
@@ -994,12 +1028,10 @@ export default function EstimateDetailPage({
                 the Client Portal + emails a magic-link sign-in). Office-only;
                 controlled by the parent state wired into saveEstimate. */}
             <ProposalOfficePanel
-              estimateId={estimate.id}
               // Reflect the LIVE picker selection (not just the saved estimate's
               // customer) so the Send button enables the moment the office picks
-              // an email-having customer — before they've hit Save. The send route
-              // still reads the saved state, so an unsaved pick surfaces the
-              // route's "link a customer" error if they Send before saving.
+              // an email-having customer. onSend auto-saves before hitting the
+              // send API, so no separate Save step is needed.
               customerEmail={
                 selectedCustomer?.contact_email ??
                 estimate.customers?.contact_email ??
@@ -1012,6 +1044,7 @@ export default function EstimateDetailPage({
               proposalAccent={proposalAccent}
               onProposalAccentChange={setProposalAccent}
               editable={editable}
+              onSend={sendProposal}
             />
 
             {/* Signed proposal artifact — once the customer e-signs, link the
@@ -1029,7 +1062,7 @@ export default function EstimateDetailPage({
 
             {editable && (
               <button
-                onClick={saveEstimate}
+                onClick={() => saveEstimate()}
                 disabled={saving}
                 className="w-full bg-white border border-gray-300 text-gray-900 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
               >

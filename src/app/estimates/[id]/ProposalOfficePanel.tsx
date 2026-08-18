@@ -1,17 +1,18 @@
 // ProposalOfficePanel.tsx
-// This component provides an office authoring panel for the construction estimate detail page.
-// It allows toggling the estimate to be sent as a proposal that requires e-signature via the Client Portal.
-// The panel collects a proposal cover letter intro and an accent banner color, and provides a "Send as Proposal" button.
+// Office authoring panel for the construction estimate detail page. Toggles the
+// estimate to be sent as a proposal that requires e-signature via the Client
+// Portal, collects a cover-letter intro + accent banner color, and exposes a
+// "Send as Proposal" button. The parent passes `onSend`, which auto-saves the
+// estimate before hitting the send API — so the office never has to remember a
+// separate Save step (the send API reads the saved DB row, not local state).
 
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useToast } from "@/components/Toast";
 import { Loader2, Send } from "lucide-react";
 
 type Props = {
-  estimateId: string;
   customerEmail: string | null;
   requiresSignature: boolean;
   onRequiresSignatureChange: (v: boolean) => void;
@@ -20,10 +21,11 @@ type Props = {
   proposalAccent: string;
   onProposalAccentChange: (v: string) => void;
   editable: boolean;
+  // Parent-provided: saves the estimate (silent) then POSTs /send. Owns toasts.
+  onSend: () => Promise<void>;
 };
 
 export default function ProposalOfficePanel({
-  estimateId,
   customerEmail,
   requiresSignature,
   onRequiresSignatureChange,
@@ -32,27 +34,15 @@ export default function ProposalOfficePanel({
   proposalAccent,
   onProposalAccentChange,
   editable,
+  onSend,
 }: Props) {
   const [busy, setBusy] = useState(false);
-  const router = useRouter();
   const toast = useToast();
 
-  const sendAsProposal = async () => {
+  const handleSend = async () => {
     setBusy(true);
     try {
-      const res = await fetch(`/api/proposals/${estimateId}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data?.error ?? `Send failed (${res.status})`);
-      } else {
-        toast.success(
-          `Proposal sent — ${data.emailed ? "magic-link sign-in emailed" : "customer invited"}`
-        );
-        router.refresh();
-      }
+      await onSend();
     } catch {
       toast.error("Send failed — please try again.");
     } finally {
@@ -102,7 +92,7 @@ export default function ProposalOfficePanel({
           </div>
           {editable && (
             <button
-              onClick={sendAsProposal}
+              onClick={handleSend}
               disabled={busy || !customerEmail}
               className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -116,7 +106,8 @@ export default function ProposalOfficePanel({
           )}
           {customerEmail ? (
             <p className="text-xs text-gray-500">
-              Save your changes first so the proposal settings take effect, then send.
+              One click saves + sends. The customer gets a magic-link sign-in to
+              review and sign the proposal.
             </p>
           ) : (
             <p className="text-xs text-gray-500">
