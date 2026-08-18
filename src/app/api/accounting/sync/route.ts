@@ -92,8 +92,12 @@ async function loadCustomer(admin: Admin, orgId: string, id: string) {
   };
 }
 
-async function persistExtId(admin: Admin, table: "customers" | "invoices" | "estimates", id: string, externalId: string) {
-  await admin.from(table).update({ accounting_external_id: externalId }).eq("id", id);
+async function persistExtId(admin: Admin, table: "customers" | "invoices" | "estimates", id: string, externalId: string, orgId: string) {
+  // Defense-in-depth: the service role bypasses RLS `with check`, so scope the
+  // update to the caller's org too (not just the id). The entity was already
+  // org-verified before this call, but a double filter guarantees a cross-org
+  // id can never be stamped here even if the verification ordering changes.
+  await admin.from(table).update({ accounting_external_id: externalId }).eq("id", id).eq("organization_id", orgId);
 }
 
 async function syncCustomer(admin: Admin, tokens: TokenSet, provider: AccountingProvider, orgId: string, id: string) {
@@ -105,7 +109,7 @@ async function syncCustomer(admin: Admin, tokens: TokenSet, provider: Accounting
     name: c.name, email: c.contact_email, phone: c.phone,
     billingAddress: c.address ? { line1: c.address } : null,
   });
-  if (res.externalId) await persistExtId(admin, "customers", c.id, res.externalId);
+  if (res.externalId) await persistExtId(admin, "customers", c.id, res.externalId, orgId);
   return res;
 }
 
@@ -146,7 +150,7 @@ async function syncInvoice(admin: Admin, tokens: TokenSet, provider: AccountingP
     dueDate: inv.due_date,
     lineItems: lines.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unit_price })),
   });
-  if (res.externalId) await persistExtId(admin, "invoices", inv.id, res.externalId);
+  if (res.externalId) await persistExtId(admin, "invoices", inv.id, res.externalId, orgId);
   return res;
 }
 
@@ -177,7 +181,7 @@ async function syncEstimate(admin: Admin, tokens: TokenSet, provider: Accounting
       description: l.description, quantity: l.quantity, unitPrice: l.unit_price,
     })),
   });
-  if (res.externalId) await persistExtId(admin, "estimates", est.id, res.externalId);
+  if (res.externalId) await persistExtId(admin, "estimates", est.id, res.externalId, orgId);
   return res;
 }
 

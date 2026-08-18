@@ -97,11 +97,14 @@ async function refreshInvoicesForOrg(
     if (status.paid && status.balance !== null) {
       // Flip to paid + stamp amount_paid if the office recorded it in QBO. A
       // local status of "void" is preserved (don't resurrect voided docs).
+      // Scope to the org too: the service role bypasses RLS with-check, and the
+      // realmId→connection lookup is the only org binding on this path.
       if (inv.status !== "void") {
         await admin
           .from("invoices")
           .update({ status: "paid" })
-          .eq("id", inv.id);
+          .eq("id", inv.id)
+          .eq("organization_id", orgId);
       }
     }
   }
