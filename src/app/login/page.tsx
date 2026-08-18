@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2, Mail } from "lucide-react";
@@ -71,6 +71,78 @@ export default function LoginPage() {
   const supabase = createClient();
   const toast = useToast();
   const router = useRouter();
+
+  // Implicit-flow magic-link recovery. Admin-generated magic links
+  // (generateLink({type:'magiclink'}) — used by the Client Portal invite +
+  // "Send as Proposal") can't do PKCE (no client-side code_verifier), so
+  // Supabase falls back to the IMPLICIT flow: it redirects here to /login with
+  // the session tokens in the URL *fragment* (#access_token=…&refresh_token=…).
+  // Fragments aren't sent to the server, so /auth/callback (which only handles
+  // the PKCE ?code= case) never sees them — the user would be stranded on
+  // /login with a valid session sitting unused in the address bar. With
+  // flowType 'pkce' (the default), the browser client also won't auto-detect
+  // the fragment (detectSessionInUrl is false). So we consume it explicitly:
+  // setSession → route by role + variant affinity (mirrors /auth/callback).
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash || !hash.includes("access_token=")) return;
+    const params = new URLSearchParams(
+      hash.startsWith("#") ? hash.slice(1) : hash
+    );
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+    if (!accessToken || !refreshToken) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      // Clear the fragment so the tokens don't linger in the address bar /
+      // browser history regardless of outcome.
+      window.history.replaceState(null, "", "/login");
+      if (cancelled) return;
+      if (error || !data.user) {
+        toast.error("That sign-in link is invalid or has expired.");
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role, organization_id")
+        .eq("id", data.user.id)
+        .maybeSingle();
+      // Super_admin (no org) → variant home.
+      if (!profile || profile.role === "super_admin" || !profile.organization_id) {
+        router.replace(isLawn() ? "/lawn" : "/dashboard");
+        return;
+      }
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("app_variant")
+        .eq("id", profile.organization_id)
+        .maybeSingle();
+      const homeVariant: AppVariant =
+        org?.app_variant === "lawn" ? "lawn" : "construction";
+      if (homeVariant !== APP_VARIANT) {
+        // Wrong-app bounce: sign out + show the cross-app banner.
+        await supabase.auth.signOut();
+        setWrongApp(homeVariant);
+        return;
+      }
+      const dest =
+        profile.role === "customer"
+          ? "/customer"
+          : isLawn()
+            ? "/lawn"
+            : "/dashboard";
+      router.replace(dest);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Run once on mount — the fragment is only present on the initial load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // After a successful sign-in, confirm the account's org belongs to THIS
   // variant. Both apps share one Supabase auth backend, so without this check a

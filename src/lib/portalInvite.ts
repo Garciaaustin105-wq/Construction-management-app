@@ -44,7 +44,13 @@ export async function inviteClientToPortal(
     };
   }
 
-  const redirectTo = `${origin}/auth/callback?flow=client`;
+  // Admin generateLink({type:'magiclink'}) can't do PKCE (no client-side
+  // code_verifier), so Supabase uses the IMPLICIT flow and returns the session
+  // in the URL *fragment* (#access_token=…&refresh_token=…) of the redirect
+  // target. Fragments aren't sent to the server, so /auth/callback (PKCE
+  // ?code= only) can't consume them. Land the fragment on /login, whose
+  // useEffect reads #access_token, calls setSession, and routes by role.
+  const redirectTo = `${origin}/login`;
 
   // 1. Create (or refresh) the auth user + mint a magic-link action_link.
   const { data: linkData, error: linkError } =
