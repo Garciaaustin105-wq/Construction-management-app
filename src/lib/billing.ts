@@ -4,7 +4,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getLimits, priceIdToTier, TRIAL_DAYS } from "@/lib/plans";
+import { getLimits, priceIdToTier, TRIAL_DAYS, PLAN_TIERS } from "@/lib/plans";
 
 // ---------------------------------------------------------------------------
 // Stripe instance (lazy, shared)
@@ -161,8 +161,10 @@ export async function createCheckoutSession(
   origin: string
 ): Promise<{ url: string }> {
   const stripe = await getStripe();
-  const priceId = process.env[`STRIPE_PRICE_${tier.toUpperCase()}`];
-  if (!priceId) throw new Error(`STRIPE_PRICE_${tier.toUpperCase()} is not configured`);
+  // Variant-aware: the price id for this tier on THIS deploy (construction vs
+  // lawn) lives in PLAN_TIERS, resolved from STRIPE_PRICE_<TIER>_<VARIANT> env.
+  const priceId = PLAN_TIERS[tier].priceId;
+  if (!priceId) throw new Error(`Stripe price for ${tier} is not configured for this deploy`);
   const customerId = await ensureStripeCustomer(org);
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",

@@ -3,8 +3,25 @@
 // maps a plan -> its limits + Stripe price id. Safe to import from client code:
 // price ids resolve from server-only env vars (undefined on the client -> null),
 // so no secret leaks; the client only needs labels + limits + the tier order.
+//
+// VARIANT-AWARE (2026-08-17): the two deploys (construction default | lawn) each
+// show their OWN pricing + limits via build-time isLawn() (NEXT_PUBLIC_APP_VARIANT).
+// The internal tier keys stay stable — trial/starter/pro/enterprise — so NO DB
+// migration of organizations.plan is needed. `enterprise` is LABELED "Business"
+// (the top paid tier); its key is unchanged so the webhook + checkout + RLS
+// keep resolving. Each variant reads its own Stripe price env vars:
+//   construction: STRIPE_PRICE_STARTER_CONSTRUCTION / _PRO_ / _ENTERPRISE_
+//   lawn:         STRIPE_PRICE_STARTER_LAWN / _PRO_ / _ENTERPRISE_
+//
+// MULTI-DIMENSIONAL (2026-08-17): tiers restrict more than headcount — jobs,
+// line-items-per-doc, storage, app-user seats, crew members (scheduling-only +
+// linked), and customers. NO unlimited storage anywhere (it costs the platform
+// too much); the Business tier's storage is a soft "call/email for more" ceiling
+// (storageCustom) — see storage cost research in the payments-pivot topic.
 
-export const TRIAL_DAYS = 14;
+import { isLawn } from "@/lib/variant";
+
+export const TRIAL_DAYS = 30;
 
 export type PlanTier =
   | "trial"
@@ -16,68 +33,218 @@ export type PlanTier =
 
 export interface PlanConfig {
   label: string;
-  /** Stripe price id (server env). null for non-purchasable tiers. */
+  /** Stripe price id for THIS deploy's variant (server env). null for non-purchasable tiers. */
   priceId: string | null;
-  /** Max active users. null = unlimited. 0 = no creates allowed. */
+  /** Display price in whole dollars (for the billing cards). 0 for trial. */
+  priceMonthly: number;
+  /** Max active app-user seats (logins). null = unlimited. 0 = no creates. */
   maxUsers: number | null;
-  /** Max jobs. null = unlimited. 0 = no creates allowed. */
+  /** Max active jobs. For lawn, a "job" is a property with a recurring plan, so
+   *  this doubles as the recurring-schedules cap (≈1 schedule per lawn job).
+   *  null = unlimited. 0 = no creates. */
   maxJobs: number | null;
+  /** Max line items per estimate/invoice. null = unlimited. */
+  maxLineItemsPerDoc: number | null;
+  /** Max storage in bytes across the org's photos/receipts/blueprints. null = unlimited. */
+  maxStorageBytes: number | null;
+  /** When true, the storage cap is a soft ceiling — the user calls/emails to ask
+   *  for more (Business tier). The hard byte cap still applies as the included allotment. */
+  storageCustom: boolean;
+  /** Max crew_members (linked app-user crew + scheduling-only). null = unlimited. */
+  maxCrewMembers: number | null;
+  /** Max customers. null = unlimited. */
+  maxCustomers: number | null;
   /** Display order on the billing page. */
   order: number;
   /** One-line description for the billing cards. */
   blurb: string;
 }
 
-export const PLAN_TIERS: Record<PlanTier, PlanConfig> = {
+const GB = 1024 * 1024 * 1024;
+
+// ── Construction variant ──────────────────────────────────────────────────────
+const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
   trial: {
     label: "Trial",
     priceId: null,
+    priceMonthly: 0,
     maxUsers: null,
     maxJobs: null,
+    maxLineItemsPerDoc: null,
+    maxStorageBytes: null,
+    storageCustom: false,
+    maxCrewMembers: null,
+    maxCustomers: null,
     order: 0,
-    blurb: "Full access for 14 days — no card required.",
+    blurb: "Full access for 30 days — no card required.",
   },
   starter: {
     label: "Starter",
-    priceId: process.env.STRIPE_PRICE_STARTER ?? null,
+    // Falls back to the legacy single price env until the variant-specific
+    // price is set, so this deploy keeps working during the price migration.
+    priceId: process.env.STRIPE_PRICE_STARTER_CONSTRUCTION ?? process.env.STRIPE_PRICE_STARTER ?? null,
+    priceMonthly: 49,
     maxUsers: 5,
     maxJobs: 10,
+    maxLineItemsPerDoc: 25,
+    maxStorageBytes: 5 * GB,
+    storageCustom: false,
+    maxCrewMembers: 15,
+    maxCustomers: 50,
     order: 1,
     blurb: "For small crews getting organized.",
   },
   pro: {
     label: "Pro",
-    priceId: process.env.STRIPE_PRICE_PRO ?? null,
+    priceId: process.env.STRIPE_PRICE_PRO_CONSTRUCTION ?? process.env.STRIPE_PRICE_PRO ?? null,
+    priceMonthly: 149,
     maxUsers: 25,
-    maxJobs: 100,
+    maxJobs: 50,
+    maxLineItemsPerDoc: 75,
+    maxStorageBytes: 25 * GB,
+    storageCustom: false,
+    maxCrewMembers: 100,
+    maxCustomers: 500,
     order: 2,
     blurb: "For growing contractors running multiple jobs.",
   },
   enterprise: {
-    label: "Enterprise",
-    priceId: process.env.STRIPE_PRICE_ENTERPRISE ?? null,
+    label: "Business",
+    priceId: process.env.STRIPE_PRICE_ENTERPRISE_CONSTRUCTION ?? process.env.STRIPE_PRICE_ENTERPRISE ?? null,
+    priceMonthly: 399,
     maxUsers: null,
     maxJobs: null,
+    maxLineItemsPerDoc: null,
+    maxStorageBytes: 100 * GB,
+    storageCustom: true,
+    maxCrewMembers: null,
+    maxCustomers: null,
     order: 3,
-    blurb: "Unlimited users and jobs. For established operations.",
+    blurb: "Unlimited users + jobs. Need more storage? Call us.",
   },
   expired: {
     label: "Expired",
     priceId: null,
+    priceMonthly: 0,
     maxUsers: 0,
     maxJobs: 0,
+    maxLineItemsPerDoc: 0,
+    maxStorageBytes: 0,
+    storageCustom: false,
+    maxCrewMembers: 0,
+    maxCustomers: 0,
     order: 99,
     blurb: "Trial ended — subscribe to keep creating.",
   },
   canceled: {
     label: "Canceled",
     priceId: null,
+    priceMonthly: 0,
     maxUsers: 0,
     maxJobs: 0,
+    maxLineItemsPerDoc: 0,
+    maxStorageBytes: 0,
+    storageCustom: false,
+    maxCrewMembers: 0,
+    maxCustomers: 0,
     order: 99,
     blurb: "Subscription canceled — resubscribe to resume.",
   },
 };
+
+// ── Lawn variant ──────────────────────────────────────────────────────────────
+// More seats + crew members than construction (lawn businesses staff many crews,
+// many of whom are scheduling-only). Jobs = recurring service plans.
+const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
+  trial: {
+    label: "Trial",
+    priceId: null,
+    priceMonthly: 0,
+    maxUsers: null,
+    maxJobs: null,
+    maxLineItemsPerDoc: null,
+    maxStorageBytes: null,
+    storageCustom: false,
+    maxCrewMembers: null,
+    maxCustomers: null,
+    order: 0,
+    blurb: "Full access for 30 days — no card required.",
+  },
+  starter: {
+    label: "Starter",
+    priceId: process.env.STRIPE_PRICE_STARTER_LAWN ?? process.env.STRIPE_PRICE_STARTER ?? null,
+    priceMonthly: 29,
+    maxUsers: 5,
+    maxJobs: 25,
+    maxLineItemsPerDoc: 15,
+    maxStorageBytes: 5 * GB,
+    storageCustom: false,
+    maxCrewMembers: 25,
+    maxCustomers: 100,
+    order: 1,
+    blurb: "For a solo operator or small route.",
+  },
+  pro: {
+    label: "Pro",
+    priceId: process.env.STRIPE_PRICE_PRO_LAWN ?? process.env.STRIPE_PRICE_PRO ?? null,
+    priceMonthly: 99,
+    maxUsers: 25,
+    maxJobs: 150,
+    maxLineItemsPerDoc: 50,
+    maxStorageBytes: 25 * GB,
+    storageCustom: false,
+    maxCrewMembers: 150,
+    maxCustomers: 1000,
+    order: 2,
+    blurb: "For growing lawn businesses with multiple crews.",
+  },
+  enterprise: {
+    label: "Business",
+    priceId: process.env.STRIPE_PRICE_ENTERPRISE_LAWN ?? process.env.STRIPE_PRICE_ENTERPRISE ?? null,
+    priceMonthly: 199,
+    maxUsers: 75,
+    maxJobs: 500,
+    maxLineItemsPerDoc: null,
+    maxStorageBytes: 75 * GB,
+    storageCustom: true,
+    maxCrewMembers: null,
+    maxCustomers: null,
+    order: 3,
+    blurb: "For established operations. Need more storage? Call us.",
+  },
+  expired: {
+    label: "Expired",
+    priceId: null,
+    priceMonthly: 0,
+    maxUsers: 0,
+    maxJobs: 0,
+    maxLineItemsPerDoc: 0,
+    maxStorageBytes: 0,
+    storageCustom: false,
+    maxCrewMembers: 0,
+    maxCustomers: 0,
+    order: 99,
+    blurb: "Trial ended — subscribe to keep creating.",
+  },
+  canceled: {
+    label: "Canceled",
+    priceId: null,
+    priceMonthly: 0,
+    maxUsers: 0,
+    maxJobs: 0,
+    maxLineItemsPerDoc: 0,
+    maxStorageBytes: 0,
+    storageCustom: false,
+    maxCrewMembers: 0,
+    maxCustomers: 0,
+    order: 99,
+    blurb: "Subscription canceled — resubscribe to resume.",
+  },
+};
+
+export const PLAN_TIERS: Record<PlanTier, PlanConfig> = isLawn()
+  ? LAWN_TIERS
+  : CONSTRUCTION_TIERS;
 
 /** Purchasable tiers, in display order. */
 export const PAID_TIERS = ["starter", "pro", "enterprise"] as const;
@@ -100,7 +267,27 @@ export function getPlanConfig(plan: string): PlanConfig {
   return PLAN_TIERS[plan as PlanTier] ?? PLAN_TIERS.trial;
 }
 
-export function getLimits(plan: string): { maxUsers: number | null; maxJobs: number | null } {
+/** Full multi-dimensional limits for a plan. Consumed by create guards
+ *  (seats, crew_members, customers, line-items, storage) + the billing UI. */
+export interface PlanLimits {
+  maxUsers: number | null;
+  maxJobs: number | null;
+  maxLineItemsPerDoc: number | null;
+  maxStorageBytes: number | null;
+  storageCustom: boolean;
+  maxCrewMembers: number | null;
+  maxCustomers: number | null;
+}
+
+export function getLimits(plan: string): PlanLimits {
   const cfg = getPlanConfig(plan);
-  return { maxUsers: cfg.maxUsers, maxJobs: cfg.maxJobs };
+  return {
+    maxUsers: cfg.maxUsers,
+    maxJobs: cfg.maxJobs,
+    maxLineItemsPerDoc: cfg.maxLineItemsPerDoc,
+    maxStorageBytes: cfg.maxStorageBytes,
+    storageCustom: cfg.storageCustom,
+    maxCrewMembers: cfg.maxCrewMembers,
+    maxCustomers: cfg.maxCustomers,
+  };
 }
