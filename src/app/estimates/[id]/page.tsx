@@ -995,7 +995,16 @@ export default function EstimateDetailPage({
                 controlled by the parent state wired into saveEstimate. */}
             <ProposalOfficePanel
               estimateId={estimate.id}
-              customerEmail={estimate.customers?.contact_email ?? null}
+              // Reflect the LIVE picker selection (not just the saved estimate's
+              // customer) so the Send button enables the moment the office picks
+              // an email-having customer — before they've hit Save. The send route
+              // still reads the saved state, so an unsaved pick surfaces the
+              // route's "link a customer" error if they Send before saving.
+              customerEmail={
+                selectedCustomer?.contact_email ??
+                estimate.customers?.contact_email ??
+                null
+              }
               requiresSignature={requiresSignature}
               onRequiresSignatureChange={setRequiresSignature}
               proposalIntro={proposalIntro}
