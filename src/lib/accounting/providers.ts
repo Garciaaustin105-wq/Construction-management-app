@@ -8,7 +8,7 @@
 // HTTP (local-AI candidates) — see [[lowvoltage-local-model-delegation]].
 
 import "./quickbooks";
-// import "./xero";        // when shipped
+import "./xero";
 // import "./freshbooks";  // when shipped
 // import "./wave";        // when shipped
 // import "./stripe_byo";  // when shipped
