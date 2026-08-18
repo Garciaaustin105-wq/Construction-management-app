@@ -8,6 +8,7 @@ import { useToast } from "@/components/Toast";
 import { Spinner } from "@/components/Skeleton";
 import BlueprintPreview from "@/components/BlueprintPreview";
 import { validateUpload } from "@/lib/uploadValidate";
+import { isOfficeLike } from "@/lib/roles";
 
 type Blueprint = {
   id: string;
@@ -115,7 +116,7 @@ export default function BlueprintsSection({
       </h2>
 
       {/* Office upload form */}
-      {role === "office" && (
+      {isOfficeLike(role) && (
         <form
           onSubmit={handleUpload}
           className="bg-white rounded-lg p-3 shadow-sm space-y-2 mb-3"
@@ -161,7 +162,7 @@ export default function BlueprintsSection({
               <FileText className="w-5 h-5" />
             </div>
             <p className="text-sm font-medium text-gray-700">No blueprints yet</p>
-            {role === "office" && (
+            {isOfficeLike(role) && (
               <p className="text-xs text-gray-500 mt-1 max-w-xs">
                 Upload a PDF or image above to share floor plans, rack elevations, or wiring diagrams with the crew.
               </p>
@@ -185,7 +186,7 @@ export default function BlueprintsSection({
                 {new Date(b.created_at).toLocaleDateString()}
               </p>
             </div>
-            {role === "office" && (
+            {isOfficeLike(role) && (
               <button
                 onClick={() => handleDelete(b)}
                 className="ml-2 text-red-600 p-2 rounded hover:bg-red-50"

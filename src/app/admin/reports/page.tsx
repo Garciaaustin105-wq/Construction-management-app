@@ -4,12 +4,15 @@ import TopBar from "@/components/TopBar";
 import Link from "next/link";
 import { FileSpreadsheet, Receipt, ChevronRight } from "lucide-react";
 import { isLawn } from "@/lib/variant";
+import { OFFICE_OR_PM } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
-// Reports index — office/admin only. Lists the available report types. New
-// report types are added here as cards (extensible). Each links to its own
-// page with filters + export. RLS scopes every report to the caller's org.
+// Reports index — office/PM (office/admin/super_admin/project_manager). Lists
+// the available report types. New report types are added here as cards
+// (extensible). Each links to its own page with filters + export. RLS scopes
+// every report to the caller's org (time_entries + receipts office policies
+// admit PM via tier_office_or_pm — see pm_reports_rls.sql).
 export default async function ReportsIndexPage() {
   const supabase = await createClient();
   const {
@@ -22,7 +25,7 @@ export default async function ReportsIndexPage() {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "office" && profile?.role !== "admin") redirect("/dashboard");
+  if (!OFFICE_OR_PM.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
 
   const reports = [
     {

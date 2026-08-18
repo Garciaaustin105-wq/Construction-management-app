@@ -32,6 +32,7 @@ import {
   CheckSquare,
   FileDiff,
   FileText,
+  FileSpreadsheet,
   Settings,
   Contact,
   Calendar,
@@ -112,6 +113,13 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/admin/users", label: "Admin", Icon: Users },
     );
   }
+  // PM gets Reports (org-wide per-worker + receipts reports; admitted via
+  // tier_office_or_pm RLS — see pm_reports_rls.sql). Scoped to reports only;
+  // the other office doc surfaces stay office/admin per the pre-existing PM
+  // discrepancy (product decision 2026-08-17: PM gets reports, nothing more).
+  if (role === "project_manager") {
+    items.push({ href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet });
+  }
   // Only the org admin manages billing (checkout + Customer Portal routes are
   // admin-only). office/super_admin don't get the tab.
   if (role === "admin") {
@@ -141,7 +149,8 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
       : base;
   }
   if (role === "project_manager") {
-    return base;
+    // PM flat bar + Reports (org-wide reports; tier_office_or_pm RLS admits).
+    return [...base, { href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet }];
   }
   if (role === "office" || role === "admin" || role === "super_admin") {
     // Lawn variant mobile hubs: Home / Lawn / Office / Manage (drop Field).

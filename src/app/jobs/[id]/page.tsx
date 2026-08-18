@@ -341,13 +341,15 @@ export default async function JobDetailPage({
           role={role}
         />
 
-        {/* Subcontractors on this job — management only (office can edit) */}
+        {/* Subcontractors on this job — management reads; office + PM edit
+            (RLS writes on job_subcontractors are is_office_or_pm, so PM can
+            attach/manage subs on their jobs — the editor must match). */}
         {MANAGEMENT.has(role) && (
           <JobSubcontractors
             jobId={job.id}
             initial={jobSubs}
             allSubs={allSubs}
-            canEdit={isOfficeLike(role)}
+            canEdit={OFFICE_OR_PM.has(role)}
           />
         )}
 

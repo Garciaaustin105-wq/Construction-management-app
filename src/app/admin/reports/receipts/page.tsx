@@ -8,6 +8,7 @@ import { formatMoney } from "@/lib/money";
 import Link from "next/link";
 import ReceiptReportPaidToggle from "@/components/ReceiptReportPaidToggle";
 import { Download, FileSpreadsheet, FileText } from "lucide-react";
+import { OFFICE_OR_PM } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function ReceiptsReportPage({
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "office" && profile?.role !== "admin") redirect("/dashboard");
+  if (!OFFICE_OR_PM.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
 
   const sp = await searchParams;
   const filters: Filters = {

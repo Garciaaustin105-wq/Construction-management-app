@@ -151,43 +151,30 @@ export default function VisitDetailPage({
   async function updateStatus(status: string) {
     if (!visit) return;
     setBusy(true);
-    if (isOffice) {
-      // Office path — route through the /status API so the customer is emailed
-      // + notified_at is stamped.
-      let res: Response;
-      try {
-        res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
-        });
-      } catch {
-        setBusy(false);
-        toast.error("Failed: network error");
-        return;
-      }
+    // Both office and crew route through the /status API. The API admits
+    // office/PM (full status + reschedule) and the assigned crew/superintendent
+    // (status-only, server-side ownership check) and — critically — fires the
+    // customer notification suite (service_complete + review_request) when a
+    // visit is marked done, regardless of who marked it. The old crew path did
+    // a direct RLS update that bypassed the API, so crew-done visits never
+    // emailed the customer.
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+    } catch {
       setBusy(false);
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        toast.error(`Failed: ${data.error ?? res.statusText}`);
-        return;
-      }
-    } else {
-      // Crew path — direct update via RLS (crew update policy on their own
-      // visit). The /status API is office-only. No customer email; office
-      // reviews completed visits at end of day.
-      const supabase = createClient();
-      const patch: Record<string, unknown> = { status };
-      patch.completed_at = status === "done" ? new Date().toISOString() : null;
-      const { error } = await supabase
-        .from("lawn_visits")
-        .update(patch)
-        .eq("id", visit.id);
-      setBusy(false);
-      if (error) {
-        toast.error(`Failed: ${error.message}`);
-        return;
-      }
+      toast.error("Failed: network error");
+      return;
+    }
+    setBusy(false);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
     }
     const completed_at = status === "done" ? new Date().toISOString() : null;
     setVisit({ ...visit, status, completed_at });

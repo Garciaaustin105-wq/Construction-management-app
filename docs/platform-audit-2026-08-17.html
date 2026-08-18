@@ -1,0 +1,464 @@
+<title>Platform Audit — Terra Vista / Terra Verde</title>
+<style>
+  :root{
+    --paper:#F6F5F1; --surface:#FFFFFF; --surface-2:#FBFAF6;
+    --ink:#16202E; --ink-2:#54616F; --ink-3:#8A93A0;
+    --rule:#DCD8CE; --rule-strong:#BDB7A8;
+    --blueprint:#1E4D9B; --blueprint-2:#2D6BD4; --blueprint-soft:#E8EFF8;
+    --ok:#2E7D5B; --ok-soft:#E4F0EA; --ok-bd:#BFD8CD;
+    --warn:#B7791F; --warn-soft:#F4ECDC; --warn-bd:#E2CFA2;
+    --crit:#B23B3B; --crit-soft:#F4E4E4; --crit-bd:#E2B8B8;
+    --code-bg:#ECEAE3; --code-bd:#D8D4C8;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    --mono:"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0D1521; --surface:#15243B; --surface-2:#1A2A44;
+      --ink:#E8EDF4; --ink-2:#A6B3C6; --ink-3:#7A889C;
+      --rule:#27374F; --rule-strong:#3A4D69;
+      --blueprint:#6FA8FF; --blueprint-2:#8FB AFF; --blueprint-soft:#1B2C47;
+      --ok:#54C290; --ok-soft:#15301F; --ok-bd:#27503A;
+      --warn:#E0B04A; --warn-soft:#332A12; --warn-bd:#5A4A20;
+      --crit:#E26565; --crit-soft:#341A1A; --crit-bd:#5A2828;
+      --code-bg:#101D30; --code-bd:#243752;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0D1521; --surface:#15243B; --surface-2:#1A2A44;
+    --ink:#E8EDF4; --ink-2:#A6B3C6; --ink-3:#7A889C;
+    --rule:#27374F; --rule-strong:#3A4D69;
+    --blueprint:#6FA8FF; --blueprint-2:#8FBAFF; --blueprint-soft:#1B2C47;
+    --ok:#54C290; --ok-soft:#15301F; --ok-bd:#27503A;
+    --warn:#E0B04A; --warn-soft:#332A12; --warn-bd:#5A4A20;
+    --crit:#E26565; --crit-soft:#341A1A; --crit-bd:#5A2828;
+    --code-bg:#101D30; --code-bd:#243752;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--paper)}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); font-size:15.5px; line-height:1.6;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  .wrap{max-width:820px; margin:0 auto; padding:40px 28px 96px}
+
+  /* Title block — drawing title-block feel */
+  .titleblock{
+    border:1.5px solid var(--ink); background:var(--surface);
+    padding:0; margin-bottom:40px;
+  }
+  .titleblock__top{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:14px 20px; border-bottom:1.5px solid var(--ink);
+    font-family:var(--mono); font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-2);
+  }
+  .titleblock__top span:first-child{color:var(--blueprint); font-weight:600}
+  .titleblock__body{padding:34px 28px 30px}
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--blueprint); margin:0 0 14px;
+  }
+  h1{
+    font-family:var(--serif); font-weight:600; font-size:38px; line-height:1.12;
+    margin:0 0 10px; letter-spacing:-.01em; text-wrap:balance; color:var(--ink);
+  }
+  .subtitle{color:var(--ink-2); font-size:15px; margin:0; max-width:52ch}
+
+  /* Verdict stamp */
+  .verdict{
+    display:flex; gap:18px; align-items:stretch; margin-top:26px;
+    border-top:1px solid var(--rule); padding-top:22px;
+  }
+  .stamp{
+    flex:0 0 auto; border:2px solid var(--ok); color:var(--ok);
+    background:var(--ok-soft); border-radius:4px; padding:10px 16px;
+    font-family:var(--mono); font-size:12px; font-weight:700;
+    letter-spacing:.12em; text-transform:uppercase; display:flex;
+    align-items:center; white-space:nowrap;
+  }
+  .verdict__text{font-size:14.5px; color:var(--ink-2); line-height:1.55}
+  .verdict__text strong{color:var(--ink)}
+
+  .meta-row{
+    display:flex; flex-wrap:wrap; gap:10px 28px; margin-top:22px;
+    font-family:var(--mono); font-size:11.5px; color:var(--ink-3);
+    letter-spacing:.04em;
+  }
+  .meta-row b{color:var(--ink-2); font-weight:600; text-transform:uppercase; letter-spacing:.12em; font-size:10px; display:block; margin-bottom:2px}
+
+  /* Sections */
+  section{margin-top:54px}
+  h2{
+    font-family:var(--serif); font-weight:600; font-size:24px; line-height:1.2;
+    margin:0 0 6px; letter-spacing:-.005em; color:var(--ink); text-wrap:balance;
+    display:flex; align-items:center; gap:12px;
+  }
+  .sec-sub{color:var(--ink-2); font-size:13.5px; margin:0 0 20px; font-family:var(--mono); letter-spacing:.02em}
+  h3{
+    font-family:var(--sans); font-weight:700; font-size:13px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--ink-2); margin:30px 0 12px;
+  }
+  p{margin:0 0 14px}
+  p.lede{font-size:16.5px; color:var(--ink); line-height:1.55}
+
+  /* Status chip */
+  .chip{
+    display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
+    font-size:10.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+    padding:4px 9px; border-radius:3px; white-space:nowrap; border:1px solid transparent;
+  }
+  .chip--ok{background:var(--ok-soft); color:var(--ok); border-color:var(--ok-bd)}
+  .chip--warn{background:var(--warn-soft); color:var(--warn); border-color:var(--warn-bd)}
+  .chip--crit{background:var(--crit-soft); color:var(--crit); border-color:var(--crit-bd)}
+  .chip--info{background:var(--blueprint-soft); color:var(--blueprint); border-color:var(--rule)}
+  .chip-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+  .area-head{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px}
+
+  /* Tables */
+  .scroll{overflow-x:auto; margin:0 -4px 18px}
+  table{border-collapse:collapse; width:100%; font-size:13.5px; min-width:560px}
+  th{
+    text-align:left; font-family:var(--mono); font-size:10.5px; font-weight:600;
+    letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3);
+    border-bottom:1.5px solid var(--rule-strong); padding:8px 12px 9px; vertical-align:bottom;
+  }
+  td{border-bottom:1px solid var(--rule); padding:11px 12px; vertical-align:top; color:var(--ink)}
+  td:first-child{white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  code, .path{
+    font-family:var(--mono); font-size:12.2px; background:var(--code-bg);
+    border:1px solid var(--code-bd); border-radius:3px; padding:1px 5px;
+    color:var(--ink); white-space:nowrap;
+  }
+  .sev{font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; white-space:nowrap}
+  .sev-crit{color:var(--crit)} .sev-warn{color:var(--warn)} .sev-ok{color:var(--ok)} .sev-info{color:var(--blueprint)}
+
+  /* Callouts */
+  .callout{
+    border-left:3px solid var(--blueprint); background:var(--blueprint-soft);
+    padding:14px 18px; margin:18px 0; border-radius:0 4px 4px 0;
+  }
+  .callout--crit{border-color:var(--crit); background:var(--crit-soft)}
+  .callout--warn{border-color:var(--warn); background:var(--warn-soft)}
+  .callout--ok{border-color:var(--ok); background:var(--ok-soft)}
+  .callout__label{font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin:0 0 6px}
+  .callout--crit .callout__label{color:var(--crit)} .callout--warn .callout__label{color:var(--warn)} .callout--ok .callout__label{color:var(--ok)} .callout:not(.callout--crit):not(.callout--warn):not(.callout--ok) .callout__label{color:var(--blueprint)}
+  .callout p{margin:0; font-size:14px}
+
+  ul.tight{margin:6px 0 14px; padding-left:20px}
+  ul.tight li{margin-bottom:5px; font-size:14px}
+  ul.tight li::marker{color:var(--blueprint)}
+
+  .num{
+    font-family:var(--mono); font-variant-numeric:tabular-nums;
+    display:inline-block; min-width:1.6em; color:var(--ink-3); font-size:12px;
+  }
+
+  /* KPI row */
+  .kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); margin:22px 0 6px}
+  .kpi{background:var(--surface); padding:14px 16px}
+  .kpi__n{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:22px; font-weight:600; color:var(--blueprint); line-height:1}
+  .kpi__l{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); margin-top:6px}
+
+  hr.thin{border:none; border-top:1px solid var(--rule); margin:34px 0}
+  .foot{margin-top:60px; padding-top:22px; border-top:1.5px solid var(--ink); font-family:var(--mono); font-size:11px; color:var(--ink-3); letter-spacing:.04em}
+  a{color:var(--blueprint); text-decoration:underline; text-underline-offset:2px}
+  a:focus-visible{outline:2px solid var(--blueprint); outline-offset:2px; border-radius:2px}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important; transition:none!important}}
+  @media (max-width:560px){
+    .wrap{padding:24px 16px 60px}
+    h1{font-size:28px} h2{font-size:20px}
+    .titleblock__body{padding:24px 18px}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- TITLE BLOCK -->
+  <div class="titleblock">
+    <div class="titleblock__top">
+      <span>● Phase 0 — Platform Audit</span>
+      <span>Rev. A · 2026-08-17</span>
+    </div>
+    <div class="titleblock__body">
+      <p class="eyebrow">Readiness baseline before app-store launch</p>
+      <h1>Platform Audit — Terra Vista / Terra Verde</h1>
+      <p class="subtitle">A read-only verification of what is actually real and working across the construction + lawn apps: build health, auth &amp; RLS, feature completeness, the Stripe/payments surface, and PWA/ops readiness. Six parallel auditors, findings cross-checked against code.</p>
+      <div class="verdict">
+        <div class="stamp">● Real &amp; Working</div>
+        <div class="verdict__text">
+          <strong>The platform is real and substantially production-ready.</strong> Build green, auth/RLS sound, both feature sets live and complete, PWA ready. One prod bug (Pay Here, pending SQL — which aligns with the proposed pivot), two functional notification gaps, a few PM-role UI inconsistencies, and two pending SQL files to clear. Nothing here blocks the store-launch track.
+        </div>
+      </div>
+      <div class="meta-row">
+        <div><b>Repo</b>C:\Users\garci_9e2kg3l\Projects\lowvoltage-app</div>
+        <div><b>Branch</b>main · b9de337</div>
+        <div><b>Stack</b>Next.js 16 · React 19 · Supabase · TS 5</div>
+        <div><b>Scope</b>264 src files · ~40 SQL migrations</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpis">
+    <div class="kpi"><div class="kpi__n">0</div><div class="kpi__l">Type errors</div></div>
+    <div class="kpi"><div class="kpi__n">2/2</div><div class="kpi__l">Variant builds green</div></div>
+    <div class="kpi"><div class="kpi__n">5</div><div class="kpi__l">Public token portals</div></div>
+    <div class="kpi"><div class="kpi__n">7</div><div class="kpi__l">Excel exports + PDF</div></div>
+    <div class="kpi"><div class="kpi__n">0</div><div class="kpi__l">Cross-org leak paths</div></div>
+  </div>
+
+  <!-- TOP ACTIONS -->
+  <section>
+    <div class="area-head">
+      <h2>Action list</h2>
+      <span class="chip chip--info"><span class="chip-dot"></span>Ranked by severity</span>
+    </div>
+    <p class="sec-sub">The concrete things to decide or fix, in priority order.</p>
+
+    <div class="callout callout--crit">
+      <p class="callout__label">🔴 Decision required — Pay Here is currently broken in prod</p>
+      <p>Code on <code>main</code> (commit <code>b9de337</code>, deployed) references the <code>connect_payouts_enabled</code> column, but <code>connect_payouts_enabled.sql</code> was never run. Result: the public invoice "Pay" button never renders and the server throws "not set up" — <strong>Pay Here silently does not work for any org.</strong> Two clean options: <b>(A)</b> run the SQL now to restore Pay Here, or <b>(B)</b> skip it and proceed with the QuickBooks pivot (the column becomes dead schema). This is the single most important decision in the report.</p>
+    </div>
+
+    <div class="scroll">
+    <table>
+      <thead><tr><th>#</th><th>Sev</th><th>Finding</th><th>Where</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><span class="num">01</span></td><td class="sev sev-crit">Decide</td><td>Pending <code>connect_payouts_enabled.sql</code> — Pay Here broken against missing column</td><td>invoicePay.ts, /invoices/view/[token], /api/billing/connect/status</td><td>Run SQL (keep Pay Here) <i>or</i> skip (pivot to QBO)</td></tr>
+        <tr><td><span class="num">02</span></td><td class="sev sev-warn">Fix</td><td><code>daily_log_submitted</code> + <code>punch_item_completed</code> notifications declared in feed UI but <b>never inserted</b> — office feed misses them</td><td>daily-logs + punch create/complete flows (client-side writes, no notifications.insert)</td><td>Fire the notification on create/complete</td></tr>
+        <tr><td><span class="num">03</span></td><td class="sev sev-warn">Fix</td><td>Lawn <code>service_complete</code> / <code>review_request</code> fire only on <b>office</b> mark-done, not crew mark-done — customer isn't notified when the crew finishes</td><td>/lawn/my-route + visit page crew path bypass /api/lawn/visits/[id]/status</td><td>Route crew mark-done through the status API, or fire notifications on crew done</td></tr>
+        <tr><td><span class="num">04</span></td><td class="sev sev-warn">Fix</td><td>Two strict <code>role === "office"</code> gates bounce admin/super_admin/PM: job "mark seen" 403s them; Blueprints section hides upload + delete</td><td>api/jobs/[jobId]/view/route.ts:30; BlueprintsSection.tsx:118,164,188</td><td>Admit <code>isOfficeLike()</code> / <code>OFFICE_OR_PM</code></td></tr>
+        <tr><td><span class="num">05</span></td><td class="sev sev-warn">Review</td><td>Manual "Mark Paid" sets status but not <code>amount_paid</code> → stale once Pay Here is gone; <code>invoice_paid</code> notification not fired for offline payments</td><td>invoices/[id]/InvoiceActions.tsx</td><td>Set amount_paid = total on Mark Paid; insert invoice_paid notification</td></tr>
+        <tr><td><span class="num">06</span></td><td class="sev sev-info">Align</td><td>PM role powers granted by SQL (<code>is_office_or_pm</code>) but unevenly honored in UI — reports, notifications feed, and in-job sub editor treat PM read-only</td><td>reports pages, notifications RLS (tier_office), JobSubcontractors</td><td>Decide PM scope; align UI gates to SQL</td></tr>
+        <tr><td><span class="num">07</span></td><td class="sev sev-info">Run</td><td><code>harden_function_execute.sql</code> untracked &amp; not run — revokes anon RPC execute on SECURITY DEFINER fns (defense-in-depth, not a live hole)</td><td>repo root (untracked file)</td><td>Run in Supabase SQL editor, then commit</td></tr>
+        <tr><td><span class="num">08</span></td><td class="sev sev-info">Correct</td><td>Memory drift: service worker cache is <b>v5</b> (memory said v3/v4); EXIF image-orientation fix <b>IS committed</b> (<code>11007ee</code>) — memory said "not committed"</td><td>memory notes</td><td>Update memory file</td></tr>
+        <tr><td><span class="num">09</span></td><td class="sev sev-info">Config</td><td>Acknowledged-pending, not bugs: SMS (Twilio env + <code>SMS_ENABLED</code> flip); Google Maps 2-key dependency; online Stripe receipt needs platform "Successful payments" toggle; lawn <code>RESEND_FROM</code> domain unverified (optional)</td><td>Vercel + Stripe dashboard</td><td>Set when ready; graceful degradation already in place</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <!-- AREA: BUILD -->
+  <section>
+    <div class="area-head">
+      <h2>Build &amp; CI</h2>
+      <span class="chip chip--ok"><span class="chip-dot"></span>Green</span>
+    </div>
+    <p class="sec-sub">tsc · eslint · both-variant production builds</p>
+    <p>Memory's claim of clean builds is confirmed as of today.</p>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Check</th><th>Result</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Typecheck <code>tsc --noEmit</code></td><td class="sev sev-ok">0 errors</td><td>Strict mode, bundler resolution</td></tr>
+        <tr><td>Lint <code>npm run lint</code></td><td class="sev sev-ok">0 errors / 5 warnings</td><td>All cosmetic: 4 unused locals, 1 <code>&lt;img&gt;</code> in /punch/[id]</td></tr>
+        <tr><td>Construction build</td><td class="sev sev-ok">Pass</td><td>58/58 static pages</td></tr>
+        <tr><td>Lawn build</td><td class="sev sev-ok">Pass</td><td>Variant gate collapses construction-only routes</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout callout--warn">
+      <p class="callout__label">⚠ Local env is thin</p>
+      <p><code>.env.local</code> carries only the 3 Supabase vars. Resend, Stripe, Twilio, Google Maps, and <code>CRON_SECRET</code> live on Vercel only — so server routes can't be exercised locally without them. Not a build issue; a local-dev caveat.</p>
+    </div>
+  </section>
+
+  <!-- AREA: AUTH/RLS -->
+  <section>
+    <div class="area-head">
+      <h2>Auth, RLS &amp; multi-tenancy</h2>
+      <span class="chip chip--ok"><span class="chip-dot"></span>Sound</span>
+    </div>
+    <p class="sec-sub">Supabase SSR · variant gate · password reset · RLS isolation</p>
+    <ul class="tight">
+      <li><b>Auth</b>: singleton browser client (avoids the pre-hydration RLS write race); server client wraps cookie sets in try/catch; <code>src/proxy.ts</code> runs the variant gate before <code>updateSession</code>. Custom cross-device password-reset is well-designed — 256-bit single-use, race-safe atomic claim, hash-only-in-DB, no enumeration, rate-limited.</li>
+      <li><b>Variant split</b>: defense-in-depth — build-time branch pruning + proxy redirect/API-404 + login affinity guard + DB trigger <code>guard_jobs_variant()</code>. Three lawn crons intentionally self-gate <code>isLawn()</code> so the construction deploy owns cron against the shared DB (no double-process).</li>
+      <li><b>RLS</b>: every business table has <code>same_org()</code>/<code>tier_*</code> on every policy + <code>with check</code> on writes; <code>organization_id</code> NOT NULL on 18 tables; BEFORE-INSERT triggers stamp child org from parent <i>even for service-role writes</i>. The 42P17 recursion pattern is consistently fixed via SECURITY DEFINER helpers — no direct cross-table subqueries remain.</li>
+      <li><b>Service role</b>: used in ~14 routes, always either token-scoped to one org row (public portals) or caller-tenant-scoped via <code>getMyOrg</code>. <b>No cross-org leak path found.</b></li>
+    </ul>
+    <h3>Gaps</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Sev</th><th>Finding</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td class="sev sev-warn">UI</td><td>Strict <code>role !== "office"</code> on job "mark seen" → admin/super_admin/PM get 403, unread badge won't clear</td><td>api/jobs/[jobId]/view/route.ts:30</td></tr>
+        <tr><td class="sev sev-warn">UI</td><td>Strict <code>role === "office"</code> → admin/super_admin lose Blueprints upload form + delete button (RLS admits them)</td><td>BlueprintsSection.tsx:118,164,188</td></tr>
+        <tr><td class="sev sev-info">Verify</td><td><code>showOfficeSurface</code> excludes super_admin from dashboard office view — likely intentional (uses platform view), confirm</td><td>dashboard/page.tsx:96</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout">
+      <p class="callout__label">All 5 public token portals in isPublicRoute</p>
+      <p><code>/q/</code> (estimate), <code>/invoices/view/</code>, <code>/co/</code> (change order), <code>/s/</code> (submittal), <code>/v/</code> (lawn photo) — every portal is registered, so logged-in viewers never see app chrome over a standalone portal. No chrome-leak gap.</p>
+    </div>
+  </section>
+
+  <!-- AREA: CONSTRUCTION -->
+  <section>
+    <div class="area-head">
+      <h2>Construction features</h2>
+      <span class="chip chip--ok"><span class="chip-dot"></span>Real &amp; complete</span>
+    </div>
+    <p class="sec-sub">Estimates → invoices → GC pro → Gantt → inspections → reports</p>
+    <p>Every claimed feature maps to a shipped page + API route + real table. No stubs. The quote→estimate merge is a done one-time migration (app reads a single <code>estimates</code> table). The 8-feature professional estimate creator, standalone job-less estimates, deposit-only-invoice model, Gantt drag + CPM critical path + cycle rejection, inspections (exactly 12 residential / 25 commercial, seeded on demand), and JobBudget reacting live to approved change orders all verify against code.</p>
+
+    <h3>Feature status</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Feature</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Estimates (merge, standalone, 8-feature creator, deposit auto-apply)</td><td class="sev sev-ok">Live</td><td>All 8 schema columns rendered</td></tr>
+        <tr><td>Invoices + send (email) + public portals /q/ + /invoices/view/</td><td class="sev sev-ok">Live</td><td>SMS gated "Coming soon"</td></tr>
+        <tr><td>GC pro: Daily Logs, Punch List, Change Orders, Submittals</td><td class="sev sev-ok">Live</td><td>Four-tier RLS; public /co/ + /s/ portals</td></tr>
+        <tr><td>Gantt schedule (drag + CPM + FS deps + zoom)</td><td class="sev sev-ok">Live</td><td>job_tasks; cycle rejection works</td></tr>
+        <tr><td>City inspections checklist</td><td class="sev sev-ok">Live</td><td>12 res / 25 comm; project_type toggle</td></tr>
+        <tr><td>Reports: receipts + per-worker + 7 Excel exports + PDF</td><td class="sev sev-ok">Live</td><td>xlsx + jspdf</td></tr>
+        <tr><td>Notifications feed (6 of 8 types fire)</td><td class="sev sev-warn">Partial</td><td>2 types declared but never inserted — see #02</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Gaps</h3>
+    <ul class="tight">
+      <li><b>#02 — two notifications never fire</b>: <code>daily_log_submitted</code> and <code>punch_item_completed</code> exist in the feed's enum/icon map but no code path inserts them. The office dashboard will never surface these events despite the UI being ready.</li>
+      <li><b>PM powers uneven</b>: SQL grants PM full CRUD via <code>is_office_or_pm</code>, but the receipts + weekly reports, the notifications feed (RLS <code>tier_office</code>), and the in-job subcontractor editor treat PM read-only.</li>
+      <li><b>CO creates no invoice (v1)</b>: office manually adds an approved CO to an invoice — documented scope, but a workflow gap vs Procore/Buildertrend.</li>
+      <li><b>Minor</b>: dead <code>change_order_lines.unit</code> column; punch <code>completed_at</code> stamped client-side only; no expiry on share tokens (UUID-unguessable + status guard is the current protection).</li>
+    </ul>
+  </section>
+
+  <!-- AREA: LAWN -->
+  <section>
+    <div class="area-head">
+      <h2>Lawn features</h2>
+      <span class="chip chip--ok"><span class="chip-dot"></span>Real &amp; complete</span>
+    </div>
+    <p class="sec-sub">Schedules → routes → visits → cycle billing → maps → customer notifications</p>
+    <p>The recurring-schedule → visit-lifecycle → crew-route → cycle-billing loop is fully wired end-to-end with race-safe billing (atomic claim-then-line), one-shot customer notifications, a public photo portal, and a map-first planner backed by Google Directions + Distance Matrix + Places + Static Maps. Variant gating is a clean two-way split; the three lawn crons correctly no-op on the lawn deploy.</p>
+
+    <h3>Notable strengths</h3>
+    <ul class="tight">
+      <li><b>Cycle billing</b> is race-safe by construction; "lawn approval creates no invoice" guard verified in <code>approve_deposit_invoice.sql</code> (skips invoice for lawn jobs — cycle billing handles it, avoids double-bill).</li>
+      <li><b>Maps</b>: graceful error card when the public key is missing; <code>AddressInput</code> degrades to plain text; Static Maps in 4 customer emails (separate <code>GOOGLE_MAPS_STATIC_KEY</code>, no referrer restriction for email clients); 25-waypoint cap with polyline fallback.</li>
+      <li><b>Customer notifications</b>: 4 milestones, org templates (8/org seeded), per-customer opt-in (SMS default false — TCPA), <code>notification_log</code>, public <code>/v/[token]</code> photo portal.</li>
+    </ul>
+
+    <h3>Gaps</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Sev</th><th>Finding</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="sev sev-warn">Workflow</td><td><code>service_complete</code> + <code>review_request</code> fire only on office mark-done, not crew mark-done — see #03</td><td>Crew path does a direct RLS update, bypasses the status API</td></tr>
+        <tr><td class="sev sev-info">Config</td><td>SMS channel pending Twilio env (acknowledged)</td><td>4 surfaces correctly show "Coming soon"</td></tr>
+        <tr><td class="sev sev-info">Ops</td><td>Cycle-billing delivery failure is swallowed (invoice created but not emailed); office only sees the send count dip</td><td>Minor observability gap</td></tr>
+        <tr><td class="sev sev-info">Cosmetic</td><td>Photos undifferentiated before/after (upload order is the de-facto tag); weather US-only (NWS)</td><td>—</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <!-- AREA: STRIPE -->
+  <section>
+    <div class="area-head">
+      <h2>Stripe / payments &amp; the pivot</h2>
+      <span class="chip chip--warn"><span class="chip-dot"></span>Pivot cleanly scoped</span>
+    </div>
+    <p class="sec-sub">SaaS subscriptions · Connect "Pay Here" · the QuickBooks question</p>
+    <p>Two subsystems share one webhook (discriminated by Checkout <code>mode</code>): <b>SaaS subscriptions</b> (your revenue — Stripe Billing, checkout/portal/sync, <code>billing_events</code>, <code>guard_job_create</code>) and <b>Connect "Pay Here"</b> (a contractor's customer pays an invoice via destination charge; webhook marks it paid). The proposed pivot — Stripe keeps only subscriptions; construction receivables move to QuickBooks; lawn BYO Stripe/bookkeeping — is <b>cleanly scoped</b>: Pay Here is a self-contained ~9 files + 1 SQL + 1 webhook branch + 1 env var, with zero coupling into SaaS subs or lawn cycle billing.</p>
+
+    <div class="callout callout--ok">
+      <p class="callout__label">✓ SaaS subscriptions are solid and untouched by the pivot</p>
+      <p><code>billing.ts</code> (checkout/portal/sync), <code>plans.ts</code>, <code>billing_events</code>, and <code>guard_job_create</code> stay as-is. Subscription status gating (active/past_due/canceled) works server-side and via the DB trigger. Grandfather-on-deploy is one-shot.</p>
+    </div>
+
+    <h3>To deprecate Pay Here on construction</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Action</th><th>File(s)</th></tr></thead>
+      <tbody>
+        <tr><td>Delete or <code>isLawn()</code>-gate Connect UI</td><td>ConnectStripeButton.tsx, admin/billing/page.tsx (connect section)</td></tr>
+        <tr><td>Delete or gate Connect APIs</td><td>api/billing/connect/start, /status</td></tr>
+        <tr><td>Remove public Pay route + panel</td><td>api/invoices/pay/[token], InvoicePayPanel.tsx</td></tr>
+        <tr><td>Strip Connect from invoice portal</td><td>invoices/view/[token]/page.tsx (canPay flags)</td></tr>
+        <tr><td>Remove webhook payment branch</td><td>api/stripe/webhook/route.ts (mode === "payment")</td></tr>
+        <tr><td>Drop Connect lib + env</td><td>invoicePay.ts (getConnectAccount/createCheckoutSession), STRIPE_PLATFORM_FEE_PERCENT</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="callout callout--warn">
+      <p class="callout__label">⚠ Two decisions before implementing</p>
+      <p><b>(1) Does lawn keep platform-managed Connect?</b> If yes → gate the Connect surfaces behind <code>isLawn()</code>, don't delete. If no → delete outright. Currently both variants ship identical Connect code (no variant gate). <b>(2) The pending SQL:</b> if the pivot proceeds, skip <code>connect_payouts_enabled.sql</code> (dead schema). If abandoned, run it now — Pay Here is broken in prod today against a missing column.</p>
+    </div>
+
+    <h3>Post-pivot follow-ups (non-blocking)</h3>
+    <ul class="tight">
+      <li>Fix <code>amount_paid</code> on manual Mark Paid (becomes universally stale once Pay Here is gone) — see #05.</li>
+      <li>Fire <code>invoice_paid</code> notification for offline payments (today only the webhook fires it).</li>
+      <li>Consider a "Pay in QuickBooks" deep link from the public invoice portal.</li>
+    </ul>
+  </section>
+
+  <!-- AREA: PWA/OPS -->
+  <section>
+    <div class="area-head">
+      <h2>PWA, email, SMS &amp; ops</h2>
+      <span class="chip chip--ok"><span class="chip-dot"></span>Production-ready</span>
+    </div>
+    <p class="sec-sub">Service worker · manifest · portals · Resend · Twilio · pending SQL</p>
+
+    <h3>PWA — ready</h3>
+    <ul class="tight">
+      <li>Service worker cache is <b>v5</b> (three-tier: network-first navigations, cache-first hashed bundles, stale-while-revalidate mutable static). Precaches the app shell + icons; never intercepts Supabase or <code>/api/*</code>.</li>
+      <li>Manifest is variant-aware (Terra Vista blue / Terra Verde green, variant start_url), generated per-deploy. Icons: 192 + 512 maskable PNGs + 180×180 iOS PNG (resvg rasterize, no Inkscape). iOS home-screen icon still needs manual remove/re-add after icon changes (iOS limitation).</li>
+      <li><b>EXIF orientation fix IS committed</b> (<code>11007ee</code>) and wired into crew photo, lawn visit photo, and receipts upload paths with graceful fallback. (Memory drift — said "not committed".)</li>
+    </ul>
+
+    <h3>Email &amp; SMS</h3>
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Channel</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Email (Resend)</td><td class="sev sev-ok">Live</td><td><code>fromAddress()</code> per-variant display name; lawn sends via construction-domain FROM until terraverdelawnmanagement.com verified (optional)</td></tr>
+        <tr><td>SMS (Twilio)</td><td class="sev sev-info">Gated</td><td><code>SMS_ENABLED=false</code>; 4 surfaces show "Coming soon"; server code + E.164 normalize ready; needs Twilio env + A2P 10DLC + flag flip</td></tr>
+        <tr><td>Receipts (offline)</td><td class="sev sev-ok">Live</td><td>Office "Send receipt" → recomputes total server-side → branded paid-in-full email</td></tr>
+        <tr><td>Receipts (online)</td><td class="sev sev-info">Toggle</td><td>Uses Stripe's own receipt; needs "Successful payments" email toggle on platform acct</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout callout--warn">
+      <p class="callout__label">⚠ Two pending SQL files</p>
+      <p><code>connect_payouts_enabled.sql</code> (see #01) and <code>harden_function_execute.sql</code> (untracked — revokes anon RPC execute on SECURITY DEFINER functions; defense-in-depth, low urgency). Both should be resolved before the next deploy.</p>
+    </div>
+  </section>
+
+  <!-- READINESS -->
+  <section>
+    <h2>Readiness verdict</h2>
+    <p class="sec-sub">Where the platform stands against the store-launch track</p>
+    <p class="lede">This is a real, working product — not a demo. The audit found no isolation breach, no data-loss path, and no build failure. The findings are a short list of functional polish items, two pending SQL files, and one product decision (Pay Here vs. QuickBooks) that you're already thinking through.</p>
+    <ul class="tight">
+      <li><b>Build &amp; CI</b>: green, both variants.</li>
+      <li><b>Auth / RLS / multi-tenant</b>: sound; two strict-office UI gates to relax.</li>
+      <li><b>Construction</b>: complete; two notifications to wire, PM scope to align.</li>
+      <li><b>Lawn</b>: complete; service_complete-on-crew-done workflow to fix.</li>
+      <li><b>Payments</b>: pivot cleanly scoped; Pay Here currently broken pending the SQL decision.</li>
+      <li><b>PWA / ops</b>: production-ready; two pending SQL files to clear.</li>
+    </ul>
+
+    <div class="callout callout--ok">
+      <p class="callout__label">Next — the five strategy decisions</p>
+      <p>The audit is the baseline. The launch track now waits on your calls: (1) confirm the payments pivot (Stripe subs only + QuickBooks for construction), (2) integration priority order, (3) lawn payment path (BYO Stripe + QBO?), (4) pricing tiers, (5) green-light closing the gaps. Once you decide, the build work (QBO OAuth, accounting adapter, store assets) is the mechanical kind that delegates cleanly to local AI — token-efficient by design.</p>
+    </div>
+  </section>
+
+  <div class="foot">
+    Audit run 2026-08-17 · 6 parallel auditors (build, auth/RLS, construction, lawn, Stripe, PWA/ops) · read-only · head b9de337 · findings cross-checked against code, not memory claims. QuickBooks design doc drafted by local Ollama (codestral:22b) — RLS sketch needs human rework.
+  </div>
+
+</div>

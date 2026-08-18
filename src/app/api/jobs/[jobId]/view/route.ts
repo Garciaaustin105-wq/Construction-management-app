@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { OFFICE_OR_PM, type Role } from "@/lib/roles";
 
 // Mark a job as "seen" by the caller. The caller must be allowed to view that
 // job — office, an assigned crew member, or the owning customer — before we
@@ -27,7 +28,11 @@ export async function POST(
   const role = profile?.role ?? "crew";
   const customerId = profile?.customer_id ?? null;
 
-  if (role !== "office") {
+  // Office-like (office/admin/super_admin) and PM oversee every job in their
+  // org (RLS admits them via tier_office_or_pm), so they can mark any org job
+  // seen without a per-job access-scope check. Everyone else (crew/customer)
+  // must be assigned to / own the job.
+  if (!OFFICE_OR_PM.has(role as Role)) {
     // Fetch the job's access scope (RLS already hides jobs the caller can't
     // see; a null job means not-found OR not-authorized — treat both as 403).
     const { data: job } = await supabase

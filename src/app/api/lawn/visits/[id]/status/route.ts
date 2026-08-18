@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { OFFICE_OR_PM } from "@/lib/roles";
 import {
@@ -53,15 +54,28 @@ export async function POST(
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? null;
-  if (!role || !OFFICE_OR_PM.has(role as never)) {
-    return NextResponse.json({ error: "Office or PM only" }, { status: 403 });
+  const officeLike = !!role && OFFICE_OR_PM.has(role as never);
+  // Crew / superintendent may advance a visit's status (done / skipped /
+  // reopen) so the customer notification suite fires when the CREW marks a
+  // visit done — not only when office does. Rescheduling (a due_date move)
+  // stays office/PM-only; crew cannot move a visit to a new day.
+  const crewLike = role === "crew" || role === "superintendent";
+  if (!officeLike && !crewLike) {
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+  }
+  if (body.due_date && !officeLike) {
+    return NextResponse.json(
+      { error: "Only office or PM can reschedule a visit" },
+      { status: 403 }
+    );
   }
 
   // Snapshot the current row so we can detect a real transition + the
-  // notified_at gate before mutating.
+  // notified_at gate before mutating. crew_id is included so we can enforce
+  // server-side that a crew/superintendent caller only acts on their own visit.
   const { data: current } = await supabase
     .from("lawn_visits")
-    .select("id, status, due_date, notified_at, job_id, share_token, organization_id")
+    .select("id, status, due_date, notified_at, job_id, share_token, organization_id, crew_id")
     .eq("id", id)
     .maybeSingle();
   const cur = current as unknown as {
@@ -72,9 +86,16 @@ export async function POST(
     job_id: string;
     share_token: string | null;
     organization_id: string | null;
+    crew_id: string | null;
   } | null;
   if (!cur) {
     return NextResponse.json({ error: "Visit not found" }, { status: 404 });
+  }
+  // Defense in depth: a crew/superintendent caller may only act on a visit
+  // assigned to them (the page also checks this client-side). Office/PM
+  // oversee every org visit via RLS (tier_office_or_pm).
+  if (crewLike && cur.crew_id !== user.id) {
+    return NextResponse.json({ error: "Not your visit" }, { status: 403 });
   }
 
   const patch: Record<string, unknown> = {};
@@ -125,7 +146,21 @@ export async function POST(
 
   let notified = false;
   if (shouldNotify) {
-    const { data: job } = await supabase
+    // The notification reads (jobs / customers / templates / settings) + the
+    // notification_log writes + the notified_at stamp run as the SERVICE ROLE
+    // so they succeed regardless of who marked the visit done — a crew caller's
+    // session client may not be able to read the job/org or write
+    // notification_log, and the crew update policy may not permit a
+    // notified_at write. The visit status UPDATE above already ran on the RLS
+    // session client, so crew could only touch their own visit; this block only
+    // reads + notifies + stamps. (The morning remind cron already passes an
+    // admin client to sendCustomerNotification the same way.)
+    const admin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    const { data: job } = await admin
       .from("jobs")
       .select("customer_id, name, address, organization_id, lawn_jobs(map_lat, map_lng)")
       .eq("id", cur.job_id)
@@ -143,7 +178,7 @@ export async function POST(
     const organizationId = cur.organization_id ?? jobRow?.organization_id ?? null;
 
     if (customerId && organizationId) {
-      const { data: org } = await supabase
+      const { data: org } = await admin
         .from("organizations")
         .select("name")
         .eq("id", organizationId)
@@ -159,7 +194,7 @@ export async function POST(
 
       // service_complete (templated email + sms, opt-in gated, logged).
       const completeResults = await sendCustomerNotification({
-        supabase,
+        supabase: admin,
         event: "service_complete",
         organizationId,
         visitId: id,
@@ -178,7 +213,7 @@ export async function POST(
       // → the {{review_link}} token renders empty, but the office controls
       // whether the template is active at all).
       const reviewResults = await sendCustomerNotification({
-        supabase,
+        supabase: admin,
         event: "review_request",
         organizationId,
         visitId: id,
@@ -193,7 +228,7 @@ export async function POST(
       notified = anySent(completeResults) || anySent(reviewResults);
     }
 
-    await supabase
+    await admin
       .from("lawn_visits")
       .update({ notified_at: new Date().toISOString() })
       .eq("id", id);
