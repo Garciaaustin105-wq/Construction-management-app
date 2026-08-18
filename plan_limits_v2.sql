@@ -8,8 +8,10 @@
 -- Caps (must match src/lib/plans.ts PLAN_TIERS):
 --   construction: starter jobs=10, pro jobs=50, enterprise(null)
 --                  starter crew=15, pro crew=100, enterprise(null)
+--                  starter customers=50, pro customers=500, enterprise(null)
 --   lawn:          starter jobs=25, pro jobs=150, enterprise jobs=500
 --                  starter crew=25, pro crew=150, enterprise(null)
+--                  starter customers=100, pro customers=1000, enterprise(null)
 --   trial:         unlimited.  expired/canceled: 0 (block all creates).
 --
 -- ⚠️ BEHAVIOR CHANGE for existing orgs: they were grandfathered to Pro (see
@@ -149,7 +151,73 @@ create trigger trg_guard_crew_member_create
   for each row execute function public.guard_crew_member_create();
 
 -- ────────────────────────────────────────────────────────────────────────────
--- 3. Defense-in-depth: revoke direct RPC execute (trigger-only fns).
+-- 3. Customer cap guard (new dimension). Fires on customers INSERT.
+--    Caps mirror src/lib/plans.ts maxCustomers:
+--      construction: starter 50, pro 500, enterprise(null)
+--      lawn:         starter 100, pro 1000, enterprise(null)
+--    trial unlimited; expired/canceled 0.
+-- ────────────────────────────────────────────────────────────────────────────
+create or replace function public.guard_customer_create()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_plan    text;
+  v_trial   timestamptz;
+  v_variant text;
+  v_eff     text;
+  v_count   bigint;
+  v_max     int;
+begin
+  select plan, trial_ends_at, coalesce(app_variant, 'construction')
+    into v_plan, v_trial, v_variant
+    from public.organizations
+    where id = new.organization_id;
+  if not found then
+    return new;
+  end if;
+
+  v_eff := v_plan;
+  if v_plan = 'trial' and v_trial is not null and now() > v_trial then
+    v_eff := 'expired';
+  end if;
+
+  if v_eff in ('expired', 'canceled') then
+    raise exception 'Your plan does not allow adding customers. Subscribe to continue.';
+  end if;
+
+  v_max := case
+    when v_eff = 'trial'      then null
+    when v_eff = 'enterprise' then null
+    when v_eff = 'pro'        then (case when v_variant = 'lawn' then 1000 else 500 end)
+    when v_eff = 'starter'    then (case when v_variant = 'lawn' then 100 else 50 end)
+    else null
+  end;
+
+  if v_max is not null then
+    select count(*) into v_count
+      from public.customers
+      where organization_id = new.organization_id;
+    if v_count >= v_max then
+      raise exception 'Customer limit reached (%s) on the %s plan. Upgrade to add more customers.',
+        v_max, v_eff;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_guard_customer_create on public.customers;
+create trigger trg_guard_customer_create
+  before insert on public.customers
+  for each row execute function public.guard_customer_create();
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- 4. Defense-in-depth: revoke direct RPC execute (trigger-only fns).
 -- ────────────────────────────────────────────────────────────────────────────
 revoke execute on function public.guard_job_create()           from public, anon, authenticated;
 revoke execute on function public.guard_crew_member_create()   from public, anon, authenticated;
+revoke execute on function public.guard_customer_create()      from public, anon, authenticated;
