@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import StatusBadge from "@/components/StatusBadge";
-import { OFFICE_LIKE } from "@/lib/roles";
+import { FIELD_MGMT } from "@/lib/roles";
 
 type Log = {
   id: string;
@@ -32,7 +32,7 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
   const [log, setLog] = useState<Log | null>(null);
   const [loading, setLoading] = useState(false);
   const [authorized, setAuthorized] = useState(false);
-  const [isOffice, setIsOffice] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -44,7 +44,7 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
       if (!profile) { router.push("/dashboard"); return; }
       if (profile.role === "customer") { router.push("/dashboard"); return; }
       setAuthorized(true);
-      setIsOffice(OFFICE_LIKE.has(profile.role));
+      setCanEdit(FIELD_MGMT.has(profile.role));
       const { id: paramId } = await params; setId(paramId);
       const { data: logRow } = await supabase.from("daily_logs").select("id, job_id, log_date, weather, work_performed, equipment, materials, delays, safety_notes, crew_count, status, reviewed_at, created_by, created_at").eq("id", paramId).single();
       if (!logRow) { toast.error("Log not found"); router.push("/daily-logs"); return; }
@@ -112,7 +112,7 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
               </div>
               <StatusBadge status={log.status} />
             </div>
-            {isOffice && (
+            {canEdit && (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label htmlFor="weather" className="block text-sm font-medium text-gray-700">Weather</label>
@@ -152,7 +152,7 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
                 )}
               </form>
             )}
-            {!isOffice && (
+            {!canEdit && (
               <div className="space-y-4">
                 <div>
                   <p className="text-sm font-semibold text-gray-500">Weather</p>

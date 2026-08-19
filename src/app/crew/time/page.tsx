@@ -8,6 +8,7 @@ import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucid
 import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
 import { isLawn } from "@/lib/variant";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
+import StatusBadge from "@/components/StatusBadge";
 
 type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
@@ -21,6 +22,7 @@ type TimeEntry = {
   lat: number | null;
   lng: number | null;
   location_source: GpsSource | null;
+  status: string;
 };
 
 function fmtDuration(ms: number): string {
@@ -76,7 +78,7 @@ export default function CrewTimePage() {
       user?.id
         ? supabase
             .from("time_entries")
-            .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source")
+            .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
             .eq("user_id", user.id)
             .order("clock_in_at", { ascending: false })
             .limit(50)
@@ -147,7 +149,7 @@ export default function CrewTimePage() {
         location_source: gps?.source ?? null,
         location_accuracy: gps?.accuracy ?? null,
       })
-      .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source")
+      .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
       .single();
     if (error) {
       toast.error(
@@ -384,6 +386,9 @@ export default function CrewTimePage() {
                     <span className="font-mono text-sm font-semibold text-gray-700 tabular-nums">
                       {fmtDuration(dur)}
                     </span>
+                    {e.status && e.status !== "pending" && (
+                      <StatusBadge status={e.status} />
+                    )}
                     <TimeEntryEditModal
                       entry={e}
                       jobs={jobs}

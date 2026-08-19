@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import StatusBadge from "@/components/StatusBadge";
-import { OFFICE_OR_PM } from "@/lib/roles";
+import { FIELD_MGMT } from "@/lib/roles";
 
 type PunchItem = {
   id: string;
@@ -33,7 +33,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
   const [crew, setCrew] = useState<Crew[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [userId, setUserId] = useState<string>("");
-  const [isOffice, setIsOffice] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -60,7 +60,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
         router.push("/dashboard");
         return;
       }
-      setIsOffice(OFFICE_OR_PM.has(role));
+      setCanEdit(FIELD_MGMT.has(role));
       setAuthorized(true);
 
       const [{ data: itemRow }, { data: crewRows }, { data: photoRows }] = await Promise.all([
@@ -209,7 +209,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Title</span>
-            {isOffice ? (
+            {canEdit ? (
               <input
                 type="text"
                 value={item.title}
@@ -223,7 +223,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Description</span>
-            {isOffice ? (
+            {canEdit ? (
               <textarea
                 value={item.description ?? ""}
                 onChange={(e) => setItem({ ...item, description: e.target.value })}
@@ -237,7 +237,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Location</span>
-            {isOffice ? (
+            {canEdit ? (
               <input
                 type="text"
                 value={item.location ?? ""}
@@ -251,7 +251,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Assigned to</span>
-            {isOffice ? (
+            {canEdit ? (
               <select
                 value={item.assigned_to ?? ""}
                 onChange={(e) => setItem({ ...item, assigned_to: e.target.value || null })}
@@ -274,7 +274,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Priority</span>
-              {isOffice ? (
+              {canEdit ? (
                 <select
                   value={item.priority}
                   onChange={(e) => setItem({ ...item, priority: e.target.value })}
@@ -290,7 +290,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
             </label>
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Due date</span>
-              {isOffice ? (
+              {canEdit ? (
                 <input
                   type="date"
                   value={item.due_date ? item.due_date.slice(0, 10) : ""}
@@ -307,7 +307,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
             </label>
           </div>
 
-          {isOffice && (
+          {canEdit && (
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Status</span>
               <select
@@ -337,7 +337,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
           </div>
         )}
 
-        {isOffice && (
+        {canEdit && (
           <div className="bg-white rounded-lg shadow-sm p-4">
             <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Attach photo</h2>
             <input
@@ -352,7 +352,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
           </div>
         )}
 
-        {isOffice && (
+        {canEdit && (
           <button
             onClick={save}
             disabled={saving}
@@ -363,7 +363,7 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
           </button>
         )}
 
-        {!isOffice && item.status !== "void" && (
+        {!canEdit && item.status !== "void" && (
           <button
             onClick={advance}
             disabled={saving}

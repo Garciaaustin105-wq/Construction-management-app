@@ -3,6 +3,7 @@ import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { FIELD_MGMT } from "@/lib/roles";
 
 function PunchForm() {
   const router = useRouter();
@@ -29,7 +30,7 @@ function PunchForm() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/login"); return; }
       const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single();
-      if (!["office", "admin", "project_manager"].includes(profile?.role ?? "")) { router.push("/dashboard"); return; }
+      if (!FIELD_MGMT.has((profile?.role ?? "crew") as never)) { router.push("/dashboard"); return; }
       setAuthorized(true);
       const { data: jobRows } = await supabase.from("jobs").select("id, name, type").eq("type", "construction").order("created_at", { ascending: false });
       let jobsList = (jobRows ?? []) as { id: string; name: string; type: string }[];

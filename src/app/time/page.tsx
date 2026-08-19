@@ -10,6 +10,8 @@ import { isLawn } from "@/lib/variant";
 import ManualTimeEntryForm from "@/components/ManualTimeEntryForm";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
 import ForceClockOutButton from "@/components/ForceClockOutButton";
+import TimeApproveButton from "@/components/TimeApproveButton";
+import StatusBadge from "@/components/StatusBadge";
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -47,6 +49,8 @@ type Joined = {
   note: string | null;
   lat: number | null;
   lng: number | null;
+  status: string;
+  approved_by: string | null;
   user: { id: string; full_name: string | null } | null;
   job: { id: string; name: string | null } | null;
   cost_code_id: string | null;
@@ -117,7 +121,7 @@ export default async function TimeOverviewPage({
     supabase
       .from("time_entries")
       .select(
-        "id, clock_in_at, clock_out_at, note, lat, lng, cost_code_id, user:profiles(id, full_name), job:jobs(id, name), cost_code:cost_codes(code, name)"
+        "id, clock_in_at, clock_out_at, note, lat, lng, cost_code_id, status, approved_by, user:profiles(id, full_name), job:jobs(id, name), cost_code:cost_codes(code, name)"
       )
       .gte("clock_in_at", weekStart.toISOString())
       .lt("clock_in_at", weekEnd.toISOString())
@@ -142,6 +146,9 @@ export default async function TimeOverviewPage({
   // features ship (separate SQL-gated deploy).
   const role = (profile?.role ?? "crew") as never;
   const canManage = OFFICE_OR_PM.has(role);
+  // Review/approve is FIELD_MGMT (admits superintendent, which OFFICE_OR_PM
+  // excludes). Supers can now review time; office/PM can both manage + review.
+  const canReview = FIELD_MGMT.has(role);
   const variant: "construction" | "lawn" = isLawn() ? "lawn" : "construction";
 
   // Workers (clockable) + jobs + cost codes for the manual-add + edit modals.
@@ -175,6 +182,10 @@ export default async function TimeOverviewPage({
 
   const weekTotalMs = weekShifts.reduce((sum, s) => sum + shiftDurationMs(s, now), 0);
   const weekHours = weekTotalMs / 3_600_000;
+  // Clocked-out shifts still awaiting field-management review.
+  const pendingReview = weekShifts.filter(
+    (s) => s.clock_out_at && s.status === "pending"
+  ).length;
 
   // ---- Group by worker ----
   const byWorker = new Map<
@@ -258,6 +269,12 @@ export default async function TimeOverviewPage({
           <span className="font-mono text-xs font-semibold text-gray-700 tabular-nums flex-shrink-0">
             {fmtDuration(dur)}
           </span>
+          {s.clock_out_at && s.status !== "pending" && (
+            <StatusBadge status={s.status} />
+          )}
+          {canReview && s.clock_out_at && s.status === "pending" && (
+            <TimeApproveButton entryId={s.id} />
+          )}
           {canManage && (
             <TimeEntryEditModal
               entry={{
@@ -398,6 +415,17 @@ export default async function TimeOverviewPage({
         </section>
 
         <TimeExportButton rows={exportRows} />
+
+        {/* Pending-review callout for field management */}
+        {canReview && pendingReview > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+            <p className="text-sm text-amber-800">
+              {pendingReview} shift{pendingReview === 1 ? "" : "s"} awaiting review —
+              use the <span className="font-semibold">✓</span> / <span className="font-semibold">✕</span> buttons on each shift line.
+            </p>
+          </div>
+        )}
 
         {/* By worker */}
         <section>
