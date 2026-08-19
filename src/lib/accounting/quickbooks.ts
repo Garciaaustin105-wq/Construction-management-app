@@ -174,12 +174,16 @@ export class QuickBooksProvider implements AccountingProvider {
       if (email) body.PrimaryEmailAddr = { Address: email };
       if (phone) body.PrimaryPhone = { FreeFormNumber: phone };
       if (billingAddress) {
-        body.BillAddr = {
-          Line1: billingAddress.line1 ?? null,
-          City: billingAddress.city ?? null,
-          CountrySubDivisionCode: billingAddress.state ?? null,
-          PostalCode: billingAddress.zip ?? null,
-        };
+        // QBO rejects `null` inside BillAddr ("Customer has invalid or
+        // unsupported properties") — omitted, not null. Only include the
+        // sub-fields we actually have. (Our customer `address` is often a
+        // single unstructured string, so usually only Line1 is set.)
+        const billAddr: Record<string, string> = {};
+        if (billingAddress.line1) billAddr.Line1 = billingAddress.line1;
+        if (billingAddress.city) billAddr.City = billingAddress.city;
+        if (billingAddress.state) billAddr.CountrySubDivisionCode = billingAddress.state;
+        if (billingAddress.zip) billAddr.PostalCode = billingAddress.zip;
+        if (Object.keys(billAddr).length) body.BillAddr = billAddr;
       }
       if (existingExternalId) {
         // QBO requires Id + the current SyncToken on sparse updates.
