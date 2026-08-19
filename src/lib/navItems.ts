@@ -100,7 +100,19 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
         { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
       ];
     }
-    // office / admin / super_admin — in the lawn app /lawn IS the home
+    // super_admin — platform-only nav (no org workspace content). Home is
+    // /dashboard, which renders the platform block on both variants (the
+    // dashboard lawn-redirect exempts super_admin).
+    if (role === "super_admin") {
+      return [
+        { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+        { href: "/admin/users", label: "Users", Icon: Users },
+        { href: "/admin/orgs", label: "Platform", Icon: Building },
+        { href: "/admin/dev", label: "Dev", Icon: Terminal },
+      ];
+    }
+
+    // office / admin — in the lawn app /lawn IS the home
     // dashboard (the lawn office landing page), so Home points there directly
     // and there is no separate "Lawn" tab (it would just duplicate Home).
     // /dashboard still redirects to /lawn as a safety net for typed/old links.
@@ -119,10 +131,6 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     ];
     if (role === "admin") {
       items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
-    }
-    if (role === "super_admin") {
-      items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
-      items.push({ href: "/admin/dev", label: "Dev", Icon: Terminal });
     }
     return items;
   }
@@ -199,7 +207,18 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     ];
   }
 
-  // office / admin / super_admin — full office surface.
+  // super_admin — platform-only nav (no org workspace content). Home is
+  // /dashboard, which renders the platform block on both variants.
+  if (role === "super_admin") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/admin/users", label: "Users", Icon: Users },
+      { href: "/admin/orgs", label: "Platform", Icon: Building },
+      { href: "/admin/dev", label: "Dev", Icon: Terminal },
+    ];
+  }
+
+  // office / admin — full office surface.
   const items: NavItem[] = [
     { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
     { href: "/crew/photo", label: "Photos", Icon: Camera },
@@ -217,10 +236,6 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
   // admin-only). office/super_admin don't get the tab.
   if (role === "admin") {
     items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
-  }
-  if (role === "super_admin") {
-    items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
-    items.push({ href: "/admin/dev", label: "Dev", Icon: Terminal });
   }
   return items;
 }
@@ -292,6 +307,15 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
           { href: "/admin/customers", label: "Customers", Icon: Contact },
           { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
         ];
+  }
+  if (role === "super_admin") {
+    // Platform-only mobile bar — no Field/Office/Manage org hubs.
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/admin/users", label: "Users", Icon: Users },
+      { href: "/admin/orgs", label: "Platform", Icon: Building },
+      { href: "/admin/dev", label: "Dev", Icon: Terminal },
+    ];
   }
   if (role === "office" || role === "admin" || role === "super_admin") {
     // Lawn variant mobile hubs: Home / Lawn / Office / Manage (drop Field).

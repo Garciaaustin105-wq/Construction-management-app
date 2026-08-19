@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import { getMyOrg } from "@/lib/tenant";
 
 // Update the caller's organization business info (name/address/phone/email/logo).
-//   admin       → may edit only their OWN org.
-//   super_admin → may edit any org (body.organization_id required).
-// office/PM/crew/customer → 403 (org info is admin-only, per the admin>office
-// decision).
+//   admin → may edit only their OWN org.
+//   super_admin / office / PM / crew / customer → 403 (org identity is
+//   admin-only; super_admin is a read-only platform-overview role — see
+//   super_admin_readonly_orgs.sql for the matching RLS gate).
 export async function PATCH(request: Request) {
   const supabase = await createClient();
   const {
@@ -20,39 +20,30 @@ export async function PATCH(request: Request) {
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  if (tenant.role !== "admin" && tenant.role !== "super_admin") {
+  // Org business-info is editable by the org's own admin ONLY. super_admin is a
+  // platform-overview role and must NOT mutate tenant identity.
+  if (tenant.role !== "admin") {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
   const body = await request.json();
-  const { name, address, phone, email, logo_path, organization_id } = body as {
+  const { name, address, phone, email, logo_path } = body as {
     name?: string;
     address?: string;
     phone?: string;
     email?: string;
     logo_path?: string;
-    organization_id?: string;
   };
 
-  // Determine target org.
-  let targetOrgId: string;
-  if (tenant.isSuperAdmin) {
-    if (!organization_id) {
-      return NextResponse.json(
-        { error: "organization_id is required for super admin" },
-        { status: 400 }
-      );
-    }
-    targetOrgId = String(organization_id);
-  } else {
-    if (!tenant.orgId) {
-      return NextResponse.json(
-        { error: "Your account has no organization" },
-        { status: 403 }
-      );
-    }
-    targetOrgId = tenant.orgId;
+  // Admin edits only their own org. (body.organization_id, if sent by an old
+  // client, is ignored — an admin cannot target another org.)
+  if (!tenant.orgId) {
+    return NextResponse.json(
+      { error: "Your account has no organization" },
+      { status: 403 }
+    );
   }
+  const targetOrgId = tenant.orgId;
 
   const update: Record<string, string | null> = {};
   if (typeof name === "string") update.name = name.trim() || null;

@@ -26,14 +26,6 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 }
 
 export default async function DashboardPage() {
-  // Lawn variant: the lawn landing is /lawn (schedules + today's route). The
-  // construction-oriented dashboard (construction jobs / RFIs / receipts tiles)
-  // doesn't apply to a lawn org, so redirect lawn users to /lawn instead of
-  // rendering a construction dashboard. The notifications feed (customer
-  // actions) is surfaced on /lawn for lawn office users — see /lawn/page.tsx —
-  // so nothing is lost by redirecting.
-  if (isLawn()) redirect("/lawn");
-
   const supabase = await createClient();
   const {
     data: { user },
@@ -78,6 +70,12 @@ export default async function DashboardPage() {
 
   const role = profile.role ?? "crew";
 
+  // Lawn variant: the lawn landing is /lawn (schedules + today's route). The
+  // construction-oriented dashboard doesn't apply to a lawn org, so redirect
+  // lawn users to /lawn — EXCEPT super_admin, who has no org and lands on the
+  // platform block below (rendered on both variants).
+  if (isLawn() && !isSuperAdmin(role)) redirect("/lawn");
+
   // Show the user's OWN organization name (not a hardcoded brand) so each
   // tenant sees their own workspace — otherwise every new business is labelled
   // "Terra Vista" and appears to be someone else's project. "Org members read
@@ -121,16 +119,22 @@ export default async function DashboardPage() {
   // dashboard waited on jobs → photos → rfis → invoices one after another).
   const [jobsRes, photosRes, rfisRes, invoicesRes, notificationsRes] =
     await Promise.all([
-      supabase
-        .from("jobs")
-        .select("id, name, status, customers(name)")
-        .eq("type", "construction")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("photos")
-        .select("id, storage_path, caption, created_at, jobs(name)")
-        .order("created_at", { ascending: false })
-        .limit(12),
+      // super_admin (platform view) doesn't use jobs/photos — skip the
+      // cross-org query (RLS would return every org's rows; not needed here).
+      showPlatform
+        ? Promise.resolve({ data: [] })
+        : supabase
+            .from("jobs")
+            .select("id, name, status, customers(name)")
+            .eq("type", "construction")
+            .order("created_at", { ascending: false }),
+      showPlatform
+        ? Promise.resolve({ data: [] })
+        : supabase
+            .from("photos")
+            .select("id, storage_path, caption, created_at, jobs(name)")
+            .order("created_at", { ascending: false })
+            .limit(12),
       showOfficeSurface
         ? supabase
             .from("rfis")

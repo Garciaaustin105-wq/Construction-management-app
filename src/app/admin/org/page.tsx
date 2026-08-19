@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import OrgSettingsForm from "./OrgSettingsForm";
 import { getMyOrg } from "@/lib/tenant";
 
-// Org business-info settings. admin edits their own org; super_admin may edit
-// any org (passed via ?org=<id>). office/PM/crew/customer are redirected.
+// Org business-info settings. admin edits their own org; super_admin opens any
+// org READ-ONLY (via ?org=<id>) — super_admin cannot mutate org identity (see
+// super_admin_readonly_orgs.sql + the /api/org admin-only gate).
 export default async function OrgSettingsPage({
   searchParams,
 }: {
@@ -42,8 +43,9 @@ export default async function OrgSettingsPage({
 
   if (!orgRow) redirect("/dashboard");
 
-  // admin can edit their own org; super_admin can edit any.
-  const canEdit = tenant.role === "admin" || isSuperAdmin;
+  // Only the org's own admin may edit. super_admin opens the page read-only
+  // (platform overview; org identity is not super_admin-mutable).
+  const canEdit = tenant.role === "admin";
 
   return <OrgSettingsForm org={orgRow} canEdit={canEdit} />;
 }
