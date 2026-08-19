@@ -13,8 +13,7 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    // INERT until NEXT_PUBLIC_SENTRY_DSN is set — captureException no-ops
-    // without a DSN. Keeps console.error for local dev.
+    // DSN is hardcoded in instrumentation-client.ts → errors flow to Sentry.
     Sentry.captureException(error);
     console.error(error);
   }, [error]);

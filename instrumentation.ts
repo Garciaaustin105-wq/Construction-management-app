@@ -1,7 +1,8 @@
 // Next 16 server-side instrumentation hook. Loads the right Sentry config for
 // the runtime (nodejs vs edge) at cold start, and exports onRequestError so
 // unhandled errors in server components / route handlers / server actions are
-// captured. All INERT until SENTRY_DSN is set.
+// captured. DSN is hardcoded in the config files (public-safe), so errors flow
+// on every deploy.
 //
 // Client-side init lives in instrumentation-client.ts (Next 15+), which Next
 // loads automatically in the browser bundle — do NOT import it here (this file

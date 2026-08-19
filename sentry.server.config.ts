@@ -1,16 +1,19 @@
 // Server-runtime Sentry init. Loaded by instrumentation.ts when
-// NEXT_RUNTIME === "nodejs". INERT until SENTRY_DSN is set (the SDK no-ops
-// with no DSN, so this is safe to ship ahead of the env vars).
+// NEXT_RUNTIME === "nodejs". DSN is hardcoded below — Sentry DSNs are public
+// identifiers (they ship in client JS bundles by design), NOT secrets; only
+// SENTRY_AUTH_TOKEN (source-map upload) is a secret and stays in env.
 //
 // No performance tracing by default (tracesSampleRate: 0) — perf data is
-// high-volume and the free tier is 5K errors/mo, not transactions. Enable
-// per-environment only after a deliberate quota/PII review.
+// high-volume, and spans carry request URLs that could leak portal tokens from
+// /q/, /invoices/view/, /co/, /s/, /v/ routes. The scrubber redacts those, but
+// no tracing = no spans = no URL leakage path at all. Enable deliberately only
+// after a quota + PII review.
 
 import * as Sentry from "@sentry/nextjs";
 import { scrubEvent } from "@/lib/sentry";
 
 Sentry.init({
-  dsn: process.env.SENTRY_DSN,
+  dsn: "https://9e9b5d01e79ca426a500856fb656e44c@o4511935727796224.ingest.us.sentry.io/4511935756304384",
   tracesSampleRate: 0,
   beforeSend: scrubEvent,
   ignoreErrors: [

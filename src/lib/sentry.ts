@@ -2,13 +2,13 @@
 //
 // This is the security-critical piece of the Sentry integration: a single
 // `scrubEvent` used by every Sentry.init's `beforeSend` (client, server, edge)
-// so NOTHING that looks like a credential, and NO raw request body, ever leaves
-// the app for Sentry. This is non-negotiable for a multi-tenant app that handles
-// auth headers, Stripe keys, customer PII, and portal tokens.
+// so NOTHING that looks like a credential, NO raw request body, and NO portal
+// access token ever leaves the app for Sentry. Non-negotiable for a multi-tenant
+// app that handles auth headers, Stripe keys, customer PII, and portal tokens.
 //
-// The integration stays INERT until SENTRY_DSN / NEXT_PUBLIC_SENTRY_DSN are set
-// on the Vercel projects: with no DSN, Sentry.init no-ops and no events are
-// sent, so the scrubber simply never runs. See [[lowvoltage-sentry-scaffold]].
+// The DSN is hardcoded in the config files (public-safe — Sentry DSNs ship in
+// client JS bundles by design; only SENTRY_AUTH_TOKEN is a secret, kept in env).
+// See [[lowvoltage-sentry-scaffold]].
 
 import { captureException as sentryCaptureException } from "@sentry/nextjs";
 import type { ErrorEvent } from "@sentry/nextjs";
@@ -21,11 +21,46 @@ const SECRET_KEY =
 
 const REDACTED = "[REDACTED]";
 
+// Public portal routes whose NEXT path segment is a bearer token granting
+// access to customer data (estimates / invoices / change-orders / submittals /
+// visit photos). The token segment must never reach Sentry via request.url or
+// breadcrumb URLs. Keep in sync with isPublicRoute in navItems.ts.
+const PORTAL_TOKEN_PREFIXES = ["/q/", "/invoices/view/", "/co/", "/s/", "/v/"];
+
+// Breadcrumb/data keys that commonly hold URLs (navigation breadcrumbs).
+const URL_KEYS = new Set(["url", "from", "to", "href", "referrer", "referer"]);
+
+function scrubUrl(raw: string | undefined): string | undefined {
+  if (!raw) return raw;
+  // Drop the query string entirely — ?token=… (password-reset flow) and any
+  // other query param can carry credentials/PII we never want in Sentry.
+  let url = raw;
+  const qIdx = url.indexOf("?");
+  if (qIdx >= 0) url = url.slice(0, qIdx);
+  // Redact the bearer-token segment on portal routes.
+  for (const prefix of PORTAL_TOKEN_PREFIXES) {
+    const idx = url.indexOf(prefix);
+    if (idx >= 0) {
+      const start = idx + prefix.length;
+      const rest = url.slice(start);
+      const end = rest.indexOf("/");
+      const tokenSeg = end >= 0 ? rest.slice(0, end) : rest;
+      if (tokenSeg) {
+        url = url.slice(0, start) + REDACTED + (end >= 0 ? rest.slice(end) : "");
+      }
+      break;
+    }
+  }
+  return url;
+}
+
 function scrubObject(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     if (SECRET_KEY.test(k)) {
       out[k] = REDACTED;
+    } else if (URL_KEYS.has(k) && typeof v === "string") {
+      out[k] = scrubUrl(v) ?? REDACTED;
     } else if (v && typeof v === "object") {
       out[k] = Array.isArray(v)
         ? v.map((i) => (i && typeof i === "object" ? scrubObject(i as Record<string, unknown>) : i))
@@ -40,8 +75,8 @@ function scrubObject(obj: Record<string, unknown>): Record<string, unknown> {
 /**
  * `beforeSend` shared by all three Sentry configs. Strips credential-looking
  * keys from request headers, extra, breadcrumbs, and contexts; drops raw
- * request bodies and cookies entirely (form fields / JSON payloads / query
- * strings can all carry PII or credentials we never want in Sentry).
+ * request bodies and cookies entirely; and sanitizes request/breadcrumb URLs so
+ * portal bearer tokens and query strings never reach Sentry.
  */
 export function scrubEvent(event: ErrorEvent): ErrorEvent | null {
   if (!event) return event;
@@ -54,6 +89,11 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent | null {
       event.request.headers = scrubObject(
         event.request.headers as unknown as Record<string, unknown>
       ) as unknown as typeof event.request.headers;
+    }
+    // Sanitize the URL — redacts portal token segments + strips the query.
+    if (event.request.url) {
+      const u = scrubUrl(event.request.url);
+      if (u !== undefined) event.request.url = u;
     }
   }
 

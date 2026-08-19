@@ -1,12 +1,12 @@
 // Edge-runtime Sentry init (proxy.ts + edge API routes). Loaded by
-// instrumentation.ts when NEXT_RUNTIME === "edge". INERT until SENTRY_DSN is
-// set. Same scrubbing + no-tracing policy as the server config.
+// instrumentation.ts when NEXT_RUNTIME === "edge". DSN hardcoded (public-safe;
+// see sentry.server.config.ts). Same scrubbing + no-tracing policy as server.
 
 import * as Sentry from "@sentry/nextjs";
 import { scrubEvent } from "@/lib/sentry";
 
 Sentry.init({
-  dsn: process.env.SENTRY_DSN,
+  dsn: "https://9e9b5d01e79ca426a500856fb656e44c@o4511935727796224.ingest.us.sentry.io/4511935756304384",
   tracesSampleRate: 0,
   beforeSend: scrubEvent,
   ignoreErrors: [
