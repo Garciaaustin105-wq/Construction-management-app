@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, TrendingUp, ClipboardList, CheckSquare, FileDiff, FileText } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, TrendingUp, ClipboardList, CheckSquare, FileDiff, FileText, Terminal } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import PlanBanner from "@/components/PlanBanner";
@@ -224,6 +224,13 @@ export default async function DashboardPage() {
             >
               <Users className="w-5 h-5" />
               Users
+            </Link>
+            <Link
+              href="/admin/dev"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <Terminal className="w-5 h-5" />
+              Dev · Analytics &amp; system
             </Link>
           </div>
         )}

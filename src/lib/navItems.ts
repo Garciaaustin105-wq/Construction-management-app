@@ -47,6 +47,7 @@ import {
   Bell,
   UsersRound,
   MessagesSquare,
+  Terminal,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -121,6 +122,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     }
     if (role === "super_admin") {
       items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
+      items.push({ href: "/admin/dev", label: "Dev", Icon: Terminal });
     }
     return items;
   }
@@ -218,6 +220,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
   }
   if (role === "super_admin") {
     items.push({ href: "/admin/orgs", label: "Platform", Icon: Building });
+    items.push({ href: "/admin/dev", label: "Dev", Icon: Terminal });
   }
   return items;
 }
@@ -372,6 +375,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
           "/admin/billing",
           "/admin/orgs",
           "/admin/clients",
+          "/admin/dev",
         ],
       },
     ];
