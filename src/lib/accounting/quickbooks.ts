@@ -186,10 +186,13 @@ export class QuickBooksProvider implements AccountingProvider {
         if (Object.keys(billAddr).length) body.BillAddr = billAddr;
       }
       if (existingExternalId) {
-        // QBO requires Id + the current SyncToken on sparse updates.
+        // QBO requires Id + the current SyncToken on updates. Use a SPARSE
+        // (partial) update — `sparse` is lowercase in QBO (capital-S `Sparse`
+        // is an unknown property → "request has invalid or unsupported property"),
+        // and partial update won't reset fields we don't send.
         const cur = await getEntity(tokens, "customer", existingExternalId);
         body.Id = existingExternalId;
-        body.Sparse = false;
+        body.sparse = true;
         body.SyncToken = cur.SyncToken;
       }
       const created = await postEntity(tokens, "customer", body);
