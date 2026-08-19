@@ -101,11 +101,12 @@ async function getEntity(
   entity: string,
   id: string
 ): Promise<Record<string, unknown>> {
-  const url = `${REST_BASE}${tokens.realmId}/${entity}/${id}?minorversion=${MINOR_VERSION}`;
   // QBO entity state (esp. SyncToken) MUST NOT be served from any cache — a
   // stale SyncToken causes "Stale Object Error" (5010) on the next write.
-  // Next/Vercel's data cache keys on URL (not the bearer header), so without
-  // no-store a GET made when SyncToken=0 can be replayed after QBO bumped it.
+  // Next/Vercel's data cache keys on URL (not the bearer header), so we BOTH
+  // set cache:"no-store" AND append a cache-busting `_` param (unique per call)
+  // so a GET made when SyncToken=0 can never be replayed after QBO bumped it.
+  const url = `${REST_BASE}${tokens.realmId}/${entity}/${id}?minorversion=${MINOR_VERSION}&_=${Date.now()}`;
   const res = await fetch(url, { headers: apiHeaders(tokens), cache: "no-store" });
   if (!res.ok) throw new Error(await intuitError(res));
   const json = (await res.json()) as Record<string, unknown>;
