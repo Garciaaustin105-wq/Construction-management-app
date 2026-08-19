@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { OFFICE_LIKE } from "@/lib/roles";
+import { MANAGEMENT, ACCOUNTING, PIPELINE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import { getMyOrg, type MyTenant } from "@/lib/tenant";
 import { getOrgBilling } from "@/lib/billing";
@@ -136,7 +136,16 @@ export default async function LawnInsightsPage() {
 
   const tenant: MyTenant | null = await getMyOrg(supabase);
   if (!tenant) redirect("/login");
-  if (!OFFICE_LIKE.has(tenant.role as never)) redirect("/dashboard");
+  // Lawn insights: management + accountant (read-only) + sales (pipeline).
+  // Was OFFICE_LIKE; widened so accountant/sales/PM/super can read lawn analytics.
+  if (
+    !(
+      MANAGEMENT.has(tenant.role as never) ||
+      ACCOUNTING.has(tenant.role as never) ||
+      PIPELINE.has(tenant.role as never)
+    )
+  )
+    redirect("/dashboard");
   // Lawn-only page — construction variant has no lawn analytics surface.
   if (!isLawn()) redirect("/dashboard");
 

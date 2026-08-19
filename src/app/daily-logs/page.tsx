@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import { OFFICE_OR_PM } from "@/lib/roles";
+import { FIELD_MGMT } from "@/lib/roles";
 import Link from "next/link";
 import { Plus, ClipboardList, Download } from "lucide-react";
 import DailyLogFilters from "@/components/DailyLogFilters";
@@ -32,7 +32,9 @@ export default async function DailyLogsPage({
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
-  if (!OFFICE_OR_PM.has(role)) redirect("/dashboard");
+  // Field-management review: superintendent + PM + office + admin/super_admin.
+  // Authoring (canCreate) stays office/admin.
+  if (!FIELD_MGMT.has(role)) redirect("/dashboard");
   const canCreate = role === "office" || role === "admin";
 
   const sp = await searchParams;

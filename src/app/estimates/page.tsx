@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { computeEstimateTotals, formatMoney } from "@/lib/money";
-import { OFFICE_OR_PM } from "@/lib/roles";
+import { PIPELINE } from "@/lib/roles";
 import Link from "next/link";
 import { FileText, Plus } from "lucide-react";
 
@@ -43,14 +43,14 @@ export default async function EstimatesPage() {
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
-  // Admit office / admin / project_manager / super_admin (OFFICE_OR_PM). The
-  // dashboard shows the Estimates tile to the office surface, so gating this
-  // list on role === "office" alone bounced admin/super_admin back to /dashboard
-  // (looked like the page just refreshed).
-  if (!OFFICE_OR_PM.has(role)) redirect("/dashboard");
-  // Estimate creation is office/admin (see /estimates/new gate) — hide the New
-  // button for the other admitted roles so they don't see a button that bounces.
-  const canCreate = role === "office" || role === "admin";
+  // Admit the sales pipeline: sales + PM + office + admin + super_admin
+  // (PIPELINE). sales is the dedicated pre-sale/estimator role; PM/office
+  // already author estimates. Was OFFICE_OR_PM, which bounced sales.
+  if (!PIPELINE.has(role)) redirect("/dashboard");
+  // Estimate creation: the whole pipeline set (sales/PM/office/admin/super_admin)
+  // — see /estimates/new gate. Was office/admin only, which locked PM out of
+  // authoring (a PM-discrepancy bug) and excluded sales.
+  const canCreate = PIPELINE.has(role);
 
   const { data: estimates } = await supabase
     .from("estimates")

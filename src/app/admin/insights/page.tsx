@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { OFFICE_OR_PM } from "@/lib/roles";
+import { MANAGEMENT, ACCOUNTING, PIPELINE } from "@/lib/roles";
 import { isConstruction } from "@/lib/variant";
 import { getMyOrg, type MyTenant } from "@/lib/tenant";
 import { getOrgBilling } from "@/lib/billing";
@@ -111,7 +111,16 @@ export default async function ConstructionInsightsPage() {
 
   const tenant: MyTenant | null = await getMyOrg(supabase);
   if (!tenant) redirect("/login");
-  if (!OFFICE_OR_PM.has(tenant.role as never)) redirect("/dashboard");
+  // Insights = the broad read surface: management (office/admin/super/PM) +
+  // accountant (read-only financials) + sales (pipeline). Crew/customer bounce.
+  if (
+    !(
+      MANAGEMENT.has(tenant.role as never) ||
+      ACCOUNTING.has(tenant.role as never) ||
+      PIPELINE.has(tenant.role as never)
+    )
+  )
+    redirect("/dashboard");
   // Construction-only page — lawn has its own /lawn/insights.
   if (!isConstruction()) redirect("/lawn/insights");
 

@@ -10,6 +10,7 @@ import EstimateLineItemEditor, {
 } from "@/components/EstimateLineItemEditor";
 import { type ServiceOption } from "@/components/LineItemEditor";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
+import { PIPELINE } from "@/lib/roles";
 
 function NewEstimateForm() {
   const router = useRouter();
@@ -79,7 +80,9 @@ function NewEstimateForm() {
         .select("role, organization_id")
         .eq("id", user.id)
         .single();
-      if (profile?.role !== "office" && profile?.role !== "admin") {
+      // Estimate authoring = the sales pipeline (sales/PM/office/admin/super_admin).
+      // Was office/admin only, which locked PM out of authoring and excluded sales.
+      if (!PIPELINE.has((profile?.role ?? "crew") as never)) {
         router.push("/dashboard");
         return;
       }

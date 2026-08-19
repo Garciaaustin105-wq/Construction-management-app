@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
-import { OFFICE_LIKE } from "@/lib/roles";
+import { FIELD_MGMT } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import Link from "next/link";
@@ -64,9 +64,18 @@ export default async function LawnPage() {
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
-  // The Lawn tab is for dispatchers/managers (office / admin / super_admin).
-  // Crew field completion is Phase 2.
-  if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
+  // /lawn is the office dispatch landing. Admit field/office MANAGEMENT
+  // (FIELD_MGMT: office / admin / super_admin / project_manager /
+  // superintendent) — dispatchers + PM/super running routes. Route the other
+  // roles to their actual home instead of /dashboard, because /dashboard
+  // itself redirects lawn users back to /lawn (an infinite loop for any
+  // non-office lawn user).
+  if (!FIELD_MGMT.has(role as never)) {
+    if (role === "sales") redirect("/estimates");
+    if (role === "accountant") redirect("/invoices");
+    // crew (and any other field role) → today's route.
+    redirect("/lawn/my-route");
+  }
 
   const today = new Date().toISOString().slice(0, 10);
 

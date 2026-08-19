@@ -5,7 +5,7 @@ import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
-import { OFFICE_OR_PM } from "@/lib/roles";
+import { OFFICE_OR_PM, ACCOUNTING } from "@/lib/roles";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
@@ -30,7 +30,9 @@ export default async function InvoicesPage({
   // Admit office / admin / project_manager / super_admin so every management
   // role can open the list (was office/admin/PM, which bounced super_admin back
   // to /dashboard). Invoice creation stays office/admin/PM (see /invoices/new).
-  if (!OFFICE_OR_PM.has(role)) redirect("/dashboard");
+  // Admit office/admin/PM/super_admin (OFFICE_OR_PM) PLUS accountant
+  // (ACCOUNTING, read-only). Invoice creation stays office/admin/PM (canCreate).
+  if (!(OFFICE_OR_PM.has(role) || ACCOUNTING.has(role))) redirect("/dashboard");
   const canCreate =
     role === "office" || role === "admin" || role === "project_manager";
 

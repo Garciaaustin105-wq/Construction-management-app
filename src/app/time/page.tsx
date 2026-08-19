@@ -5,6 +5,7 @@ import TopBar from "@/components/TopBar";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import TimeExportButton, { type ExportRow } from "@/components/TimeExportButton";
 import { Users, MapPin, ChevronLeft, ChevronRight, User, Briefcase } from "lucide-react";
+import { FIELD_MGMT } from "@/lib/roles";
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -68,7 +69,10 @@ export default async function TimeOverviewPage({
     .select("role")
     .eq("id", user.id)
     .single();
-  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+  // Field-management review surface: superintendent + PM + office + admin
+  // (super_admin folds in via FIELD_MGMT). Was `!== "office"`, which bounced
+  // admin/super_admin AND locked out the PM/super time review this page is.
+  if (!FIELD_MGMT.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
 
   // ---- Week selection (default = current week, Monday-based) ----
   const sp = await searchParams;

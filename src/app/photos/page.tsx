@@ -5,6 +5,7 @@ import TopBar from "@/components/TopBar";
 import PhotoLightbox from "@/components/PhotoLightbox";
 import PhotoFilters from "@/components/PhotoFilters";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
+import { OFFICE_LIKE } from "@/lib/roles";
 
 // Office-only browse page: all photos across jobs, filterable by job + uploader.
 export default async function PhotosPage({
@@ -23,7 +24,9 @@ export default async function PhotosPage({
     .select("role")
     .eq("id", user.id)
     .single();
-  if ((profile?.role ?? "crew") !== "office") redirect("/dashboard");
+  // Office photo manager: office / admin / super_admin. Was `!== "office"`,
+  // which bounced admin/super_admin back to /dashboard when they tapped Photos.
+  if (!OFFICE_LIKE.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
 
   const sp = await searchParams;
   const jobFilter = sp.job ?? "";

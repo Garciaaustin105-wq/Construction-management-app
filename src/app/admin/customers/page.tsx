@@ -4,7 +4,7 @@ import TopBar from "@/components/TopBar";
 import CustomersManager, {
   type Customer,
 } from "@/components/CustomersManager";
-import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
+import { MANAGEMENT, PIPELINE, ACCOUNTING, isSuperAdmin } from "@/lib/roles";
 
 export default async function CustomersPage() {
   const supabase = await createClient();
@@ -20,7 +20,14 @@ export default async function CustomersPage() {
     .single();
   const role = profile?.role ?? "crew";
   // super_admin (no org) manages via the platform view, not here.
-  if (isSuperAdmin(role) || !MANAGEMENT.has(role)) redirect("/dashboard");
+  // Admit management + sales (PIPELINE — leads) + accountant (ACCOUNTING — read).
+  // super_admin (no org) manages via the platform view, not here. Edit (canEdit)
+  // stays office/admin; sales/accountant get the read-only directory below.
+  if (
+    isSuperAdmin(role) ||
+    !(MANAGEMENT.has(role) || PIPELINE.has(role) || ACCOUNTING.has(role))
+  )
+    redirect("/dashboard");
   const orgId = (profile?.organization_id as string | null) ?? "";
 
   const { data } = await supabase

@@ -13,7 +13,7 @@ import { resolveReportRange, rangeDayCount } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
 import { Download, Camera, Receipt, Briefcase } from "lucide-react";
 import { isLawn } from "@/lib/variant";
-import { OFFICE_OR_PM } from "@/lib/roles";
+import { OFFICE_OR_PM, ACCOUNTING } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,14 @@ export default async function WeeklyReportPage({
     .eq("id", user.id)
     .single();
   const reportRole = profile?.role ?? "crew";
-  if (!OFFICE_OR_PM.has(reportRole as never)) redirect("/dashboard");
+  // Admit office/admin/PM/super_admin + accountant (read-only financials).
+  if (
+    !(
+      OFFICE_OR_PM.has(reportRole as never) ||
+      ACCOUNTING.has(reportRole as never)
+    )
+  )
+    redirect("/dashboard");
 
   const sp = await searchParams;
   const jobId = sp.job || null;

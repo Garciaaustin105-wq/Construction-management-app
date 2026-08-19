@@ -11,6 +11,8 @@ import {
   ShieldCheck,
   Users,
   Crown,
+  Megaphone,
+  Calculator,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { isLawn } from "@/lib/variant";
@@ -20,6 +22,8 @@ type Role =
   | "superintendent"
   | "project_manager"
   | "office"
+  | "sales"
+  | "accountant"
   | "customer"
   | "admin";
 
@@ -36,27 +40,36 @@ const ALL_OPTIONS: RoleOption[] = [
     value: "superintendent",
     label: "Superintendent",
     icon: ClipboardList,
-    hint: "Field supervisor",
+    hint: "Runs the site — daily logs, crew time, punch",
   },
   {
     value: "project_manager",
     label: "Project Manager",
     icon: ShieldCheck,
-    hint: "Manages projects",
+    hint: "Schedule, permits, contracts, pricing",
   },
   { value: "office", label: "Office", icon: Users, hint: "Full access" },
+  { value: "sales", label: "Sales", icon: Megaphone, hint: "Estimates & pipeline" },
+  {
+    value: "accountant",
+    label: "Accountant",
+    icon: Calculator,
+    hint: "Read-only financials",
+  },
   { value: "admin", label: "Admin", icon: Crown, hint: "Org owner — manages users + org" },
   { value: "customer", label: "Customer", icon: Building2, hint: "Client portal" },
 ];
 
 // Roles each caller role may create (mirrors /api/users canCreate).
+// office may create field + sales + client roles (no office, no admin, no
+// accountant — accountant is a sensitive financial role, admin-only).
 function optionsFor(callerRole: string): RoleOption[] {
   if (callerRole === "super_admin") return ALL_OPTIONS;
   if (callerRole === "admin")
     return ALL_OPTIONS.filter((o) => o.value !== "admin" || true); // admin may create admin
-  // office: field + client roles only (no office, no admin)
+  // office: field + sales + client roles only (no office, no admin, no accountant)
   return ALL_OPTIONS.filter((o) =>
-    ["crew", "superintendent", "project_manager", "customer"].includes(o.value)
+    ["crew", "superintendent", "project_manager", "sales", "customer"].includes(o.value)
   );
 }
 

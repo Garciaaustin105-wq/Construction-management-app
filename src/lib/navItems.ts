@@ -1,19 +1,26 @@
 // Single source of truth for the app's primary navigation, consumed by both
 // the desktop Sidebar and the mobile BottomNav so the two can never drift apart.
 //
-// `buildNavItems` is a deliberate 1:1 port of the BottomNav's original
-// imperative item-building logic (it was inlined there before this module
-// existed). The office block checks `role === "office" || "admin" ||
-// "super_admin"` on purpose - NOT the `isOfficeLike` helper - so project_manager
-// keeps getting ONLY the 3 base tabs. That matches the pre-Phase-1 behavior
-// exactly (PM is in OFFICE_OR_PM but the old bottom nav never admitted it).
-// Whether PM should get more tabs is a product decision, not a layout one, so
-// it is intentionally left as-is here. See the desktop-layout plan's
-// "PM discrepancy" note.
+// Role → nav model (Option A: single primary role + role-set gates). Field
+// roles (crew, superintendent) get a FOCUSED nav — only the surfaces they
+// actually use — so a field worker isn't handed a confusing office dashboard.
+// Office/PM/accountant/sales get the denser surfaces appropriate to their job.
+//
+//   crew            — minimal field-capture nav (Home/Photos/Time [+ Route lawn]).
+//   superintendent  — field MANAGEMENT (Daily Logs/Punch/Change Orders + base).
+//   project_manager — schedule/contracts/pricing + field/office doc surfaces
+//                     (Daily Logs/Punch/Change Orders/Submittals/Receipts +
+//                     Reports/Insights). The old "PM discrepancy" (PM got only
+//                     3 base tabs) is RESOLVED — a PM running jobs end-to-end,
+//                     and a small-GC owner wearing PM+Super, needs these.
+//   sales           — pre-sale funnel (Estimates/Customers/Insights), no field.
+//   accountant      — read-only financials (Invoices/Customers/Reports/Insights).
+//   office/admin/   — full office surface (+ Billing for admin, Platform for
+//   super_admin       super_admin).
 //
 // `buildMobileNav` is the MOBILE bar: office/admin/super_admin collapse into
-// 5 section hubs (Home/Field/Lawn/Office/Manage) instead of the flat 7-8 cell
-// row. Crew/superintendent/PM keep a flat bar (not crowded). The desktop
+// section hubs (Home/Field/Office/Manage, or Home/Office/Manage on lawn);
+// crew/superintendent/PM/sales/accountant keep a short flat bar. The desktop
 // Sidebar still uses buildNavItems (flat, expanded - it has room). Hub
 // `aliases` drive the mobile active-state (prefix match) and are ignored by
 // the Sidebar.
@@ -74,6 +81,24 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     if (role === "project_manager") {
       return base;
     }
+    // Sales (estimator): pre-sale funnel only — estimates, leads, pipeline.
+    if (role === "sales") {
+      return [
+        { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+        { href: "/estimates", label: "Estimates", Icon: FileText },
+        { href: "/admin/customers", label: "Customers", Icon: Contact },
+        { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+      ];
+    }
+    // Accountant: read-only financials — invoices, customers, insights.
+    if (role === "accountant") {
+      return [
+        { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+        { href: "/invoices", label: "Invoices", Icon: Receipt },
+        { href: "/admin/customers", label: "Customers", Icon: Contact },
+        { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+      ];
+    }
     // office / admin / super_admin — in the lawn app /lawn IS the home
     // dashboard (the lawn office landing page), so Home points there directly
     // and there is no separate "Lawn" tab (it would just duplicate Home).
@@ -100,35 +125,92 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     return items;
   }
 
-  // Construction variant (unchanged): full GC + lawn nav.
-  const items: NavItem[] = [
-    { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
-    { href: "/crew/photo", label: "Photos", Icon: Camera },
-    { href: "/crew/time", label: "Time", Icon: Clock },
-  ];
-  if (role === "office" || role === "admin" || role === "super_admin") {
-    items.push(
-      { href: "/receipts", label: "Receipts", Icon: Receipt },
+  // Construction variant.
+  //
+  // Field-friendly principle: crew + superintendent get a FOCUSED nav (the
+  // field surfaces they actually use), NOT the full office dashboard. A
+  // super who runs the site shouldn't be handed Client Portal / Admin /
+  // Submittals clutter. Office/PM/accountant get the denser surfaces.
+  //
+  // PM discrepancy RESOLVED (was flagged at the old line 6-12 note): PM now
+  // gets the field/office doc surfaces (Daily Logs, Punch, Change Orders,
+  // Submittals, Receipts) alongside Reports + Insights — a PM who runs jobs
+  // end-to-end (and a small-GC owner wearing PM+Super) needs them.
+
+  // Crew: minimal field nav — nothing that isn't field-capture.
+  if (role === "crew") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/crew/photo", label: "Photos", Icon: Camera },
+      { href: "/crew/time", label: "Time", Icon: Clock },
+    ];
+  }
+
+  // Superintendent: field MANAGEMENT — runs the site. Daily Logs, Punch,
+  // Change Orders (review), plus the field-capture base. No office/admin
+  // clutter. (Time-review FEATURES land next phase; the Time tab is the entry.)
+  if (role === "superintendent") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/crew/photo", label: "Photos", Icon: Camera },
+      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
+      { href: "/punch", label: "Punch List", Icon: CheckSquare },
+      { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
+    ];
+  }
+
+  // PM: schedule/permits/contracts/pricing + the field/office doc surfaces.
+  if (role === "project_manager") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/crew/photo", label: "Photos", Icon: Camera },
+      { href: "/crew/time", label: "Time", Icon: Clock },
       { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
       { href: "/punch", label: "Punch List", Icon: CheckSquare },
       { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
       { href: "/submittals", label: "Submittals", Icon: FileText },
-      { href: "/admin/clients", label: "Client Portal", Icon: MessagesSquare },
-      { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
-      { href: "/admin/users", label: "Admin", Icon: Users },
-    );
-  }
-  // PM gets Reports + Insights (org-wide per-worker/receipts reports + the
-  // construction command center; both admitted via tier_office_or_pm RLS —
-  // see pm_reports_rls.sql). PM runs jobs, so job-profitability insights are
-  // admitted too. The other office doc surfaces stay office/admin per the
-  // pre-existing PM discrepancy (product decision 2026-08-17).
-  if (role === "project_manager") {
-    items.push(
+      { href: "/receipts", label: "Receipts", Icon: Receipt },
       { href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet },
       { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
-    );
+    ];
   }
+
+  // Sales (estimator): pre-sale funnel only. No field tabs, no invoices/billing.
+  if (role === "sales") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/estimates", label: "Estimates", Icon: FileText },
+      { href: "/admin/customers", label: "Customers", Icon: Contact },
+      { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+    ];
+  }
+
+  // Accountant: read-only financials. No field tabs, no write surfaces.
+  if (role === "accountant") {
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/invoices", label: "Invoices", Icon: Receipt },
+      { href: "/admin/customers", label: "Customers", Icon: Contact },
+      { href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet },
+      { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+    ];
+  }
+
+  // office / admin / super_admin — full office surface.
+  const items: NavItem[] = [
+    { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+    { href: "/crew/photo", label: "Photos", Icon: Camera },
+    { href: "/crew/time", label: "Time", Icon: Clock },
+    { href: "/receipts", label: "Receipts", Icon: Receipt },
+    { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
+    { href: "/punch", label: "Punch List", Icon: CheckSquare },
+    { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
+    { href: "/submittals", label: "Submittals", Icon: FileText },
+    { href: "/admin/clients", label: "Client Portal", Icon: MessagesSquare },
+    { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+    { href: "/admin/users", label: "Admin", Icon: Users },
+  ];
   // Only the org admin manages billing (checkout + Customer Portal routes are
   // admin-only). office/super_admin don't get the tab.
   if (role === "admin") {
@@ -150,16 +232,63 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
     { href: "/crew/photo", label: "Photos", Icon: Camera },
     { href: "/crew/time", label: "Time", Icon: Clock },
   ];
-  if (role === "crew" || role === "superintendent") {
+  if (role === "crew") {
     // Lawn crew get their Route tab; construction crew don't (construction is
     // construction-only now — /lawn is blocked there, so the tab would bounce).
     return isLawn()
       ? [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }]
       : base;
   }
+  if (role === "superintendent") {
+    // Superintendent runs the site — field-management flat bar. Lawn super
+    // stays route-focused (same as crew + Route). Construction super gets the
+    // core review surfaces (Time/Daily Logs/Punch); Change Orders + Photos are
+    // reachable from the desktop sidebar / dashboard, kept off the short bar.
+    if (isLawn()) {
+      return [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }];
+    }
+    return [
+      { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
+      { href: "/punch", label: "Punch", Icon: CheckSquare },
+    ];
+  }
   if (role === "project_manager") {
     // PM flat bar + Reports (org-wide reports; tier_office_or_pm RLS admits).
     return [...base, { href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet }];
+  }
+  if (role === "sales") {
+    // Sales flat bar — estimates, leads, pipeline. No field tabs.
+    return isLawn()
+      ? [
+          { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+          { href: "/estimates", label: "Estimates", Icon: FileText },
+          { href: "/admin/customers", label: "Customers", Icon: Contact },
+          { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+        ]
+      : [
+          { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+          { href: "/estimates", label: "Estimates", Icon: FileText },
+          { href: "/admin/customers", label: "Customers", Icon: Contact },
+          { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+        ];
+  }
+  if (role === "accountant") {
+    // Accountant flat bar — read-only financials. No field tabs, no writes.
+    return isLawn()
+      ? [
+          { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+          { href: "/invoices", label: "Invoices", Icon: Receipt },
+          { href: "/admin/customers", label: "Customers", Icon: Contact },
+          { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+        ]
+      : [
+          { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
+          { href: "/invoices", label: "Invoices", Icon: Receipt },
+          { href: "/admin/customers", label: "Customers", Icon: Contact },
+          { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+        ];
   }
   if (role === "office" || role === "admin" || role === "super_admin") {
     // Lawn variant mobile hubs: Home / Lawn / Office / Manage (drop Field).

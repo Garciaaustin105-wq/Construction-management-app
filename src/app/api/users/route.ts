@@ -19,11 +19,13 @@ import { getLimits } from "@/lib/plans";
 // bypasses RLS — so the org scoping here is the enforcement (there is no
 // `with check` for service-role writes; see the multi-tenancy plan).
 
-// Roles an office user (non-admin) may create: field + client roles only.
+// Roles an office user (non-admin) may create: field + sales + client roles.
+// Accountant is NOT here — it's a sensitive financial role, admin/super_admin only.
 const OFFICE_CREATABLE = new Set([
   "crew",
   "superintendent",
   "project_manager",
+  "sales",
   "customer",
 ]);
 

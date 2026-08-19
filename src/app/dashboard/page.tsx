@@ -7,7 +7,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
-import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar } from "lucide-react";
+import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, TrendingUp, ClipboardList, CheckSquare, FileDiff, FileText } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import PlanBanner from "@/components/PlanBanner";
@@ -95,11 +95,22 @@ export default async function DashboardPage() {
   // across all orgs).
   const showOfficeSurface = role === "office" || role === "admin";
   const showPlatform = isSuperAdmin(role);
+  // Dedicated surfaces for the new roles so /dashboard is useful to them
+  // (otherwise a sales/accountant user lands on a generic office grid they
+  // can't act on, and a superintendent lands on office-manage clutter).
+  const showSales = role === "sales";
+  const showAccountant = role === "accountant";
+  const showSuper = role === "superintendent";
   // Section visibility — each tile inside still keeps its own exact role guard;
   // these only decide whether a labeled section renders at all.
   const showCreate = showOfficeSurface || role === "project_manager";
-  const showManage = MANAGEMENT.has(role);
-  const showTrack = showOfficeSurface || !showPlatform;
+  // Manage = office/admin/PM (was MANAGEMENT, which included superintendent —
+  // a field role shouldn't be handed cost-code/sub management tiles).
+  const showManage = role === "office" || role === "admin" || role === "project_manager";
+  // Track (Time/Photos/Calendar/Reports) is the office surface; sales/accountant
+  // get their own dedicated sections below instead of the generic Track.
+  const showTrack =
+    (showOfficeSurface || !showPlatform) && !showSales && !showAccountant;
   // Office-like (office/admin/super_admin) see the customer-action feed
   // (estimate accepted/declined, invoice paid). RLS (tier_office) scopes the
   // query to the caller's org (super_admin sees the platform-wide feed).
@@ -266,6 +277,129 @@ export default async function DashboardPage() {
           </section>
         )}
 
+        {/* SUPERINTENDENT — field-management surface (runs the site). Review
+            features land next phase; for now these are the entry points so a
+            super isn't dropped onto an office grid they can't act on. */}
+        {showSuper && (
+          <section className="space-y-2">
+            <SectionHeader>Field</SectionHeader>
+            <div className="grid grid-cols-3 gap-2">
+              <Link
+                href="/crew/time"
+                className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+              >
+                <Clock className="w-5 h-5" />
+                Time
+              </Link>
+              <Link
+                href="/daily-logs"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <ClipboardList className="w-5 h-5" />
+                Logs
+              </Link>
+              <Link
+                href="/punch"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <CheckSquare className="w-5 h-5" />
+                Punch
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                href="/change-orders"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <FileDiff className="w-5 h-5" />
+                Change Orders
+              </Link>
+              <Link
+                href="/crew/photo"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Images className="w-5 h-5" />
+                Photos
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {/* SALES — pre-sale funnel (estimates + leads + pipeline). No field
+            tabs, no invoices/billing. */}
+        {showSales && (
+          <section className="space-y-2">
+            <SectionHeader>Sales</SectionHeader>
+            <div className="grid grid-cols-3 gap-2">
+              <Link
+                href="/estimates/new"
+                className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+              >
+                <FileText className="w-5 h-5" />
+                New Estimate
+              </Link>
+              <Link
+                href="/estimates"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <FileText className="w-5 h-5" />
+                Estimates
+              </Link>
+              <Link
+                href="/admin/customers"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Building2 className="w-5 h-5" />
+                Leads
+              </Link>
+            </div>
+            <Link
+              href="/admin/insights"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <TrendingUp className="w-5 h-5" />
+              Pipeline Insights
+            </Link>
+          </section>
+        )}
+
+        {/* ACCOUNTANT — read-only financials. No write surfaces, no field. */}
+        {showAccountant && (
+          <section className="space-y-2">
+            <SectionHeader>Financials</SectionHeader>
+            <div className="grid grid-cols-3 gap-2">
+              <Link
+                href="/invoices"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Receipt className="w-5 h-5" />
+                Invoices
+              </Link>
+              <Link
+                href="/admin/customers"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Building2 className="w-5 h-5" />
+                Customers
+              </Link>
+              <Link
+                href="/admin/reports"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <FileSpreadsheet className="w-5 h-5" />
+                Reports
+              </Link>
+            </div>
+            <Link
+              href="/admin/insights"
+              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+            >
+              <TrendingUp className="w-5 h-5" />
+              Insights
+            </Link>
+          </section>
+        )}
+
         {/* MANAGE — admin (users + org settings) + MANAGEMENT (cost codes,
             subs, customers). Each tile keeps its own role guard. */}
         {showManage && (
@@ -327,7 +461,7 @@ export default async function DashboardPage() {
         {showTrack && (
           <section className="space-y-2">
             <SectionHeader>Track</SectionHeader>
-            {showOfficeSurface ? (
+            {(showOfficeSurface || showSuper) ? (
               <div className="grid grid-cols-3 gap-2">
                 <Link
                   href="/time"
