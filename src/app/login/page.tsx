@@ -58,7 +58,12 @@ function Banner() {
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  // Separate loading states per action so only the button the user tapped
+  // spins. Previously a single shared `loading` made BOTH buttons spin when
+  // either was pressed — which read as "the magic-link path is firing at the
+  // same time as my password sign-in" even though only one handler ran.
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
   // "magic-link" mode: the office can email a passwordless sign-in link to the
   // typed address (used by invited customers — and any user who'd rather not
   // type a password). Supabase sends its own magic-link email; clicking it
@@ -174,7 +179,7 @@ export default function LoginPage() {
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
+    setPwdLoading(true);
     setWrongApp(null);
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -182,12 +187,12 @@ export default function LoginPage() {
     });
     if (error) {
       toast.error(error.message);
-      setLoading(false);
+      setPwdLoading(false);
       return;
     }
     if (!data.session || !data.user) {
       toast.error("Logged in but no session. Try again.");
-      setLoading(false);
+      setPwdLoading(false);
       return;
     }
     // Affinity check: refuse + bounce if this account belongs to the other app.
@@ -195,7 +200,7 @@ export default function LoginPage() {
     if (wrongHome) {
       await supabase.auth.signOut();
       setWrongApp(wrongHome);
-      setLoading(false);
+      setPwdLoading(false);
       return;
     }
     toast.success("Signed in");
@@ -213,7 +218,7 @@ export default function LoginPage() {
   // /auth/callback?flow=client, which routes by role (customer → /customer).
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
+    setLinkLoading(true);
     setWrongApp(null);
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -223,7 +228,7 @@ export default function LoginPage() {
         emailRedirectTo: `${window.location.origin}/auth/callback?flow=client`,
       },
     });
-    setLoading(false);
+    setLinkLoading(false);
     if (error) {
       toast.error(error.message);
       return;
@@ -328,18 +333,18 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={handleLogin}
-              disabled={loading}
+              disabled={pwdLoading || linkLoading}
               className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              {loading ? "Signing in..." : "Sign In"}
+              {pwdLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {pwdLoading ? "Signing in..." : "Sign In"}
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={pwdLoading || linkLoading}
               className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+              {linkLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
               Email me a sign-in link
             </button>
 
