@@ -69,6 +69,16 @@ function authBasic(): string {
   return `Basic ${Buffer.from(`${INTUIT_CLIENT_ID}:${INTUIT_CLIENT_SECRET}`).toString("base64")}`;
 }
 
+/** QBO wraps every entity response under a Capitalized key (`Customer`,
+ * `Invoice`, `Estimate`, `Item`, `Payment`), but callers pass the entity name
+ * lowercase (e.g. "customer"). Reading `json[entity]` lowercase returns
+ * undefined → the wrapped object is lost → SyncToken comes back undefined →
+ * updates ship without a SyncToken → "Stale Object Error" (5010), and create
+ * readback loses the new Id. Always unwrap with the Capitalized key. */
+function capEntity(entity: string): string {
+  return entity.charAt(0).toUpperCase() + entity.slice(1);
+}
+
 /** Standard headers for a QBO REST call (bearer access token). */
 function apiHeaders(tokens: TokenSet): Record<string, string> {
   return {
@@ -92,7 +102,7 @@ async function postEntity(
   });
   if (!res.ok) throw new Error(await intuitError(res));
   const json = (await res.json()) as Record<string, unknown>;
-  return (json[entity] as Record<string, unknown>) ?? {};
+  return (json[capEntity(entity)] as Record<string, unknown>) ?? {};
 }
 
 /** Run a QBO query (SQL) and return the parsed JSON. cache-bust + no-store. */
@@ -143,7 +153,7 @@ async function getEntity(
   const res = await fetch(url, { headers: apiHeaders(tokens), cache: "no-store" });
   if (!res.ok) throw new Error(await intuitError(res));
   const json = (await res.json()) as Record<string, unknown>;
-  return (json[entity] as Record<string, unknown>) ?? {};
+  return (json[capEntity(entity)] as Record<string, unknown>) ?? {};
 }
 
 export class QuickBooksProvider implements AccountingProvider {
