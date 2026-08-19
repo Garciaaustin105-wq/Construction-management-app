@@ -102,7 +102,11 @@ async function getEntity(
   id: string
 ): Promise<Record<string, unknown>> {
   const url = `${REST_BASE}${tokens.realmId}/${entity}/${id}?minorversion=${MINOR_VERSION}`;
-  const res = await fetch(url, { headers: apiHeaders(tokens) });
+  // QBO entity state (esp. SyncToken) MUST NOT be served from any cache — a
+  // stale SyncToken causes "Stale Object Error" (5010) on the next write.
+  // Next/Vercel's data cache keys on URL (not the bearer header), so without
+  // no-store a GET made when SyncToken=0 can be replayed after QBO bumped it.
+  const res = await fetch(url, { headers: apiHeaders(tokens), cache: "no-store" });
   if (!res.ok) throw new Error(await intuitError(res));
   const json = (await res.json()) as Record<string, unknown>;
   return (json[entity] as Record<string, unknown>) ?? {};
@@ -190,10 +194,27 @@ export class QuickBooksProvider implements AccountingProvider {
         // (partial) update — `sparse` is lowercase in QBO (capital-S `Sparse`
         // is an unknown property → "request has invalid or unsupported property"),
         // and partial update won't reset fields we don't send.
-        const cur = await getEntity(tokens, "customer", existingExternalId);
         body.Id = existingExternalId;
         body.sparse = true;
-        body.SyncToken = cur.SyncToken;
+        // SyncToken must be current or QBO throws "Stale Object Error" (5010).
+        // A cached GET or a double-click/concurrent sync can hand us a stale
+        // token, so fetch it fresh inside apply() and retry once on a stale
+        // rejection (re-fetches a then-current token).
+        const apply = async (): Promise<Record<string, unknown>> => {
+          const cur = await getEntity(tokens, "customer", existingExternalId);
+          return postEntity(tokens, "customer", { ...body, SyncToken: cur.SyncToken });
+        };
+        let updated: Record<string, unknown>;
+        try {
+          updated = await apply();
+        } catch (e) {
+          if (!/stale object/i.test((e as Error).message)) throw e;
+          updated = await apply(); // one retry with a freshly-fetched SyncToken
+        }
+        return {
+          externalId: existingExternalId,
+          externalNumber: (updated.DisplayName as string) ?? null,
+        };
       }
       const created = await postEntity(tokens, "customer", body);
       return {
