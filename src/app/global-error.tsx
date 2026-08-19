@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { BRAND } from "@/lib/brand";
 
 /**
@@ -15,6 +16,9 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    // INERT until NEXT_PUBLIC_SENTRY_DSN is set — captureException no-ops
+    // without a DSN. Keeps console.error for local dev.
+    Sentry.captureException(error);
     console.error(error);
   }, [error]);
 

@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 import { BRAND } from "@/lib/brand";
 
 export default function Error({
@@ -12,6 +13,9 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
+    // INERT until NEXT_PUBLIC_SENTRY_DSN is set — captureException no-ops
+    // without a DSN. Keeps console.error for local dev.
+    Sentry.captureException(error);
     console.error(error);
   }, [error]);
 

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 import { isLawn, isConstruction } from "@/lib/variant";
+import { captureException } from "@sentry/nextjs";
 
 // Next 16 root proxy. Two jobs, in order:
 //   1. Variant gate — a CLEAN TWO-WAY split. Each deploy hides the OTHER
@@ -27,6 +28,10 @@ import { isLawn, isConstruction } from "@/lib/variant";
 //
 // Per-page server guards still handle auth; this proxy does NOT gate on the
 // session, only on the build variant. See src/lib/variant.ts + navItems.ts.
+//
+// The whole body is wrapped in try/catch so an unexpected throw in the variant
+// gate or updateSession is reported to Sentry (edge runtime) and rethrown —
+// INERT until SENTRY_DSN is set (captureException no-ops without a DSN).
 
 const BLOCKED_PAGE_PREFIXES = [
   "/admin/projects", // construction job creator
@@ -77,40 +82,47 @@ const LAWN_BLOCKED_API_PREFIXES = [
 ];
 
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-  const isApi = pathname.startsWith("/api/");
+  try {
+    const { pathname } = request.nextUrl;
+    const isApi = pathname.startsWith("/api/");
 
-  if (isLawn()) {
-    if (isApi) {
-      // Construction API route: 404 (page routes redirect, but a direct fetch
-      // shouldn't reach construction data either).
-      if (BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
-        return new NextResponse("Not Found", { status: 404 });
+    if (isLawn()) {
+      if (isApi) {
+        // Construction API route: 404 (page routes redirect, but a direct fetch
+        // shouldn't reach construction data either).
+        if (BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
+          return new NextResponse("Not Found", { status: 404 });
+        }
+      } else if (BLOCKED_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) {
+        // Construction page: redirect to the lawn landing.
+        const url = request.nextUrl.clone();
+        url.pathname = "/lawn";
+        url.search = "";
+        return NextResponse.redirect(url);
       }
-    } else if (BLOCKED_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) {
-      // Construction page: redirect to the lawn landing.
-      const url = request.nextUrl.clone();
-      url.pathname = "/lawn";
-      url.search = "";
-      return NextResponse.redirect(url);
-    }
-  } else if (isConstruction()) {
-    if (isApi) {
-      // Lawn API route: 404 (direct fetch shouldn't reach lawn data).
-      if (LAWN_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
-        return new NextResponse("Not Found", { status: 404 });
+    } else if (isConstruction()) {
+      if (isApi) {
+        // Lawn API route: 404 (direct fetch shouldn't reach lawn data).
+        if (LAWN_BLOCKED_API_PREFIXES.some((p) => pathname.startsWith(p))) {
+          return new NextResponse("Not Found", { status: 404 });
+        }
+      } else if (LAWN_BLOCKED_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) {
+        // Lawn page: redirect to the construction landing.
+        const url = request.nextUrl.clone();
+        url.pathname = "/dashboard";
+        url.search = "";
+        return NextResponse.redirect(url);
       }
-    } else if (LAWN_BLOCKED_PAGE_PREFIXES.some((p) => pathname.startsWith(p))) {
-      // Lawn page: redirect to the construction landing.
-      const url = request.nextUrl.clone();
-      url.pathname = "/dashboard";
-      url.search = "";
-      return NextResponse.redirect(url);
     }
+
+    // Allowed route: refresh the Supabase session.
+    return updateSession(request);
+  } catch (err) {
+    // Edge runtime — sentry.edge.config is loaded by instrumentation. Capture
+    // and rethrow so the request still fails the same way; we just get a report.
+    captureException(err);
+    throw err;
   }
-
-  // Allowed route: refresh the Supabase session.
-  return updateSession(request);
 }
 
 export const config = {
