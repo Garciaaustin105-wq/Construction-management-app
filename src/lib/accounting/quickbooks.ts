@@ -95,6 +95,39 @@ async function postEntity(
   return (json[entity] as Record<string, unknown>) ?? {};
 }
 
+/** Run a QBO query (SQL) and return the parsed JSON. cache-bust + no-store. */
+async function queryEntity(
+  tokens: TokenSet,
+  sql: string
+): Promise<Record<string, unknown>> {
+  const url = `${REST_BASE}${tokens.realmId}/query?query=${encodeURIComponent(sql)}&minorversion=${MINOR_VERSION}&_=${Date.now()}`;
+  const res = await fetch(url, { headers: apiHeaders(tokens), cache: "no-store" });
+  if (!res.ok) throw new Error(await intuitError(res));
+  return (await res.json()) as Record<string, unknown>;
+}
+
+/** Find or create a dedicated service line item to use on invoices/estimates;
+ * returns its QBO Id. We do NOT assume a "Services" item exists or is usable —
+ * fresh/reset QBO companies ship a "Services" item whose IncomeAccountRef can
+ * dangle, making any invoice that references it fail with "Invalid Reference
+ * Id" (2500). We keep our own "Terra Vista Services" Service item bound to the
+ * company's first active Income account. (Per-job item MAPPING is Phase 2.) */
+async function ensureServiceItem(tokens: TokenSet): Promise<string> {
+  const NAME = "Terra Vista Services";
+  const found = await queryEntity(tokens, `select Id from Item where Name='${NAME}' and Active=true maxresults 1`);
+  const fItem = (found.QueryResponse as { Item?: Array<{ Id?: string }> } | undefined)?.Item?.[0]?.Id;
+  if (fItem) return fItem;
+  const accts = await queryEntity(tokens, `select Id from Account where AccountType='Income' and Active=true maxresults 1`);
+  const acctId = (accts.QueryResponse as { Account?: Array<{ Id?: string }> } | undefined)?.Account?.[0]?.Id;
+  if (!acctId) throw new Error("QBO has no active Income account to bind a service item to");
+  const created = await postEntity(tokens, "item", {
+    Name: NAME,
+    Type: "Service",
+    IncomeAccountRef: { value: String(acctId) },
+  });
+  return String(created.Id);
+}
+
 /** GET an entity by id; return the parsed wrapped object. */
 async function getEntity(
   tokens: TokenSet,
@@ -247,6 +280,7 @@ export class QuickBooksProvider implements AccountingProvider {
   async syncInvoice(input: SyncInvoiceInput): Promise<SyncResult> {
     try {
       const { tokens, customerExternalId, docNumber, dueDate, lineItems, existingExternalId } = input;
+      const serviceItemId = await ensureServiceItem(tokens);
       const body: Record<string, unknown> = {
         CustomerRef: { value: customerExternalId },
         TxnDate: todayISO(),
@@ -254,7 +288,7 @@ export class QuickBooksProvider implements AccountingProvider {
           Description: li.description,
           Amount: money(li.quantity * li.unitPrice),
           DetailType: "SalesItemLineDetail",
-          SalesItemLineDetail: { ItemRef: { name: "Services" }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
+          SalesItemLineDetail: { ItemRef: { value: serviceItemId }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
         })),
       };
       if (docNumber) body.DocNumber = docNumber;
@@ -275,13 +309,14 @@ export class QuickBooksProvider implements AccountingProvider {
   async syncEstimate(input: SyncEstimateInput): Promise<SyncResult> {
     try {
       const { tokens, customerExternalId, docNumber, lineItems, existingExternalId } = input;
+      const serviceItemId = await ensureServiceItem(tokens);
       const body: Record<string, unknown> = {
         CustomerRef: { value: customerExternalId },
         Line: lineItems.map((li) => ({
           Description: li.description,
           Amount: money(li.quantity * li.unitPrice),
           DetailType: "SalesItemLineDetail",
-          SalesItemLineDetail: { ItemRef: { name: "Services" }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
+          SalesItemLineDetail: { ItemRef: { value: serviceItemId }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
         })),
       };
       if (docNumber) body.DocNumber = docNumber;
