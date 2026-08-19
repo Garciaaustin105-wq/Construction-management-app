@@ -205,17 +205,34 @@ export class QuickBooksProvider implements AccountingProvider {
           const cur = await getEntity(tokens, "customer", existingExternalId);
           return postEntity(tokens, "customer", { ...body, SyncToken: cur.SyncToken });
         };
-        let updated: Record<string, unknown>;
         try {
-          updated = await apply();
+          const updated = await apply();
+          return {
+            externalId: existingExternalId,
+            externalNumber: (updated.DisplayName as string) ?? null,
+          };
         } catch (e) {
-          if (!/stale object/i.test((e as Error).message)) throw e;
-          updated = await apply(); // one retry with a freshly-fetched SyncToken
+          const msg = (e as Error).message ?? "";
+          if (/stale object/i.test(msg)) {
+            // SyncToken raced — retry once with a freshly-fetched token.
+            const updated = await apply();
+            return {
+              externalId: existingExternalId,
+              externalNumber: (updated.DisplayName as string) ?? null,
+            };
+          }
+          if (/invalid or unsupported property|not found|does not exist/i.test(msg)) {
+            // The QBO customer was deleted/merged/reset on their side (e.g. a
+            // sandbox reconnect to a fresh company) — our stored extId is stale.
+            // Drop it and CREATE a fresh customer so the sync self-heals instead
+            // of erroring forever. persistExtId will record the new id.
+            delete body.Id;
+            delete body.sparse;
+            // fall through to CREATE below.
+          } else {
+            throw e; // unknown failure — surface it to the caller
+          }
         }
-        return {
-          externalId: existingExternalId,
-          externalNumber: (updated.DisplayName as string) ?? null,
-        };
       }
       const created = await postEntity(tokens, "customer", body);
       return {
