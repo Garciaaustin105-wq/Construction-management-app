@@ -157,6 +157,19 @@ async function resolveIncomeAccount(tokens: TokenSet): Promise<string> {
   return String((created as { Id?: string }).Id);
 }
 
+/** Per-realm cache of our service item Id. Intuit meters READS (CorePlus)
+ * against a monthly cap but WRITES are free — and ensureServiceItem's
+ * `select Id from Item` read fired on EVERY sync just to re-find an item that
+ * almost never changes. Cache it per realm for the life of a warm instance:
+ * the burst case (lawn monthly cycle-billing) fires many syncs on one warm
+ * instance and now pays the Item read once. Serverless cold starts re-query
+ * once, which is fine. The durable version (persist on accounting_connections)
+ * is a Phase-2 production-cutover task; this is the zero-migration cut. If the
+ * office deletes the item in QBO, the stale Id surfaces as "Invalid Reference
+ * Id" (2500) on the next create — callers invalidate via invalidateServiceItem
+ * and retry once. */
+const serviceItemCache = new Map<string, string>();
+
 /** Find or create a dedicated service line item to use on invoices/estimates;
  * returns its QBO Id. We do NOT assume a "Services" item exists or is usable —
  * fresh/reset QBO companies ship a "Services" item whose IncomeAccountRef can
@@ -165,17 +178,31 @@ async function resolveIncomeAccount(tokens: TokenSet): Promise<string> {
  * real services Income account (see resolveIncomeAccount). (Per-job item
  * MAPPING is Phase 2.) */
 async function ensureServiceItem(tokens: TokenSet): Promise<string> {
+  const cached = serviceItemCache.get(String(tokens.realmId));
+  if (cached) return cached;
   const NAME = "Terra Vista Services";
   const found = await queryEntity(tokens, `select Id from Item where Name='${NAME}' and Active=true maxresults 1`);
   const fItem = (found.QueryResponse as { Item?: Array<{ Id?: string }> } | undefined)?.Item?.[0]?.Id;
-  if (fItem) return fItem;
-  const acctId = await resolveIncomeAccount(tokens);
-  const created = await postEntity(tokens, "item", {
-    Name: NAME,
-    Type: "Service",
-    IncomeAccountRef: { value: String(acctId) },
-  });
-  return String(created.Id);
+  let itemId: string;
+  if (fItem) {
+    itemId = fItem;
+  } else {
+    const acctId = await resolveIncomeAccount(tokens);
+    const created = await postEntity(tokens, "item", {
+      Name: NAME,
+      Type: "Service",
+      IncomeAccountRef: { value: String(acctId) },
+    });
+    itemId = String(created.Id);
+  }
+  serviceItemCache.set(String(tokens.realmId), itemId);
+  return itemId;
+}
+
+/** Drop the cached service-item Id for a realm (after a QBO-side deletion made
+ * it stale) so the next ensureServiceItem re-resolves. */
+function invalidateServiceItem(tokens: TokenSet): void {
+  serviceItemCache.delete(String(tokens.realmId));
 }
 
 /** GET an entity by id; return the parsed wrapped object. */
@@ -330,27 +357,44 @@ export class QuickBooksProvider implements AccountingProvider {
   async syncInvoice(input: SyncInvoiceInput): Promise<SyncResult> {
     try {
       const { tokens, customerExternalId, docNumber, dueDate, lineItems, existingExternalId } = input;
-      const serviceItemId = await ensureServiceItem(tokens);
-      const body: Record<string, unknown> = {
-        CustomerRef: { value: customerExternalId },
-        TxnDate: todayISO(),
-        Line: lineItems.map((li) => ({
+      if (!lineItems.length) return { externalId: null, error: "Invoice has no line items to sync" };
+      const makeLines = (sid: string) =>
+        lineItems.map((li) => ({
           Description: li.description,
           Amount: money(li.quantity * li.unitPrice),
           DetailType: "SalesItemLineDetail",
-          SalesItemLineDetail: { ItemRef: { value: serviceItemId }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
-        })),
+          SalesItemLineDetail: { ItemRef: { value: sid }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
+        }));
+      const attempt = async (): Promise<Record<string, unknown>> => {
+        const serviceItemId = await ensureServiceItem(tokens);
+        const body: Record<string, unknown> = {
+          CustomerRef: { value: customerExternalId },
+          TxnDate: todayISO(),
+          Line: makeLines(serviceItemId),
+        };
+        if (docNumber) body.DocNumber = docNumber;
+        if (dueDate) body.DueDate = dueDate;
+        if (existingExternalId) {
+          const cur = await getEntity(tokens, "invoice", existingExternalId);
+          body.Id = existingExternalId;
+          body.SyncToken = cur.SyncToken;
+          body.Line = [...(body.Line as unknown[]), ...((cur.Line as unknown[]) ?? [])];
+        }
+        return postEntity(tokens, "invoice", body);
       };
-      if (docNumber) body.DocNumber = docNumber;
-      if (dueDate) body.DueDate = dueDate;
-      if (existingExternalId) {
-        const cur = await getEntity(tokens, "invoice", existingExternalId);
-        body.Id = existingExternalId;
-        body.SyncToken = cur.SyncToken;
-        body.Line = [...(body.Line as unknown[]), ...((cur.Line as unknown[]) ?? [])];
+      try {
+        const created = await attempt();
+        return { externalId: String(created.Id), externalNumber: (created.DocNumber as string) ?? null };
+      } catch (e) {
+        // The cached service item (or its income account) was deleted/inactivated
+        // in QBO → "Invalid Reference Id" (2500). Drop the cache, re-resolve, retry once.
+        if (/invalid reference id|invalid reference|has been made inactive/i.test((e as Error).message ?? "")) {
+          invalidateServiceItem(tokens);
+          const created = await attempt();
+          return { externalId: String(created.Id), externalNumber: (created.DocNumber as string) ?? null };
+        }
+        throw e;
       }
-      const created = await postEntity(tokens, "invoice", body);
-      return { externalId: String(created.Id), externalNumber: (created.DocNumber as string) ?? null };
     } catch (e) {
       return { externalId: null, error: (e as Error).message };
     }
@@ -359,25 +403,40 @@ export class QuickBooksProvider implements AccountingProvider {
   async syncEstimate(input: SyncEstimateInput): Promise<SyncResult> {
     try {
       const { tokens, customerExternalId, docNumber, lineItems, existingExternalId } = input;
-      const serviceItemId = await ensureServiceItem(tokens);
-      const body: Record<string, unknown> = {
-        CustomerRef: { value: customerExternalId },
-        Line: lineItems.map((li) => ({
+      if (!lineItems.length) return { externalId: null, error: "Estimate has no line items to sync" };
+      const makeLines = (sid: string) =>
+        lineItems.map((li) => ({
           Description: li.description,
           Amount: money(li.quantity * li.unitPrice),
           DetailType: "SalesItemLineDetail",
-          SalesItemLineDetail: { ItemRef: { value: serviceItemId }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
-        })),
+          SalesItemLineDetail: { ItemRef: { value: sid }, Qty: li.quantity, UnitPrice: money(li.unitPrice) },
+        }));
+      const attempt = async (): Promise<Record<string, unknown>> => {
+        const serviceItemId = await ensureServiceItem(tokens);
+        const body: Record<string, unknown> = {
+          CustomerRef: { value: customerExternalId },
+          Line: makeLines(serviceItemId),
+        };
+        if (docNumber) body.DocNumber = docNumber;
+        if (existingExternalId) {
+          const cur = await getEntity(tokens, "estimate", existingExternalId);
+          body.Id = existingExternalId;
+          body.SyncToken = cur.SyncToken;
+          body.Line = [...(body.Line as unknown[]), ...((cur.Line as unknown[]) ?? [])];
+        }
+        return postEntity(tokens, "estimate", body);
       };
-      if (docNumber) body.DocNumber = docNumber;
-      if (existingExternalId) {
-        const cur = await getEntity(tokens, "estimate", existingExternalId);
-        body.Id = existingExternalId;
-        body.SyncToken = cur.SyncToken;
-        body.Line = [...(body.Line as unknown[]), ...((cur.Line as unknown[]) ?? [])];
+      try {
+        const created = await attempt();
+        return { externalId: String(created.Id), externalNumber: (created.DocNumber as string) ?? null };
+      } catch (e) {
+        if (/invalid reference id|invalid reference|has been made inactive/i.test((e as Error).message ?? "")) {
+          invalidateServiceItem(tokens);
+          const created = await attempt();
+          return { externalId: String(created.Id), externalNumber: (created.DocNumber as string) ?? null };
+        }
+        throw e;
       }
-      const created = await postEntity(tokens, "estimate", body);
-      return { externalId: String(created.Id), externalNumber: (created.DocNumber as string) ?? null };
     } catch (e) {
       return { externalId: null, error: (e as Error).message };
     }
