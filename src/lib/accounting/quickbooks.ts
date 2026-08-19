@@ -116,20 +116,60 @@ async function queryEntity(
   return (await res.json()) as Record<string, unknown>;
 }
 
+/** Resolve a QBO Income account Id to bind a service item to.
+ *
+ * QBO's chart of accounts typically has several Income accounts with distinct
+ * AccountSubType values (ServiceFeeIncome, SalesOfProductIncome,
+ * DiscountsRefundsGiven, InterestIncome, …). Binding our service item to "the
+ * first active Income account" (maxresults 1, no subtype filter) can land every
+ * synced dollar in an arbitrary or wrong revenue account — an accounting-
+ * correctness bug an accountant catches months later. So we prefer, in order:
+ *   1. an existing Income account with AccountSubType='ServiceFeeIncome'
+ *   2. one with AccountSubType='SalesOfProductIncome'
+ *   3. any other active Income account
+ *   4. if NONE exist, create a dedicated labeled income account of our own
+ *      (Income / ServiceFeeIncome) so revenue always posts somewhere known and
+ *      correct — never to DiscountsRefundsGiven or InterestIncome by accident.
+ * (Per-org item + account MAPPING chosen by the office is Phase 2.) */
+async function resolveIncomeAccount(tokens: TokenSet): Promise<string> {
+  const subtypes = ["ServiceFeeIncome", "SalesOfProductIncome"];
+  for (const sub of subtypes) {
+    const r = await queryEntity(
+      tokens,
+      `select Id from Account where AccountType='Income' and AccountSubType='${sub}' and Active=true maxresults 1`
+    );
+    const id = (r.QueryResponse as { Account?: Array<{ Id?: string }> } | undefined)?.Account?.[0]?.Id;
+    if (id) return id;
+  }
+  // Any active Income account at all (user may have a custom-subtyped one).
+  const anyR = await queryEntity(
+    tokens,
+    `select Id from Account where AccountType='Income' and Active=true maxresults 1`
+  );
+  const anyId = (anyR.QueryResponse as { Account?: Array<{ Id?: string }> } | undefined)?.Account?.[0]?.Id;
+  if (anyId) return anyId;
+  // No Income account exists — create a dedicated, labeled one we control.
+  const created = await postEntity(tokens, "account", {
+    Name: "Terra Vista Services Income",
+    AccountType: "Income",
+    AccountSubType: "ServiceFeeIncome",
+  });
+  return String((created as { Id?: string }).Id);
+}
+
 /** Find or create a dedicated service line item to use on invoices/estimates;
  * returns its QBO Id. We do NOT assume a "Services" item exists or is usable —
  * fresh/reset QBO companies ship a "Services" item whose IncomeAccountRef can
  * dangle, making any invoice that references it fail with "Invalid Reference
- * Id" (2500). We keep our own "Terra Vista Services" Service item bound to the
- * company's first active Income account. (Per-job item MAPPING is Phase 2.) */
+ * Id" (2500). We keep our own "Terra Vista Services" Service item bound to a
+ * real services Income account (see resolveIncomeAccount). (Per-job item
+ * MAPPING is Phase 2.) */
 async function ensureServiceItem(tokens: TokenSet): Promise<string> {
   const NAME = "Terra Vista Services";
   const found = await queryEntity(tokens, `select Id from Item where Name='${NAME}' and Active=true maxresults 1`);
   const fItem = (found.QueryResponse as { Item?: Array<{ Id?: string }> } | undefined)?.Item?.[0]?.Id;
   if (fItem) return fItem;
-  const accts = await queryEntity(tokens, `select Id from Account where AccountType='Income' and Active=true maxresults 1`);
-  const acctId = (accts.QueryResponse as { Account?: Array<{ Id?: string }> } | undefined)?.Account?.[0]?.Id;
-  if (!acctId) throw new Error("QBO has no active Income account to bind a service item to");
+  const acctId = await resolveIncomeAccount(tokens);
   const created = await postEntity(tokens, "item", {
     Name: NAME,
     Type: "Service",
