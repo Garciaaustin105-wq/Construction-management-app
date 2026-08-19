@@ -5,7 +5,11 @@ import TopBar from "@/components/TopBar";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import TimeExportButton, { type ExportRow } from "@/components/TimeExportButton";
 import { Users, MapPin, ChevronLeft, ChevronRight, User, Briefcase } from "lucide-react";
-import { FIELD_MGMT } from "@/lib/roles";
+import { FIELD_MGMT, OFFICE_OR_PM } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
+import ManualTimeEntryForm from "@/components/ManualTimeEntryForm";
+import TimeEntryEditModal from "@/components/TimeEntryEditModal";
+import ForceClockOutButton from "@/components/ForceClockOutButton";
 
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -45,6 +49,7 @@ type Joined = {
   lng: number | null;
   user: { id: string; full_name: string | null } | null;
   job: { id: string; name: string | null } | null;
+  cost_code_id: string | null;
   cost_code: { code: string; name: string } | null;
 };
 
@@ -112,7 +117,7 @@ export default async function TimeOverviewPage({
     supabase
       .from("time_entries")
       .select(
-        "id, clock_in_at, clock_out_at, note, lat, lng, user:profiles(id, full_name), job:jobs(id, name), cost_code:cost_codes(code, name)"
+        "id, clock_in_at, clock_out_at, note, lat, lng, cost_code_id, user:profiles(id, full_name), job:jobs(id, name), cost_code:cost_codes(code, name)"
       )
       .gte("clock_in_at", weekStart.toISOString())
       .lt("clock_in_at", weekEnd.toISOString())
@@ -130,6 +135,43 @@ export default async function TimeOverviewPage({
   };
   const onClockRows = (onClockRes.data ?? []) as unknown as OnClock[];
   const weekShifts = (weekRes.data ?? []) as unknown as Joined[];
+
+  // ---- Office/PM manage actions: manual add, force clock-out, edit ----
+  // FIELD_MGMT can view this page; OFFICE_OR_PM (office/admin/PM/super_admin)
+  // can manage time. Superintendent is read-only here until the review/approve
+  // features ship (separate SQL-gated deploy).
+  const role = (profile?.role ?? "crew") as never;
+  const canManage = OFFICE_OR_PM.has(role);
+  const variant: "construction" | "lawn" = isLawn() ? "lawn" : "construction";
+
+  // Workers (clockable) + jobs + cost codes for the manual-add + edit modals.
+  // RLS scopes profiles/jobs/cost_codes to this org. Cost codes are a
+  // construction surface only.
+  const [workersRes, manageJobsRes, manageCodesRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("role", ["crew", "superintendent", "project_manager"])
+      .order("full_name"),
+    supabase
+      .from("jobs")
+      .select("id, name")
+      .eq("type", variant === "lawn" ? "lawn" : "construction")
+      .order("name"),
+    variant === "lawn"
+      ? Promise.resolve({ data: [] })
+      : supabase.from("cost_codes").select("id, code, name").order("code"),
+  ]);
+  const clockableWorkers = (workersRes.data ?? []) as {
+    id: string;
+    full_name: string | null;
+  }[];
+  const manageJobs = (manageJobsRes.data ?? []) as { id: string; name: string }[];
+  const manageCodes = (manageCodesRes.data ?? []) as {
+    id: string;
+    code: string;
+    name: string;
+  }[];
 
   const weekTotalMs = weekShifts.reduce((sum, s) => sum + shiftDurationMs(s, now), 0);
   const weekHours = weekTotalMs / 3_600_000;
@@ -216,6 +258,21 @@ export default async function TimeOverviewPage({
           <span className="font-mono text-xs font-semibold text-gray-700 tabular-nums flex-shrink-0">
             {fmtDuration(dur)}
           </span>
+          {canManage && (
+            <TimeEntryEditModal
+              entry={{
+                id: s.id,
+                job_id: s.job?.id ?? "",
+                cost_code_id: s.cost_code_id,
+                clock_in_at: s.clock_in_at,
+                clock_out_at: s.clock_out_at,
+                note: s.note,
+              }}
+              jobs={manageJobs}
+              costCodes={manageCodes}
+              variant={variant}
+            />
+          )}
         </div>
         {s.note && <p className="text-xs text-gray-400 truncate">{s.note}</p>}
         {typeof s.lat === "number" && typeof s.lng === "number" && (
@@ -250,6 +307,16 @@ export default async function TimeOverviewPage({
             <p className="text-[10px] text-gray-400">{workers.length} people</p>
           </div>
         </div>
+
+        {/* Office/PM: add a shift on behalf of a crew member */}
+        {canManage && (
+          <ManualTimeEntryForm
+            workers={clockableWorkers}
+            jobs={manageJobs}
+            costCodes={manageCodes}
+            variant={variant}
+          />
+        )}
 
         {/* On the clock now */}
         <section>
@@ -291,6 +358,12 @@ export default async function TimeOverviewPage({
                     <span className="font-mono text-sm font-semibold text-gray-700 tabular-nums">
                       {fmtDuration(elapsed)}
                     </span>
+                    {canManage && (
+                      <ForceClockOutButton
+                        entryId={r.id}
+                        workerName={r.user?.full_name}
+                      />
+                    )}
                   </div>
                 );
               })}

@@ -12,6 +12,7 @@ import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import PlanBanner from "@/components/PlanBanner";
 import NotificationsFeed from "@/components/NotificationsFeed";
+import RoleOnboarding from "@/components/RoleOnboarding";
 
 // Small overline label that groups the dashboard tiles into named sections
 // (Create / Manage / Track / Your Work). Kept deliberately understated so it
@@ -204,6 +205,7 @@ export default async function DashboardPage() {
       <TopBar title={orgName} subtitle={`Signed in as ${role}`} />
 
       <main className="max-w-md lg:max-w-7xl mx-auto p-4 space-y-6">
+        <RoleOnboarding role={role} variant="construction" />
         <PlanBanner />
         <ClientPullToRefresh>
         {/* Super admin: platform view (no org, so no office grid). */}

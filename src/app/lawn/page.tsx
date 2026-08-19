@@ -5,6 +5,7 @@ import EmptyState from "@/components/EmptyState";
 import { FIELD_MGMT } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
+import RoleOnboarding from "@/components/RoleOnboarding";
 import Link from "next/link";
 import { Plus, Sprout, CalendarDays, Calendar, Route, Scissors, CloudSun, FileText } from "lucide-react";
 
@@ -126,6 +127,7 @@ export default async function LawnPage() {
       <TopBar title="Lawn" subtitle="Recurring routes & today's visits" />
 
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
+        <RoleOnboarding role={role} variant="lawn" />
         <div className="grid grid-cols-2 gap-2">
           <Link
             href="/lawn/new"

@@ -7,6 +7,7 @@ import { useToast } from "@/components/Toast";
 import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucide-react";
 import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
 import { isLawn } from "@/lib/variant";
+import TimeEntryEditModal from "@/components/TimeEntryEditModal";
 
 type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
@@ -383,6 +384,12 @@ export default function CrewTimePage() {
                     <span className="font-mono text-sm font-semibold text-gray-700 tabular-nums">
                       {fmtDuration(dur)}
                     </span>
+                    <TimeEntryEditModal
+                      entry={e}
+                      jobs={jobs}
+                      costCodes={costCodes}
+                      variant={isLawn() ? "lawn" : "construction"}
+                    />
                     <button
                       onClick={() => removeEntry(e)}
                       className="text-red-600 p-1.5 rounded hover:bg-red-50 flex-shrink-0"
