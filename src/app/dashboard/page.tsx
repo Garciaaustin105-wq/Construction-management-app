@@ -110,10 +110,13 @@ export default async function DashboardPage() {
   // get their own dedicated sections below instead of the generic Track.
   const showTrack =
     (showOfficeSurface || !showPlatform) && !showSales && !showAccountant;
-  // Office-like (office/admin/super_admin) see the customer-action feed
-  // (estimate accepted/declined, invoice paid). RLS (tier_office) scopes the
-  // query to the caller's org (super_admin sees the platform-wide feed).
-  const showNotifications = showOfficeSurface || showPlatform;
+  // Office-like (office/admin) see the customer-action feed (estimate
+  // accepted/declined, invoice paid). RLS (tier_office) scopes the query to
+  // the caller's org. super_admin is intentionally EXCLUDED: they have no org,
+  // so same_org() bypasses tier_office and would surface every tenant's
+  // notifications platform-wide. Per the "super_admin not tied to orgs" rule,
+  // they get no org notification feed.
+  const showNotifications = showOfficeSurface;
 
   // Fan out the independent reads in parallel (was sequential awaits, so the
   // dashboard waited on jobs → photos → rfis → invoices one after another).

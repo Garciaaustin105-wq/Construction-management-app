@@ -83,8 +83,14 @@ export default function NewUserForm({
   orgs: { id: string; name: string }[];
 }) {
   const router = useRouter();
+  const isSuperAdmin = callerRole === "super_admin";
   const options = optionsFor(callerRole);
-  const [role, setRole] = useState<Role>(options[0]?.value ?? "crew");
+  // super_admin only provisions office helpers (analytics support) — no role
+  // picker, no field/customer/admin roles. The form below hides the role
+  // selector entirely for super_admin and locks role to "office".
+  const [role, setRole] = useState<Role>(
+    isSuperAdmin ? "office" : options[0]?.value ?? "crew"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -120,7 +126,9 @@ export default function NewUserForm({
       return;
     }
 
-    toast.success(`Created ${role}: ${email}`);
+    toast.success(
+      isSuperAdmin ? `Added office worker: ${email}` : `Created ${role}: ${email}`
+    );
     setEmail("");
     setPassword("");
     setFullName("");
@@ -143,7 +151,7 @@ export default function NewUserForm({
           Dashboard
         </button>
         <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2">
-          Add User
+          {isSuperAdmin ? "Add Office Worker" : "Add User"}
         </h1>
         <div className="w-16" />
       </header>
@@ -153,6 +161,22 @@ export default function NewUserForm({
           onSubmit={handleSubmit}
           className="bg-white rounded-lg p-4 shadow-sm space-y-4"
         >
+          {/* super_admin only adds office helpers (analytics support) — no role
+              buffet. A locked banner replaces the role picker so the form is
+              just org + name + email + password. */}
+          {isSuperAdmin ? (
+            <div className="flex items-center gap-3 px-3 py-3 rounded-lg border border-blue-200 bg-blue-50">
+              <Users className="w-5 h-5 flex-shrink-0 text-blue-600" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-blue-700">
+                  Office worker
+                </p>
+                <p className="text-xs text-blue-600">
+                  Added to the org below to help with analytics &amp; office work.
+                </p>
+              </div>
+            </div>
+          ) : (
           <div>
             <span className="text-sm font-medium text-gray-700 block mb-2">
               Role
@@ -199,6 +223,7 @@ export default function NewUserForm({
               </p>
             )}
           </div>
+          )}
 
           {/* super_admin picks the target org */}
           {callerRole === "super_admin" && orgs.length > 0 && (
@@ -286,9 +311,9 @@ export default function NewUserForm({
             {loading && <Loader2 className="w-5 h-5 animate-spin" />}
             {loading
               ? "Creating..."
-              : `Add ${
-                  options.find((o) => o.value === role)?.label ?? "User"
-                }`}
+              : isSuperAdmin
+                ? "Add Office Worker"
+                : `Add ${options.find((o) => o.value === role)?.label ?? "User"}`}
           </button>
         </form>
       </main>

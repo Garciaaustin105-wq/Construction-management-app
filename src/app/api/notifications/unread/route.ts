@@ -10,6 +10,20 @@ export async function GET(req: Request) {
     return NextResponse.json({ unread: 0 });
   }
 
+  // super_admin has no org, but same_org() short-circuits true for them — so
+  // the jobs/photos/RFIs/notifications counts below would bypass tier_office
+  // RLS and aggregate EVERY tenant's activity platform-wide. That's a cross-
+  // org leak, not a useful "platform inbox." super_admin is a platform role,
+  // not an org workspace user, so the badge is always 0 for them.
+  const { data: myProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (myProfile?.role === "super_admin") {
+    return NextResponse.json({ unread: 0 });
+  }
+
   const url = new URL(req.url);
   const markSeen = url.searchParams.get("markSeen") === "1";
 
