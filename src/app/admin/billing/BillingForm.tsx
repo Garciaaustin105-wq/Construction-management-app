@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader2, Check } from "lucide-react";
+import { ArrowLeft, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
 type Tier = {
@@ -18,8 +18,25 @@ type Tier = {
   priceMonthly: number;
 };
 
+type Blocker = {
+  dim: "jobs" | "customers" | "crewMembers" | "seats" | "storage";
+  label: string;
+  current: number;
+  cap: number;
+  mustRemove: number;
+};
+
 function cap(n: number | null, noun: string): string {
   return n === null ? `Unlimited ${noun}*` : `Up to ${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+function formatBytes(n: number): string {
+  if (n <= 0) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${Math.round(n / 1024 / 1024)} MB`;
+  const gb = n / 1024 / 1024 / 1024;
+  return `${gb >= 10 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
 }
 
 export default function BillingForm({
@@ -44,6 +61,7 @@ export default function BillingForm({
   const searchParams = useSearchParams();
   const [loadingTier, setLoadingTier] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
+  const [blockers, setBlockers] = useState<{ tier: string; items: Blocker[] } | null>(null);
   const status = searchParams.get("status");
 
   useEffect(() => {
@@ -65,6 +83,7 @@ export default function BillingForm({
 
   const subscribe = async (tier: string) => {
     setLoadingTier(tier);
+    setBlockers(null);
     try {
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -72,6 +91,15 @@ export default function BillingForm({
         body: JSON.stringify({ tier }),
       });
       const data = await res.json();
+      if (res.status === 409 && Array.isArray(data.blockers)) {
+        // Downgrade guard: current usage exceeds the target tier. Show what to
+        // remove (or export first) instead of a generic toast. The office trims
+        // down below the cap and retries, or picks a higher tier.
+        setBlockers({ tier, items: data.blockers as Blocker[] });
+        toast.error("Downgrade blocked — see details below");
+        setLoadingTier(null);
+        return;
+      }
       if (!res.ok) {
         toast.error(data.error ?? "Could not start checkout");
         setLoadingTier(null);
@@ -141,6 +169,62 @@ export default function BillingForm({
             </p>
           )}
         </div>
+
+        {blockers && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              <div className="text-sm text-amber-900">
+                <p className="font-semibold">
+                  Downgrade to {labelMap[blockers.tier] || blockers.tier} blocked
+                </p>
+                <p className="text-amber-800">
+                  Your current usage is above what that plan allows. Remove the
+                  excess below (or export it first to keep your data), then retry.
+                </p>
+              </div>
+            </div>
+            <ul className="space-y-1.5 text-sm">
+              {blockers.items.map((b) => {
+                const isStorage = b.dim === "storage";
+                const cur = isStorage ? formatBytes(b.current) : b.current;
+                const capStr = isStorage ? formatBytes(b.cap) : b.cap;
+                const remove = isStorage
+                  ? `free up ${formatBytes(b.mustRemove)}`
+                  : `remove ${b.mustRemove}`;
+                return (
+                  <li
+                    key={b.dim}
+                    className="flex items-center justify-between gap-2 bg-white/60 rounded px-3 py-2"
+                  >
+                    <span className="text-gray-800">
+                      <span className="font-medium">{b.label}:</span> {cur}{" "}
+                      <span className="text-gray-500">
+                        ({labelMap[blockers.tier] || blockers.tier} allows {capStr})
+                      </span>
+                    </span>
+                    <span className="text-amber-700 font-medium whitespace-nowrap">
+                      {remove}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="text-xs text-amber-800 border-t border-amber-200 pt-2 space-y-1">
+              <p>
+                Tip: open any job and tap <span className="font-medium">Export</span>{" "}
+                to download its files + summary before deleting. Then remove the
+                extra records and come back here.
+              </p>
+              <button
+                onClick={() => router.push("/dashboard")}
+                className="text-amber-900 font-medium underline underline-offset-2"
+              >
+                Go to Dashboard to manage records
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {tiers.map((tier) => (

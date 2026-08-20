@@ -1,10 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getMyOrg } from "@/lib/tenant";
-import { createCheckoutSession } from "@/lib/billing";
-import { PAID_TIERS, type PaidTier } from "@/lib/plans";
+import { createCheckoutSession, getOrgBilling, effectiveStatus } from "@/lib/billing";
+import { PAID_TIERS, type PaidTier, getLimits } from "@/lib/plans";
+import { getOrgUsage, isDowngrade, downgradeBlockers } from "@/lib/orgUsage";
 
 // Start a Stripe Checkout session for a paid tier. Org admin only.
+//
+// DOWNGRADE GUARD: before creating a Checkout, if the target tier is a
+// downgrade from the current EFFECTIVE plan (incl. a lapsed trial resubscribe),
+// compare current usage (jobs/customers/crew/seats/storage) to the target
+// tier's caps. If any dimension is over the cap, return 409 with the blockers
+// instead of starting Checkout — the office must remove the excess (or export
+// it first via /api/jobs/[id]/export) or pick a higher tier. This closes the
+// "downgrade with no shrinkage" leak (holding higher-tier capacity at a lower
+// price). Upgrades, same-tier re-subscribes, and trial→paid conversions are
+// never blocked (isDowngrade returns false for those).
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -46,6 +57,27 @@ export async function POST(request: Request) {
     .single();
   if (!org) {
     return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+  }
+
+  // Downgrade guard (money leak #2). The Customer Portal is locked to
+  // cancel-only (createPortalSession below), so plan changes only flow through
+  // this route — making this the single place to gate downgrades.
+  const billing = await getOrgBilling(supabase, org.id);
+  if (billing) {
+    const eff = effectiveStatus(billing);
+    if (isDowngrade(eff.plan, tier)) {
+      const usage = await getOrgUsage(supabase, org.id);
+      const blockers = downgradeBlockers(usage, getLimits(tier));
+      if (blockers.length > 0) {
+        return NextResponse.json(
+          {
+            error: `Downgrade to ${tier} blocked: your current usage exceeds that plan.`,
+            blockers,
+          },
+          { status: 409 }
+        );
+      }
+    }
   }
 
   const origin = new URL(request.url).origin;

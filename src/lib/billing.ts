@@ -179,16 +179,61 @@ export async function createCheckoutSession(
   return { url: session.url };
 }
 
-/** Open the Stripe Customer Portal (update card, cancel, view invoices). */
+/** Open the Stripe Customer Portal (update card, cancel, view invoices).
+ *
+ *  Plan CHANGES are disabled in the portal (subscription_update.enabled=false)
+ *  so the only way to switch tiers is our /api/billing/checkout route, where
+ *  the downgrade guard runs. Without this lock, a tenant could swap to a
+ *  cheaper plan in the portal and the webhook would overwrite organizations.plan
+ *  — bypassing the guard entirely (the leak). Cancel stays enabled (cancel →
+ *  canceled, which is fine). Card updates + invoice history stay enabled.
+ *
+ *  This Stripe API version's sessions.create accepts `configuration` as a
+ *  CONFIGURATION ID only (not an inline object), so we create + cache a
+ *  cancel-only portal configuration once per Stripe account and reference it by
+ *  id. The config is a named (non-default) Stripe resource — harmless + can be
+ *  deactivated in the Dashboard; creating it does not change the Dashboard's
+ *  default config. Cached in module scope (one Stripe account → one config). */
+let portalConfigId: string | null = null;
+
+async function ensurePortalConfig(stripe: Stripe): Promise<string> {
+  if (portalConfigId) return portalConfigId;
+  // Reuse an existing active config that already disables plan changes, if one
+  // exists (idempotent across restarts / deploys).
+  const existing = await stripe.billingPortal.configurations.list({
+    active: true,
+    limit: 100,
+  });
+  const found = existing.data.find(
+    (c) => c.features?.subscription_update?.enabled === false
+  );
+  if (found) {
+    portalConfigId = found.id;
+    return found.id;
+  }
+  const created = await stripe.billingPortal.configurations.create({
+    features: {
+      subscription_update: { enabled: false },
+      subscription_cancel: { enabled: true },
+      invoice_history: { enabled: true },
+      payment_method_update: { enabled: true },
+    },
+  });
+  portalConfigId = created.id;
+  return created.id;
+}
+
 export async function createPortalSession(
   org: OrgForStripe,
   origin: string
 ): Promise<{ url: string }> {
   if (!org.stripeCustomerId) throw new Error("No billing account to manage yet");
   const stripe = await getStripe();
+  const configuration = await ensurePortalConfig(stripe);
   const session = await stripe.billingPortal.sessions.create({
     customer: org.stripeCustomerId,
     return_url: `${origin}/admin/billing`,
+    configuration,
   });
   return { url: session.url };
 }

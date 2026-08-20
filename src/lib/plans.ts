@@ -54,6 +54,12 @@ export interface PlanConfig {
   maxCrewMembers: number | null;
   /** Max customers. null = unlimited. */
   maxCustomers: number | null;
+  /** Max AI actions (LLM calls — photo analysis, assistants, etc.) per calendar
+   *  month per org. Variant-INDEPENDENT (LLM cost doesn't depend on variant).
+   *  null = unlimited. 0 = AI disabled on this tier. trial gets a taste (25),
+   *  starter none, pro 100, Business 5000, expired/canceled 0. Mirrored in
+   *  ai_action_gating.sql ai_action_max() so the DB + app agree. */
+  maxAiActionsPerMonth: number | null;
   /** Display order on the billing page. */
   order: number;
   /** One-line description for the billing cards. */
@@ -75,6 +81,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: null,
     maxCustomers: null,
+    maxAiActionsPerMonth: 25,
     order: 0,
     blurb: "Full access for 30 days — no card required.",
   },
@@ -91,6 +98,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 15,
     maxCustomers: 50,
+    maxAiActionsPerMonth: 0,
     order: 1,
     blurb: "For small crews getting organized.",
   },
@@ -105,6 +113,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 100,
     maxCustomers: 500,
+    maxAiActionsPerMonth: 100,
     order: 2,
     blurb: "For growing contractors running multiple jobs.",
   },
@@ -119,6 +128,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: true,
     maxCrewMembers: null,
     maxCustomers: null,
+    maxAiActionsPerMonth: 5000,
     order: 3,
     blurb: "Unlimited users + jobs. Need more storage? Call us.",
   },
@@ -133,6 +143,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 0,
     maxCustomers: 0,
+    maxAiActionsPerMonth: 0,
     order: 99,
     blurb: "Trial ended — subscribe to keep creating.",
   },
@@ -147,6 +158,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 0,
     maxCustomers: 0,
+    maxAiActionsPerMonth: 0,
     order: 99,
     blurb: "Subscription canceled — resubscribe to resume.",
   },
@@ -167,6 +179,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: null,
     maxCustomers: null,
+    maxAiActionsPerMonth: 25,
     order: 0,
     blurb: "Full access for 30 days — no card required.",
   },
@@ -181,20 +194,28 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 25,
     maxCustomers: 100,
+    maxAiActionsPerMonth: 0,
     order: 1,
     blurb: "For a solo operator or small route.",
   },
   pro: {
     label: "Pro",
     priceId: process.env.STRIPE_PRICE_PRO_LAWN ?? process.env.STRIPE_PRICE_PRO ?? null,
-    priceMonthly: 99,
+    priceMonthly: 149,
     maxUsers: 25,
     maxJobs: 150,
     maxLineItemsPerDoc: 50,
-    maxStorageBytes: 25 * GB,
+    // 2026-08-19: bumped 25GB -> 75GB. Lawn before/after photos accumulate
+    // (~36MB/yard/yr), so a full 150-yard Pro filled 25GB in ~4yr and hit the
+    // hard block — the stranding wall we don't want for loyal customers. 75GB
+    // gives ~14yr at typical use (or ~5yr if crews take 8 photos/visit). Cost
+    // is trivial (~$1.50/mo) at the $149 Pro price. Construction Pro stays
+    // 25GB (separate research).
+    maxStorageBytes: 75 * GB,
     storageCustom: false,
     maxCrewMembers: 150,
     maxCustomers: 1000,
+    maxAiActionsPerMonth: 100,
     order: 2,
     blurb: "For growing lawn businesses with multiple crews.",
   },
@@ -209,6 +230,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: true,
     maxCrewMembers: null,
     maxCustomers: null,
+    maxAiActionsPerMonth: 5000,
     order: 3,
     blurb: "For established operations. Need more storage? Call us.",
   },
@@ -223,6 +245,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 0,
     maxCustomers: 0,
+    maxAiActionsPerMonth: 0,
     order: 99,
     blurb: "Trial ended — subscribe to keep creating.",
   },
@@ -237,6 +260,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     storageCustom: false,
     maxCrewMembers: 0,
     maxCustomers: 0,
+    maxAiActionsPerMonth: 0,
     order: 99,
     blurb: "Subscription canceled — resubscribe to resume.",
   },
@@ -255,7 +279,8 @@ export function isPaidTier(plan: string): plan is PlanTier {
   return (PAID_TIERS as readonly string[]).includes(plan);
 }
 
-/** Resolve a Stripe price id back to a tier (used in the webhook). */
+/** Resolve a Stripe price id back to a tier (used in the webhook). Matches
+ *  only the current STRIPE_PRICE_<TIER>_<VARIANT> price ids. */
 export function priceIdToTier(priceId: string): PlanTier | null {
   for (const tier of PAID_TIERS) {
     if (PLAN_TIERS[tier].priceId === priceId) return tier;
@@ -277,6 +302,7 @@ export interface PlanLimits {
   storageCustom: boolean;
   maxCrewMembers: number | null;
   maxCustomers: number | null;
+  maxAiActionsPerMonth: number | null;
 }
 
 export function getLimits(plan: string): PlanLimits {
@@ -289,5 +315,6 @@ export function getLimits(plan: string): PlanLimits {
     storageCustom: cfg.storageCustom,
     maxCrewMembers: cfg.maxCrewMembers,
     maxCustomers: cfg.maxCustomers,
+    maxAiActionsPerMonth: cfg.maxAiActionsPerMonth,
   };
 }
