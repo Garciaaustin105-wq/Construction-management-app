@@ -12,6 +12,7 @@ import LawnPropertyDetails, {
   type LawnJob,
 } from "@/components/LawnPropertyDetails";
 import JobDetailsEditor from "@/components/JobDetailsEditor";
+import JobAssignmentEditor from "@/components/JobAssignmentEditor";
 import LawnJobFinancials from "@/components/LawnJobFinancials";
 
 type Schedule = {
@@ -37,6 +38,8 @@ type Schedule = {
     name: string;
     address: string | null;
     description: string | null;
+    customer_id: string | null;
+    assigned_crew: string[] | null;
     customers: { name: string | null } | null;
   } | null;
 };
@@ -99,7 +102,7 @@ export default function ScheduleDetailPage({
       const { data: sched } = await supabase
         .from("recurring_schedules")
         .select(
-          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, jobs(name, address, description, customers(name))"
+          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, jobs(name, address, description, customer_id, assigned_crew, customers(name))"
         )
         .eq("id", id)
         .maybeSingle();
@@ -144,7 +147,22 @@ export default function ScheduleDetailPage({
             ...prev,
             jobs: prev.jobs
               ? { ...prev.jobs, name, address, description }
-              : { name, address, description, customers: null },
+              : { name, address, description, customer_id: null, assigned_crew: null, customers: null },
+          }
+        : prev
+    );
+  }
+
+  // JobAssignmentEditor save callback: update schedule state so the customer +
+  // crew reflect the change without a refetch (same reason as onJobDetailsSaved).
+  function onAssignmentSaved(customerId: string | null, crew: string[]) {
+    setSchedule((prev) =>
+      prev
+        ? {
+            ...prev,
+            jobs: prev.jobs
+              ? { ...prev.jobs, customer_id: customerId, assigned_crew: crew }
+              : prev.jobs,
           }
         : prev
     );
@@ -436,6 +454,17 @@ export default function ScheduleDetailPage({
             onSaved={onJobDetailsSaved}
           />
         </section>
+
+        {/* Customer + crew assignment — editable after creation. JobDetailsEditor
+            only covers name/address/description; this handles jobs.customer_id +
+            jobs.assigned_crew (reassign customer / change crew). */}
+        <JobAssignmentEditor
+          jobId={schedule.job_id}
+          initialCustomerId={schedule.jobs?.customer_id ?? null}
+          initialCrew={schedule.jobs?.assigned_crew ?? []}
+          canEdit={authorized}
+          onSaved={onAssignmentSaved}
+        />
 
         {/* Property profile (lawn_jobs 1:1) */}
         <LawnPropertyDetails

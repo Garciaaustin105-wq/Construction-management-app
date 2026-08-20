@@ -118,6 +118,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
     // /dashboard still redirects to /lawn as a safety net for typed/old links.
     const items: NavItem[] = [
       { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+      { href: "/lawn/jobs", label: "Jobs", Icon: CheckSquare },
       { href: "/crew/photo", label: "Photos", Icon: Camera },
       { href: "/crew/time", label: "Time", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
