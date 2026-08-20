@@ -30,6 +30,7 @@ const EVENT_ORDER = [
   "visit_reminder",
   "on_my_way",
   "service_complete",
+  "service_skipped",
   "review_request",
 ] as const;
 
@@ -37,6 +38,7 @@ const EVENT_LABEL: Record<string, string> = {
   visit_reminder: "Visit reminder",
   on_my_way: "On my way",
   service_complete: "Service complete",
+  service_skipped: "Visit skipped",
   review_request: "Review request",
 };
 
@@ -44,6 +46,7 @@ const EVENT_HINT: Record<string, string> = {
   visit_reminder: "Sent the morning of a scheduled visit (automated).",
   on_my_way: "Sent when the crew taps “On my way” on the visit page.",
   service_complete: "Sent when a visit is marked done. Includes a photo link.",
+  service_skipped: "Sent when a visit is marked skipped (weather, no access, etc.).",
   review_request: "Sent right after service complete. Links to your review URL.",
 };
 
@@ -218,7 +221,7 @@ export default function LawnNotificationsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Notifications" backHref="/office" backLabel="Office" />
+      <TopBar title="Notifications" backHref="/lawn" backLabel="Lawn" />
 
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         {/* Global settings */}

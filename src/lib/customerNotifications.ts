@@ -1,7 +1,7 @@
 // Templated, opt-in customer notifications for the lawn visit lifecycle.
 //
-// Central sender for the four milestone events (visit_reminder, on_my_way,
-// service_complete, review_request). Each event has an org-managed email + SMS
+// Central sender for the five milestone events (visit_reminder, on_my_way,
+// service_complete, service_skipped, review_request). Each event has an org-managed email + SMS
 // template (notification_templates) with {{token}} bodies; this module renders
 // the tokens, applies the gate chain (global enable → per-customer channel
 // opt-in → template active), sends via the generic sendCustomerEmail /
@@ -29,6 +29,7 @@ export type NotificationEvent =
   | "visit_reminder"
   | "on_my_way"
   | "service_complete"
+  | "service_skipped"
   | "review_request";
 
 export type NotificationChannel = "email" | "sms";

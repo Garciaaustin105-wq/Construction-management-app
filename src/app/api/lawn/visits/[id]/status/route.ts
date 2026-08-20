@@ -11,17 +11,20 @@ import { buildStaticMapUrl } from "@/lib/staticMap";
 
 export const dynamic = "force-dynamic";
 
-// Central status / move handler for a lawn visit. Office/PM only. Accepts
-// { status?, due_date? } and applies both. completed_at is set to now() when
-// status==='done', null otherwise. After a SUCCESSFUL update it decides whether
-// to email the customer a one-shot notice:
-//   - notify when status becomes 'done' or 'skipped' (i.e. a real transition,
-//     not a re-mark of an already-terminal state), OR
-//   - notify when due_date changed (a move).
-// Reopen (status 'pending' from done/skipped) never emails.
-// The notice is gated by notified_at IS NULL — at most one per visit. notified_at
-// is stamped AFTER the send attempt regardless of success, so a transient Resend
-// failure does not spam a retry on every subsequent action (see comment below).
+// Central status / move handler for a lawn visit. Office/PM, or crew/
+// superintendent on their OWN visit (a due_date move stays office/PM-only).
+// Accepts { status?, due_date? } and applies both. completed_at is set to now()
+// when status==='done', null otherwise. After a SUCCESSFUL update it decides
+// whether to email the customer a one-shot notice:
+//   - status becomes 'done'    → service_complete + review_request (gated by
+//     notified_at IS NULL);
+//   - status becomes 'skipped' → service_skipped (gated by notified_skipped_at
+//     IS NULL — an INDEPENDENT one-shot so a done-notice and a skip-notice on
+//     the same visit don't suppress each other).
+// Reopen (status 'pending' from done/skipped) and a due_date move never email.
+// Each flag is stamped AFTER the send attempt regardless of success (and even
+// when there is no customer to notify), so a transient Resend failure or a
+// no-customer visit doesn't re-fire on every subsequent action.
 
 export async function POST(
   request: Request,
@@ -75,7 +78,7 @@ export async function POST(
   // server-side that a crew/superintendent caller only acts on their own visit.
   const { data: current } = await supabase
     .from("lawn_visits")
-    .select("id, status, due_date, notified_at, job_id, share_token, organization_id, crew_id")
+    .select("id, status, due_date, notified_at, notified_skipped_at, job_id, share_token, organization_id, crew_id")
     .eq("id", id)
     .maybeSingle();
   const cur = current as unknown as {
@@ -83,6 +86,7 @@ export async function POST(
     status: string;
     due_date: string;
     notified_at: string | null;
+    notified_skipped_at: string | null;
     job_id: string;
     share_token: string | null;
     organization_id: string | null;
@@ -133,28 +137,31 @@ export async function POST(
   }
 
   // ── Decide whether to notify the customer ──────────────────────────────────
-  // The notification suite fires the service_complete event (with a before/after
-  // photo-portal link) when the visit is marked done, followed immediately by a
-  // review_request. Both are templated, opt-in gated, and logged via
-  // notification_log. The one-shot gate (notified_at IS NULL) is preserved — at
-  // most one notice per visit. notified_at is stamped AFTER the attempts
-  // regardless of send success, so a transient Resend/Twilio failure does not
-  // re-fire the notice on every subsequent action (done→reopen→done); the office
-  // can resend a one-off from the visit page if a customer reports a miss.
+  // Two INDEPENDENT one-shot notice paths, each gated by its own flag so neither
+  // suppresses the other on the same visit:
+  //   - done    → service_complete (+ review_request), gated by notified_at IS NULL;
+  //   - skipped → service_skipped, gated by notified_skipped_at IS NULL.
+  // Both are templated, opt-in gated, and logged via notification_log. Each flag
+  // is stamped AFTER the attempts regardless of send success (and even when
+  // there is no customer to notify), so a transient Resend/Twilio failure or a
+  // no-customer visit doesn't re-fire on every subsequent action; the office can
+  // resend a one-off from the visit page if a customer reports a miss.
   const statusBecameDone = body.status === "done" && cur.status !== "done";
-  const shouldNotify = cur.notified_at === null && statusBecameDone;
+  const statusBecameSkipped = body.status === "skipped" && cur.status !== "skipped";
+  const shouldNotifyDone = cur.notified_at === null && statusBecameDone;
+  const shouldNotifySkipped = cur.notified_skipped_at === null && statusBecameSkipped;
 
   let notified = false;
-  if (shouldNotify) {
+  if (shouldNotifyDone || shouldNotifySkipped) {
     // The notification reads (jobs / customers / templates / settings) + the
-    // notification_log writes + the notified_at stamp run as the SERVICE ROLE
-    // so they succeed regardless of who marked the visit done — a crew caller's
-    // session client may not be able to read the job/org or write
-    // notification_log, and the crew update policy may not permit a
-    // notified_at write. The visit status UPDATE above already ran on the RLS
-    // session client, so crew could only touch their own visit; this block only
-    // reads + notifies + stamps. (The morning remind cron already passes an
-    // admin client to sendCustomerNotification the same way.)
+    // notification_log writes + the flag stamp run as the SERVICE ROLE so they
+    // succeed regardless of who marked the visit — a crew caller's session
+    // client may not be able to read the job/org or write notification_log, and
+    // the crew update policy may not permit a flag write. The visit status
+    // UPDATE above already ran on the RLS session client, so crew could only
+    // touch their own visit; this block only reads + notifies + stamps. (The
+    // morning remind cron already passes an admin client to
+    // sendCustomerNotification the same way.)
     const admin = createAdminClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -186,51 +193,74 @@ export async function POST(
       const orgName =
         (org as unknown as { name: string | null } | null)?.name ?? null;
 
-      const photoLink = buildPhotoLink(cur.share_token);
-      // Property map image for the email (Static Maps). null when the job has no
-      // pin or GOOGLE_MAPS_STATIC_KEY is unset → email sends without the image.
-      const pin = jobRow?.lawn_jobs;
-      const mapImageUrl = buildStaticMapUrl(pin?.map_lat ?? null, pin?.map_lng ?? null);
+      if (shouldNotifyDone) {
+        const photoLink = buildPhotoLink(cur.share_token);
+        // Property map image for the email (Static Maps). null when the job has
+        // no pin or GOOGLE_MAPS_STATIC_KEY is unset → email sends without it.
+        const pin = jobRow?.lawn_jobs;
+        const mapImageUrl = buildStaticMapUrl(pin?.map_lat ?? null, pin?.map_lng ?? null);
 
-      // service_complete (templated email + sms, opt-in gated, logged).
-      const completeResults = await sendCustomerNotification({
-        supabase: admin,
-        event: "service_complete",
-        organizationId,
-        visitId: id,
-        customerId,
-        jobName: jobRow?.name ?? null,
-        address: jobRow?.address ?? null,
-        serviceDate: cur.due_date,
-        orgName,
-        photoLink,
-        mapImageUrl,
-      });
+        // service_complete (templated email + sms, opt-in gated, logged).
+        const completeResults = await sendCustomerNotification({
+          supabase: admin,
+          event: "service_complete",
+          organizationId,
+          visitId: id,
+          customerId,
+          jobName: jobRow?.name ?? null,
+          address: jobRow?.address ?? null,
+          serviceDate: cur.due_date,
+          orgName,
+          photoLink,
+          mapImageUrl,
+        });
 
-      // review_request follows only if a review_request template is active AND
-      // the org has configured a Google review URL — both checked inside the
-      // helper (getTemplate returns null → skipped; buildReviewLink returns null
-      // → the {{review_link}} token renders empty, but the office controls
-      // whether the template is active at all).
-      const reviewResults = await sendCustomerNotification({
-        supabase: admin,
-        event: "review_request",
-        organizationId,
-        visitId: id,
-        customerId,
-        jobName: jobRow?.name ?? null,
-        address: jobRow?.address ?? null,
-        serviceDate: cur.due_date,
-        orgName,
-        mapImageUrl,
-      });
+        // review_request follows only if a review_request template is active
+        // AND the org has configured a Google review URL — both checked inside
+        // the helper (getTemplate returns null → skipped; buildReviewLink
+        // returns null → {{review_link}} renders empty, but the office controls
+        // whether the template is active at all).
+        const reviewResults = await sendCustomerNotification({
+          supabase: admin,
+          event: "review_request",
+          organizationId,
+          visitId: id,
+          customerId,
+          jobName: jobRow?.name ?? null,
+          address: jobRow?.address ?? null,
+          serviceDate: cur.due_date,
+          orgName,
+          mapImageUrl,
+        });
 
-      notified = anySent(completeResults) || anySent(reviewResults);
+        notified = anySent(completeResults) || anySent(reviewResults);
+      } else {
+        // shouldNotifySkipped — a skip notice. No before/after photos or
+        // property map on a skip; the service_skipped template uses
+        // {{customer_name}} {{job_name}} {{address}} {{service_date}} {{org_name}}.
+        const skippedResults = await sendCustomerNotification({
+          supabase: admin,
+          event: "service_skipped",
+          organizationId,
+          visitId: id,
+          customerId,
+          jobName: jobRow?.name ?? null,
+          address: jobRow?.address ?? null,
+          serviceDate: cur.due_date,
+          orgName,
+        });
+        notified = anySent(skippedResults);
+      }
     }
 
+    // Stamp the one-shot flag regardless of send success / customer presence so
+    // a transient failure or a no-customer visit doesn't re-fire next time.
+    // done and skipped are mutually exclusive transitions (one status per
+    // request), so exactly one flag is stamped here.
+    const stampedAt = new Date().toISOString();
     await admin
       .from("lawn_visits")
-      .update({ notified_at: new Date().toISOString() })
+      .update(shouldNotifyDone ? { notified_at: stampedAt } : { notified_skipped_at: stampedAt })
       .eq("id", id);
   }
 
