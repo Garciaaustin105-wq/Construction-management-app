@@ -17,6 +17,8 @@
     "@sentry/nextjs": "^10.70.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
+    "@types/archiver": "^8.0.0",
+    "archiver": "^8.0.0",
     "ical-generator": "^11.1.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",

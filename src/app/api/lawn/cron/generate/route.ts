@@ -80,6 +80,21 @@ export async function POST(request: Request) {
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
+  // ── Auto-resume: reactivate every schedule whose off-season window has
+  // elapsed. bulk-pause persisted paused_until = pause_to; when today reaches
+  // it, flip active=true and clear the window. The active=true select below
+  // then includes these schedules and the normal generation loop extends their
+  // visits from today — no separate generation path (idempotent via the unique
+  // index). Paused winter visits stay paused (record preserved), matching
+  // manual bulk-resume. Runs on the construction-owned cron (this route no-ops
+  // on the lawn deploy), same as today's generation.
+  await admin
+    .from("recurring_schedules")
+    .update({ active: true, paused_from: null, paused_until: null })
+    .eq("active", false)
+    .not("paused_until", "is", null)
+    .lte("paused_until", todayISO());
+
   const { data: rows } = await admin
     .from("recurring_schedules")
     .select(

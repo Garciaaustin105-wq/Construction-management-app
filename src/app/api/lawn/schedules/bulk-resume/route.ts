@@ -1,0 +1,169 @@
+import { createClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+import { OFFICE_OR_PM } from "@/lib/roles";
+import { generateDueDates } from "@/lib/lawnRecurrence";
+
+// POST /api/lawn/schedules/bulk-resume — reopen a customer's seasonal pause.
+// Reverses bulk-pause: flips the customer's INACTIVE recurring schedules back
+// to active and regenerates pending visits from `resume_from` through
+// min(end_date, today+90d). Beats Jobber's spring reopen where owners
+// "manually close/reopen hundreds of jobs each spring" — one tap regenerates
+// the whole account.
+//
+// Body: { customer_id, resume_from } (ISO YYYY-MM-DD).
+//
+// Paused winter visits (status='paused') are LEFT as-is — the record of
+// skipped service over the off-season is preserved. Only fresh visits from
+// resume_forward materialize. Existing future visits already in the table
+// are skipped via the unique(recurring_schedule_id, due_date) index (23505).
+//
+// Gate: OFFICE_OR_PM. RLS session client scopes to the caller's org.
+export const dynamic = "force-dynamic";
+
+const HORIZON_DAYS = 90;
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+function addDaysISO(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+type JobRow = { id: string };
+type Sched = {
+  id: string;
+  job_id: string;
+  frequency: string;
+  interval_weeks: number;
+  days_of_week: number[];
+  day_of_month: number | null;
+  start_date: string;
+  end_date: string | null;
+};
+
+export async function POST(req: Request) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const role = profile?.role ?? "crew";
+  if (!OFFICE_OR_PM.has(role as never))
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  let body: { customer_id?: string; resume_from?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  }
+  const { customer_id, resume_from } = body;
+  if (!customer_id || !resume_from)
+    return NextResponse.json(
+      { error: "customer_id and resume_from are required" },
+      { status: 400 }
+    );
+
+  const { data: jobRowsData } = await supabase
+    .from("jobs")
+    .select("id")
+    .eq("customer_id", customer_id);
+  const jobIds = ((jobRowsData as unknown as JobRow[] | null) ?? []).map(
+    (j) => j.id
+  );
+  if (jobIds.length === 0)
+    return NextResponse.json(
+      { error: "No jobs found for that customer (in your org)" },
+      { status: 404 }
+    );
+
+  // Only INACTIVE schedules reopen — an active one is already running.
+  const { data: schedRows } = await supabase
+    .from("recurring_schedules")
+    .select(
+      "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date"
+    )
+    .in("job_id", jobIds)
+    .eq("active", false);
+  const schedules = (schedRows as unknown as Sched[] | null) ?? [];
+  if (schedules.length === 0)
+    return NextResponse.json({
+      reopened_schedules: 0,
+      generated_visits: 0,
+      note: "No paused schedules to reopen for this customer",
+    });
+
+  // Reactivate + clear the off-season window (manual resume overrides any
+  // pending auto-resume). The nightly cron (active=true filter) will extend
+  // from here going forward too.
+  const { error: schedErr } = await supabase
+    .from("recurring_schedules")
+    .update({ active: true, paused_from: null, paused_until: null })
+    .in(
+      "id",
+      schedules.map((s) => s.id)
+    );
+  if (schedErr)
+    return NextResponse.json(
+      { error: `Failed to reopen schedules: ${schedErr.message}` },
+      { status: 500 }
+    );
+
+  const horizon = addDaysISO(todayISO(), HORIZON_DAYS);
+  let generated = 0;
+
+  for (const s of schedules) {
+    let to = horizon;
+    if (s.end_date && s.end_date < to) to = s.end_date;
+    if (resume_from > to) continue; // season already ended
+
+    const dates = generateDueDates(
+      {
+        frequency: s.frequency,
+        interval_weeks: s.interval_weeks,
+        days_of_week: s.days_of_week,
+        day_of_month: s.day_of_month,
+        start_date: s.start_date,
+        end_date: s.end_date,
+      },
+      resume_from,
+      to
+    );
+    if (dates.length === 0) continue;
+
+    const inserts = dates.map((due_date) => ({
+      recurring_schedule_id: s.id,
+      job_id: s.job_id,
+      due_date,
+      status: "pending" as const,
+    }));
+    const { error } = await supabase.from("lawn_visits").insert(inserts);
+    if (error && error.code !== "23505") {
+      // 23505 = a date already exists (race / manual add / pre-generated) —
+      // expected and ignored. Anything else: log and continue; don't crash
+      // the batch (other schedules still need reopening).
+      console.error(
+        "bulk-resume insert failed",
+        s.id,
+        error.code,
+        error.message
+      );
+    } else {
+      generated += dates.length;
+    }
+  }
+
+  return NextResponse.json({
+    reopened_schedules: schedules.length,
+    generated_visits: generated,
+  });
+}

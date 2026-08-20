@@ -26,6 +26,8 @@ type Schedule = {
   service_type: string | null;
   price_per_visit: number;
   active: boolean;
+  paused_from: string | null;
+  paused_until: string | null;
   notes: string | null;
   // customers is reached through jobs (recurring_schedules has job_id, no
   // customer_id) — embed jobs(name, address, description, customers(name)).
@@ -97,7 +99,7 @@ export default function ScheduleDetailPage({
       const { data: sched } = await supabase
         .from("recurring_schedules")
         .select(
-          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes, jobs(name, address, description, customers(name))"
+          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, jobs(name, address, description, customers(name))"
         )
         .eq("id", id)
         .maybeSingle();
@@ -153,16 +155,29 @@ export default function ScheduleDetailPage({
     setBusy(true);
     const supabase = createClient();
     const next = !schedule.active;
+    // Manual per-schedule pause/resume. On resume, clear any persisted
+    // off-season window so a pending auto-resume can't override the manual
+    // action. On pause, leave the window null — a manual hold has no
+    // auto-resume (only bulk-pause sets a window).
+    const patch: Record<string, unknown> = { active: next };
+    if (next) {
+      patch.paused_from = null;
+      patch.paused_until = null;
+    }
     const { error } = await supabase
       .from("recurring_schedules")
-      .update({ active: next })
+      .update(patch)
       .eq("id", schedule.id);
     setBusy(false);
     if (error) {
       toast.error(`Failed: ${error.message}`);
       return;
     }
-    setSchedule({ ...schedule, active: next });
+    setSchedule({
+      ...schedule,
+      active: next,
+      ...(next ? { paused_from: null, paused_until: null } : {}),
+    });
     toast.success(next ? "Route resumed" : "Route paused");
   }
 
@@ -171,6 +186,13 @@ export default function ScheduleDetailPage({
   // are skipped via the unique (schedule, due_date) index (23505 ignored).
   async function regenerate() {
     if (!schedule) return;
+    // Don't generate visits for a paused route — the seasonal pause relies on
+    // active=false stopping the nightly cron, and bulk-resume is the intended
+    // way back. Generating here would seed visits the pause meant to suppress.
+    if (!schedule.active) {
+      toast.warning("Resume the route first");
+      return;
+    }
     setRegenerating(true);
     const supabase = createClient();
     const today = new Date().toISOString().slice(0, 10);
@@ -327,7 +349,11 @@ export default function ScheduleDetailPage({
                 schedule.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
               }`}
             >
-              {schedule.active ? "Active" : "Paused"}
+              {schedule.active
+                ? "Active"
+                : schedule.paused_until
+                  ? `Paused → ${schedule.paused_until}`
+                  : "Paused"}
             </span>
           </div>
           <p className="text-sm text-gray-700">{schedSummary}</p>
@@ -335,6 +361,11 @@ export default function ScheduleDetailPage({
             Season: {schedule.start_date}
             {schedule.end_date ? ` → ${schedule.end_date}` : " → open"}
           </p>
+          {!schedule.active && schedule.paused_until && (
+            <p className="text-xs text-blue-600 font-medium">
+              Auto-resumes {schedule.paused_until}
+            </p>
+          )}
           {schedule.notes && (
             <p className="text-xs text-gray-500 pt-1 border-t border-gray-100">
               {schedule.notes}
@@ -374,6 +405,21 @@ export default function ScheduleDetailPage({
               Generate / extend
             </button>
           </div>
+
+          {/* Export this property's full record (photos, visits, invoices) as a
+              ZIP — the "keep your data" companion so removing an old account
+              (e.g. to fit a lower plan after a season ends) isn't data loss.
+              Server route /api/jobs/[id]/export is office-gated + reads this
+              job_id's photos/visits/estimates/invoices. */}
+          <a
+            href={`/api/jobs/${schedule.job_id}/export`}
+            className="block w-full text-center bg-gray-100 text-gray-700 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-200"
+          >
+            Export this property (ZIP)
+          </a>
+          <p className="text-xs text-gray-400 text-center">
+            Download all photos, visits &amp; records before removing an old account.
+          </p>
         </div>
 
         {/* Property location / name / notes — editable after creation (same
