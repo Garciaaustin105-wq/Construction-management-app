@@ -16,6 +16,9 @@ import { ZipArchive } from "archiver";
 // buckets (proposal-docs, submittal-files), so storage downloads use the admin
 // client; the metadata reads use the RLS session client, which already scopes
 // to the caller's own org (a cross-org job id returns null → 404).
+//
+// Slug is `jobId` to match the sibling `api/jobs/[jobId]/view` route — Next.js
+// forbids two different slug names under the same dynamic path.
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +30,9 @@ function safeName(name: string): string {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ jobId: string }> }
 ) {
-  const { id } = await params;
+  const { jobId } = await params;
   const supabase = await createClient();
   const {
     data: { user },
@@ -51,25 +54,25 @@ export async function GET(
     supabase
       .from("jobs")
       .select("id, name, address, description, status, type, created_at, customers(name, email, phone)")
-      .eq("id", id)
+      .eq("id", jobId)
       .maybeSingle(),
-    supabase.from("photos").select("id, storage_path, caption, created_at, lat, lng, visit_id").eq("job_id", id),
-    supabase.from("blueprints").select("id, storage_path, filename, caption, created_at").eq("job_id", id),
-    supabase.from("receipts").select("id, storage_path, vendor, amount, tax, category, payment_method, receipt_no, captured_at").eq("job_id", id),
-    supabase.from("estimates").select("id, status, title, created_at, estimate_line_items(id, quantity, unit_price)").eq("job_id", id),
-    supabase.from("invoices").select("id, status, paid_at, amount_paid, created_at, invoice_line_items(id, quantity, unit_price)").eq("job_id", id),
-    supabase.from("rfis").select("id, question, answer, status, created_at, answered_at").eq("job_id", id),
-    supabase.from("daily_logs").select("id, log_date, weather, status, created_at").eq("job_id", id),
-    supabase.from("punch_items").select("id, title, location, status, priority, due_date").eq("job_id", id),
-    supabase.from("change_orders").select("id, co_number, title, amount, is_credit, status, created_at").eq("job_id", id),
-    supabase.from("submittals").select("id, submittal_number, title, csi_section, status, disposition, ball_in_court, created_at").eq("job_id", id),
-    supabase.from("submittal_files").select("id, submittal_id, filename, storage_path, created_at").eq("job_id", id),
-    supabase.from("schedule_events").select("id, title, start_at, end_at, kind, notes").eq("job_id", id),
-    supabase.from("portal_approvals").select("id, document_type, document_id, signed_pdf_path, signer_name, signed_at").eq("job_id", id).not("signed_pdf_path", "is", null),
+    supabase.from("photos").select("id, storage_path, caption, created_at, lat, lng, visit_id").eq("job_id", jobId),
+    supabase.from("blueprints").select("id, storage_path, filename, caption, created_at").eq("job_id", jobId),
+    supabase.from("receipts").select("id, storage_path, vendor, amount, tax, category, payment_method, receipt_no, captured_at").eq("job_id", jobId),
+    supabase.from("estimates").select("id, status, title, created_at, estimate_line_items(id, quantity, unit_price)").eq("job_id", jobId),
+    supabase.from("invoices").select("id, status, paid_at, amount_paid, created_at, invoice_line_items(id, quantity, unit_price)").eq("job_id", jobId),
+    supabase.from("rfis").select("id, question, answer, status, created_at, answered_at").eq("job_id", jobId),
+    supabase.from("daily_logs").select("id, log_date, weather, status, created_at").eq("job_id", jobId),
+    supabase.from("punch_items").select("id, title, location, status, priority, due_date").eq("job_id", jobId),
+    supabase.from("change_orders").select("id, co_number, title, amount, is_credit, status, created_at").eq("job_id", jobId),
+    supabase.from("submittals").select("id, submittal_number, title, csi_section, status, disposition, ball_in_court, created_at").eq("job_id", jobId),
+    supabase.from("submittal_files").select("id, submittal_id, filename, storage_path, created_at").eq("job_id", jobId),
+    supabase.from("schedule_events").select("id, title, start_at, end_at, kind, notes").eq("job_id", jobId),
+    supabase.from("portal_approvals").select("id, document_type, document_id, signed_pdf_path, signer_name, signed_at").eq("job_id", jobId).not("signed_pdf_path", "is", null),
     // Lawn-only record sets (empty for construction jobs — harmless). These are
     // the core of a lawn property's history: the recurring cadence + every visit.
-    supabase.from("lawn_visits").select("id, recurring_schedule_id, due_date, status, crew_id, notes").eq("job_id", id).order("due_date", { ascending: true }),
-    supabase.from("recurring_schedules").select("id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes").eq("job_id", id),
+    supabase.from("lawn_visits").select("id, recurring_schedule_id, due_date, status, crew_id, notes").eq("job_id", jobId).order("due_date", { ascending: true }),
+    supabase.from("recurring_schedules").select("id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, notes").eq("job_id", jobId),
   ]);
 
   const job = jobRes.data;
