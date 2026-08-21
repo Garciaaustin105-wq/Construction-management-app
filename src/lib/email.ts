@@ -32,7 +32,7 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/\"/g, "&quot;");
 }
 
 export type SendEstimateEmailInput = {
@@ -61,17 +61,28 @@ export function renderEstimateEmail(
   const job = escapeHtml(input.jobName);
   const customer = escapeHtml(input.customerName || "there");
   const total = escapeHtml(input.total);
-  const numberLine = input.estimateNumber
-    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Estimate #${escapeHtml(
-        input.estimateNumber
-      )}</p>`
-    : "";
-  const validLine = input.validUntil
-    ? `<p style="margin:0;color:#6b7280;font-size:14px;">This estimate is valid until <strong style="color:#374151;">${escapeHtml(
-        input.validUntil
-      )}</strong>.</p>`
-    : "";
-  const messageLine = input.message && input.message.trim()
+
+  const lineMap: { [key: string]: string } = {
+    estimateNumber: input.estimateNumber
+      ? `<p style="margin:0 0 4px;color:#6b7280;font-size:12px;text-transform:uppercase;letter-spacing:.06em;">Estimate #${escapeHtml(
+          input.estimateNumber
+        )}</p>`
+      : "",
+    validUntil: input.validUntil
+      ? `<p style="margin:0;color:#6b7280;font-size:14px;">This estimate is valid until <strong style="color:#374151;">${escapeHtml(
+          input.validUntil
+        )}</strong>.</p>`
+      : "",
+    message: input.message?.trim()
+      ? `<p style="margin:0 0 4px;font-style:italic;color:#6b7280;">${escapeHtml(
+          input.message.trim()
+        )}</p>`
+      : "",
+  };
+
+  const numberLine = lineMap.estimateNumber;
+  const validLine = lineMap.validUntil;
+  const messageLine = lineMap.message
     ? `<p style="margin:0 0 20px;color:#111827;font-size:15px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(
         input.message.trim()
       )}</p>`
