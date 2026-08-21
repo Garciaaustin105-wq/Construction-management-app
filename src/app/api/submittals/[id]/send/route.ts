@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { sendSubmittalEmail } from "@/lib/email";
+import { loadSubmittalForEmail } from "@/lib/emailLoaders";
 import { OFFICE_OR_PM } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -69,38 +70,21 @@ export async function POST(
     return NextResponse.json({ error: "Office or PM only" }, { status: 403 });
   }
 
-  const { data: submittal } = await supabase
-    .from("submittals")
-    .select(
-      "id, status, organization_id, submittal_number, title, csi_section, jobs(name)"
-    )
-    .eq("id", id)
-    .maybeSingle();
+  // Submittal + job name. Row load + field mapping live in src/lib/emailLoaders.ts
+  // (loadSubmittalForEmail) and are SHARED with the /admin/email-preview "preview
+  // with real data" feature so a preview matches what ships. The reviewer's email
+  // (`to`) is caller-supplied (no architect entity) — it is NOT loaded here.
+  const loaded = await loadSubmittalForEmail(supabase, id);
 
-  if (!submittal) {
+  if (!loaded) {
     return NextResponse.json({ error: "Submittal not found" }, { status: 404 });
   }
 
-  if (submittal.status !== "draft" && submittal.status !== "returned") {
+  if (loaded.status !== "draft" && loaded.status !== "returned") {
     return NextResponse.json(
-      { error: `This submittal is already ${submittal.status}` },
+      { error: `This submittal is already ${loaded.status}` },
       { status: 400 }
     );
-  }
-
-  const jobName =
-    (submittal.jobs as unknown as { name: string } | null)?.name ??
-    submittal.title ??
-    "the project";
-
-  let orgName = "";
-  if (submittal.organization_id) {
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("name")
-      .eq("id", submittal.organization_id)
-      .maybeSingle();
-    if (org?.name) orgName = org.name;
   }
 
   const token = crypto.randomUUID();
@@ -110,11 +94,11 @@ export async function POST(
 
   const { error: emailError } = await sendSubmittalEmail({
     to,
-    orgName,
-    jobName,
-    submittalNumber: submittal.submittal_number ?? null,
-    title: submittal.title,
-    csiSection: submittal.csi_section ?? null,
+    orgName: loaded.orgName,
+    jobName: loaded.jobName,
+    submittalNumber: loaded.submittalNumber,
+    title: loaded.title,
+    csiSection: loaded.csiSection,
     submittalUrl,
     message,
   });

@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { formatMoney } from "@/lib/money";
 import { sendChangeOrderEmail } from "@/lib/email";
+import { loadChangeOrderForEmail } from "@/lib/emailLoaders";
 import { OFFICE_OR_PM } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -62,49 +62,29 @@ export async function POST(
     return NextResponse.json({ error: "Office or PM only" }, { status: 403 });
   }
 
-  // Change order + job name + the job's customer (email/name). RLS scopes to
-  // the caller's org (super_admin admitted via tier_office_or_pm).
-  const { data: co } = await supabase
-    .from("change_orders")
-    .select(
-      "id, status, organization_id, co_number, title, amount, is_credit, jobs(name, customers(name, contact_email))"
-    )
-    .eq("id", id)
-    .maybeSingle();
+  // Change order + job name + the job's customer (email/name). Row load + field
+  // mapping live in src/lib/emailLoaders.ts (loadChangeOrderForEmail) and are
+  // SHARED with the /admin/email-preview "preview with real data" feature so a
+  // preview matches what ships. RLS scopes the read to the caller's org.
+  const loaded = await loadChangeOrderForEmail(supabase, id);
 
-  if (!co) {
+  if (!loaded) {
     return NextResponse.json({ error: "Change order not found" }, { status: 404 });
   }
 
-  if (co.status !== "draft" && co.status !== "submitted") {
+  if (loaded.status !== "draft" && loaded.status !== "submitted") {
     return NextResponse.json(
-      { error: `This change order is already ${co.status}` },
+      { error: `This change order is already ${loaded.status}` },
       { status: 400 }
     );
   }
 
-  const jobRow = co.jobs as unknown as
-    | { name: string | null; customers: { name: string | null; contact_email: string | null } | null }
-    | null;
-  const jobName = jobRow?.name ?? co.title ?? "your project";
-  const customer = jobRow?.customers ?? null;
-  const customerEmail = customer?.contact_email?.trim() || null;
-
+  const customerEmail = loaded.to;
   if (!customerEmail) {
     return NextResponse.json(
       { error: "The job's customer has no email on file — add one in Customers first." },
       { status: 400 }
     );
-  }
-
-  let orgName = "";
-  if (co.organization_id) {
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("name")
-      .eq("id", co.organization_id)
-      .maybeSingle();
-    if (org?.name) orgName = org.name;
   }
 
   const token = crypto.randomUUID();
@@ -114,13 +94,13 @@ export async function POST(
 
   const { error: emailError } = await sendChangeOrderEmail({
     to: customerEmail,
-    customerName: customer?.name ?? "",
-    orgName,
-    jobName,
-    coNumber: co.co_number ?? null,
-    title: co.title,
-    amount: formatMoney(Number(co.amount) || 0),
-    isCredit: !!co.is_credit,
+    customerName: loaded.customerName,
+    orgName: loaded.orgName,
+    jobName: loaded.jobName,
+    coNumber: loaded.coNumber,
+    title: loaded.title,
+    amount: loaded.amount,
+    isCredit: loaded.isCredit,
     changeOrderUrl,
     message,
   });

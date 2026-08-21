@@ -11,11 +11,16 @@
 // records a warning and returns delivered:false WITHOUT throwing, so an
 // unconfigured channel never breaks approval or cycle billing — the invoice is
 // still created and re-sendable manually once the provider is configured.
+//
+// Row load + field mapping live in src/lib/emailLoaders.ts (loadInvoiceForEmail)
+// and are SHARED with the /admin/email-preview "preview with real data" feature
+// so a preview matches what ships. This helper keeps the channel resolution,
+// delivery, and token mint/persist.
 
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { computeTotal, formatMoney } from "@/lib/money";
 import { sendInvoiceEmail } from "@/lib/email";
 import { sendInvoiceSms, normalizePhoneToE164 } from "@/lib/sms";
+import { loadInvoiceForEmail } from "@/lib/emailLoaders";
 
 // Public base URL for links generated outside an HTTP request (cron / cycle
 // billing). NEXT_PUBLIC_SITE_URL is optional — the prod URL is hardcoded as a
@@ -59,15 +64,8 @@ export async function deliverInvoice(
 ): Promise<DeliverInvoiceResult> {
   const admin = adminClient();
 
-  const { data: invoice } = await admin
-    .from("invoices")
-    .select(
-      "id, status, customer_id, job_id, organization_id, amount_paid, due_date, share_token, jobs(name), customers(name, contact_email, phone)"
-    )
-    .eq("id", invoiceId)
-    .maybeSingle();
-
-  if (!invoice) {
+  const loaded = await loadInvoiceForEmail(admin, invoiceId);
+  if (!loaded) {
     return {
       delivered: false,
       sentVia: [],
@@ -76,49 +74,12 @@ export async function deliverInvoice(
     };
   }
 
-  const customer = invoice.customers as unknown as
-    | { name: string | null; contact_email: string | null; phone: string | null }
-    | null;
-  const jobName =
-    (invoice.jobs as unknown as { name: string } | null)?.name ?? "your project";
-  const customerEmail = customer?.contact_email?.trim() || null;
-  const customerPhone = customer?.phone?.trim() || null;
-  const customerName = customer?.name ?? "";
-
-  // Org name for branding.
-  let orgName = "";
-  if (invoice.organization_id) {
-    const { data: org } = await admin
-      .from("organizations")
-      .select("name")
-      .eq("id", invoice.organization_id)
-      .maybeSingle();
-    if (org?.name) orgName = org.name;
-  }
-
-  // Total + balance from the invoice's own line items (markup/contingency/tax
-  // are already baked in as lines, so a plain sum is the invoice total).
-  const { data: lineItems } = await admin
-    .from("invoice_line_items")
-    .select("quantity, unit_price")
-    .eq("invoice_id", invoiceId);
-  const total = computeTotal(
-    (lineItems ?? []).map((i) => ({
-      quantity: Number(i.quantity),
-      unit_price: Number(i.unit_price),
-    }))
-  );
-  const amountPaid = Number(invoice.amount_paid ?? 0) || 0;
-  const balanceDue = Math.max(0, total - amountPaid);
-  const totalStr = formatMoney(total);
-  const balanceStr = formatMoney(balanceDue);
-  const dueDateStr = invoice.due_date
-    ? new Date(`${invoice.due_date}T00:00:00`).toLocaleDateString()
-    : null;
+  const customerEmail = loaded.to;
+  const customerPhone = loaded.customerPhone;
 
   // Mint a share_token only if none exists (re-sends keep the same link —
   // unlike estimates, an invoice link should stay valid once shared).
-  const token = invoice.share_token ?? crypto.randomUUID();
+  const token = loaded.shareToken ?? crypto.randomUUID();
   const origin = options.origin ?? publicBaseUrl();
   const invoiceUrl = `${origin}/invoices/view/${token}`;
 
@@ -152,12 +113,12 @@ export async function deliverInvoice(
       try {
         const { error } = await sendInvoiceEmail({
           to: customerEmail,
-          customerName,
-          orgName,
-          jobName,
-          total: totalStr,
-          balanceDue: balanceStr,
-          dueDate: dueDateStr,
+          customerName: loaded.customerName,
+          orgName: loaded.orgName,
+          jobName: loaded.jobName,
+          total: loaded.total,
+          balanceDue: loaded.balanceDue,
+          dueDate: loaded.dueDate,
           invoiceUrl,
         });
         if (error) {
@@ -191,9 +152,9 @@ export async function deliverInvoice(
         try {
           const { error } = await sendInvoiceSms({
             to: e164,
-            orgName,
-            jobName,
-            balanceDue: balanceStr,
+            orgName: loaded.orgName,
+            jobName: loaded.jobName,
+            balanceDue: loaded.balanceDue,
             invoiceUrl,
           });
           if (error) {
@@ -219,7 +180,7 @@ export async function deliverInvoice(
     const update: { sent_at: string; share_token?: string } = {
       sent_at: new Date().toISOString(),
     };
-    if (!invoice.share_token) {
+    if (!loaded.shareToken) {
       update.share_token = token;
     }
     await admin.from("invoices").update(update).eq("id", invoiceId);

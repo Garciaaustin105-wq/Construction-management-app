@@ -1,9 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { computeEstimateTotals, formatMoney } from "@/lib/money";
 import { sendEstimateEmail } from "@/lib/email";
 import { sendEstimateSms, normalizePhoneToE164 } from "@/lib/sms";
+import { loadEstimateForEmail } from "@/lib/emailLoaders";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,11 @@ export const dynamic = "force-dynamic";
 // warning. The caller must be office/admin (user-scoped client, RLS scopes
 // the read to the caller's org); the service role is used only for the
 // delivery + the status/token write.
+//
+// Row load + field mapping live in src/lib/emailLoaders.ts (loadEstimateForEmail)
+// and are SHARED with the /admin/email-preview "preview with real data" feature
+// so a preview is guaranteed to match what ships. This route keeps all
+// validation + the token mint/persist + the status write.
 
 type Channel = "email" | "sms" | "both";
 
@@ -74,38 +79,19 @@ export async function POST(
     return NextResponse.json({ error: "Office only" }, { status: 403 });
   }
 
-  // Estimate + customer email AND phone + job name (RLS scopes to caller org).
-  const { data: estimate } = await supabase
-    .from("estimates")
-    .select(
-      "id, status, customer_id, organization_id, valid_until, estimate_number, title, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name, address), customers(name, contact_email, phone)"
-    )
-    .eq("id", id)
-    .maybeSingle();
-
-  if (!estimate) {
+  const loaded = await loadEstimateForEmail(supabase, id);
+  if (!loaded) {
     return NextResponse.json({ error: "Estimate not found" }, { status: 404 });
   }
 
-  if (estimate.status !== "draft" && estimate.status !== "sent") {
+  if (loaded.status !== "draft" && loaded.status !== "sent") {
     return NextResponse.json(
-      { error: `This estimate is already ${estimate.status}` },
+      { error: `This estimate is already ${loaded.status}` },
       { status: 400 }
     );
   }
 
-  const customer = estimate.customers as unknown as
-    | { name: string | null; contact_email: string | null; phone: string | null }
-    | null;
-  const jobName =
-    (estimate.jobs as unknown as { name: string } | null)?.name ??
-    (estimate.title as string | null) ??
-    "your project";
-  const customerEmail = customer?.contact_email?.trim() || null;
-  const customerPhone = customer?.phone?.trim() || null;
-  const estimateNumber = estimate.estimate_number ?? null;
-
-  if (!estimate.customer_id) {
+  if (!loaded.customerId) {
     return NextResponse.json(
       { error: "No customer is linked to this estimate. Add one in Customers first." },
       { status: 400 }
@@ -115,58 +101,18 @@ export async function POST(
   const wantEmail = via === "email" || via === "both";
   const wantSms = via === "sms" || via === "both";
 
-  if (wantEmail && !customerEmail) {
+  if (wantEmail && !loaded.to) {
     return NextResponse.json(
       { error: "Customer has no email on file — add one in Customers first (or send via Text)." },
       { status: 400 }
     );
   }
-  if (wantSms && !customerPhone) {
+  if (wantSms && !loaded.customerPhone) {
     return NextResponse.json(
       { error: "Customer has no phone on file — add one in Customers first (or send via Email)." },
       { status: 400 }
     );
   }
-
-  // Line items → grand total (incl. markup/contingency/tax) for the message.
-  const { data: lineItems } = await supabase
-    .from("estimate_line_items")
-    .select("quantity, unit_price")
-    .eq("estimate_id", id);
-  const totals = computeEstimateTotals(
-    (lineItems ?? []).map((i) => ({
-      quantity: Number(i.quantity),
-      unit_price: Number(i.unit_price),
-    })),
-    {
-      markupPct: Number(estimate.markup_pct) || 0,
-      contingencyPct: Number(estimate.contingency_pct) || 0,
-      taxPct: Number(estimate.tax_pct) || 0,
-      depositPct: Number(estimate.deposit_pct) || 0,
-      depositAmount: Number(estimate.deposit_amount) || 0,
-    }
-  );
-  const hasPricing =
-    totals.markupAmount > 0 ||
-    totals.contingencyAmount > 0 ||
-    totals.taxAmount > 0 ||
-    totals.depositAmount > 0;
-  const total = formatMoney(hasPricing ? totals.grandTotal : totals.subtotal);
-
-  // Org name for branding.
-  let orgName = "";
-  if (estimate.organization_id) {
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("name")
-      .eq("id", estimate.organization_id)
-      .maybeSingle();
-    if (org?.name) orgName = org.name;
-  }
-
-  const validUntil = estimate.valid_until
-    ? new Date(`${estimate.valid_until}T00:00:00`).toLocaleDateString()
-    : null;
 
   // Fresh token each send (rotates — old links stop working). Built before
   // delivery so both the email + the SMS can carry the same /q/{token} URL.
@@ -186,13 +132,13 @@ export async function POST(
   if (wantEmail) {
     try {
       const { error } = await sendEstimateEmail({
-        to: customerEmail!,
-        customerName: customer?.name ?? "",
-        orgName,
-        jobName,
-        estimateNumber,
-        total,
-        validUntil,
+        to: loaded.to!,
+        customerName: loaded.customerName,
+        orgName: loaded.orgName,
+        jobName: loaded.jobName,
+        estimateNumber: loaded.estimateNumber,
+        total: loaded.total,
+        validUntil: loaded.validUntil,
         estimateUrl,
         message,
       });
@@ -214,7 +160,7 @@ export async function POST(
   }
 
   if (wantSms) {
-    const e164 = normalizePhoneToE164(customerPhone!);
+    const e164 = normalizePhoneToE164(loaded.customerPhone!);
     if (!e164) {
       const msg =
         "Text failed: the customer's phone isn't a valid US mobile number.";
@@ -223,9 +169,9 @@ export async function POST(
     } else {
       const { error } = await sendEstimateSms({
         to: e164,
-        orgName,
-        jobName,
-        total,
+        orgName: loaded.orgName,
+        jobName: loaded.jobName,
+        total: loaded.total,
         estimateUrl,
       });
       if (error) {
@@ -274,8 +220,8 @@ export async function POST(
     ok: true,
     sentVia,
     sentTo: {
-      email: sentVia.includes("email") ? customerEmail : undefined,
-      phone: sentVia.includes("sms") ? customerPhone : undefined,
+      email: sentVia.includes("email") ? loaded.to : undefined,
+      phone: sentVia.includes("sms") ? loaded.customerPhone : undefined,
     },
     warnings: warnings.length > 0 ? warnings : undefined,
   });
