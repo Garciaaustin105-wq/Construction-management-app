@@ -8,7 +8,7 @@ import { useToast } from "@/components/Toast";
 import { Spinner } from "@/components/Skeleton";
 import BlueprintPreview from "@/components/BlueprintPreview";
 import { validateUpload } from "@/lib/uploadValidate";
-import { isOfficeLike } from "@/lib/roles";
+import { OFFICE_OR_PM, type Role } from "@/lib/roles";
 
 type Blueprint = {
   id: string;
@@ -35,6 +35,10 @@ export default function BlueprintsSection({
   const router = useRouter();
   const supabase = createClient();
   const toast = useToast();
+  // PM has full CRUD on blueprints via tier_office_or_pm at the DB layer
+  // (blueprints table + the blueprints storage bucket), so the upload/delete
+  // UI admits the same set — not just isOfficeLike (office/admin/super_admin).
+  const canManage = OFFICE_OR_PM.has(role as Role);
 
   // Blueprints are in a PRIVATE bucket, so the preview is served via a signed
   // URL minted on demand (the blueprints bucket RLS grants SELECT to office,
@@ -116,7 +120,7 @@ export default function BlueprintsSection({
       </h2>
 
       {/* Office upload form */}
-      {isOfficeLike(role) && (
+      {canManage && (
         <form
           onSubmit={handleUpload}
           className="bg-white rounded-lg p-3 shadow-sm space-y-2 mb-3"
@@ -162,7 +166,7 @@ export default function BlueprintsSection({
               <FileText className="w-5 h-5" />
             </div>
             <p className="text-sm font-medium text-gray-700">No blueprints yet</p>
-            {isOfficeLike(role) && (
+            {canManage && (
               <p className="text-xs text-gray-500 mt-1 max-w-xs">
                 Upload a PDF or image above to share floor plans, rack elevations, or wiring diagrams with the crew.
               </p>
@@ -186,7 +190,7 @@ export default function BlueprintsSection({
                 {new Date(b.created_at).toLocaleDateString()}
               </p>
             </div>
-            {isOfficeLike(role) && (
+            {canManage && (
               <button
                 onClick={() => handleDelete(b)}
                 className="ml-2 text-red-600 p-2 rounded hover:bg-red-50"

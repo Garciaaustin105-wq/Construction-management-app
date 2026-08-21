@@ -14,8 +14,10 @@ import {
   Send,
   Mail,
   MessageSquare,
+  DollarSign,
 } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
+import { formatMoney } from "@/lib/money";
 
 type Channel = "email" | "sms" | "both";
 
@@ -24,12 +26,19 @@ type Channel = "email" | "sms" | "both";
 // which delivers via deliverInvoice (mints/keeps the share_token, sends email +
 // SMS, stamps sent_at iff delivered) and returns a delivered flag + warnings.
 // Text won't deliver until TWILIO_* env vars are set; email until the Resend
-// domain is verified — both surface as non-fatal warnings. Status buttons (Mark
-// Paid/Void/Unpaid/Restore) + Delete are direct client writes (office RLS).
+// domain is verified — both surface as non-fatal warnings. There is no
+// separate "Mark Paid" button: recording a payment for the full balance due
+// (Record payment, below — defaults to the full balance) is what marks an
+// invoice paid, via /api/invoices/[id]/payments, which accumulates
+// amount_paid and flips status server-side. That keeps amount_paid, status,
+// and the payments ledger always in sync — a direct status-only write can't
+// desync them. Void/Unpaid/Restore + Delete remain direct client writes
+// (office RLS) since they don't touch amount_paid.
 
 export default function InvoiceActions({
   invoiceId,
   status,
+  balanceDue,
   customerEmail,
   customerPhone,
   connectedProviders,
@@ -37,6 +46,7 @@ export default function InvoiceActions({
 }: {
   invoiceId: string;
   status: string;
+  balanceDue: number;
   customerEmail?: string | null;
   customerPhone?: string | null;
   connectedProviders: { id: string; label: string }[];
@@ -49,6 +59,19 @@ export default function InvoiceActions({
   const [sending, setSending] = useState(false);
   const [sendingReceipt, setSendingReceipt] = useState(false);
   const [syncing, setSyncing] = useState<string | null>(null);
+  // Record offline (cash/check/other) payment form. amount defaults to the
+  // remaining balance so a single tap records full payment; editable for
+  // partials / overpayments.
+  const [showRec, setShowRec] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recAmount, setRecAmount] = useState<string>(
+    balanceDue > 0 ? balanceDue.toFixed(2) : ""
+  );
+  const [recMethod, setRecMethod] = useState<"cash" | "check" | "other">("cash");
+  const [recReference, setRecReference] = useState("");
+  const [recDate, setRecDate] = useState<string>(
+    new Date().toISOString().slice(0, 10)
+  );
 
   // Push this invoice to the org's connected bookkeeping provider (one-way:
   // app authors → provider receives + processes payment; paid status flows
@@ -145,6 +168,45 @@ export default function InvoiceActions({
       toast.error("Send failed — please try again.");
     } finally {
       setSendingReceipt(false);
+    }
+  }
+
+  // Record an offline payment (cash/check/other). The API accumulates into
+  // invoices.amount_paid (preserving the seeded deposit) and flips status to
+  // 'paid' once the balance is covered; partials keep it 'sent'.
+  async function recordPayment(e: React.FormEvent) {
+    e.preventDefault();
+    const amount = Number(recAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter an amount greater than 0");
+      return;
+    }
+    setRecording(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/payments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount,
+          method: recMethod,
+          reference: recReference.trim() || null,
+          paid_at: recDate ? new Date(`${recDate}T00:00:00.000Z`).toISOString() : null,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(data?.error ?? "Failed to record payment");
+        return;
+      }
+      toast.success(`Recorded ${formatMoney(amount)} ${recMethod} payment`);
+      setShowRec(false);
+      setRecReference("");
+      setRecAmount(balanceDue > 0 ? balanceDue.toFixed(2) : "");
+      router.refresh();
+    } catch {
+      toast.error("Network error");
+    } finally {
+      setRecording(false);
     }
   }
 
@@ -294,33 +356,128 @@ export default function InvoiceActions({
         </>
       )}
 
+      {/* Record an offline (cash/check/other) payment. Adds to amount_paid and
+          flips status to paid once the balance is covered; partials keep the
+          invoice 'sent' and shrink the balance. The Payments section on the
+          invoice page lists what's recorded. */}
+      {status !== "void" && (
+        <div className="space-y-2">
+          {!showRec ? (
+            <button
+              onClick={() => setShowRec(true)}
+              disabled={busy}
+              className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <DollarSign className="w-4 h-4" />
+              Record payment
+            </button>
+          ) : (
+            <form
+              onSubmit={recordPayment}
+              className="space-y-2 bg-gray-50 border border-gray-200 rounded-lg p-3"
+            >
+              <span className="text-sm font-medium text-gray-700">
+                Record offline payment
+              </span>
+              <label className="block">
+                <span className="block mb-1 text-xs font-medium text-gray-600">
+                  Amount
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  value={recAmount}
+                  onChange={(e) => setRecAmount(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  placeholder={balanceDue > 0 ? formatMoney(balanceDue) : "0.00"}
+                />
+                {balanceDue > 0 && (
+                  <span className="block mt-1 text-xs text-gray-400">
+                    Balance due {formatMoney(balanceDue)}
+                  </span>
+                )}
+              </label>
+              <label className="block">
+                <span className="block mb-1 text-xs font-medium text-gray-600">
+                  Method
+                </span>
+                <select
+                  value={recMethod}
+                  onChange={(e) =>
+                    setRecMethod(e.target.value as "cash" | "check" | "other")
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="cash">Cash</option>
+                  <option value="check">Check</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="block mb-1 text-xs font-medium text-gray-600">
+                  Reference (optional)
+                </span>
+                <input
+                  type="text"
+                  value={recReference}
+                  onChange={(e) => setRecReference(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  placeholder="Check #, etc."
+                />
+              </label>
+              <label className="block">
+                <span className="block mb-1 text-xs font-medium text-gray-600">
+                  Date paid
+                </span>
+                <input
+                  type="date"
+                  value={recDate}
+                  onChange={(e) => setRecDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={recording}
+                  className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {recording ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <DollarSign className="w-4 h-4" />
+                  )}
+                  Save payment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRec(false)}
+                  disabled={recording}
+                  className="px-3 py-2 rounded-lg font-semibold text-sm text-gray-600 bg-white border border-gray-300 active:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
       {status === "sent" && (
-        <>
-          <button
-            onClick={() => updateStatus("paid", new Date().toISOString())}
-            disabled={busy}
-            className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-base active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {busy ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <CheckCircle2 className="w-5 h-5" />
-            )}
-            Mark Paid
-          </button>
-          <button
-            onClick={() => updateStatus("void", null)}
-            disabled={busy}
-            className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {busy ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <XCircle className="w-4 h-4" />
-            )}
-            Mark Void
-          </button>
-        </>
+        <button
+          onClick={() => updateStatus("void", null)}
+          disabled={busy}
+          className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {busy ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <XCircle className="w-4 h-4" />
+          )}
+          Mark Void
+        </button>
       )}
 
       {status === "paid" && (
