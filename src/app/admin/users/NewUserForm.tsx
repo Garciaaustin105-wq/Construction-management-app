@@ -64,13 +64,24 @@ const ALL_OPTIONS: RoleOption[] = [
 // office may create field + sales + client roles (no office, no admin, no
 // accountant — accountant is a sensitive financial role, admin-only).
 function optionsFor(callerRole: string): RoleOption[] {
-  if (callerRole === "super_admin") return ALL_OPTIONS;
-  if (callerRole === "admin")
-    return ALL_OPTIONS.filter((o) => o.value !== "admin" || true); // admin may create admin
-  // office: field + sales + client roles only (no office, no admin, no accountant)
-  return ALL_OPTIONS.filter((o) =>
-    ["crew", "superintendent", "project_manager", "sales", "customer"].includes(o.value)
-  );
+  let opts: RoleOption[];
+  if (callerRole === "super_admin") {
+    opts = ALL_OPTIONS;
+  } else if (callerRole === "admin") {
+    // admin may create admin (and every other assignable role)
+    opts = ALL_OPTIONS;
+  } else {
+    // office: field + sales + client roles only (no office, no admin, no accountant)
+    opts = ALL_OPTIONS.filter((o) =>
+      ["crew", "superintendent", "project_manager", "sales", "customer"].includes(o.value)
+    );
+  }
+  // Superintendent is a construction field-mgmt role (daily logs, punch,
+  // submittals, time approval) with no lawn analogue — lawn field work is
+  // just `crew`. Hide it on the lawn deploy so the picker matches the
+  // /api/users canCreate gate (which also blocks it for lawn).
+  if (isLawn()) opts = opts.filter((o) => o.value !== "superintendent");
+  return opts;
 }
 
 export default function NewUserForm({

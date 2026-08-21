@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getMyOrg } from "@/lib/tenant";
 import { ASSIGNABLE_ROLES, isOfficeLike, isSuperAdmin } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
 import { getOrgBilling, createGate, effectiveStatus } from "@/lib/billing";
 import { getLimits } from "@/lib/plans";
 
@@ -30,6 +31,12 @@ const OFFICE_CREATABLE = new Set([
 ]);
 
 function canCreate(callerRole: string, targetRole: string): boolean {
+  // Superintendent is a construction field-mgmt role (daily logs, punch,
+  // submittals, time approval) with no lawn analogue — lawn field work is
+  // just `crew`. Block it on the lawn deploy for EVERY caller (admin /
+  // super_admin included) so no lawn org can provision one. Construction
+  // deploy is unaffected (isLawn() is false there).
+  if (isLawn() && targetRole === "superintendent") return false;
   if (isSuperAdmin(callerRole)) return ASSIGNABLE_ROLES.includes(targetRole as never);
   if (callerRole === "admin") return ASSIGNABLE_ROLES.includes(targetRole as never);
   if (callerRole === "office") return OFFICE_CREATABLE.has(targetRole as never);
