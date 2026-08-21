@@ -28,12 +28,14 @@ import { loadGoogleMaps } from "@/lib/googleMaps";
 import {
   nearestNeighborRoute,
   nearestNeighborByMatrix,
+  refineRouteHaversine,
+  clusterZones,
   routeMiles,
   estDriveMinutes,
   type RouteStop,
   type CrewInfo,
 } from "@/lib/lawnRouting";
-import { Save, Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles } from "lucide-react";
+import { Save, Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles, Users } from "lucide-react";
 
 // Google Maps touches window — load the map client-only.
 const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
@@ -74,6 +76,8 @@ export default function RouteMapPlanner({
   const [crewAssign, setCrewAssign] = useState<Record<string, string | null>>(
     () => Object.fromEntries(initial.map((s) => [s.id, s.crewId]))
   );
+  const [massAssignCrewId, setMassAssignCrewId] = useState("");
+  const [massAssigning, setMassAssigning] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [geocoding, setGeocoding] = useState<Record<string, boolean>>({});
@@ -164,7 +168,10 @@ export default function RouteMapPlanner({
   // can't be sequenced by distance, so they stay appended in their current
   // order. Non-destructive: only mutates local `ordered` state — the dispatcher
   // still has to hit Save to persist. Distance Matrix caps at 25
-  // origins/destinations per request, so we gate at 25 mapped stops.
+  // origins/destinations per request — above that, fall back to a haversine
+  // nearest-neighbor walk + 2-opt refinement (no Google API call, so no cap).
+  // It's an estimate rather than live drive time, but still meaningfully
+  // better than the unoptimized greedy order for a big day.
   async function optimizeOrder() {
     const mapped = ordered.filter((s) => s.pos);
     if (mapped.length < 2) {
@@ -172,7 +179,14 @@ export default function RouteMapPlanner({
       return;
     }
     if (mapped.length > 25) {
-      toast.warning("Too many pinned stops to optimize (max 25).");
+      setOptimizing(true);
+      const optimized = refineRouteHaversine(nearestNeighborRoute(mapped));
+      const unmapped = ordered.filter((s) => !s.pos);
+      setOrdered([...optimized, ...unmapped]);
+      setOptimizing(false);
+      toast.success(
+        "Reordered by estimated distance (too many stops for live drive-time) — review and Save."
+      );
       return;
     }
     setOptimizing(true);
@@ -225,13 +239,19 @@ export default function RouteMapPlanner({
     }
   }
 
-  async function save() {
+  // Accepts an optional assignment-map override so callers that just computed
+  // a new crewAssign (e.g. the mass-assign buttons below) can save it
+  // immediately without waiting on React's async state update — using the
+  // `crewAssign` state var right after setCrewAssign() would read the STALE
+  // value here since state updates aren't synchronous.
+  async function save(assignOverride?: Record<string, string | null>) {
     setBusy(true);
+    const assign = assignOverride ?? crewAssign;
     // Per-crew contiguous 1..n from the dragged order; unassigned → null.
     const targets = new Map<string, { crew_id: string | null; route_order: number | null }>();
     const counters = new Map<string, number>();
     for (const s of ordered) {
-      const crew = crewAssign[s.id] ?? null;
+      const crew = assign[s.id] ?? null;
       if (crew) {
         counters.set(crew, (counters.get(crew) ?? 0) + 1);
         targets.set(s.id, { crew_id: crew, route_order: counters.get(crew)! });
@@ -254,6 +274,90 @@ export default function RouteMapPlanner({
     }
     toast.success(`Saved ${targets.size} visit${targets.size === 1 ? "" : "s"}`);
     router.refresh();
+  }
+
+  // "Assign to all" / "Assign to unassigned" — sets massAssignCrewId on every
+  // (or every currently-unassigned) stop and saves immediately (no separate
+  // renumber step: save() already computes each crew's contiguous 1..n from
+  // the current `ordered` list position).
+  async function massAssign(target: "all" | "unassigned") {
+    if (!massAssignCrewId) {
+      toast.warning("Pick a crew first");
+      return;
+    }
+    const next: Record<string, string | null> = { ...crewAssign };
+    for (const s of ordered) {
+      if (target === "all" || !next[s.id]) next[s.id] = massAssignCrewId;
+    }
+    setCrewAssign(next);
+    setMassAssigning(true);
+    await save(next);
+    setMassAssigning(false);
+  }
+
+  // "Auto-assign crews" — geographic k-means zoning (clusterZones) instead of
+  // one crew for everyone. k = the number of crews already in use today (so
+  // re-running after a manual tweak keeps the same crew count), falling back
+  // to the full crew roster size when nothing is assigned yet; clamped to
+  // [1, mappedCount] so k never exceeds the stops available to zone.
+  // Zones are ranked biggest-stop-count-first (routeMiles as a tiebreak) and
+  // paired with crews in that order — a simple, deterministic, stable
+  // assignment rather than a full optimal matching. Each zone's stops are
+  // locally sequenced via nearestNeighborRoute (haversine + 2-opt) so the
+  // reassembled `ordered` list is contiguous per crew — save() then writes a
+  // correct per-crew 1..n route_order straight from list position. Local
+  // state only — does not call save(); the dispatcher can still drag-tweak
+  // before hitting the main Save button.
+  function autoAssignCrews() {
+    if (mappedCount < 2) {
+      toast.info("Pin at least 2 stops first.");
+      return;
+    }
+    if (crews.length === 0) {
+      toast.warning("No crews available to assign.");
+      return;
+    }
+    const assignedCrewIds = new Set(
+      Object.values(crewAssign).filter((c): c is string => !!c)
+    );
+    const kRaw = assignedCrewIds.size > 0 ? assignedCrewIds.size : crews.length;
+    const k = Math.max(1, Math.min(kRaw, mappedCount));
+
+    const zones = clusterZones(ordered, k);
+    const mappedZones = zones
+      .filter((z) => z.label !== "Unmapped")
+      .map((z) => ({ ...z, stops: nearestNeighborRoute(z.stops) }));
+    const unmappedZone = zones.find((z) => z.label === "Unmapped") ?? null;
+
+    const rankedZones = [...mappedZones].sort((a, b) => {
+      if (b.stops.length !== a.stops.length)
+        return b.stops.length - a.stops.length;
+      return routeMiles(b.stops) - routeMiles(a.stops);
+    });
+    const crewIds = crews.slice(0, k).map((c) => c.id);
+
+    const nextAssign: Record<string, string | null> = { ...crewAssign };
+    const reassembled: RouteStop[] = [];
+    rankedZones.forEach((zone, i) => {
+      const crewId = crewIds[i] ?? null;
+      for (const s of zone.stops) {
+        nextAssign[s.id] = crewId;
+        reassembled.push(s);
+      }
+    });
+    if (unmappedZone) {
+      for (const s of unmappedZone.stops) reassembled.push(s);
+    }
+    // Safety net: zones partition `ordered` exactly, but if anything were
+    // somehow missed, append it as-is rather than silently dropping a stop.
+    const seen = new Set(reassembled.map((s) => s.id));
+    for (const s of ordered) if (!seen.has(s.id)) reassembled.push(s);
+
+    setCrewAssign(nextAssign);
+    setOrdered(reassembled);
+    toast.success(
+      `Zoned ${mappedZones.length} area${mappedZones.length === 1 ? "" : "s"} across ${Math.min(crewIds.length, mappedZones.length)} crew${crewIds.length === 1 ? "" : "s"} — review and Save.`
+    );
   }
 
   if (initial.length === 0) {
@@ -349,6 +453,58 @@ export default function RouteMapPlanner({
         }}
       />
 
+      {/* Mass crew-assign — pick a crew, then blast it onto every stop or
+          just the unassigned ones. Saves immediately (same per-crew
+          contiguous renumber as the main Save button, from current list
+          order), so this is a shortcut for "everyone today", not a staged
+          edit. */}
+      {crews.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-white rounded-lg p-2.5 shadow-sm text-xs">
+          <select
+            value={massAssignCrewId}
+            onChange={(e) => setMassAssignCrewId(e.target.value)}
+            disabled={massAssigning}
+            className="flex-1 min-w-[140px] px-2 py-1.5 border border-gray-300 rounded-lg text-xs disabled:opacity-50"
+          >
+            <option value="">— Pick a crew —</option>
+            {crews.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => massAssign("all")}
+            disabled={massAssigning || !massAssignCrewId}
+            className="px-2.5 py-1.5 rounded-lg font-semibold text-green-700 bg-green-50 border border-green-200 disabled:opacity-50 flex items-center gap-1"
+          >
+            {massAssigning && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Assign to all
+          </button>
+          <button
+            type="button"
+            onClick={() => massAssign("unassigned")}
+            disabled={massAssigning || !massAssignCrewId}
+            className="px-2.5 py-1.5 rounded-lg font-semibold text-gray-700 bg-white border border-gray-300 disabled:opacity-50"
+          >
+            Assign to unassigned
+          </button>
+          {mappedCount >= 2 && (
+            <button
+              type="button"
+              onClick={autoAssignCrews}
+              disabled={massAssigning}
+              className="px-2.5 py-1.5 rounded-lg font-semibold text-green-700 bg-white border border-green-300 disabled:opacity-50 flex items-center gap-1"
+              title="Split today's pinned stops into geographic zones, one per crew"
+            >
+              <Users className="w-3.5 h-3.5" />
+              Auto-assign crews
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Drag-to-reorder list */}
       <RouteList
         stops={ordered}
@@ -370,7 +526,7 @@ export default function RouteMapPlanner({
       {/* Save */}
       <div className="sticky bottom-20 lg:bottom-4 z-10">
         <button
-          onClick={save}
+          onClick={() => save()}
           disabled={busy}
           className="w-full bg-green-600 text-white py-3.5 rounded-lg font-semibold active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
         >

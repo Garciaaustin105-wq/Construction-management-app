@@ -15,6 +15,7 @@ import JobDetailsEditor from "@/components/JobDetailsEditor";
 import JobAssignmentEditor from "@/components/JobAssignmentEditor";
 import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
 import LawnJobFinancials from "@/components/LawnJobFinancials";
+import SkipReasonPicker from "@/components/SkipReasonPicker";
 
 type Schedule = {
   id: string;
@@ -51,6 +52,7 @@ type Visit = {
   status: string;
   crew_id: string | null;
   notes: string | null;
+  skip_reason: string | null;
 };
 
 const STATUS_CHIP: Record<string, string> = {
@@ -81,6 +83,7 @@ export default function ScheduleDetailPage({
   const [resetting, setResetting] = useState(false);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [moveDate, setMoveDate] = useState("");
+  const [skippingId, setSkippingId] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -122,7 +125,7 @@ export default function ScheduleDetailPage({
       const [{ data: visitRows }, { data: lawnJob }, { data: services }] = await Promise.all([
         supabase
           .from("lawn_visits")
-          .select("id, due_date, status, crew_id, notes")
+          .select("id, due_date, status, crew_id, notes, skip_reason")
           .eq("recurring_schedule_id", id)
           .order("due_date", { ascending: true }),
         supabase
@@ -286,7 +289,7 @@ export default function ScheduleDetailPage({
     // Refresh the visit list.
     const { data: visitRows } = await supabase
       .from("lawn_visits")
-      .select("id, due_date, status, crew_id, notes")
+      .select("id, due_date, status, crew_id, notes, skip_reason")
       .eq("recurring_schedule_id", schedule.id)
       .order("due_date", { ascending: true });
     setVisits((visitRows as unknown as Visit[]) ?? []);
@@ -351,7 +354,7 @@ export default function ScheduleDetailPage({
     }
     const { data: visitRows } = await supabase
       .from("lawn_visits")
-      .select("id, due_date, status, crew_id, notes")
+      .select("id, due_date, status, crew_id, notes, skip_reason")
       .eq("recurring_schedule_id", schedule.id)
       .order("due_date", { ascending: true });
     setVisits((visitRows as unknown as Visit[]) ?? []);
@@ -363,16 +366,17 @@ export default function ScheduleDetailPage({
     );
   }
 
-  async function skipVisit(visitId: string) {
+  async function skipVisit(visitId: string, skipReason: string) {
     setBusy(true);
     // Route through the /status API (not a direct update) so the customer is
-    // emailed + notified_at stamped — same path as the visit detail page.
+    // emailed (with the reason) + notified_skipped_at stamped — same path as
+    // the visit detail page.
     let res: Response;
     try {
       res = await fetch(`/api/lawn/visits/${visitId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "skipped" }),
+        body: JSON.stringify({ status: "skipped", skip_reason: skipReason }),
       });
     } catch {
       setBusy(false);
@@ -386,8 +390,13 @@ export default function ScheduleDetailPage({
       return;
     }
     setVisits((prev) =>
-      prev.map((v) => (v.id === visitId ? { ...v, status: "skipped" } : v))
+      prev.map((v) =>
+        v.id === visitId
+          ? { ...v, status: "skipped", skip_reason: skipReason.trim() || null }
+          : v
+      )
     );
+    setSkippingId(null);
     toast.success("Visit skipped");
   }
 
@@ -647,7 +656,19 @@ export default function ScheduleDetailPage({
                       {v.status}
                     </span>
                   </div>
-                  {v.status === "pending" && (
+                  {v.status === "skipped" && v.skip_reason && (
+                    <p className="text-xs text-gray-500">
+                      Skipped · {v.skip_reason}
+                    </p>
+                  )}
+                  {v.status === "pending" && skippingId === v.id ? (
+                    <SkipReasonPicker
+                      busy={busy}
+                      onConfirm={(reason) => skipVisit(v.id, reason)}
+                      onCancel={() => setSkippingId(null)}
+                    />
+                  ) : (
+                    v.status === "pending" && (
                     <div className="flex flex-wrap gap-2">
                       <Link
                         href={`/lawn/visits/${v.id}`}
@@ -697,7 +718,7 @@ export default function ScheduleDetailPage({
                           </button>
                           <button
                             type="button"
-                            onClick={() => skipVisit(v.id)}
+                            onClick={() => setSkippingId(v.id)}
                             disabled={busy}
                             className="text-xs text-gray-600 font-medium"
                           >
@@ -706,6 +727,7 @@ export default function ScheduleDetailPage({
                         </>
                       )}
                     </div>
+                    )
                   )}
                 </div>
               ))}

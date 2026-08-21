@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import SendVisitPhotos from "@/components/SendVisitPhotos";
+import SkipReasonPicker from "@/components/SkipReasonPicker";
 import { useToast } from "@/components/Toast";
 import { validateUpload } from "@/lib/uploadValidate";
 import { normalizeImage } from "@/lib/normalizeImage";
@@ -32,6 +33,7 @@ type Visit = {
   crew_id: string | null;
   completed_at: string | null;
   notes: string | null;
+  skip_reason: string | null;
   recurring_schedule_id: string;
   // customers is reached through jobs (lawn_visits has job_id, no customer_id)
   // — embed jobs(name, address, customers(name, contact_email, phone)).
@@ -81,13 +83,14 @@ export default function VisitDetailPage({
   const [uploading, setUploading] = useState(false);
   const [property, setProperty] = useState<LawnJob | null>(null);
   const [sendingOMW, setSendingOMW] = useState(false);
+  const [showSkipPicker, setShowSkipPicker] = useState(false);
 
   async function load() {
     const supabase = createClient();
     const { data: v } = await supabase
       .from("lawn_visits")
       .select(
-        "id, job_id, due_date, status, crew_id, completed_at, notes, recurring_schedule_id, jobs(name, address, customers(name, contact_email, phone))"
+        "id, job_id, due_date, status, crew_id, completed_at, notes, skip_reason, recurring_schedule_id, jobs(name, address, customers(name, contact_email, phone))"
       )
       .eq("id", id)
       .maybeSingle();
@@ -157,22 +160,24 @@ export default function VisitDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function updateStatus(status: string) {
+  async function updateStatus(status: string, skipReason?: string) {
     if (!visit) return;
     setBusy(true);
     // Both office and crew route through the /status API. The API admits
     // office/PM (full status + reschedule) and the assigned crew/superintendent
     // (status-only, server-side ownership check) and — critically — fires the
-    // customer notification suite (service_complete + review_request) when a
-    // visit is marked done, regardless of who marked it. The old crew path did
-    // a direct RLS update that bypassed the API, so crew-done visits never
-    // emailed the customer.
+    // customer notification suite (service_complete + review_request, or
+    // service_skipped with the reason) when a visit is marked done/skipped,
+    // regardless of who marked it. The old crew path did a direct RLS update
+    // that bypassed the API, so crew-done visits never emailed the customer.
     let res: Response;
     try {
       res = await fetch(`/api/lawn/visits/${visit.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(
+          status === "skipped" ? { status, skip_reason: skipReason } : { status }
+        ),
       });
     } catch {
       setBusy(false);
@@ -186,7 +191,13 @@ export default function VisitDetailPage({
       return;
     }
     const completed_at = status === "done" ? new Date().toISOString() : null;
-    setVisit({ ...visit, status, completed_at });
+    setVisit({
+      ...visit,
+      status,
+      completed_at,
+      skip_reason: status === "skipped" ? skipReason?.trim() || null : null,
+    });
+    setShowSkipPicker(false);
     toast.success(
       status === "done"
         ? "Marked done"
@@ -392,42 +403,56 @@ export default function VisitDetailPage({
             </span>
           </div>
 
+          {visit.status === "skipped" && visit.skip_reason && (
+            <p className="text-xs text-gray-500">
+              Skipped · {visit.skip_reason}
+            </p>
+          )}
+
           {/* Status actions */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            {visit.status !== "done" && (
-              <button
-                type="button"
-                onClick={() => updateStatus("done")}
-                disabled={busy}
-                className="bg-green-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
-              >
-                <Check className="w-4 h-4" />
-                Mark done
-              </button>
-            )}
-            {isOffice && visit.status !== "skipped" && (
-              <button
-                type="button"
-                onClick={() => updateStatus("skipped")}
-                disabled={busy}
-                className="bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
-              >
-                <X className="w-4 h-4" />
-                Skip
-              </button>
-            )}
-            {isOffice && visit.status !== "pending" && (
-              <button
-                type="button"
-                onClick={() => updateStatus("pending")}
-                disabled={busy}
-                className="bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Reopen
-              </button>
-            )}
-          </div>
+          {showSkipPicker ? (
+            <SkipReasonPicker
+              busy={busy}
+              onConfirm={(reason) => updateStatus("skipped", reason)}
+              onCancel={() => setShowSkipPicker(false)}
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              {visit.status !== "done" && (
+                <button
+                  type="button"
+                  onClick={() => updateStatus("done")}
+                  disabled={busy}
+                  className="bg-green-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  Mark done
+                </button>
+              )}
+              {isOffice && visit.status !== "skipped" && (
+                <button
+                  type="button"
+                  onClick={() => setShowSkipPicker(true)}
+                  disabled={busy}
+                  className="bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  <X className="w-4 h-4" />
+                  Skip
+                </button>
+              )}
+              {isOffice && visit.status !== "pending" && (
+                <button
+                  type="button"
+                  onClick={() => updateStatus("pending")}
+                  disabled={busy}
+                  className="bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Reopen
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Move date + on-my-way — office only */}
           {isOffice && (moving ? (

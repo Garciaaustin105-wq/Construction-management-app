@@ -13,8 +13,12 @@ export const dynamic = "force-dynamic";
 
 // Central status / move handler for a lawn visit. Office/PM, or crew/
 // superintendent on their OWN visit (a due_date move stays office/PM-only).
-// Accepts { status?, due_date? } and applies both. completed_at is set to now()
-// when status==='done', null otherwise. After a SUCCESSFUL update it decides
+// Accepts { status?, due_date?, skip_reason? } and applies all three.
+// completed_at is set to now() when status==='done', null otherwise.
+// skip_reason is set (trimmed, "" -> null) when status==='skipped' and cleared
+// when reopening to 'pending' — a status-only field, not gated separately from
+// the existing status auth (crew may supply it on their own visit same as
+// they can already set status='skipped'). After a SUCCESSFUL update it decides
 // whether to email the customer a one-shot notice:
 //   - status becomes 'done'    → service_complete + review_request (gated by
 //     notified_at IS NULL);
@@ -32,12 +36,14 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  const body: { status?: string; due_date?: string } = {};
+  const body: { status?: string; due_date?: string; skip_reason?: string } = {};
   try {
     const parsed = await request.json();
     if (parsed && typeof parsed === "object") {
       if (typeof parsed.status === "string") body.status = parsed.status;
       if (typeof parsed.due_date === "string") body.due_date = parsed.due_date;
+      if (typeof parsed.skip_reason === "string")
+        body.skip_reason = parsed.skip_reason;
     }
   } catch {
     // Empty / invalid body is treated as no-op fields.
@@ -106,6 +112,13 @@ export async function POST(
   if (body.status) patch.status = body.status;
   if (body.status === "done") patch.completed_at = new Date().toISOString();
   else if (body.status) patch.completed_at = null;
+  // skip_reason rides the same status transition — set (trimmed empty -> null)
+  // when skipping, cleared automatically when reopening to pending. Not
+  // touched on a plain due_date move or a transition to 'done'.
+  const skipReason =
+    body.status === "skipped" ? body.skip_reason?.trim() || null : null;
+  if (body.status === "skipped") patch.skip_reason = skipReason;
+  else if (body.status === "pending") patch.skip_reason = null;
   if (body.due_date) patch.due_date = body.due_date;
   // A move (due_date change) invalidates the dispatcher's saved per-crew
   // sequence for the old day — null route_order so it doesn't collide with the
@@ -248,6 +261,7 @@ export async function POST(
           address: jobRow?.address ?? null,
           serviceDate: cur.due_date,
           orgName,
+          reason: skipReason,
         });
         notified = anySent(skippedResults);
       }

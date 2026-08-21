@@ -96,7 +96,66 @@ export function nearestNeighborRoute(stops: RouteStop[]): RouteStop[] {
     ordered.push(next);
     cursor = next.pos!;
   }
-  return [...ordered, ...unmapped];
+  return [...refineRouteHaversine(ordered), ...unmapped];
+}
+
+/**
+ * 2-opt local-search refinement: repeatedly considers reversing a segment
+ * [i+1..j] of the list and keeps the reversal if it strictly reduces the sum
+ * of the two edges touching the segment's endpoints — the standard O(1)-per-
+ * candidate 2-opt delta check (no full-path recompute), so a full pass is
+ * O(n²). Removes the edge crossings a pure greedy nearest-neighbor walk tends
+ * to leave behind. Repeats passes until one finds no improving swap, capped
+ * at 20 passes so a large day can't spin. Deterministic (no randomness) —
+ * the same input order always refines to the same output.
+ */
+export function twoOpt<T>(order: T[], cost: (a: T, b: T) => number): T[] {
+  const n = order.length;
+  if (n < 4) return order; // nothing to usefully reverse below a 4-stop chain
+  let arr = [...order];
+  const MAX_PASSES = 20;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    let improved = false;
+    for (let i = 0; i < n - 2; i++) {
+      for (let j = i + 1; j < n - 1; j++) {
+        const before = cost(arr[i], arr[i + 1]) + cost(arr[j], arr[j + 1]);
+        const after = cost(arr[i], arr[j]) + cost(arr[i + 1], arr[j + 1]);
+        if (after < before - 1e-9) {
+          const reversed = arr.slice(i + 1, j + 1).reverse();
+          arr = [...arr.slice(0, i + 1), ...reversed, ...arr.slice(j + 1)];
+          improved = true;
+        }
+      }
+    }
+    if (!improved) break;
+  }
+  return arr;
+}
+
+/** twoOpt keyed on straight-line haversine distance between mapped stops. */
+export function refineRouteHaversine(order: RouteStop[]): RouteStop[] {
+  return twoOpt(order, (a, b) => haversineMiles(a.pos!, b.pos!));
+}
+
+/**
+ * twoOpt keyed on a real drive-duration matrix (seconds), same shape as
+ * nearestNeighborByMatrix's `durationSec`. `mappedStops` is the array whose
+ * index order the matrix's rows/columns correspond to (built once by the
+ * caller alongside the matrix) — NOT `order`, which is already reordered.
+ * The id→index map is built once from `mappedStops` up front.
+ */
+export function refineRouteMatrix(
+  order: RouteStop[],
+  mappedStops: RouteStop[],
+  durationSec: number[][]
+): RouteStop[] {
+  const idToIdx = new Map(mappedStops.map((s, i) => [s.id, i]));
+  return twoOpt(order, (a, b) => {
+    const ai = idToIdx.get(a.id);
+    const bi = idToIdx.get(b.id);
+    if (ai === undefined || bi === undefined) return Infinity;
+    return durationSec[ai]?.[bi] ?? Infinity;
+  });
 }
 
 /**
@@ -168,7 +227,7 @@ export function nearestNeighborByMatrix(
     ordered.push(mappedStops[bestIdx]);
     cursor = bestIdx;
   }
-  return ordered;
+  return refineRouteMatrix(ordered, mappedStops, durationSec);
 }
 
 /** Total straight-line miles along an ordered stop list (sum of legs). */

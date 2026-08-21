@@ -205,6 +205,10 @@ export type SendCustomerNotificationInput = {
   // caller from the job's lawn_jobs pin via buildStaticMapUrl). Email-only —
   // SMS has no image. Omitted when null (no pin / GOOGLE_MAPS_STATIC_KEY unset).
   mapImageUrl?: string | null;
+  // service_skipped only — why the visit was skipped (from SkipReasonPicker,
+  // "preset" or "preset: note"). Renders as {{reason}}, defaulting to "N/A"
+  // when omitted so older/unreasoned skips don't render an empty placeholder.
+  reason?: string | null;
 };
 
 // Send one event to the visit's customer across both channels, gated + logged.
@@ -253,6 +257,7 @@ export async function sendCustomerNotification(
     org_name: input.orgName ?? "",
     photo_link: input.photoLink ?? "",
     review_link: reviewLink ?? "",
+    reason: input.reason?.trim() || "N/A",
   };
 
   for (const channel of CHANNELS) {

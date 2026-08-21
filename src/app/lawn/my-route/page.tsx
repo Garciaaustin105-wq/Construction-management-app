@@ -8,8 +8,9 @@ import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
-import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation } from "lucide-react";
+import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X } from "lucide-react";
 import type { RouteStop } from "@/lib/lawnRouting";
+import SkipReasonPicker from "@/components/SkipReasonPicker";
 
 // Google Maps touches window — load the map client-only.
 const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
@@ -67,14 +68,18 @@ function VisitCard({
   v,
   busyId,
   onDone,
+  onSkip,
 }: {
   v: Visit;
   busyId: string | null;
   onDone: (id: string) => void;
+  onSkip: (id: string, reason: string) => void;
 }) {
+  const [showSkip, setShowSkip] = useState(false);
   const jobName = v.jobs?.name ?? "—";
   const custName = v.jobs?.customers?.name ?? null;
   const address = v.jobs?.address ?? null;
+  const busy = busyId === v.id;
   return (
     <div className="bg-white rounded-lg p-3 shadow-sm space-y-2">
       <div className="flex justify-between items-start gap-2">
@@ -93,28 +98,45 @@ function VisitCard({
           {dueLabel(v.due_date)}
         </span>
       </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onDone(v.id)}
-          disabled={busyId === v.id}
-          className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
-        >
-          {busyId === v.id ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Check className="w-4 h-4" />
-          )}
-          Mark done
-        </button>
-        <Link
-          href={`/lawn/visits/${v.id}`}
-          className="bg-white border border-gray-300 text-gray-900 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-1.5"
-        >
-          <Camera className="w-4 h-4" />
-          Photos
-        </Link>
-      </div>
+      {showSkip ? (
+        <SkipReasonPicker
+          busy={busy}
+          onConfirm={(reason) => onSkip(v.id, reason)}
+          onCancel={() => setShowSkip(false)}
+        />
+      ) : (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onDone(v.id)}
+            disabled={busy}
+            className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {busy ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Check className="w-4 h-4" />
+            )}
+            Mark done
+          </button>
+          <Link
+            href={`/lawn/visits/${v.id}`}
+            className="bg-white border border-gray-300 text-gray-900 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-1.5"
+          >
+            <Camera className="w-4 h-4" />
+            Photos
+          </Link>
+          <button
+            type="button"
+            onClick={() => setShowSkip(true)}
+            disabled={busy}
+            className="bg-white border border-gray-300 text-gray-600 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            <X className="w-4 h-4" />
+            Skip
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -125,12 +147,14 @@ function Section({
   icon,
   busyId,
   onDone,
+  onSkip,
 }: {
   label: string;
   list: Visit[];
   icon: React.ReactNode;
   busyId: string | null;
   onDone: (id: string) => void;
+  onSkip: (id: string, reason: string) => void;
 }) {
   if (list.length === 0) return null;
   return (
@@ -141,7 +165,7 @@ function Section({
       </h2>
       <div className="space-y-2">
         {list.map((v) => (
-          <VisitCard key={v.id} v={v} busyId={busyId} onDone={onDone} />
+          <VisitCard key={v.id} v={v} busyId={busyId} onDone={onDone} onSkip={onSkip} />
         ))}
       </div>
     </section>
@@ -229,6 +253,33 @@ export default function MyRoutePage() {
     toast.success("Marked done");
   }
 
+  async function skipVisit(visitId: string, skipReason: string) {
+    setBusyId(visitId);
+    // Same /status API path as markDone — fires the service_skipped customer
+    // notice (with the reason) instead of service_complete/review_request, and
+    // server-checks crew_id === auth.uid() before applying.
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visitId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "skipped", skip_reason: skipReason }),
+      });
+    } catch {
+      setBusyId(null);
+      toast.error("Failed: network error");
+      return;
+    }
+    setBusyId(null);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
+    }
+    setVisits((prev) => prev.filter((v) => v.id !== visitId));
+    toast.success("Visit skipped");
+  }
+
   if (!authorized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -310,6 +361,7 @@ export default function MyRoutePage() {
               icon={<CalendarDays className="w-3.5 h-3.5" />}
               busyId={busyId}
               onDone={markDone}
+              onSkip={skipVisit}
             />
             <Section
               label="Today"
@@ -317,6 +369,7 @@ export default function MyRoutePage() {
               icon={<CalendarDays className="w-3.5 h-3.5" />}
               busyId={busyId}
               onDone={markDone}
+              onSkip={skipVisit}
             />
             <Section
               label="Upcoming"
@@ -324,6 +377,7 @@ export default function MyRoutePage() {
               icon={<CalendarDays className="w-3.5 h-3.5" />}
               busyId={busyId}
               onDone={markDone}
+              onSkip={skipVisit}
             />
           </>
         )}
