@@ -45,8 +45,9 @@ import {
   Calendar,
   TrendingUp,
   Bell,
+  Mail,
   UsersRound,
-  MessagesSquare,
+  Images,
   Terminal,
   type LucideIcon,
 } from "lucide-react";
@@ -83,18 +84,21 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       return base;
     }
     // Sales (estimator): pre-sale funnel only — estimates, leads, pipeline.
+    // Home points straight at /estimates because /lawn redirects non-FIELD_MGMT
+    // roles away (sales → /estimates); pointing Home at /lawn would loop.
     if (role === "sales") {
       return [
-        { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+        { href: "/estimates", label: "Home", Icon: Home, badge: "unread" },
         { href: "/estimates", label: "Estimates", Icon: FileText },
         { href: "/admin/customers", label: "Customers", Icon: Contact },
         { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
       ];
     }
-    // Accountant: read-only financials — invoices, customers, insights.
+    // Accountant: read-only financials — invoices, customers, insights. Home
+    // points straight at /invoices (/lawn redirects accountant → /invoices).
     if (role === "accountant") {
       return [
-        { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+        { href: "/invoices", label: "Home", Icon: Home, badge: "unread" },
         { href: "/invoices", label: "Invoices", Icon: Receipt },
         { href: "/admin/customers", label: "Customers", Icon: Contact },
         { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
@@ -127,6 +131,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/invoices", label: "Invoices", Icon: Receipt },
       { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
       { href: "/lawn/notifications", label: "Notifications", Icon: Bell },
+      { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
       { href: "/calendar", label: "Calendar", Icon: Calendar },
       { href: "/admin/users", label: "Admin", Icon: Users },
     ];
@@ -222,15 +227,21 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
   // office / admin — full office surface.
   const items: NavItem[] = [
     { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
-    { href: "/crew/photo", label: "Photos", Icon: Camera },
+    { href: "/crew/photo", label: "Upload Photo", Icon: Camera },
     { href: "/crew/time", label: "Time", Icon: Clock },
     { href: "/receipts", label: "Receipts", Icon: Receipt },
     { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
     { href: "/punch", label: "Punch List", Icon: CheckSquare },
     { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
     { href: "/submittals", label: "Submittals", Icon: FileText },
-    { href: "/admin/clients", label: "Client Portal", Icon: MessagesSquare },
+    // Global photo browser — see all jobs' photos in one place (was
+    // previously reachable from nowhere in the app). "Client Portal"
+    // (/admin/clients) used to sit here; it's still reachable from the
+    // Customers page (it largely duplicated that page's customer list —
+    // see the "two customer tabs" fix on /admin/customers).
+    { href: "/photos", label: "Photos", Icon: Images },
     { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
+    { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
     { href: "/admin/users", label: "Admin", Icon: Users },
   ];
   // Only the org admin manages billing (checkout + Customer Portal routes are
@@ -278,10 +289,12 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
     return [...base, { href: "/admin/reports", label: "Reports", Icon: FileSpreadsheet }];
   }
   if (role === "sales") {
-    // Sales flat bar — estimates, leads, pipeline. No field tabs.
+    // Sales flat bar — estimates, leads, pipeline. No field tabs. Home points
+    // straight at /estimates (lawn) / /dashboard (construction) — /lawn redirects
+    // sales away, so Home=/lawn would loop.
     return isLawn()
       ? [
-          { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+          { href: "/estimates", label: "Home", Icon: Home, badge: "unread" },
           { href: "/estimates", label: "Estimates", Icon: FileText },
           { href: "/admin/customers", label: "Customers", Icon: Contact },
           { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
@@ -295,9 +308,10 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
   }
   if (role === "accountant") {
     // Accountant flat bar — read-only financials. No field tabs, no writes.
+    // Home points straight at /invoices (lawn) — /lawn redirects accountant away.
     return isLawn()
       ? [
-          { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
+          { href: "/invoices", label: "Home", Icon: Home, badge: "unread" },
           { href: "/invoices", label: "Invoices", Icon: Receipt },
           { href: "/admin/customers", label: "Customers", Icon: Contact },
           { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
@@ -344,18 +358,29 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
             "/invoices",
             "/admin/reports",
             "/calendar",
-            "/admin/customers",
             "/admin/crew-members",
             "/crew/time",
             "/lawn/insights",
             "/lawn/notifications",
+            "/admin/email-preview",
           ],
         },
         {
           href: "/manage",
           label: "Manage",
           Icon: Settings,
-          aliases: ["/admin/users", "/admin/billing", "/admin/orgs", "/admin/org"],
+          // /admin/customers moved here from Office's aliases — the Customers
+          // card itself was removed from the lawn Office page (it duplicated
+          // Manage's Customers card), but the alias was left pointing at
+          // Office, so the bottom nav highlighted the wrong tab whenever you
+          // were actually on the Customers page (reached via Manage).
+          aliases: [
+            "/admin/users",
+            "/admin/billing",
+            "/admin/orgs",
+            "/admin/org",
+            "/admin/customers",
+          ],
         },
       ];
     }
@@ -386,6 +411,8 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
           "/punch",
           "/change-orders",
           "/submittals",
+          "/photos",
+          "/admin/email-preview",
         ],
       },
       {

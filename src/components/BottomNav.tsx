@@ -47,10 +47,13 @@ export default function BottomNav() {
   }
 
   const items = buildMobileNav(role);
-  // Hub roles (office/admin/super_admin) put Sign Out inside the Manage hub
-  // page, so the bar shows only the 5 hub cells. Flat roles keep the trailing
-  // Sign Out button.
-  const showSignOutCell = role !== null && !isOfficeLike(role);
+  // Hub roles (office/admin) put Sign Out inside the Manage hub page, so the
+  // bar shows only the hub cells. Flat roles keep the trailing Sign Out button.
+  // super_admin's mobile nav is a FLAT platform-only bar (Home/Users/Platform/
+  // Dev) — it has no Manage hub, so it must get the trailing Sign Out cell too,
+  // otherwise it has no way to sign out on mobile.
+  const showSignOutCell =
+    role !== null && (role === "super_admin" || !isOfficeLike(role));
 
   // The bottom nav is persistent (rendered from the root layout) but should
   // not appear on public/portal routes that have their own chrome.

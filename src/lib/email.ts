@@ -51,17 +51,12 @@ export type SendEstimateEmailInput = {
 // ({ data, error }); the caller decides how to surface a failure. Throws if
 // RESEND_API_KEY is unset so the route returns a clear 500 instead of a silent
 // no-op.
-export async function sendEstimateEmail(
+// Pure render of the estimate email (no Resend, no env read). Shared single
+// source of truth: sendEstimateEmail sends exactly this HTML + subject, and
+// /admin/email-preview renders exactly this HTML.
+export function renderEstimateEmail(
   input: SendEstimateEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
-    );
-  }
-
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const org = escapeHtml(input.orgName);
   const job = escapeHtml(input.jobName);
   const customer = escapeHtml(input.customerName || "there");
@@ -129,12 +124,29 @@ export async function sendEstimateEmail(
   </table>
 </body></html>`;
 
-  return resend.emails.send({
-    from: fromAddress(),
-    to: input.to,
+  return {
     subject: input.estimateNumber
       ? `Estimate #${input.estimateNumber} from ${input.orgName} — ${input.jobName}`
       : `Estimate from ${input.orgName} — ${input.jobName}`,
+    html,
+  };
+}
+
+export async function sendEstimateEmail(
+  input: SendEstimateEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
+    );
+  }
+  const { subject, html } = renderEstimateEmail(input);
+  const resend = new Resend(apiKey);
+  return resend.emails.send({
+    from: fromAddress(),
+    to: input.to,
+    subject,
     html,
   });
 }
@@ -152,17 +164,12 @@ export type SendVerificationEmailInput = {
 // delivery to non-owner inboxes. Returns Resend's { data, error }; the caller
 // (signup route) treats a failed send as non-fatal (workspace is already
 // created) and surfaces an emailSent:false flag to the client.
-export async function sendVerificationEmail(
+// Pure render of the verify-email email (no Resend, no env read). Shared single
+// source of truth: sendVerificationEmail sends exactly this HTML + subject, and
+// /admin/email-preview renders exactly this HTML.
+export function renderVerificationEmail(
   input: SendVerificationEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
-    );
-  }
-
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const name = escapeHtml(input.name || "there");
   const href = input.verifyLink; // Supabase-generated verify URL — left intact
 
@@ -199,10 +206,28 @@ export async function sendVerificationEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: `Verify your email — ${BRAND.shortName}`,
+    html,
+  };
+}
+
+export async function sendVerificationEmail(
+  input: SendVerificationEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
+    );
+  }
+
+  const { subject, html } = renderVerificationEmail(input);
+  const resend = new Resend(apiKey);
   return resend.emails.send({
     from: fromAddress(),
     to: input.to,
-    subject: `Verify your email — ${BRAND.shortName}`,
+    subject,
     html,
   });
 }
@@ -222,17 +247,12 @@ export type SendPasswordResetEmailInput = {
 // non-owner inboxes. Throws if RESEND_API_KEY is unset; returns Resend's
 // { data, error } otherwise (the caller treats an error as a hard failure,
 // since a reset email that never arrives is worse than a clear error).
-export async function sendPasswordResetEmail(
+// Pure render of the password-reset email (no Resend, no env read). Shared
+// single source of truth: sendPasswordResetEmail sends exactly this HTML +
+// subject, and /admin/email-preview renders exactly this HTML.
+export function renderPasswordResetEmail(
   input: SendPasswordResetEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
-    );
-  }
-
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const href = input.resetLink; // our /reset-password?token=... URL — left intact
 
   const html = `<!doctype html>
@@ -269,10 +289,28 @@ export async function sendPasswordResetEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: `Reset your password — ${BRAND.shortName}`,
+    html,
+  };
+}
+
+export async function sendPasswordResetEmail(
+  input: SendPasswordResetEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set — add it in Vercel (Project Settings → Environment Variables) and redploy."
+    );
+  }
+
+  const { subject, html } = renderPasswordResetEmail(input);
+  const resend = new Resend(apiKey);
   return resend.emails.send({
     from: fromAddress(),
     to: input.to,
-    subject: `Reset your password — ${BRAND.shortName}`,
+    subject,
     html,
   });
 }
@@ -299,14 +337,12 @@ export type SendOnMyWayEmailInput = {
 };
 
 // "Your lawn crew is on the way" — one-tap heads-up sent from the visit page.
-export async function sendOnMyWayEmail(
+// Pure render of the on-my-way email (no Resend, no env read). Shared single
+// source of truth: sendOnMyWayEmail sends exactly this HTML + subject, and
+// /admin/email-preview renders exactly this HTML.
+export function renderOnMyWayEmail(
   input: SendOnMyWayEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const customer = escapeHtml(input.customerName || "there");
   const job = escapeHtml(input.jobName);
   const address = input.address ? escapeHtml(input.address) : null;
@@ -343,11 +379,26 @@ export async function sendOnMyWayEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: `Your lawn crew is on the way — ${input.jobName}`,
+    html,
+  };
+}
+
+export async function sendOnMyWayEmail(
+  input: SendOnMyWayEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderOnMyWayEmail(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: `Your lawn crew is on the way — ${input.jobName}`,
+      subject,
       html,
     });
   } catch (err) {
@@ -369,14 +420,12 @@ export type SendLawnVisitEmailInput = {
 
 // Generic lawn-visit notice (visit completed / skipped / rescheduled). The
 // caller picks the subject + body lines so this stays a thin, reusable wrapper.
-export async function sendLawnVisitEmail(
+// Pure render of the lawn-visit email (no Resend, no env read). Shared single
+// source of truth: sendLawnVisitEmail sends exactly this HTML, and
+// /admin/email-preview renders exactly this HTML.
+export function renderLawnVisitEmail(
   input: SendLawnVisitEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const customer = escapeHtml(input.customerName || "there");
   const job = escapeHtml(input.jobName);
   const address = input.address ? escapeHtml(input.address) : null;
@@ -421,11 +470,23 @@ export async function sendLawnVisitEmail(
   </table>
 </body></html>`;
 
+  return { subject: input.subject, html };
+}
+
+export async function sendLawnVisitEmail(
+  input: SendLawnVisitEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderLawnVisitEmail(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: input.subject,
+      subject,
       html,
     });
   } catch (err) {
@@ -470,14 +531,13 @@ export type SendCustomerEmailInput = {
   mapImageUrl?: string | null;
 };
 
-export async function sendCustomerEmail(
+// Pure render of the generic customer email (no Resend, no env read). Shared
+// single source of truth: sendCustomerEmail sends exactly this HTML, and the
+// /admin/email-preview page renders exactly this HTML. Tokens must already be
+// substituted in `body` (\n separates paragraphs).
+export function renderCustomerEmailHtml(
   input: SendCustomerEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const orgName = input.orgName?.trim() || BRAND.company;
   const bodyParas = input.body
     .split(/\r?\n/)
@@ -525,11 +585,23 @@ export async function sendCustomerEmail(
   </table>
 </body></html>`;
 
+  return { subject: input.subject, html };
+}
+
+export async function sendCustomerEmail(
+  input: SendCustomerEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderCustomerEmailHtml(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: input.subject,
+      subject,
       html,
     });
   } catch (err) {
@@ -561,15 +633,12 @@ export type SendInvoiceEmailInput = {
   message?: string | null; // optional personal note, shown up top
 };
 
-export async function sendInvoiceEmail(
+// Pure render of the invoice email (no Resend, no env read). Shared single
+// source of truth: sendInvoiceEmail sends exactly this HTML + subject, and
+// /admin/email-preview renders exactly this HTML.
+export function renderInvoiceEmail(
   input: SendInvoiceEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const org = escapeHtml(input.orgName);
   const job = escapeHtml(input.jobName);
   const customer = escapeHtml(input.customerName || "there");
@@ -630,11 +699,26 @@ export async function sendInvoiceEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: `Invoice from ${input.orgName} — ${input.jobName}`,
+    html,
+  };
+}
+
+export async function sendInvoiceEmail(
+  input: SendInvoiceEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderInvoiceEmail(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: `Invoice from ${input.orgName} — ${input.jobName}`,
+      subject,
       html,
     });
   } catch (err) {
@@ -671,14 +755,12 @@ export type SendInvoiceReceiptEmailInput = {
   invoiceUrl: string; // public /invoices/view/{token} link
 };
 
-export async function sendInvoiceReceiptEmail(
+// Pure render of the invoice receipt email (no Resend, no env read). Shared
+// single source of truth: sendInvoiceReceiptEmail sends exactly this HTML +
+// subject, and /admin/email-preview renders exactly this HTML.
+export function renderInvoiceReceiptEmail(
   input: SendInvoiceReceiptEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const org = escapeHtml(input.orgName);
   const customer = escapeHtml(input.customerName || "there");
   const job = escapeHtml(input.jobName);
@@ -737,11 +819,26 @@ export async function sendInvoiceReceiptEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: `Payment receipt from ${input.orgName} — ${input.jobName}`,
+    html,
+  };
+}
+
+export async function sendInvoiceReceiptEmail(
+  input: SendInvoiceReceiptEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderInvoiceReceiptEmail(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: `Payment receipt from ${input.orgName} — ${input.jobName}`,
+      subject,
       html,
     });
   } catch (err) {
@@ -873,15 +970,12 @@ export type SendChangeOrderEmailInput = {
   message?: string | null;
 };
 
-export async function sendChangeOrderEmail(
+// Pure render of the change order email (no Resend, no env read). Shared
+// single source of truth: sendChangeOrderEmail sends exactly this HTML +
+// subject, and /admin/email-preview renders exactly this HTML.
+export function renderChangeOrderEmail(
   input: SendChangeOrderEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const org = escapeHtml(input.orgName);
   const job = escapeHtml(input.jobName);
   const customer = escapeHtml(input.customerName || "there");
@@ -945,13 +1039,29 @@ export async function sendChangeOrderEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: input.coNumber
+      ? `Change Order #${input.coNumber} from ${input.orgName} — ${input.jobName}`
+      : `Change Order from ${input.orgName} — ${input.jobName}`,
+    html,
+  };
+}
+
+export async function sendChangeOrderEmail(
+  input: SendChangeOrderEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+
+  const { subject, html } = renderChangeOrderEmail(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: input.coNumber
-        ? `Change Order #${input.coNumber} from ${input.orgName} — ${input.jobName}`
-        : `Change Order from ${input.orgName} — ${input.jobName}`,
+      subject,
       html,
     });
   } catch (err) {
@@ -981,14 +1091,12 @@ export type SendClientPortalMagicLinkInput = {
   signInLink: string; // the Supabase action_link from generateLink({type:'magiclink'})
 };
 
-export async function sendClientPortalMagicLink(
+// Pure render of the client-portal magic-link email (no Resend, no env read).
+// Shared single source of truth: sendClientPortalMagicLink sends exactly this
+// HTML + subject, and /admin/email-preview renders exactly this HTML.
+export function renderClientPortalMagicLink(
   input: SendClientPortalMagicLinkInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const org = escapeHtml(input.orgName);
   const client = escapeHtml(input.clientName || "there");
   const href = input.signInLink; // Supabase-generated magic-link URL — left intact
@@ -1030,11 +1138,26 @@ export async function sendClientPortalMagicLink(
   </table>
 </body></html>`;
 
+  return {
+    subject: `Your ${input.orgName} client portal sign-in link`,
+    html,
+  };
+}
+
+export async function sendClientPortalMagicLink(
+  input: SendClientPortalMagicLinkInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderClientPortalMagicLink(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: `Your ${input.orgName} client portal sign-in link`,
+      subject,
       html,
     });
   } catch (err) {
@@ -1063,15 +1186,12 @@ export type SendSubmittalEmailInput = {
   message?: string | null;
 };
 
-export async function sendSubmittalEmail(
+// Pure render of the submittal email (no Resend, no env read). Shared single
+// source of truth: sendSubmittalEmail sends exactly this HTML + subject, and
+// /admin/email-preview renders exactly this HTML.
+export function renderSubmittalEmail(
   input: SendSubmittalEmailInput
-): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return { data: null, error: { message: "email not configured" } };
-  }
-
-  const resend = new Resend(apiKey);
+): { subject: string; html: string } {
   const org = escapeHtml(input.orgName);
   const job = escapeHtml(input.jobName);
   const title = escapeHtml(input.title);
@@ -1135,13 +1255,29 @@ export async function sendSubmittalEmail(
   </table>
 </body></html>`;
 
+  return {
+    subject: input.submittalNumber
+      ? `Submittal #${input.submittalNumber} from ${input.orgName} — ${input.jobName}`
+      : `Submittal from ${input.orgName} — ${input.jobName}`,
+    html,
+  };
+}
+
+export async function sendSubmittalEmail(
+  input: SendSubmittalEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+
+  const { subject, html } = renderSubmittalEmail(input);
+  const resend = new Resend(apiKey);
   try {
     return await resend.emails.send({
       from: fromAddress(),
       to: input.to,
-      subject: input.submittalNumber
-        ? `Submittal #${input.submittalNumber} from ${input.orgName} — ${input.jobName}`
-        : `Submittal from ${input.orgName} — ${input.jobName}`,
+      subject,
       html,
     });
   } catch (err) {

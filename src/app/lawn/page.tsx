@@ -2,12 +2,25 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
-import { FIELD_MGMT } from "@/lib/roles";
+import { FIELD_MGMT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
 import Link from "next/link";
-import { Plus, Sprout, CalendarDays, Calendar, Route, Scissors, CloudSun, FileText } from "lucide-react";
+import {
+  Plus,
+  Sprout,
+  CalendarDays,
+  Calendar,
+  Route,
+  Scissors,
+  CloudSun,
+  FileText,
+  Users,
+  Contact,
+  TrendingUp,
+  Snowflake,
+} from "lucide-react";
 
 // Row shapes for the relation joins (Supabase types these loosely, so we cast
 // via `as unknown as Row[]` — same pattern as estimates/page.tsx).
@@ -52,6 +65,17 @@ function dueLabel(dueDate: string): string {
   return new Date(`${dueDate}T00:00:00.000Z`).toLocaleDateString();
 }
 
+// Small uppercase section divider — matches the local SectionHeader used on
+// /dashboard (each page keeps its own so the hub reads as grouped sections, not
+// a flat tile soup). Keep it a div, not a competing heading.
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+      {children}
+    </h2>
+  );
+}
+
 export default async function LawnPage() {
   const supabase = await createClient();
   const {
@@ -65,18 +89,35 @@ export default async function LawnPage() {
     .eq("id", user.id)
     .single();
   const role = profile?.role ?? "crew";
+  // super_admin is a PLATFORM role with a null org; same_org() short-circuits
+  // true for it, so every query on this page (lawn_visits, recurring_schedules,
+  // notifications — all org-scoped) would aggregate EVERY tenant's data. That
+  // is a cross-org leak. super_admin also has platform-only nav
+  // (Home/Users/Platform/Dev) with no lawn workspace, so it has no business on
+  // /lawn. Send it to /dashboard (its platform home on both variants, where
+  // the lawn redirect is already exempted for super_admin). Same treatment as
+  // /dashboard gating the notifications feed OFF for super_admin.
+  if (role === "super_admin") redirect("/dashboard");
   // /lawn is the office dispatch landing. Admit field/office MANAGEMENT
-  // (FIELD_MGMT: office / admin / super_admin / project_manager /
-  // superintendent) — dispatchers + PM/super running routes. Route the other
-  // roles to their actual home instead of /dashboard, because /dashboard
-  // itself redirects lawn users back to /lawn (an infinite loop for any
-  // non-office lawn user).
+  // (FIELD_MGMT: office / admin / project_manager / superintendent —
+  // super_admin handled above) — dispatchers + PM running routes. Route the
+  // other roles to their actual home instead of /dashboard, because
+  // /dashboard itself redirects lawn users back to /lawn (an infinite loop
+  // for any non-office lawn user).
   if (!FIELD_MGMT.has(role as never)) {
     if (role === "sales") redirect("/estimates");
     if (role === "accountant") redirect("/invoices");
     // crew (and any other field role) → today's route.
     redirect("/lawn/my-route");
   }
+  // A superintendent is a field role with its own focused "My Route" surface;
+  // the office dispatch hub (schedules, billing, weather, services) is not
+  // theirs to act on, so send them to My Route instead of a hub full of tiles
+  // that would bounce them. PM stays — they oversee routes + seasonal.
+  if (role === "superintendent") redirect("/lawn/my-route");
+
+  const officeLike = isOfficeLike(role);
+  const officeOrPm = OFFICE_OR_PM.has(role as never);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -84,10 +125,7 @@ export default async function LawnPage() {
   // scopes all three to this user's org. The notifications query mirrors
   // /dashboard: lawn office users redirect to /lawn and never load /dashboard,
   // so the customer-action feed (estimate accepted/declined, invoice paid) is
-  // surfaced here instead. (A lawn org can't produce the construction-typed
-  // notifications — those routes are 404'd by the variant proxy and the DB
-  // trigger blocks construction jobs — so this naturally shows only the
-  // lawn-relevant estimate/invoice alerts.)
+  // surfaced here instead.
   const [{ data: visits }, { data: schedules }, { data: notificationsData }] =
     await Promise.all([
       supabase
@@ -128,64 +166,10 @@ export default async function LawnPage() {
 
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
         <RoleOnboarding role={role} variant="lawn" />
-        <div className="grid grid-cols-2 gap-2">
-          <Link
-            href="/lawn/new"
-            className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            New lawn job
-          </Link>
-          <Link
-            href="/lawn/calendar"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <Calendar className="w-5 h-5" />
-            Calendar
-          </Link>
-          <Link
-            href="/lawn/routes"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <Route className="w-5 h-5" />
-            Routes
-          </Link>
-          <Link
-            href="/lawn/services"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <Scissors className="w-5 h-5" />
-            Services
-          </Link>
-          <Link
-            href="/lawn/weather"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <CloudSun className="w-5 h-5" />
-            Weather
-          </Link>
-          <Link
-            href="/lawn/billing"
-            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <FileText className="w-5 h-5" />
-            Billing
-          </Link>
-        </div>
 
-        {/* ── Notifications — customer actions (estimate accepted/declined,
-            invoice paid). Surfaced here because lawn office users land on
-            /lawn, not /dashboard. RLS-scoped to this org. */}
+        {/* ── Today — the actionable dispatch list (top of page) ───────── */}
         <section className="space-y-2">
-          <NotificationsFeed notifications={notifications} />
-        </section>
-
-        {/* ── Today's Route ─────────────────────────────────────────────── */}
-        <section className="space-y-2">
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide flex items-center gap-1">
-            <CalendarDays className="w-3.5 h-3.5" />
-            Today&rsquo;s Route
-          </h2>
+          <SectionHeader>Today</SectionHeader>
           {visitRows.length === 0 ? (
             <div className="bg-white rounded-lg">
               <EmptyState
@@ -230,12 +214,9 @@ export default async function LawnPage() {
           )}
         </section>
 
-        {/* ── Recurring Schedules ───────────────────────────────────────── */}
+        {/* ── Recurring schedules ──────────────────────────────────────── */}
         <section className="space-y-2">
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide flex items-center gap-1">
-            <Sprout className="w-3.5 h-3.5" />
-            Recurring Schedules
-          </h2>
+          <SectionHeader>Recurring schedules</SectionHeader>
           {scheduleRows.length === 0 ? (
             <div className="bg-white rounded-lg">
               <EmptyState
@@ -243,13 +224,15 @@ export default async function LawnPage() {
                 title="No recurring schedules yet"
                 description="Create a lawn job to set up a recurring route."
                 action={
-                  <Link
-                    href="/lawn/new"
-                    className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
-                  >
-                    <Plus className="w-4 h-4" />
-                    New lawn job
-                  </Link>
+                  officeLike ? (
+                    <Link
+                      href="/lawn/new"
+                      className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
+                    >
+                      <Plus className="w-4 h-4" />
+                      New lawn job
+                    </Link>
+                  ) : undefined
                 }
               />
             </div>
@@ -299,6 +282,130 @@ export default async function LawnPage() {
               })}
             </div>
           )}
+        </section>
+
+        {/* ── Plan — dispatch & scheduling tools ────────────────────────
+            Tiles are role-gated to their destination page's admission set so
+            a viewer never sees a tile that would bounce them (audit #6). */}
+        {(officeLike || officeOrPm) && (
+          <section className="space-y-2">
+            <SectionHeader>Plan</SectionHeader>
+            <div className="grid grid-cols-2 gap-2">
+              {officeLike && (
+                <Link
+                  href="/lawn/new"
+                  className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  New lawn job
+                </Link>
+              )}
+              {officeLike && (
+                <Link
+                  href="/lawn/calendar"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Calendar className="w-5 h-5" />
+                  Route calendar
+                </Link>
+              )}
+              {officeLike && (
+                <Link
+                  href="/lawn/routes"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Route className="w-5 h-5" />
+                  Routes
+                </Link>
+              )}
+              {officeOrPm && (
+                <Link
+                  href="/lawn/seasonal"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <Snowflake className="w-5 h-5" />
+                  Seasonal
+                </Link>
+              )}
+              {officeLike && (
+                <Link
+                  href="/lawn/weather"
+                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+                >
+                  <CloudSun className="w-5 h-5" />
+                  Weather
+                </Link>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ── Customers & service ─────────────────────────────────────── */}
+        {officeLike && (
+          <section className="space-y-2">
+            <SectionHeader>Customers &amp; service</SectionHeader>
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                href="/admin/customers"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Contact className="w-5 h-5" />
+                Customers
+              </Link>
+              <Link
+                href="/lawn/services"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Scissors className="w-5 h-5" />
+                Services
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {/* ── Money — billing & invoices ────────────────────────────────
+            "Record payment" (cash/check) lands here in Phase C. */}
+        {officeLike && (
+          <section className="space-y-2">
+            <SectionHeader>Money</SectionHeader>
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                href="/lawn/billing"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <FileText className="w-5 h-5" />
+                Billing
+              </Link>
+              <Link
+                href="/invoices"
+                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <Users className="w-5 h-5" />
+                Invoices
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {/* ── Insights — owner analytics (admits every hub viewer) ────── */}
+        <section className="space-y-2">
+          <SectionHeader>Insights</SectionHeader>
+          <Link
+            href="/lawn/insights"
+            className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
+          >
+            <TrendingUp className="w-5 h-5" />
+            Insights
+          </Link>
+        </section>
+
+        {/* ── Recent activity — customer-action notifications ──────────
+            Surfaced here because lawn office users land on /lawn, not
+            /dashboard. RLS-scoped to this org. NotificationsFeed renders its
+            own "Notifications" label (same as /dashboard), so no SectionHeader
+            here — that would double up. */}
+        <section>
+          <NotificationsFeed notifications={notifications} />
         </section>
       </main>
     </div>

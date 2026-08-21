@@ -28,14 +28,16 @@ function SubmittalForm() {
     const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single();
     if (profile?.role !== "office" && profile?.role !== "admin" && profile?.role !== "project_manager") { router.push("/dashboard"); return; }
     setAuthorized(true);
-    const { data: jobRows } = await supabase.from("jobs").select("id, name, type").eq("type","construction").order("created_at",{ascending:false});
+    const [{ data: jobRows }, { data: costCodesRows }] = await Promise.all([
+      supabase.from("jobs").select("id, name, type").eq("type","construction").order("created_at",{ascending:false}),
+      supabase.from("cost_codes").select("id, code, name").order("code"),
+    ]);
     let jobsList = (jobRows ?? []) as {id:string;name:string;type:string}[];
     if (preselectedJob && !jobsList.some(x => x.id === preselectedJob)) {
       const { data: preJob } = await supabase.from("jobs").select("id, name, type").eq("id", preselectedJob).maybeSingle();
       if (preJob) jobsList = [preJob as { id: string; name: string; type: string }, ...jobsList];
     }
     setJobs(jobsList.map(j => ({id:j.id, name:j.name})));
-    const { data: costCodesRows } = await supabase.from("cost_codes").select("id, code, name").order("code");
     setCostCodes(costCodesRows ?? []);
   })(); }, [router, preselectedJob]);
 

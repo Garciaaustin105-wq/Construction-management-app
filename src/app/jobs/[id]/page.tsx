@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
 import JobDetailsEditor from "@/components/JobDetailsEditor";
+import JobCustomerAssignment from "@/components/JobCustomerAssignment";
 import JobAssignment from "@/components/JobAssignment";
 import JobStatusControl from "@/components/JobStatusControl";
 import RfiAnswerForm from "@/components/RfiAnswerForm";
@@ -46,10 +47,10 @@ export default async function JobDetailPage({
 
   // Fan out all per-job reads in parallel (was sequential awaits, so the job
   // page waited on job → photos → rfis → blueprints → receipts → crew).
-  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, jobSubsRes, allSubsRes, schedEventsRes, dailyLogsRes, punchRes, changeOrdersRes, submittalsRes] = await Promise.all([
+  const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, customersRes, jobSubsRes, allSubsRes, schedEventsRes, dailyLogsRes, punchRes, changeOrdersRes, submittalsRes] = await Promise.all([
     supabase
       .from("jobs")
-      .select("id, name, address, description, status, created_at, assigned_crew, customers(name), type")
+      .select("id, name, address, description, status, created_at, assigned_crew, customer_id, customers(name), type")
       .eq("id", id)
       .single(),
     supabase
@@ -82,6 +83,13 @@ export default async function JobDetailPage({
           .select("id, full_name, email, role")
           .in("role", ["crew", "superintendent"])
           .order("full_name")
+      : Promise.resolve({ data: [] }),
+    // Customer picker options — office/PM only (matches who can edit the
+    // assignment below). "Management read customers" RLS (tier_management)
+    // covers office/admin/PM/superintendent, so this always resolves for
+    // whoever the UI actually shows the picker to.
+    OFFICE_OR_PM.has(role)
+      ? supabase.from("customers").select("id, name").order("name")
       : Promise.resolve({ data: [] }),
     // Subcontractors attached to this job — management only.
     MANAGEMENT.has(role)
@@ -167,6 +175,7 @@ export default async function JobDetailPage({
   const blueprints = blueprintsRes.data;
   const receipts = receiptsRes.data;
   const crewMembers = crewRes.data;
+  const customerOptions = (customersRes.data ?? []) as { id: string; name: string }[];
 
   // Flatten attached subcontractors for the JobSubcontractors section.
   const jobSubs: JobSub[] = ((jobSubsRes.data ?? []) as unknown as {
@@ -272,6 +281,18 @@ export default async function JobDetailPage({
             canEdit={OFFICE_OR_PM.has(role)}
           />
         </section>
+
+        {/* Office + project manager: set/change the customer linked to this
+            job. This was previously only settable at job creation
+            (/admin/projects/new) — there was no way to attach or reassign a
+            customer on an existing job afterward. */}
+        {OFFICE_OR_PM.has(role) && (
+          <JobCustomerAssignment
+            jobId={job.id}
+            initialCustomerId={job.customer_id}
+            customers={customerOptions}
+          />
+        )}
 
         {/* Schedule (Gantt) + Inspections summary — all roles can view (RLS scopes
             read); office/PM edit on the dedicated pages. */}
@@ -650,9 +671,20 @@ export default async function JobDetailPage({
           </section>
         )}
 
-        {/* Office only: delete project */}
+        {/* Office only: export + delete project */}
         {isOfficeLike(role) && (
-          <DeleteJobButton jobId={job.id} jobName={job.name} />
+          <>
+            <a
+              href={`/api/jobs/${job.id}/export`}
+              className="block w-full text-center bg-gray-100 text-gray-800 py-3 rounded-lg font-semibold active:bg-gray-200"
+            >
+              Export job profile (ZIP)
+            </a>
+            <p className="text-xs text-gray-400 text-center -mt-2 px-4">
+              Download all files + records for this job before removing it (e.g. to fit a lower plan).
+            </p>
+            <DeleteJobButton jobId={job.id} jobName={job.name} />
+          </>
         )}
       </main>
 

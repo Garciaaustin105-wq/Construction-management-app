@@ -4,7 +4,7 @@ import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
-import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, Contact, FileSpreadsheet, Clock, TrendingUp, Bell } from "lucide-react";
+import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images } from "lucide-react";
 
 export default async function OfficePage() {
   const supabase = await createClient();
@@ -40,10 +40,9 @@ export default async function OfficePage() {
                 <Calendar className="w-5 h-5" />
                 Calendar
               </Link>
-              <Link href="/admin/customers" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-                <Contact className="w-5 h-5" />
-                Customers
-              </Link>
+              {/* Customers lives on the Manage tab only — it was duplicated
+                  here too (Office AND Manage both linking to /admin/customers),
+                  which read as "two customer tabs doing the same thing." */}
               <Link href="/crew/time" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
                 <Clock className="w-5 h-5" />
                 Time Clock
@@ -78,6 +77,13 @@ export default async function OfficePage() {
               <Link href="/submittals" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
                 <FileText className="w-5 h-5" />
                 Submittals
+              </Link>
+              {/* Global photo browser (/photos) — collects every job's photos
+                  in one place. It already existed but had no nav entry point
+                  anywhere in the app, so it was effectively unreachable. */}
+              <Link href="/photos" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+                <Images className="w-5 h-5" />
+                Photos
               </Link>
               {showReports && (
                 <Link href="/admin/reports" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">

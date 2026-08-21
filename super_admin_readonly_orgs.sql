@@ -40,7 +40,7 @@ create policy "Org admin update org" on public.organizations for update
 
 -- ----------------------------------------------------------------------------
 -- Verify: the UPDATE policy qualifier should NO LONGER contain is_super_admin.
---   select polname, qual, with_check
+--   select policyname, qual, with_check
 --   from pg_policies
 --   where schemaname = 'public' and tablename = 'organizations';
 -- ----------------------------------------------------------------------------

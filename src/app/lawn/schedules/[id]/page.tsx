@@ -13,6 +13,7 @@ import LawnPropertyDetails, {
 } from "@/components/LawnPropertyDetails";
 import JobDetailsEditor from "@/components/JobDetailsEditor";
 import JobAssignmentEditor from "@/components/JobAssignmentEditor";
+import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
 import LawnJobFinancials from "@/components/LawnJobFinancials";
 
 type Schedule = {
@@ -71,9 +72,13 @@ export default function ScheduleDetailPage({
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [property, setProperty] = useState<LawnJob | null>(null);
+  const [lawnServices, setLawnServices] = useState<
+    { id: string; name: string; default_price: number }[]
+  >([]);
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [moveDate, setMoveDate] = useState("");
 
@@ -114,7 +119,7 @@ export default function ScheduleDetailPage({
       setSchedule(sched as unknown as Schedule);
 
       const jobId = (sched as unknown as Schedule).job_id;
-      const [{ data: visitRows }, { data: lawnJob }] = await Promise.all([
+      const [{ data: visitRows }, { data: lawnJob }, { data: services }] = await Promise.all([
         supabase
           .from("lawn_visits")
           .select("id, due_date, status, crew_id, notes")
@@ -125,9 +130,18 @@ export default function ScheduleDetailPage({
           .select("*")
           .eq("id", jobId)
           .maybeSingle(),
+        supabase
+          .from("lawn_services")
+          .select("id, name, default_price")
+          .eq("active", true)
+          .order("name"),
       ]);
       setVisits((visitRows as unknown as Visit[]) ?? []);
       setProperty((lawnJob as unknown as LawnJob | null) ?? null);
+      setLawnServices(
+        (services as { id: string; name: string; default_price: number }[]) ??
+          []
+      );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -166,6 +180,23 @@ export default function ScheduleDetailPage({
           }
         : prev
     );
+  }
+
+  // RecurringScheduleEditor save callback: update schedule state with the
+  // edited recurrence patch so the top summary + resetUpcoming use the new
+  // params without a refetch.
+  function onScheduleSaved(patch: {
+    frequency: string;
+    interval_weeks: number;
+    days_of_week: number[];
+    day_of_month: number | null;
+    start_date: string;
+    end_date: string | null;
+    service_type: string | null;
+    price_per_visit: number;
+    notes: string | null;
+  }) {
+    setSchedule((prev) => (prev ? { ...prev, ...patch } : prev));
   }
 
   async function toggleActive() {
@@ -260,6 +291,76 @@ export default function ScheduleDetailPage({
       .order("due_date", { ascending: true });
     setVisits((visitRows as unknown as Visit[]) ?? []);
     toast.success(`Generated ${dueDates.length} upcoming visit date${dueDates.length === 1 ? "" : "s"}`);
+  }
+
+  // Apply the (just-saved) schedule to upcoming visits: delete future PENDING
+  // visits (done/skipped/paused are history, preserved) then regenerate from
+  // today through min(end_date, today+60d). Used after editing mow days so the
+  // new cadence actually reshapes what's upcoming. RLS: "Office manage lawn
+  // visits" (for all, tier_office_or_pm) permits the delete.
+  async function resetUpcoming() {
+    if (!schedule) return;
+    if (!schedule.active) {
+      toast.warning("Resume the route first");
+      return;
+    }
+    setResetting(true);
+    const supabase = createClient();
+    const today = new Date().toISOString().slice(0, 10);
+    // Delete only future pending visits — preserve completed/skipped history.
+    const { error: delErr } = await supabase
+      .from("lawn_visits")
+      .delete()
+      .eq("recurring_schedule_id", schedule.id)
+      .eq("status", "pending")
+      .gte("due_date", today);
+    if (delErr) {
+      setResetting(false);
+      toast.error(`Failed to clear visits: ${delErr.message}`);
+      return;
+    }
+    const to = new Date();
+    to.setUTCDate(to.getUTCDate() + 60);
+    let genTo = to.toISOString().slice(0, 10);
+    if (schedule.end_date && schedule.end_date < genTo) genTo = schedule.end_date;
+    const dueDates = generateDueDates(
+      {
+        frequency: schedule.frequency,
+        interval_weeks: schedule.interval_weeks,
+        days_of_week: schedule.days_of_week,
+        day_of_month: schedule.day_of_month,
+        start_date: schedule.start_date,
+        end_date: schedule.end_date,
+      },
+      today,
+      genTo
+    );
+    if (dueDates.length > 0) {
+      const inserts = dueDates.map((due_date) => ({
+        recurring_schedule_id: schedule.id,
+        job_id: schedule.job_id,
+        due_date,
+        status: "pending" as const,
+      }));
+      const { error: insErr } = await supabase.from("lawn_visits").insert(inserts);
+      if (insErr && insErr.code !== "23505") {
+        setResetting(false);
+        toast.error(`Failed to generate: ${insErr.message}`);
+        return;
+      }
+    }
+    const { data: visitRows } = await supabase
+      .from("lawn_visits")
+      .select("id, due_date, status, crew_id, notes")
+      .eq("recurring_schedule_id", schedule.id)
+      .order("due_date", { ascending: true });
+    setVisits((visitRows as unknown as Visit[]) ?? []);
+    setResetting(false);
+    toast.success(
+      `Upcoming visits reset · ${dueDates.length} date${
+        dueDates.length === 1 ? "" : "s"
+      }`
+    );
   }
 
   async function skipVisit(visitId: string) {
@@ -439,6 +540,45 @@ export default function ScheduleDetailPage({
             Download all photos, visits &amp; records before removing an old account.
           </p>
         </div>
+
+        {/* Recurring schedule — mow days, frequency, season, service, price.
+            Editable after creation (was read-only for life). Saving updates the
+            row; tap "Reset upcoming" below to apply the new cadence to future
+            visits (deletes future pending, preserves done/skipped history). */}
+        <RecurringScheduleEditor
+          scheduleId={schedule.id}
+          initial={{
+            frequency: schedule.frequency as "weekly" | "biweekly" | "monthly",
+            interval_weeks: schedule.interval_weeks,
+            days_of_week: schedule.days_of_week,
+            day_of_month: schedule.day_of_month,
+            start_date: schedule.start_date,
+            end_date: schedule.end_date,
+            service_type: schedule.service_type,
+            price_per_visit: Number(schedule.price_per_visit) || 0,
+            notes: schedule.notes,
+          }}
+          lawnServices={lawnServices}
+          canEdit={authorized}
+          onSaved={onScheduleSaved}
+        />
+        <button
+          type="button"
+          onClick={resetUpcoming}
+          disabled={resetting || !schedule.active}
+          className="w-full bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+        >
+          {resetting ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4" />
+          )}
+          Reset upcoming visits
+        </button>
+        <p className="text-xs text-gray-400 -mt-2">
+          Clears future pending visits and regenerates them from the saved
+ schedule. Past visits are kept.
+        </p>
 
         {/* Property location / name / notes — editable after creation (same
             JobDetailsEditor as the construction job page; edits the jobs row by

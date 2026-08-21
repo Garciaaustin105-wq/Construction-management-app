@@ -20,11 +20,14 @@ const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
 });
 
 // Field crew's own route. Lists lawn_visits where crew_id = the signed-in crew
-// member (crew / superintendent), grouped Overdue / Today / Upcoming. Crew can
-// mark a visit done inline (direct update via RLS — the /status API is
-// office-only and would 403 for crew; crew done does NOT auto-email the
-// customer, office reviews completed visits). Tapping a card opens the visit
-// page for before/after photos + details (opened to crew for their own visits).
+// member (crew / superintendent), grouped Overdue / Today / Upcoming. Crew
+// marks a visit done inline through the /status API (NOT a direct RLS update)
+// so the customer notification suite (service_complete + review_request) fires
+// exactly as it does from the visit detail page — a direct update would
+// silently skip both emails. The /status route admits crew/super for
+// status-only changes and server-checks crew_id === auth.uid(). Tapping a card
+// opens the visit page for before/after photos + details (opened to crew for
+// their own visits).
 //
 // A read-only Google driving-path map of today's pinned stops sits above the
 // list, with an "Open in Google Maps" link that launches turn-by-turn nav.
@@ -200,14 +203,26 @@ export default function MyRoutePage() {
 
   async function markDone(visitId: string) {
     setBusyId(visitId);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("lawn_visits")
-      .update({ status: "done", completed_at: new Date().toISOString() })
-      .eq("id", visitId);
+    // Route through the /status API (not a direct RLS update) so the customer
+    // service_complete / review_request emails fire — the same path the visit
+    // detail page takes. The route admits crew/super for status-only changes
+    // and server-checks crew_id === auth.uid().
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visitId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "done" }),
+      });
+    } catch {
+      setBusyId(null);
+      toast.error("Failed: network error");
+      return;
+    }
     setBusyId(null);
-    if (error) {
-      toast.error(`Failed: ${error.message}`);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
       return;
     }
     setVisits((prev) => prev.filter((v) => v.id !== visitId));

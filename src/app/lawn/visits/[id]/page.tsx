@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
+import SendVisitPhotos from "@/components/SendVisitPhotos";
 import { useToast } from "@/components/Toast";
 import { validateUpload } from "@/lib/uploadValidate";
 import { normalizeImage } from "@/lib/normalizeImage";
@@ -33,11 +34,16 @@ type Visit = {
   notes: string | null;
   recurring_schedule_id: string;
   // customers is reached through jobs (lawn_visits has job_id, no customer_id)
-  // — embed jobs(name, address, customers(name)).
+  // — embed jobs(name, address, customers(name, contact_email, phone)).
+  // contact_email/phone feed the "Send to customer" channel picker.
   jobs: {
     name: string;
     address: string | null;
-    customers: { name: string | null } | null;
+    customers: {
+      name: string | null;
+      contact_email: string | null;
+      phone: string | null;
+    } | null;
   } | null;
 };
 
@@ -81,7 +87,7 @@ export default function VisitDetailPage({
     const { data: v } = await supabase
       .from("lawn_visits")
       .select(
-        "id, job_id, due_date, status, crew_id, completed_at, notes, recurring_schedule_id, jobs(name, address, customers(name))"
+        "id, job_id, due_date, status, crew_id, completed_at, notes, recurring_schedule_id, jobs(name, address, customers(name, contact_email, phone))"
       )
       .eq("id", id)
       .maybeSingle();
@@ -351,6 +357,8 @@ export default function VisitDetailPage({
   const jobName = visit.jobs?.name ?? "—";
   const jobAddress = visit.jobs?.address ?? null;
   const custName = visit.jobs?.customers?.name ?? null;
+  const custEmail = visit.jobs?.customers?.contact_email ?? null;
+  const custPhone = visit.jobs?.customers?.phone ?? null;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -537,7 +545,17 @@ export default function VisitDetailPage({
             </div>
           )}
           {photos.length > 0 ? (
-            <SignedPhotoGrid photos={photos} />
+            <>
+              <SignedPhotoGrid photos={photos} />
+              {/* Send the visit's photo-portal link + a short note to the
+                  customer. Requires at least one photo (enforced here by only
+                  rendering when photos.length > 0, and again server-side). */}
+              <SendVisitPhotos
+                visitId={visit.id}
+                customerEmail={custEmail}
+                customerPhone={custPhone}
+              />
+            </>
           ) : (
             <p className="text-xs text-gray-400 flex items-center gap-1">
               <Images className="w-3.5 h-3.5" />

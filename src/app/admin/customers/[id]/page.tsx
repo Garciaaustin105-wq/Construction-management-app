@@ -28,22 +28,27 @@ export default async function CustomerDetailPage({
   const role = profile?.role ?? "crew";
   if (!MANAGEMENT.has(role)) redirect("/dashboard");
 
-  const { data: cust } = await supabase
-    .from("customers")
-    .select(
-      "id, name, contact_name, contact_email, phone, address, notes, sms_opt_in, email_opt_in"
-    )
-    .eq("id", id)
-    .single();
+  // Customer + jobs are independent reads (both only need `id`) — fan them
+  // out together instead of awaiting one after the other. This was the
+  // biggest chunk of "customer file is slow to react": opening a customer
+  // paid for these two round trips back-to-back when neither depends on the
+  // other. Subs still has to wait on jobs (it needs the resolved job ids).
+  const [{ data: cust }, { data: jobRows }] = await Promise.all([
+    supabase
+      .from("customers")
+      .select(
+        "id, name, contact_name, contact_email, phone, address, notes, sms_opt_in, email_opt_in"
+      )
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("jobs")
+      .select("id, name, status")
+      .eq("type", "construction")
+      .eq("customer_id", id)
+      .order("name"),
+  ]);
   if (!cust) notFound();
-
-  // Jobs for this customer
-  const { data: jobRows } = await supabase
-    .from("jobs")
-    .select("id, name, status")
-    .eq("type", "construction")
-    .eq("customer_id", id)
-    .order("name");
   const jobs: CustomerJob[] = (jobRows ?? []) as CustomerJob[];
 
   // Subcontractors attached to this customer's jobs.

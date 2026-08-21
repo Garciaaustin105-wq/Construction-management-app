@@ -1,10 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import CustomersManager, {
   type Customer,
 } from "@/components/CustomersManager";
 import { MANAGEMENT, PIPELINE, ACCOUNTING, isSuperAdmin } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
+import { MessagesSquare } from "lucide-react";
 
 export default async function CustomersPage() {
   const supabase = await createClient();
@@ -43,7 +46,21 @@ export default async function CustomersPage() {
           role === "office" || role === "admin" ? "Directory" : "Read-only"
         }
       />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
+      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-3">
+        {/* Client Portal (invite customers to the authed portal + reply to
+            their messages) used to be its own top-level nav tab, listing the
+            same customers as this page — it read as a duplicate "Customers"
+            tab. It's construction-only (the lawn deploy blocks the route),
+            so it's linked from here instead, next to the list it shares. */}
+        {!isLawn() && (role === "office" || role === "admin") && (
+          <Link
+            href="/admin/clients"
+            className="flex items-center gap-2 bg-white border border-gray-300 text-gray-900 px-4 py-3 rounded-lg font-semibold text-sm active:bg-gray-50"
+          >
+            <MessagesSquare className="w-4 h-4" />
+            Client Portal & Messages
+          </Link>
+        )}
         <CustomersManager
           initial={(data as Customer[]) ?? []}
           canEdit={role === "office" || role === "admin"}

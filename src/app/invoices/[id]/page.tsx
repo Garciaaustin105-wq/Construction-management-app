@@ -25,37 +25,73 @@ export default async function InvoiceDetailPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+  // profile / invoice / lineItems / paymentRows are all independent reads —
+  // each depends only on `id` (route param) or `user.id`, never on each
+  // other's results — so fetch them concurrently instead of sequentially.
+  const [
+    { data: profile },
+    { data: invoice },
+    { data: lineItems },
+    { data: paymentRows },
+  ] = await Promise.all([
+    supabase.from("profiles").select("role").eq("id", user.id).single(),
+    supabase
+      .from("invoices")
+      .select(
+        "id, status, paid_at, sent_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, accounting_external_id, jobs(name), customers(name, contact_email, phone)"
+      )
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("invoice_line_items")
+      .select("id, description, quantity, unit_price, position")
+      .eq("invoice_id", id)
+      .order("position"),
+    // Recorded offline payments (cash / check / other). RLS scopes reads to
+    // office / customer (their invoice) / accountant. profiles(full_name)
+    // gives the recorder name via the recorded_by FK.
+    supabase
+      .from("payments")
+      .select(
+        "id, amount, method, reference, paid_at, created_at, profiles(full_name)"
+      )
+      .eq("invoice_id", id)
+      .order("paid_at", { ascending: false })
+      .order("created_at", { ascending: false }),
+  ]);
   const role = profile?.role ?? "crew";
 
-  const { data: invoice } = await supabase
-    .from("invoices")
-    .select(
-      "id, status, paid_at, sent_at, created_at, due_date, job_id, customer_id, estimate_id, amount_paid, accounting_external_id, jobs(name), customers(name, contact_email, phone)"
-    )
-    .eq("id", id)
-    .single();
-
   if (!invoice) notFound();
-
-  const { data: lineItems } = await supabase
-    .from("invoice_line_items")
-    .select("id, description, quantity, unit_price, position")
-    .eq("invoice_id", id)
-    .order("position");
 
   const items = lineItems ?? [];
   const total = computeTotal(
     items.map((i) => ({ quantity: Number(i.quantity), unit_price: Number(i.unit_price) }))
   );
-  // amount_paid is seeded with the estimate deposit on approval. The balance
-  // due is the grand total minus what's been paid (0 when fully paid).
+  // amount_paid is seeded with the estimate deposit on approval (or 0 for a
+  // deposit-owed invoice). Recording a cash/check payment ACCUMULATES into it
+  // (see /api/invoices/[id]/payments). The balance due is the grand total minus
+  // what's been paid (0 when fully paid).
   const amountPaid = Number(invoice.amount_paid ?? 0) || 0;
   const balanceDue = Math.max(0, total - amountPaid);
+
+  const payments = (
+    (paymentRows as unknown as Array<{
+      id: string;
+      amount: number | string;
+      method: string;
+      reference: string | null;
+      paid_at: string;
+      created_at: string;
+      profiles: { full_name: string | null } | null;
+    }> | null) ?? []
+  ).map((p) => ({
+    id: p.id,
+    amount: Number(p.amount) || 0,
+    method: p.method,
+    reference: p.reference,
+    paid_at: p.paid_at,
+    recorded_by_name: p.profiles?.full_name ?? null,
+  }));
   const jobName = (invoice.jobs as unknown as { name: string } | null)?.name ?? "—";
   const customerRow = invoice.customers as unknown as
     | { name: string | null; contact_email: string | null; phone: string | null }
@@ -143,7 +179,7 @@ export default async function InvoiceDetailPage({
                 <span className="tabular-nums">{formatMoney(total)}</span>
               </div>
               <div className="flex justify-between text-gray-500">
-                <span>Paid so far (deposit applied)</span>
+                <span>Paid so far</span>
                 <span className="tabular-nums">−{formatMoney(amountPaid)}</span>
               </div>
               <div className="flex justify-between font-semibold text-gray-900">
@@ -206,10 +242,66 @@ export default async function InvoiceDetailPage({
           )}
         </section>
 
+        {/* Recorded offline payments (cash / check / other). The office can
+            record more via the Record payment button in InvoiceActions. */}
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+            Payments ({payments.length})
+          </h2>
+          {payments.length === 0 ? (
+            <div className="bg-white rounded-lg shadow-sm p-3 text-sm text-gray-500">
+              No payments recorded yet
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg shadow-sm divide-y">
+              {payments.map((p) => {
+                const chip =
+                  p.method === "cash"
+                    ? "bg-green-100 text-green-700"
+                    : p.method === "check"
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-gray-100 text-gray-600";
+                return (
+                  <div key={p.id} className="p-3 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${chip}`}
+                        >
+                          {p.method}
+                        </span>
+                        <span className="text-sm font-semibold text-gray-900 tabular-nums">
+                          {formatMoney(p.amount)}
+                        </span>
+                      </div>
+                      {p.reference && (
+                        <p className="text-xs text-gray-500 mt-0.5 truncate">
+                          Ref: {p.reference}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {new Date(p.paid_at).toLocaleDateString()}
+                        {p.recorded_by_name ? ` · by ${p.recorded_by_name}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="p-3 bg-gray-50 flex justify-between items-center rounded-b-lg">
+                <span className="text-sm font-semibold text-gray-900">Paid so far</span>
+                <span className="text-base font-bold text-gray-900 tabular-nums">
+                  {formatMoney(amountPaid)}
+                </span>
+              </div>
+            </div>
+          )}
+        </section>
+
         {(role === "office" || role === "admin" || role === "project_manager") && (
           <InvoiceActions
             invoiceId={invoice.id}
             status={invoice.status}
+            balanceDue={balanceDue}
             customerEmail={customerEmail}
             customerPhone={customerPhone}
             connectedProviders={connectedProviders}

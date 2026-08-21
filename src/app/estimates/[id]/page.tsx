@@ -186,11 +186,22 @@ export default function EstimateDetailPage({
       const estSelect: string = isOffice
         ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, requires_signature, proposal_intro, proposal_accent, signed_proposal_url, jobs(name, address), customers(name, contact_email, phone, address)"
         : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email, phone, address)";
-      const { data: est } = await supabase
-        .from("estimates")
-        .select(estSelect)
-        .eq("id", paramId)
-        .single();
+      // Line items — office reads cost-coded rows + internal_cost + section;
+      // customer reads only customer-safe columns (no cost_code_id, no unit,
+      // no internal_cost). Section is customer-visible. Computed here (not
+      // after the estimate loads) because it only depends on isOffice, so the
+      // estimate + line-item fetches are independent and can run together.
+      const lineSelect = isOffice
+        ? "id, cost_code_id, description, quantity, unit, unit_price, internal_cost, section"
+        : "id, description, quantity, unit_price, section";
+      const [{ data: est }, { data: lineRows }] = await Promise.all([
+        supabase.from("estimates").select(estSelect).eq("id", paramId).single(),
+        supabase
+          .from("estimate_line_items")
+          .select(lineSelect)
+          .eq("estimate_id", paramId)
+          .order("position"),
+      ]);
 
       if (!est) {
         toast.error("Estimate not found");
@@ -218,17 +229,6 @@ export default function EstimateDetailPage({
       setProposalIntro(e.proposal_intro ?? "");
       setProposalAccent(e.proposal_accent ?? "");
 
-      // Line items — office reads cost-coded rows + internal_cost + section;
-      // customer reads only customer-safe columns (no cost_code_id, no unit,
-      // no internal_cost). Section is customer-visible.
-      const lineSelect = isOffice
-        ? "id, cost_code_id, description, quantity, unit, unit_price, internal_cost, section"
-        : "id, description, quantity, unit_price, section";
-      const { data: lineRows } = await supabase
-        .from("estimate_line_items")
-        .select(lineSelect)
-        .eq("estimate_id", paramId)
-        .order("position");
       setItems(
         (lineRows as LineRow[] | null ?? []).map((row) => ({
           cost_code_id: (row as LineRow).cost_code_id ?? null,
