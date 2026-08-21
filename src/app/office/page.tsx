@@ -4,7 +4,7 @@ import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
-import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images } from "lucide-react";
+import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera } from "lucide-react";
 
 export default async function OfficePage() {
   const supabase = await createClient();
@@ -39,6 +39,14 @@ export default async function OfficePage() {
               <Link href="/calendar" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
                 <Calendar className="w-5 h-5" />
                 Calendar
+              </Link>
+              {/* Photos (/crew/photo) — lawn has no Field hub (construction
+                  reaches it from Field), so the photo capture page lives on
+                  the Office hub for mobile. Matches the desktop sidebar, which
+                  already gives office/admin a Photos tab. */}
+              <Link href="/crew/photo" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+                <Camera className="w-5 h-5" />
+                Photos
               </Link>
               {/* Customers lives on the Manage tab only — it was duplicated
                   here too (Office AND Manage both linking to /admin/customers),

@@ -37,6 +37,7 @@ export default function Sidebar() {
   }
 
   const items = buildNavItems(role);
+  const hrefs = items.map((i) => i.href);
 
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-200 z-30 flex-col">
@@ -55,10 +56,21 @@ export default function Sidebar() {
       {/* Nav items - flex-1 so the sign-out row pins to the bottom. */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
         {items.map(({ href, label, Icon, badge }: NavItem) => {
-          // startsWith so a sub-page keeps its section highlighted (natural for
-          // a persistent sidebar). BottomNav keeps exact match on mobile.
+          // A row is active on an exact match, or on a path-prefix match ONLY
+          // when no other row sits closer to the current path. Without the
+          // "longest prefix wins" guard, a parent href like /lawn (Home) would
+          // also highlight on /lawn/jobs (Jobs) — both rows lit at once.
+          // BottomNav avoids this via explicit hub aliases; the flat sidebar
+          // needs the guard since one href can be a prefix of another.
+          const prefixMatch = pathname.startsWith(href + "/");
+          const longerMatchExists = hrefs.some(
+            (other) =>
+              other !== href &&
+              other.startsWith(href + "/") &&
+              (pathname === other || pathname.startsWith(other + "/")),
+          );
           const active =
-            pathname === href || pathname.startsWith(href + "/");
+            pathname === href || (prefixMatch && !longerMatchExists);
           const showBadge = badge === "unread" && unread > 0;
           return (
             <Link

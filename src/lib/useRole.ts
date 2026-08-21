@@ -13,14 +13,41 @@
 // paint (after the first load), eliminating the flash — same approach the
 // branding store takes for the TopBar logo/name.
 //
+// The COLD-LOAD flash remained even with the store: on the very first paint
+// `_role` is still null, so the chrome painted the null-role fallback nav for
+// one frame (desktop: full office sidebar; mobile: flat base bar) before the
+// profile fetch resolved. The root layout now reads the profile SERVER-side and
+// seeds it via `RoleSeedProvider`, so `useRole`'s first paint already has the
+// real role. The store still drives live updates (invalidateRole, sign-out) and
+// is the fallback when no seed is present.
+//
 // `_role` is the current value (seeds new subscribers so they never flash the
 // null/base nav after the first load); `_cache` dedups the fetch; `_listeners`
 // receive live updates. The store is reset on SIGNED_OUT so a different user
 // signing in afterward (same tab, no hard reload) never sees the previous role.
 
-import { useEffect, useState } from "react";
+import { createContext, createElement, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Role } from "@/lib/roles";
+
+// Server-seeded initial role (from the root layout's profile read). `undefined`
+// means "no provider above this component" → fall back to the module store.
+const RoleSeedContext = createContext<Role | null | undefined>(undefined);
+
+// Wraps the app in the root layout so every useRole() subscriber paints with
+// the server-known role on its FIRST client frame — no cold-load nav flash.
+// (createElement, not JSX, because this module is .ts — imported everywhere as
+// `@/lib/useRole` — so it can't be renamed to .tsx without churning callers.)
+export function RoleSeedProvider({
+  value,
+  children,
+}: {
+  value: Role | null;
+  children: ReactNode;
+}) {
+  return createElement(RoleSeedContext.Provider, { value }, children);
+}
 
 let _role: Role | null = null;
 let _cache: Promise<Role | null> | null = null;
@@ -74,9 +101,14 @@ export function invalidateRole() {
 }
 
 export function useRole(): Role | null {
-  // Seed from the store's current value so a remount already has the real role
-  // on its first paint — no Billing/Platform flash after the first load.
-  const [role, setRole] = useState<Role | null>(_role);
+  // Prefer the module store's current value (warm remounts / live updates),
+  // then the server-seeded role (cold first load), then null. On a cold load
+  // _role is null so the server seed wins → the first paint has the real role
+  // and the chrome never flashes the null-role fallback nav.
+  const seed = useContext(RoleSeedContext);
+  const [role, setRole] = useState<Role | null>(
+    _role ?? (seed ?? null),
+  );
   useEffect(() => {
     _listeners.add(setRole);
     if (!_cache) _cache = refreshRole();

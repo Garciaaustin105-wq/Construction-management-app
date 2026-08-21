@@ -360,6 +360,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
             "/calendar",
             "/admin/crew-members",
             "/crew/time",
+            "/crew/photo",
             "/lawn/insights",
             "/lawn/notifications",
             "/admin/email-preview",
