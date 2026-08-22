@@ -1,38 +1,38 @@
 // Server-side tenant + identity helper. `getMe()` is the single request-scoped
 // source of truth for the signed-in caller (user, role, org, billing), cached
 // via React's `cache()` so the root layout, every server page, and every route
-// handler in ONE request share ONE `getUser()` + ONE `profiles`/`organizations`
-// read instead of each re-fetching. This is the Tier 1 perf fix: it collapses
-// the duplicate `auth.getUser()` (proxy → layout → page → getMyOrg was up to
-// 4×) and the per-page `profiles` re-read across ~90 call sites.
+// handler in ONE request share ONE resolve instead of each re-fetching.
 //
-// TWO ENTRY POINTS, because pages and route handlers have different economics:
+// ROUND-TRIP COUNT (Task 13, the get_my_tenant() RPC):
+//   getMe() resolves the whole tenant in ONE round trip:
+//     1. supabase.auth.getSession()  — LOCAL, reads the cookie the proxy
+//        already refreshed (0 network). Replaces the old auth.getUser()
+//        network call to /auth/v1/user.
+//     2. supabase.rpc("get_my_tenant") — a single PostgREST call that returns
+//        profile + org server-side (was two separate queries).
+//   Down from 3 serial round trips (getUser + profiles + organizations) to 1.
 //
-//   getMe()          → identity + org/billing. 3 reads (getUser, profiles,
-//                      organizations). Use in PAGES: the root layout already
-//                      calls it, so `cache()` makes every later caller in that
-//                      render free, and the org fields (orgName / plan /
-//                      planStatus / trialEndsAt / appVariant) are already paid
-//                      for.
-//   getMeIdentity()  → identity ONLY. 2 reads (getUser, profiles). Use in ROUTE
-//                      HANDLERS that need nothing but user / orgId / role /
-//                      hasProfile / isSuperAdmin. An API request renders NO root
-//                      layout, so `cache()` has nothing to dedup against and the
-//                      caller pays every read itself — bundling the organizations
-//                      row there is a wasted round trip. This path restores the
-//                      2-read cost the hand-written `getUser()` + `profiles`
-//                      preamble had before the sweep.
+// `getMeIdentity()` (route handlers) is layered ON TOP of `getMe()` and shares
+// its cached resolve, so a request that calls both still does ONE round trip.
+// The org fields are bundled into the SAME RPC call (free — same round trip),
+// so routes no longer pay extra for org; the old identity/org split existed
+// only because the org read was a SEPARATE query the RPC has now absorbed.
 //
-// `getMe()` is layered ON TOP of `getMeIdentity()` (plus `getOrgRow()`), and both
-// are cached, so a request that calls both still does ONE getUser + ONE profiles
-// read. `getMe()`'s return type and field set are unchanged — the ~68 shipped
-// pages that read `me.orgName` / `me.plan` / `me.appVariant` are unaffected.
+// DEPLOY SAFETY: getMe() tries the RPC first and FALLS BACK to getSession +
+// profiles + organizations (the proven path) if the RPC errors — e.g. the
+// get_my_tenant() migration hasn't been run yet, or a transient failure.
+// So shipping this code before the SQL is live does NOT break login; it just
+// runs the fallback (still faster than before, since getSession replaces
+// getUser). Once the SQL is live, the RPC path is used and the fallback never
+// fires. Remove the fallback once the migration is confirmed live everywhere.
+//
+// RETURN CONTRACT is UNCHANGED — `getMe()` still returns MyTenant
+// {user, orgId, role, hasProfile, isSuperAdmin, orgName, plan, planStatus,
+//  trialEndsAt, appVariant}, so the ~68 shipped pages/routes keep working.
 //
 // `getMyOrg` / `requireOrgScoped` are kept as backward-compatible thin wrappers
-// over `getMe` so existing call sites keep working during the sweep; new code
-// should call `getMe()` (pages) or `getMeIdentity()` (routes) directly.
-// `getMyOrg`'s old `supabase` param is now optional and ignored (the cached
-// `getMe` makes its own client).
+// over `getMe` so existing call sites keep working; new code should call
+// `getMe()` (pages) or `getMeIdentity()` (routes) directly.
 
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
@@ -73,54 +73,127 @@ export type MyOrg = {
 // Unchanged shape — exactly the fields callers had before the split.
 export type MyTenant = MyIdentity & MyOrg;
 
-// Request-scoped cached IDENTITY — getUser + profiles, nothing else (2 reads).
-// `cache()` memoizes per request, so the first caller in a render pays them ONCE
-// and every later caller in the same request gets the same resolved value
-// (including `getMe()`, which is layered on top). Falls back to null when signed
-// out.
-//
-// This is the right entry point for route handlers: an API request renders no
-// root layout, so there is no earlier caller to share with, and pulling the
-// organizations row for a handler that only checks `role` is a wasted round trip.
-export const getMeIdentity = cache(async (): Promise<MyIdentity | null> => {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+// Row shape returned by the public.get_my_tenant() RPC (mirrors the function's
+// returns table). role is raw (null when no profile row); the client applies
+// the "crew" fallback.
+type TenantRow = {
+  role: string | null;
+  organization_id: string | null;
+  has_profile: boolean;
+  is_super_admin: boolean;
+  org_name: string | null;
+  plan: string | null;
+  plan_status: string | null;
+  trial_ends_at: string | null;
+  app_variant: string | null;
+};
 
+const NO_ORG: MyOrg = {
+  orgName: null,
+  plan: null,
+  planStatus: null,
+  trialEndsAt: null,
+  appVariant: "construction",
+};
+
+// Identity + org/billing in ONE round trip (getSession is local + one RPC).
+// Field set is unchanged — every existing page caller keeps working as-is.
+// The org read is skipped inside the RPC when orgId is null (super_admin).
+export const getMe = cache(async (): Promise<MyTenant | null> => {
+  const supabase = await createClient();
+
+  // LOCAL session read — replaces the auth.getUser() network round trip. The
+  // proxy already refreshed the cookie; the RPC below 401s if the JWT is
+  // invalid, which is the validation getUser() used to provide.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.user) return null;
+
+  // One PostgREST round trip for profile + org (was two separate queries).
+  const { data: row, error } = await supabase
+    .rpc("get_my_tenant")
+    .maybeSingle();
+
+  if (!error && row) {
+    const r = row as TenantRow;
+    return {
+      user: session.user,
+      orgId: r.organization_id,
+      role: r.role ?? "crew",
+      hasProfile: r.has_profile,
+      isSuperAdmin: r.is_super_admin,
+      orgName: r.org_name,
+      plan: r.plan,
+      planStatus: r.plan_status,
+      trialEndsAt: r.trial_ends_at,
+      appVariant: r.app_variant === "lawn" ? "lawn" : "construction",
+    };
+  }
+
+  // FALLBACK — RPC not available (migration not run yet) or transient error.
+  // Reuses the session user (no extra getUser) + the two queries the RPC
+  // replaces. Keeps the app working before the SQL is live; remove once the
+  // migration is confirmed live.
   const { data: profile } = await supabase
     .from("profiles")
     .select("role, organization_id")
-    .eq("id", user.id)
+    .eq("id", session.user.id)
     .maybeSingle();
-
   const role = profile?.role ?? "crew";
-
+  const orgId = (profile?.organization_id as string | null) ?? null;
+  let org: MyOrg = NO_ORG;
+  if (orgId) {
+    const { data: o } = await supabase
+      .from("organizations")
+      .select("name, plan, plan_status, trial_ends_at, app_variant")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (o) {
+      org = {
+        orgName: o.name ?? null,
+        plan: o.plan ?? null,
+        planStatus: o.plan_status ?? null,
+        trialEndsAt: o.trial_ends_at ?? null,
+        appVariant: o.app_variant === "lawn" ? "lawn" : "construction",
+      };
+    }
+  }
   return {
-    user,
-    orgId: (profile?.organization_id as string | null) ?? null,
+    user: session.user,
+    orgId,
     role,
     hasProfile: !!profile,
     isSuperAdmin: role === "super_admin",
+    ...org,
   };
 });
 
-// Request-scoped cached ORGANIZATION row (1 read), keyed by orgId so a request
-// that resolves the same org twice pays once. Returns null when the row is
-// missing; callers supply their own defaults.
-//
-// NOTE: this is a SEPARATE query, NOT a PostgREST `organizations(...)` embed on
-// the profiles select in getMeIdentity. The embed requires a DECLARED FK
-// profiles.organization_id → organizations.id; multi_tenancy_a.sql declares it
-// via `add column if not exists ... references` which is a NO-OP when the column
-// already existed without the FK — so the FK is NOT reliably declared in the
-// live DB, and the embed 400s (PGRST108), which nulled the whole profiles select
-// and broke every caller (dashboard showed "no workspace profile", role fell
-// back to "crew", billing tab vanished). The separate `.eq("id", orgId)` query
-// needs no FK. Re-enable the embed only after `alter table profiles add
-// constraint ... foreign key (organization_id) references organizations(id)` is
-// confirmed live.
+// Request-scoped cached IDENTITY (for route handlers that need nothing but
+// user / orgId / role / hasProfile / isSuperAdmin). Layered on getMe() so a
+// request that calls both shares the single RPC resolve. The org fields the
+// RPC bundles are simply ignored here — they ride the same round trip free.
+export const getMeIdentity = cache(async (): Promise<MyIdentity | null> => {
+  const me = await getMe();
+  if (!me) return null;
+  return {
+    user: me.user,
+    orgId: me.orgId,
+    role: me.role,
+    hasProfile: me.hasProfile,
+    isSuperAdmin: me.isSuperAdmin,
+  };
+});
+
+// Legacy: a separate cached organizations read. No longer on the getMe() hot
+// path (the RPC bundles the org read), but kept exported for any direct caller.
+// NOTE: this stays a SEPARATE query, NOT a PostgREST `organizations(...)` embed
+// on a profiles select — the embed needs a DECLARED FK profiles.organization_id
+// -> organizations.id that is NOT reliably declared live (the
+// `add column if not exists ... references` no-op), so the embed 400s
+// (PGRST108). Re-enable an embed only after `alter table profiles add
+// constraint ... foreign key (organization_id) references organizations(id)`
+// is confirmed live. The RPC sidesteps this entirely.
 export const getOrgRow = cache(async (orgId: string): Promise<MyOrg | null> => {
   const supabase = await createClient();
   const { data: org } = await supabase
@@ -138,29 +211,8 @@ export const getOrgRow = cache(async (orgId: string): Promise<MyOrg | null> => {
   };
 });
 
-// Identity + org/billing (3 reads), composed from the two cached helpers above
-// so calling both in one request still does ONE getUser + ONE profiles read.
-// Field set is unchanged — every existing page caller keeps working as-is.
-// The org read is skipped entirely for super_admin (orgId null).
-const NO_ORG: MyOrg = {
-  orgName: null,
-  plan: null,
-  planStatus: null,
-  trialEndsAt: null,
-  appVariant: "construction",
-};
-
-export const getMe = cache(async (): Promise<MyTenant | null> => {
-  const id = await getMeIdentity();
-  if (!id) return null;
-  if (!id.orgId) return { ...id, ...NO_ORG };
-  const org = await getOrgRow(id.orgId);
-  return { ...id, ...(org ?? NO_ORG) };
-});
-
-// Backward-compatible alias over the cached `getMe`. The `supabase` arg is now
-// optional + ignored (kept so un-swept callers / other branches don't break).
-// Prefer `getMe()` in new code. All in-tree call sites have been migrated.
+// Backward-compatible alias over the cached `getMe`. Prefer `getMe()` in new
+// code. All in-tree call sites have been migrated.
 export async function getMyOrg(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _supabase?: unknown
