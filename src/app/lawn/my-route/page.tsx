@@ -10,7 +10,6 @@ import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
 import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X } from "lucide-react";
 import type { RouteStop } from "@/lib/lawnRouting";
-import SkipReasonPicker from "@/components/SkipReasonPicker";
 
 // Google Maps touches window — load the map client-only.
 const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
@@ -19,6 +18,17 @@ const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
     <div className="w-full h-[300px] rounded-lg bg-gray-100 animate-pulse" />
   ),
 });
+
+// Only mounts after the crew taps "Skip" — kept out of the first-load bundle.
+const SkipReasonPicker = dynamic(
+  () => import("@/components/SkipReasonPicker"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[104px] rounded-lg bg-amber-50 border border-amber-200 animate-pulse" />
+    ),
+  }
+);
 
 // Field crew's own route. Lists lawn_visits where crew_id = the signed-in crew
 // member (crew / superintendent), grouped Overdue / Today / Upcoming. Crew

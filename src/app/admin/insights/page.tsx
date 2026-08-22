@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { MANAGEMENT, ACCOUNTING, PIPELINE } from "@/lib/roles";
 import { isConstruction } from "@/lib/variant";
-import { getMyOrg, type MyTenant } from "@/lib/tenant";
+import { getMe, type MyTenant } from "@/lib/tenant";
 import { getOrgBilling } from "@/lib/billing";
 import { formatMoney } from "@/lib/money";
 import { startOfWeek, addDays, toISODate, hoursFromMs } from "@/lib/weekUtils";
@@ -104,12 +104,9 @@ type ChangeOrderRow = {
 
 export default async function ConstructionInsightsPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant: MyTenant | null = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant: MyTenant | null = await getMe();
   if (!tenant) redirect("/login");
   // Insights = the broad read surface: management (office/admin/super/PM) +
   // accountant (read-only financials) + sales (pipeline). Crew/customer bounce.

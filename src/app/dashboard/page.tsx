@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
@@ -27,16 +28,9 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 export default async function DashboardPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const { user } = me;
 
   // No profile row means the auth user exists but no workspace was created
   // (e.g. a signup that didn't persist the profile, or a dashboard-created
@@ -44,7 +38,7 @@ export default async function DashboardPage() {
   // looks like a successful login to the wrong project — surface the broken
   // state so it gets fixed. ("Users read own profile" is just id = auth.uid(),
   // so a null result reliably means no profile, not an RLS hiccup.)
-  if (!profile) {
+  if (!me.hasProfile) {
     return (
       <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
         <TopBar title="Account not set up" showSignOut />
@@ -68,7 +62,7 @@ export default async function DashboardPage() {
     );
   }
 
-  const role = profile.role ?? "crew";
+  const role = me.role;
 
   // Lawn variant: the lawn landing is /lawn (schedules + today's route). The
   // construction-oriented dashboard doesn't apply to a lawn org, so redirect
@@ -78,15 +72,9 @@ export default async function DashboardPage() {
 
   // Show the user's OWN organization name (not a hardcoded brand) so each
   // tenant sees their own workspace — otherwise every new business is labelled
-  // "Terra Vista" and appears to be someone else's project. "Org members read
-  // org" admits same_org, so a user with a profile can read their own org;
-  // super_admin has org_id null and lands on the platform view instead.
-  const { data: orgRow } = await supabase
-    .from("organizations")
-    .select("name")
-    .eq("id", profile.organization_id)
-    .maybeSingle();
-  const orgName = orgRow?.name ?? "Workspace";
+  // "Terra Vista" and appears to be someone else's project. Folded into the
+  // cached getMe() embed, so no separate organizations round trip.
+  const orgName = me.orgName ?? "Workspace";
 
   // admin supersetes office on the office surface (grid, weekly report,
   // invoices, RFIs). super_admin does NOT get the office surface — they get a

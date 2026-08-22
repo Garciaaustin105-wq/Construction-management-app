@@ -330,7 +330,17 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
             <div className="grid grid-cols-2 gap-2">
               {photos.map((p) => (
                 <a key={p.id} href={p.url} target="_blank" rel="noreferrer">
-                  <img src={p.url} alt={p.caption ?? ""} className="rounded w-full h-32 object-cover" />
+                  {/* Signed URL (createSignedUrl, 1h) — the rotating token makes
+                      it a fresh optimizer cache key every hour, so plain <img>
+                      with a fixed CSS box beats next/image here. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.url}
+                    alt={p.caption ?? ""}
+                    loading="lazy"
+                    decoding="async"
+                    className="rounded w-full h-32 object-cover"
+                  />
                 </a>
               ))}
             </div>

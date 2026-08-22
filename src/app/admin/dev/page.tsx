@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import {
   Building,
   Sprout,
@@ -59,13 +59,11 @@ const STATUS_STYLE: Record<string, string> = {
 
 export default async function DevPanelPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant = await getMyOrg(supabase);
-  if (!tenant || !tenant.isSuperAdmin) redirect("/dashboard");
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
+  if (!tenant) redirect("/login");
+  if (!tenant.isSuperAdmin) redirect("/dashboard");
 
   const [orgsRes, profilesRes, jobsRes, invoicesRes, timesRes, eventsRes] =
     await Promise.all([

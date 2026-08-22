@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Providers from "@/components/Providers";
 import { BRAND } from "@/lib/brand";
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
 
 // Brand color vars set per-deploy on <html> so the --brand/--brand-dark/
@@ -45,20 +45,15 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // BottomNav) paints with the real role on its FIRST frame — eliminating the
   // cold-load null→resolved nav flash (wrong tabs for one frame). Best-effort:
   // any failure yields null, which the client useRole store refreshes anyway.
+  //
+  // Uses the request-scoped cached `getMe()` so this read is SHARED with every
+  // server page/route in the same request — each used to re-run getUser() +
+  // profiles on top of this. (Tier 1 perf fix.) The Suspense/PPR static-shell
+  // unlock is deferred (would reintroduce the cold-load nav flash).
   let initialRole: Role | null = null;
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-      initialRole = (profile?.role as Role) ?? null;
-    }
+    const me = await getMe();
+    initialRole = me ? ((me.role as Role) ?? null) : null;
   } catch {
     initialRole = null;
   }

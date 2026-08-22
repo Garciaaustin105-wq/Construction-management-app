@@ -14,6 +14,7 @@
 // (description, quantity, unit, unit_price). Decision buttons are
 // rendered by the caller (interactive/client), not by this component.
 
+import Image from "next/image";
 import { formatMoney } from "@/lib/money";
 
 export type InvoiceDocumentProps = {
@@ -71,10 +72,15 @@ export default function InvoiceDocument({
           <div className="min-w-0 flex items-center gap-3">
             {orgLogoUrl && (
               // White chip so a colored logo stays readable on the dark header.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              // Public storage URL (getPublicUrl) — no rotating token, so the
+              // optimizer caches it. w/h are the max box; object-contain
+              // letterboxes any logo aspect and reserves the space so the org
+              // name beside it doesn't shift once the logo lands.
+              <Image
                 src={orgLogoUrl}
                 alt={orgName}
+                width={150}
+                height={40}
                 className="h-10 w-auto max-w-[150px] shrink-0 object-contain rounded bg-white p-1"
               />
             )}

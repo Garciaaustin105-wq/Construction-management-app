@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { MANAGEMENT, ACCOUNTING, PIPELINE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
-import { getMyOrg, type MyTenant } from "@/lib/tenant";
+import { getMe, type MyTenant } from "@/lib/tenant";
 import { getOrgBilling } from "@/lib/billing";
 import {
   computeTotal,
@@ -129,12 +129,9 @@ function estimateGrand(est: EstimateRow): number {
 
 export default async function LawnInsightsPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant: MyTenant | null = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant: MyTenant | null = await getMe();
   if (!tenant) redirect("/login");
   // Lawn insights: management + accountant (read-only) + sales (pipeline).
   // Was OFFICE_LIKE; widened so accountant/sales/PM/super can read lawn analytics.

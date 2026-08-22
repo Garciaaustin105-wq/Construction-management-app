@@ -4,8 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { OFFICE_OR_PM } from "@/lib/roles";
+import dynamic from "next/dynamic";
 import { Plus, ArrowLeft, ListChecks, Loader2, Layers } from "lucide-react";
-import BulkScheduleEditModal from "@/components/BulkScheduleEditModal";
+
+// Interaction-only modal — only mounts once "Bulk edit" is pressed, so its form
+// state + markup stay out of the page's first-load bundle.
+const BulkScheduleEditModal = dynamic(
+  () => import("@/components/BulkScheduleEditModal"),
+  { ssr: false }
+);
 
 export default function LawnJobsPage() {
   const router = useRouter();

@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { BookOpen } from "lucide-react";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 import { isOfficeLike } from "@/lib/roles";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
@@ -25,12 +25,9 @@ function formatStorage(bytes: number | null): string {
 
 export default async function BillingPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) redirect("/login");
   if (!isOfficeLike(tenant.role) || !tenant.orgId) redirect("/dashboard");
 

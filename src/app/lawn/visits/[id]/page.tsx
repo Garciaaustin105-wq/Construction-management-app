@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import TopBar from "@/components/TopBar";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import SendVisitPhotos from "@/components/SendVisitPhotos";
-import SkipReasonPicker from "@/components/SkipReasonPicker";
+import dynamic from "next/dynamic";
 import { useToast } from "@/components/Toast";
 import { validateUpload } from "@/lib/uploadValidate";
 import { normalizeImage } from "@/lib/normalizeImage";
@@ -24,6 +24,17 @@ import {
 import LawnPropertyDetails, {
   type LawnJob,
 } from "@/components/LawnPropertyDetails";
+
+// Only mounts after "Skip" is pressed — kept out of the first-load bundle.
+const SkipReasonPicker = dynamic(
+  () => import("@/components/SkipReasonPicker"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[104px] rounded-lg bg-amber-50 border border-amber-200 animate-pulse" />
+    ),
+  }
+);
 
 type Visit = {
   id: string;

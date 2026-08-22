@@ -6,6 +6,7 @@ import { FIELD_MGMT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
+import { getMe } from "@/lib/tenant";
 import Link from "next/link";
 import {
   Plus,
@@ -78,17 +79,11 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 export default async function LawnPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + a separate profiles round-trip for the role.
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const role = me.role;
   // super_admin is a PLATFORM role with a null org; same_org() short-circuits
   // true for it, so every query on this page (lawn_visits, recurring_schedules,
   // notifications — all org-scoped) would aggregate EVERY tenant's data. That

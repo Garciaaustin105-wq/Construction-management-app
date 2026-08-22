@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 
 // Returns the caller's org plan + effective status + limits. Any org member
@@ -8,7 +8,9 @@ import { getEffectiveBilling } from "@/lib/billing";
 
 export async function GET() {
   const supabase = await createClient();
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }

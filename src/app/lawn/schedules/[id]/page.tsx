@@ -15,7 +15,19 @@ import JobDetailsEditor from "@/components/JobDetailsEditor";
 import JobAssignmentEditor from "@/components/JobAssignmentEditor";
 import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
 import LawnJobFinancials from "@/components/LawnJobFinancials";
-import SkipReasonPicker from "@/components/SkipReasonPicker";
+import dynamic from "next/dynamic";
+
+// Only mounts after "Skip" is pressed on a visit row — kept out of the
+// first-load bundle.
+const SkipReasonPicker = dynamic(
+  () => import("@/components/SkipReasonPicker"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[104px] rounded-lg bg-amber-50 border border-amber-200 animate-pulse" />
+    ),
+  }
+);
 
 type Schedule = {
   id: string;

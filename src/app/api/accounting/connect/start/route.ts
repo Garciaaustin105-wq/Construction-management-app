@@ -1,6 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { isOfficeLike } from "@/lib/roles";
 import { getProvider } from "@/lib/accounting/provider";
 import { signState } from "@/lib/accounting/crypto";
@@ -16,15 +15,9 @@ export const dynamic = "force-dynamic";
 // org. The provider id comes from the request body so one route serves all.
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }

@@ -6,7 +6,7 @@ import TopBar from "@/components/TopBar";
 import CalendarFeedCard from "./CalendarFeedCard";
 import MonthGrid from "./MonthGrid";
 import AgendaList from "./AgendaList";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { getCalendarEvents } from "@/lib/calendarEvents";
 
 // In-app calendar: a month grid + agenda list of this org's events (job
@@ -30,13 +30,12 @@ export default async function CalendarPage({
   const month = sp.month ?? "";
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant = await getMyOrg(supabase);
-  if (!tenant) redirect("/login");
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const tenant = me;
+  const user = me.user;
 
   // Build the public feed URL host from the incoming request so it works in
   // preview deploys + production without an env var.

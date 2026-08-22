@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:analyze": "ANALYZE=true next build",
     "start": "next start",
     "lint": "eslint",
     "rasterize": "node scripts/rasterize-icons.mjs"
@@ -31,6 +32,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^16.3.2",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/postcss": "^4",
     "@types/google.maps": "^3.58.1",

@@ -1,6 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { isOfficeLike } from "@/lib/roles";
 import { getConnection } from "@/lib/accounting/connections";
 import type { AccountingProviderId } from "@/lib/accounting/provider";
@@ -13,15 +12,9 @@ export const dynamic = "force-dynamic";
 // `probe=true` (off by default to avoid a refresh on every billing-page load).
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }

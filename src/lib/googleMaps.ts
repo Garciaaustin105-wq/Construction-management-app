@@ -14,8 +14,14 @@
 // a second Loader throws, and `load()` is idempotent (repeated calls resolve to
 // the same promise). So we memoize ONE Loader + ONE in-flight load at module
 // scope and just hand out the resolved `google` global.
-
-import { Loader } from "@googlemaps/js-api-loader";
+//
+// The loader package itself is `await import`ed INSIDE loadGoogleMaps rather
+// than imported at module scope. AddressInput imports this module statically
+// (it must render as a plain input before Google is ready), so a top-level
+// import would pull the loader wrapper into the first-load bundle of every
+// customer/job form — even the ones where the user never focuses the address
+// field. Deferring it means the wrapper is fetched only when a map or
+// autocomplete actually boots.
 
 export const GOOGLE_MAPS_API_KEY =
   process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
@@ -33,16 +39,27 @@ export function loadGoogleMaps(): Promise<typeof google> {
     );
     return _loadPromise;
   }
-  const loader = new Loader({
-    apiKey: GOOGLE_MAPS_API_KEY,
-    version: "weekly",
-    // `places` is required by AddressInput (Autocomplete). Geocoder,
-    // DirectionsService, and DistanceMatrixService are all in core (no library
-    // needed). Loading `places` here means a single script load covers every
-    // map + autocomplete instance in the app.
-    libraries: ["places"],
-  });
-  // loader.load() resolves once the `google` global is available.
-  _loadPromise = loader.load().then(() => google);
+  // Script already injected (e.g. the module store was reset by a remount but
+  // the `google` global from a previous load is still on window). Skip both the
+  // dynamic import and a second script injection.
+  if (typeof google !== "undefined" && google.maps) {
+    _loadPromise = Promise.resolve(google);
+    return _loadPromise;
+  }
+  _loadPromise = (async () => {
+    const { Loader } = await import("@googlemaps/js-api-loader");
+    const loader = new Loader({
+      apiKey: GOOGLE_MAPS_API_KEY,
+      version: "weekly",
+      // `places` is required by AddressInput (Autocomplete). Geocoder,
+      // DirectionsService, and DistanceMatrixService are all in core (no library
+      // needed). Loading `places` here means a single script load covers every
+      // map + autocomplete instance in the app.
+      libraries: ["places"],
+    });
+    // loader.load() resolves once the `google` global is available.
+    await loader.load();
+    return google;
+  })();
   return _loadPromise;
 }

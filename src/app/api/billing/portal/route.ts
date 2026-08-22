@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { createPortalSession } from "@/lib/billing";
 
 // Open the Stripe Customer Portal (update card, cancel, view invoices).
@@ -8,14 +8,9 @@ import { createPortalSession } from "@/lib/billing";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }

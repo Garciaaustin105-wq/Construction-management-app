@@ -1,7 +1,6 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 import { ASSIGNABLE_ROLES, isOfficeLike, isSuperAdmin } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import { getOrgBilling, createGate, effectiveStatus } from "@/lib/billing";
@@ -44,15 +43,9 @@ function canCreate(callerRole: string, targetRole: string): boolean {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }

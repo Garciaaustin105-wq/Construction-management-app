@@ -3,19 +3,16 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { Building, Users as UsersIcon, ArrowRight } from "lucide-react";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 
 // Platform view — super_admin only. Lists every organization with a member
 // count and a link to edit that org's business info. Any non-super_admin is
 // bounced to the dashboard.
 export default async function OrgsPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant || !tenant.isSuperAdmin) redirect("/dashboard");
 
   const { data: orgs } = await supabase

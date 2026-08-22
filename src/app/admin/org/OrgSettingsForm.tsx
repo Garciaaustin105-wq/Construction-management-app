@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Upload, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
@@ -162,8 +163,10 @@ export default function OrgSettingsForm({
               <p className="text-xs text-gray-500">Shown in the app header and on estimates you send to customers. PNG, JPG, or WebP.</p>
               {logoUrl ? (
                 <div className="flex items-center gap-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={logoUrl} alt="Logo" className="h-12 w-auto max-w-[180px] object-contain rounded border border-gray-100" />
+                  {/* Public storage URL (getPublicUrl, no rotating token), so
+                      the optimizer caches it — worth a real <Image>. w/h are the
+                      max box; object-contain letterboxes any logo aspect. */}
+                  <Image src={logoUrl} alt="Logo" width={180} height={48} className="h-12 w-auto max-w-[180px] object-contain rounded border border-gray-100" />
                   <button type="button" onClick={handleLogoRemove} className="text-xs text-red-600 font-semibold flex items-center gap-1"><Trash2 className="w-4 h-4" /> Remove</button>
                 </div>
               ) : (
@@ -225,8 +228,7 @@ export default function OrgSettingsForm({
         ) : (
           <div className="bg-white rounded-lg p-4 shadow-sm space-y-2 text-sm">
             {logoUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt="Logo" className="h-12 w-auto max-w-[180px] object-contain rounded border border-gray-100" />
+              <Image src={logoUrl} alt="Logo" width={180} height={48} className="h-12 w-auto max-w-[180px] object-contain rounded border border-gray-100" />
             )}
             <p className="font-semibold text-gray-900 text-base">{name}</p>
             {address && <p className="text-gray-600">{address}</p>}

@@ -1,4 +1,3 @@
-import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requireOrgScoped } from "@/lib/tenant";
@@ -36,15 +35,9 @@ function requestHost(request: Request): string {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const scoped = await requireOrgScoped(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + requireOrgScoped()'s own getUser() + profiles + organizations.
+  const scoped = await requireOrgScoped();
   if (!scoped.ok) {
     return NextResponse.json(
       { error: scoped.error },
@@ -52,6 +45,7 @@ export async function POST(request: Request) {
     );
   }
   const tenant = scoped.tenant;
+  const user = tenant.user;
 
   let rotate = false;
   try {
@@ -127,21 +121,16 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const scoped = await requireOrgScoped(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + requireOrgScoped()'s own getUser() + profiles + organizations.
+  const scoped = await requireOrgScoped();
   if (!scoped.ok) {
     return NextResponse.json(
       { error: scoped.error },
       { status: scoped.status }
     );
   }
+  const user = scoped.tenant.user;
 
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

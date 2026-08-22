@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import OrgSettingsForm from "./OrgSettingsForm";
-import { getMyOrg } from "@/lib/tenant";
+import { getMe } from "@/lib/tenant";
 
 // Org business-info settings. admin edits their own org; super_admin opens any
 // org READ-ONLY (via ?org=<id>) — super_admin cannot mutate org identity (see
@@ -12,12 +12,9 @@ export default async function OrgSettingsPage({
   searchParams: Promise<{ org?: string }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const tenant = await getMyOrg(supabase);
+  // One cached identity read (shared with the root layout) instead of
+  // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
+  const tenant = await getMe();
   if (!tenant) redirect("/login");
 
   const isSuperAdmin = tenant.isSuperAdmin;
