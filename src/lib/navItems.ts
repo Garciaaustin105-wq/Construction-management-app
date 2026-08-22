@@ -49,6 +49,7 @@ import {
   UsersRound,
   Images,
   Terminal,
+  Radio,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -67,7 +68,7 @@ export type NavItem = {
   aliases?: string[];
 };
 
-export function buildNavItems(role: Role | string | null): NavItem[] {
+function buildNavItemsBase(role: Role | string | null): NavItem[] {
   // Lawn variant: lawn-only desktop sidebar — no construction GC-pro surfaces
   // (receipts/daily-logs/punch/change-orders/submittals all dropped). Crew keep
   // their flat route tab; PM keeps the base 3.
@@ -256,7 +257,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
 // row into 5 section hubs; crew/superintendent/PM keep a flat bar. Sign Out
 // for hub roles lives in the Manage hub page (not the bar), so it is NOT an
 // item here. See plan: mobile bottom-nav cleanup.
-export function buildMobileNav(role: Role | string | null): NavItem[] {
+function buildMobileNavBase(role: Role | string | null): NavItem[] {
   const base: NavItem[] = [
     { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
     { href: "/crew/photo", label: "Photos", Icon: Camera },
@@ -463,4 +464,63 @@ export function isPublicRoute(pathname: string): boolean {
     pathname.startsWith("/v/") || // customer lawn visit photo portal (token link)
     pathname.startsWith("/customer/") // customer portal sub-routes
   );
+}
+// ── ISP / fiber module (hidden, per-org) ────────────────────────────────────
+// `installs` is a per-ORG feature (organizations.isp_module_enabled), not a
+// per-variant one, so it can't live inside the role branches above — those
+// only see the role and the build-time variant. Instead the two builders are
+// wrapped: the base functions are untouched, and the Installs row is appended
+// afterwards only when the caller passes ispModule.
+//
+// Every existing call site that passes no opts gets a byte-identical nav to
+// before, which is the point — no other tenant's chrome changes.
+//
+// This is UI reachability only. RLS is what protects install data; see the
+// header of src/lib/useIspModule.ts.
+
+export type NavOpts = {
+  /** organizations.isp_module_enabled for the signed-in user's org. */
+  ispModule?: boolean;
+};
+
+// Roles that get the Installs tab when the module is on. Customers never do
+// (internal pricing + field notes). Sales/accountant have no field surface, so
+// it would just be clutter. super_admin's nav is platform-only by design.
+const INSTALL_ROLES = new Set([
+  "crew",
+  "superintendent",
+  "project_manager",
+  "office",
+  "admin",
+]);
+
+const INSTALLS_ITEM: NavItem = {
+  href: "/installs",
+  label: "Installs",
+  Icon: Radio,
+};
+
+function withIspModule(
+  items: NavItem[],
+  role: Role | string | null,
+  opts?: NavOpts
+): NavItem[] {
+  if (!opts?.ispModule) return items;
+  if (!role || !INSTALL_ROLES.has(role)) return items;
+  if (items.some((i) => i.href === "/installs")) return items;
+  return [...items, INSTALLS_ITEM];
+}
+
+export function buildNavItems(
+  role: Role | string | null,
+  opts?: NavOpts
+): NavItem[] {
+  return withIspModule(buildNavItemsBase(role), role, opts);
+}
+
+export function buildMobileNav(
+  role: Role | string | null,
+  opts?: NavOpts
+): NavItem[] {
+  return withIspModule(buildMobileNavBase(role), role, opts);
 }

@@ -27,6 +27,7 @@ const TYPE_COLORS: Record<CalEventType, { dot: string; chip: string }> = {
   invoice: { dot: "bg-red-500", chip: "bg-red-50 text-red-800 border border-red-200" },
   estimate: { dot: "bg-indigo-500", chip: "bg-indigo-50 text-indigo-800 border border-indigo-200" },
   lawn: { dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-800 border border-emerald-200" },
+  install: { dot: "bg-cyan-500", chip: "bg-cyan-50 text-cyan-800 border border-cyan-200" },
 };
 
 const MAX_CHIPS_PER_CELL = 3;

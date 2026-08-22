@@ -88,6 +88,21 @@ type EstimateCalRow = {
   jobs: { name: string } | null;
   customers?: { name: string } | null;
 };
+// Installs (ISP/fiber module). Only orgs with organizations.isp_module_enabled
+// have any; for everyone else the query simply returns nothing. If the
+// isp_module.sql migration hasn't been run yet the query errors and `.data` is
+// null, which falls through to an empty list — the feed keeps working rather
+// than 500ing, same defensive shape as every other source in this file.
+type InstallCalRow = {
+  id: string;
+  title: string;
+  scheduled_at: string;
+  duration_minutes: number | null;
+  status: string;
+  address: string | null;
+  install_types: { name: string } | null;
+  customers: { name: string } | null;
+};
 type VisitCalRow = {
   id: string;
   due_date: string;
@@ -392,6 +407,59 @@ export async function GET(request: Request) {
         description: `${svc ?? "Lawn maintenance"} visit${
           jobName ? ` for ${jobName}` : ""
         } — ${v.status}.`,
+      });
+    }
+  }
+
+  // ── Installs (ISP / fiber module) ─────────────────────────────────────────
+  // Crew visibility resolves off installs.assigned_crew on the row itself, NOT
+  // through job_id — an install may have no parent job at all, which is exactly
+  // why installs are their own calendar source instead of schedule_events rows.
+  // (schedule_events scopes crew via `.in("job_id", visibleJobIds)` above, and a
+  // null job_id would silently never match.)
+  {
+    let installQ = admin
+      .from("installs")
+      .select(
+        "id, title, scheduled_at, duration_minutes, status, address, install_types(name), customers(name)"
+      )
+      .not("scheduled_at", "is", null)
+      .neq("status", "cancelled");
+
+    if (MANAGEMENT_ROLES.has(role) || isSuperAdmin) {
+      installQ = orgFilter(installQ);
+    } else if (role === "customer") {
+      // Own installs only. A customer with no customer_id gets a match-nothing
+      // filter rather than the whole org.
+      installQ = orgFilter(installQ).eq(
+        "customer_id",
+        customerId ?? "00000000-0000-0000-0000-000000000000"
+      );
+    } else {
+      // crew / superintendent — assigned only.
+      installQ = orgFilter(installQ).contains("assigned_crew", [userId]);
+    }
+
+    installQ = installQ.order("scheduled_at", { ascending: true }).limit(500);
+    const { data: installs } = await installQ;
+
+    for (const ins of (installs ?? []) as unknown as InstallCalRow[]) {
+      const kind = ins.install_types?.name;
+      const cust = ins.customers?.name;
+      const start = new Date(ins.scheduled_at);
+      const end = ins.duration_minutes
+        ? new Date(start.getTime() + ins.duration_minutes * 60000)
+        : undefined;
+      events.push({
+        uid: feedUid("install", ins.id, host),
+        summary: `${kind ? `${kind} — ` : ""}${ins.title}${cust ? ` · ${cust}` : ""}`,
+        start,
+        end,
+        allDay: false,
+        description:
+          [kind, ins.address, `Status: ${ins.status}`]
+            .filter(Boolean)
+            .join(" — ") || undefined,
       });
     }
   }

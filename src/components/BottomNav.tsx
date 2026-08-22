@@ -10,12 +10,15 @@ import { useIsDesktop } from "@/lib/useIsDesktop";
 import { buildMobileNav, isPublicRoute, type NavItem } from "@/lib/navItems";
 import { isOfficeLike } from "@/lib/roles";
 import { useRole } from "@/lib/useRole";
+import { useIspModule } from "@/lib/useIspModule";
 
 export default function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
   const role = useRole();
+  // Per-org hidden ISP module — see Sidebar.
+  const ispModule = useIspModule();
   const [hidden, setHidden] = useState(false);
   const isDesktop = useIsDesktop();
   // Only poll on mobile (desktop uses the Sidebar's poller). Both chrome
@@ -46,7 +49,7 @@ export default function BottomNav() {
     router.refresh();
   }
 
-  const items = buildMobileNav(role);
+  const items = buildMobileNav(role, { ispModule });
   // Hub roles (office/admin) put Sign Out inside the Manage hub page, so the
   // bar shows only the hub cells. Flat roles keep the trailing Sign Out button.
   // super_admin's mobile nav is a FLAT platform-only bar (Home/Users/Platform/

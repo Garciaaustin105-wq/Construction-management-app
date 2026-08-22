@@ -10,6 +10,7 @@ import { BRAND } from "@/lib/brand";
 import { buildNavItems, isPublicRoute, type NavItem } from "@/lib/navItems";
 import { useOrgBranding } from "@/lib/useOrgBranding";
 import { useRole } from "@/lib/useRole";
+import { useIspModule } from "@/lib/useIspModule";
 import OrgLogo from "@/components/OrgLogo";
 
 // Desktop primary navigation. Persistent fixed-left sidebar, visible only at
@@ -23,6 +24,9 @@ export default function Sidebar() {
   const router = useRouter();
   const supabase = createClient();
   const role = useRole();
+  // Per-org hidden ISP module — adds the Installs row for the one org that
+  // has it on. Every other tenant's sidebar is unchanged.
+  const ispModule = useIspModule();
   const isDesktop = useIsDesktop();
   const unread = useUnreadCount(isDesktop);
   const branding = useOrgBranding();
@@ -36,7 +40,7 @@ export default function Sidebar() {
     router.refresh();
   }
 
-  const items = buildNavItems(role);
+  const items = buildNavItems(role, { ispModule });
   const hrefs = items.map((i) => i.href);
 
   return (

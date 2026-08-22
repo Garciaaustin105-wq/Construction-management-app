@@ -11,6 +11,7 @@ const TYPE_COLORS: Record<CalEventType, { dot: string }> = {
   invoice: { dot: "bg-red-500" },
   estimate: { dot: "bg-indigo-500" },
   lawn: { dot: "bg-emerald-500" },
+  install: { dot: "bg-cyan-500" },
 };
 
 export default async function AgendaList({ events }: { events: CalEvent[] }) {

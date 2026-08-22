@@ -30,7 +30,8 @@ export type CalEventType =
   | "sub"
   | "invoice"
   | "estimate"
-  | "lawn";
+  | "lawn"
+  | "install";
 
 export type CalEvent = {
   id: string;
@@ -85,6 +86,19 @@ type EstimateRow = {
   jobs: { name: string } | null;
   customers?: { name: string } | null;
 };
+// Installs (ISP/fiber module). Present only for orgs with
+// organizations.isp_module_enabled; every other org gets zero rows from RLS,
+// and if the isp_module.sql migration hasn't been run yet the query errors and
+// `.data` is null — both cases fall through to an empty list rather than
+// breaking the calendar, same defensive shape as the other sources here.
+type InstallRow = {
+  id: string;
+  title: string;
+  scheduled_at: string | null;
+  status: string;
+  install_types: { name: string } | null;
+  customers: { name: string } | null;
+};
 type VisitRow = {
   id: string;
   due_date: string;
@@ -114,8 +128,15 @@ export async function getCalendarEvents(
   const events: CalEvent[] = [];
 
   // Fire all independent source queries in parallel.
-  const [jobsRes, eventsRes, subsRes, invoicesRes, estimatesRes, visitsRes] =
-    await Promise.all([
+  const [
+    jobsRes,
+    eventsRes,
+    subsRes,
+    invoicesRes,
+    estimatesRes,
+    visitsRes,
+    installsRes,
+  ] = await Promise.all([
       // Jobs (construction-typed start/end). Lawn orgs have none (DB trigger),
       // so this is empty in the lawn variant — no isLawn gate needed.
       supabase
@@ -168,6 +189,20 @@ export async function getCalendarEvents(
             .order("due_date", { ascending: true })
             .limit(500)
         : Promise.resolve({ data: null, error: null }),
+
+      // Installs (ISP/fiber module) — timed, and crew-visible through the
+      // installs table's OWN RLS (assigned_crew on the row), which is exactly
+      // why installs don't ride on schedule_events: that table resolves crew
+      // visibility through job_id, and an install may have no job.
+      supabase
+        .from("installs")
+        .select(
+          "id, title, scheduled_at, status, install_types(name), customers(name)"
+        )
+        .not("scheduled_at", "is", null)
+        .neq("status", "cancelled")
+        .order("scheduled_at", { ascending: true })
+        .limit(500),
     ]);
 
   // ── Jobs (start + end) ────────────────────────────────────────────────────
@@ -258,6 +293,21 @@ export async function getCalendarEvents(
       title: `${svc ?? "Lawn visit"}${jobName ? ` · ${jobName}` : ""}`,
       type: "lawn",
       href: `/lawn/visits/${v.id}`,
+    });
+  }
+
+  // ── Installs (ISP/fiber module) ────────────────────────────────────────────
+  for (const ins of (installsRes.data ?? []) as unknown as InstallRow[]) {
+    if (!ins.scheduled_at) continue;
+    const kind = ins.install_types?.name;
+    const cust = ins.customers?.name;
+    events.push({
+      id: `install-${ins.id}`,
+      date: dateOf(ins.scheduled_at),
+      title: `${kind ? `${kind} — ` : ""}${ins.title}${cust ? ` · ${cust}` : ""}`,
+      type: "install",
+      time: timeOf(ins.scheduled_at),
+      href: `/installs/${ins.id}`,
     });
   }
 
