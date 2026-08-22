@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
 import {
   fetchReceiptsReport,
   receiptTotals,
@@ -15,6 +14,7 @@ export const dynamic = "force-dynamic";
 // scopes the query to the caller's org (user-scoped server client, no service
 // role).
 export async function GET(request: Request) {
+  const XLSX = await import("xlsx");
   const supabase = await createClient();
   const {
     data: { user },

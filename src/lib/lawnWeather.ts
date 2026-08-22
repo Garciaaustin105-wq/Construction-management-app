@@ -13,6 +13,12 @@ const NWS_HEADERS = {
 const RAIN_THRESHOLD = 50; // a day is "rain-risk" if max hourly precip >= this
 const FETCH_TIMEOUT_MS = 8000;
 const WINDOW_DAYS = 10;
+// NWS forecasts change slowly and the points->grid mapping is stable, so cache
+// both api.weather.gov fetches for 30 min across requests (Next Data Cache). The
+// two calls are on the weather board's TTFB path (up to 16s cold); this turns
+// repeat loads into a cache hit. force-dynamic on the route does not disable
+// per-fetch revalidate caching.
+const NWS_REVALIDATE_SECONDS = 1800;
 
 export type DayForecast = { date: string; precipMax: number; rainRisk: boolean };
 export type VisitByDate = { date: string; count: number; jobs: string[] };
@@ -50,7 +56,11 @@ async function fetchWithTimeout(
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { ...opts, signal: ctrl.signal });
+    return await fetch(url, {
+      ...opts,
+      next: { revalidate: NWS_REVALIDATE_SECONDS },
+      signal: ctrl.signal,
+    });
   } catch {
     return null; // abort / network / DNS — caller treats as "unavailable"
   } finally {

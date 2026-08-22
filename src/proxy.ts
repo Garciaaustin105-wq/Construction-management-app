@@ -129,9 +129,11 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files (manifest.json included so the
-    // PWA manifest is served without a session round-trip). /api/** is
+    // Skip Next.js internals and all static files, PLUS the PWA service worker
+    // + manifest + Sentry tunnel — these must NEVER trigger a session round-trip
+    // (the SW fetch especially: a getUser on every SW check-in is wasted work,
+    // and the tunnel proxies Sentry envelopes, not user requests). /api/** is
     // intentionally included so the blocked-API check can run.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|manifest.json)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|sentry-tunnel|.*\\.(?:svg|png|jpg|jpeg|gif|webp|manifest.json)$).*)",
   ],
 };

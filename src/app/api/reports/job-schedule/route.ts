@@ -1,11 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
 import { fetchJobScheduleReport } from "@/lib/jobScheduleReport";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const XLSX = await import("xlsx");
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });

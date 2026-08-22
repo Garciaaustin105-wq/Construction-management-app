@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
 import { addDays, hoursFromMs, toISODate } from "@/lib/weekUtils";
 import { resolveReportRange, rangeDayCount } from "@/lib/reports";
 
@@ -52,6 +51,7 @@ function locLabel(src: string | null | undefined): string {
 }
 
 export async function GET(request: Request) {
+  const XLSX = await import("xlsx");
   const supabase = await createClient();
   const {
     data: { user },
