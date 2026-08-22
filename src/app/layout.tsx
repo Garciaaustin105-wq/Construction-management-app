@@ -5,6 +5,7 @@ import Providers from "@/components/Providers";
 import { BRAND } from "@/lib/brand";
 import { getMe } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 
 // Brand color vars set per-deploy on <html> so the --brand/--brand-dark/
 // --brand-bg CSS vars (and their bg-brand/text-brand Tailwind utilities) resolve
@@ -62,6 +63,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className="h-full antialiased" style={brandVars}>
       <body className="min-h-full bg-gray-50 text-gray-900">
         <Providers initialRole={initialRole}>{children}</Providers>
+        {/* Vercel Speed Insights — real-user perf monitoring (RUM). No-op in
+            dev; only reports in production deploys. No env var needed; tied to
+            the Vercel project. Measures the Tier 1 auth-preamble win. */}
+        <SpeedInsights />
       </body>
     </html>
   );
