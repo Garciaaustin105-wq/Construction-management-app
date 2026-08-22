@@ -177,7 +177,7 @@ export default function LoginPage() {
     return home === APP_VARIANT ? null : home;
   }
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: React.SyntheticEvent) {
     e.preventDefault();
     setPwdLoading(true);
     setWrongApp(null);
@@ -216,7 +216,7 @@ export default function LoginPage() {
   // invite, but a customer who lost it can request a fresh one here) and by any
   // user who'd rather not type a password. The link exchanges at
   // /auth/callback?flow=client, which routes by role (customer → /customer).
-  async function handleMagicLink(e: React.FormEvent) {
+  async function handleMagicLink(e: React.SyntheticEvent) {
     e.preventDefault();
     setLinkLoading(true);
     setWrongApp(null);
@@ -240,7 +240,13 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <form
-        onSubmit={linkSent ? undefined : handleMagicLink}
+        // Enter (incl. the mobile keyboard "Go" key that fires after a password
+        // manager autofills) submits the PRIMARY action — password sign-in —
+        // not the magic-link action. Previously onSubmit was bound to
+        // handleMagicLink, so Enter after autofill emailed a sign-in link
+        // instead of signing in with the saved password. The "Email me a
+        // sign-in link" button below is now type="button" (explicit tap only).
+        onSubmit={linkSent ? undefined : handleLogin}
         className="w-full max-w-sm bg-white p-6 rounded-lg shadow-sm space-y-4"
       >
         <div className="text-center mb-2">
@@ -331,8 +337,7 @@ export default function LoginPage() {
               </Link>
             </div>
             <button
-              type="button"
-              onClick={handleLogin}
+              type="submit"
               disabled={pwdLoading || linkLoading}
               className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -340,7 +345,8 @@ export default function LoginPage() {
               {pwdLoading ? "Signing in..." : "Sign In"}
             </button>
             <button
-              type="submit"
+              type="button"
+              onClick={handleMagicLink}
               disabled={pwdLoading || linkLoading}
               className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
             >
