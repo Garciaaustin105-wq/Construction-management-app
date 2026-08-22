@@ -64,9 +64,10 @@ export default function SignedPhotoGrid({ photos }: { photos: Photo[] }) {
               alt={p.caption ?? ""}
               loading="lazy"
               decoding="async"
-              // object-contain: show the whole photo, not a cropped square.
+              // object-cover fills the square cell (crops to fit, no gray
+              // letterbox bars — object-contain read as "smaller/wrong").
               // Fade in on load to skip the stretched pre-object-fit paint.
-              className="w-full h-full object-contain opacity-0 transition-opacity duration-300"
+              className="w-full h-full object-cover opacity-0 transition-opacity duration-300"
               onLoad={(e) => {
                 e.currentTarget.style.opacity = "1";
               }}

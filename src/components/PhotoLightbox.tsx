@@ -165,12 +165,12 @@ export default function PhotoLightbox({
                 alt={p.caption ?? ""}
                 loading="lazy"
                 decoding="async"
-                // object-contain (not -cover) so the WHOLE photo shows in the
-                // square cell instead of being cropped — crops read as
-                // "distorted/wrong size" to users. Fade in on load so the brief
-                // stretched pre-object-fit paint never shows. The cell's
-                // bg-gray-200 fills the letterbox bars.
-                className="w-full h-full object-contain opacity-0 transition-opacity duration-300"
+                // object-cover fills the square cell (crops to fit, no gray
+                // letterbox bars) — object-contain letterboxed the photos and
+                // read as "smaller/wrong." Fade in on load so the brief
+                // stretched pre-object-fit paint never shows; the image only
+                // becomes visible once decoded + object-cover has settled.
+                className="w-full h-full object-cover opacity-0 transition-opacity duration-300"
                 onLoad={(e) => {
                   e.currentTarget.style.opacity = "1";
                 }}

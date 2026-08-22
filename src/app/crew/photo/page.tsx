@@ -309,9 +309,10 @@ function PhotoUploadForm() {
                     <img
                       src={q.previewUrl}
                       alt=""
-                      // object-contain so the just-taken photo shows in full
-                      // (matches how it renders in the gallery), not cropped.
-                      className={`w-full h-full object-contain ${
+                      // object-cover fills the square (matches the gallery grid,
+                      // no gray letterbox bars). Local blob loads instantly, so
+                      // no fade-in needed here.
+                      className={`w-full h-full object-cover ${
                         q.status === "done" ? "opacity-40" : ""
                       }`}
                     />
