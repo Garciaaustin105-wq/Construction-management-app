@@ -43,10 +43,21 @@ export type MyTenant = {
 };
 
 // Request-scoped cached identity. `cache()` memoizes per request, so the first
-// caller in a render pays the 1 getUser + 1 (profiles ⋈ organizations) hop and
-// every later caller in the same request gets the same resolved value. The
-// `organizations` embed (PostgREST) collapses the old separate profiles +
-// organizations round trips into one. Falls back to null when signed out.
+// caller in a render pays the getUser + profiles + organizations reads ONCE and
+// every later caller in the same request gets the same resolved value. Falls
+// back to null when signed out.
+//
+// NOTE: the org read is a SEPARATE query, NOT a PostgREST `organizations(...)`
+// embed on the profiles select. The embed requires a DECLARED FK
+// profiles.organization_id → organizations.id; multi_tenancy_a.sql declares it
+// via `add column if not exists ... references` which is a NO-OP when the column
+// already existed without the FK — so the FK is NOT reliably declared in the
+// live DB, and the embed 400s (PGRST108), which nulled the whole profiles select
+// and broke every caller (dashboard showed "no workspace profile", role fell
+// back to "crew", billing tab vanished). The separate `.eq("id", orgId)` query
+// needs no FK. Re-enable the embed only after `alter table profiles add
+// constraint ... foreign key (organization_id) references organizations(id)` is
+// confirmed live.
 export const getMe = cache(async (): Promise<MyTenant | null> => {
   const supabase = await createClient();
   const {
@@ -56,20 +67,34 @@ export const getMe = cache(async (): Promise<MyTenant | null> => {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select(
-      "role, organization_id, organizations(name, plan, plan_status, trial_ends_at, app_variant)"
-    )
+    .select("role, organization_id")
     .eq("id", user.id)
     .maybeSingle();
 
   const role = profile?.role ?? "crew";
   const hasProfile = !!profile;
   const orgId = (profile?.organization_id as string | null) ?? null;
-  // PostgREST returns embeds as arrays; a many-to-one (one org per profile) is
-  // a 0- or 1-element array. Take the first, if any.
-  const org = (profile?.organizations as
-    | { name: string | null; plan: string | null; plan_status: string | null; trial_ends_at: string | null; app_variant: string | null }[]
-    | null)?.[0] ?? null;
+
+  // Load the org's name + billing columns when scoped to an org (one extra
+  // round-trip; skipped for super_admin, whose orgId is null). RLS allows
+  // same-org reads. Kept separate from the profiles read (see NOTE above).
+  let orgName: string | null = null;
+  let plan: string | null = null;
+  let planStatus: string | null = null;
+  let trialEndsAt: string | null = null;
+  let appVariant: "construction" | "lawn" = "construction";
+  if (orgId) {
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("name, plan, plan_status, trial_ends_at, app_variant")
+      .eq("id", orgId)
+      .maybeSingle();
+    orgName = org?.name ?? null;
+    plan = org?.plan ?? null;
+    planStatus = org?.plan_status ?? null;
+    trialEndsAt = org?.trial_ends_at ?? null;
+    appVariant = org?.app_variant === "lawn" ? "lawn" : "construction";
+  }
 
   return {
     user,
@@ -77,11 +102,11 @@ export const getMe = cache(async (): Promise<MyTenant | null> => {
     role,
     hasProfile,
     isSuperAdmin: role === "super_admin",
-    orgName: org?.name ?? null,
-    plan: org?.plan ?? null,
-    planStatus: org?.plan_status ?? null,
-    trialEndsAt: org?.trial_ends_at ?? null,
-    appVariant: org?.app_variant === "lawn" ? "lawn" : "construction",
+    orgName,
+    plan,
+    planStatus,
+    trialEndsAt,
+    appVariant,
   };
 });
 
