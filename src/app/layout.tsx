@@ -3,8 +3,10 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Providers from "@/components/Providers";
 import { BRAND } from "@/lib/brand";
-import { getMe } from "@/lib/tenant";
+import { getMe, type MyTenant } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
+import { APP_VARIANT } from "@/lib/variant";
+import { redirect } from "next/navigation";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 
 // Brand color vars set per-deploy on <html> so the --brand/--brand-dark/
@@ -52,11 +54,26 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // profiles on top of this. (Tier 1 perf fix.) The Suspense/PPR static-shell
   // unlock is deferred (would reintroduce the cold-load nav flash).
   let initialRole: Role | null = null;
+  let me: MyTenant | null = null;
   try {
-    const me = await getMe();
+    me = await getMe();
     initialRole = me ? ((me.role as Role) ?? null) : null;
   } catch {
     initialRole = null;
+  }
+
+  // Variant-affinity guard (defense-in-depth). /login and /auth/callback bounce
+  // a user who SIGNS IN to the wrong-variant app, but a session established
+  // earlier is never re-checked — so on localhost (one origin, no cookie-per-
+  // domain isolation) a lawn-org session can render inside the construction
+  // deploy (and vice versa). Bounce it here, piggybacking on the getMe() the
+  // layout already runs for the cold-load role-flash fix — ZERO extra round
+  // trips. super_admin (platform, no org) may use either app. Public/portal
+  // routes have no session, so `me` is null and this no-ops. The dedicated route
+  // signs the session out and shows /login's wrong-app banner; routing through
+  // it (instead of signing out here) keeps the layout URL-blind and loop-free.
+  if (me && !me.isSuperAdmin && me.appVariant !== APP_VARIANT) {
+    redirect(`/api/auth/affinity-bounce?home=${me.appVariant}`);
   }
 
   return (
