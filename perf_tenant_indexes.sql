@@ -3,8 +3,9 @@
 -- index on organization_id — every org-scoped list/RLS read did a seq scan
 -- across the RLS-filtered set. Confirmed missing via live pg_indexes on
 -- jobs/customers/profiles/subcontractors/receipts/time_entries; estimates/
--- invoices/quotes confirmed missing from committed .sql (if-not-exists keeps
--- these safe if any already exist live via ad-hoc SQL Editor).
+-- invoices confirmed missing from committed .sql. (quotes was merged into
+-- estimates via estimates_merge_a.sql — no live quotes table, so no quotes
+-- index here.)
 --
 -- Run in the Supabase SQL Editor. Non-CONCURRENTLY is fine here (small tenant,
 -- builds in ms). If any table grows large, re-run with CREATE INDEX
@@ -51,7 +52,3 @@ create index if not exists idx_estimates_org_created
 -- invoices: /invoices list, org-scoped + ORDER BY created_at desc.
 create index if not exists idx_invoices_org_created
   on public.invoices (organization_id, created_at desc);
-
--- quotes: org-scoped list, ORDER BY created_at desc.
-create index if not exists idx_quotes_org_created
-  on public.quotes (organization_id, created_at desc);
