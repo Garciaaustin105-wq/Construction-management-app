@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
-import { FIELD_MGMT } from "@/lib/roles";
+import { FIELD_MGMT, type Role } from "@/lib/roles";
 import Link from "next/link";
 import { Plus, ClipboardList, Download } from "lucide-react";
 import { formatMoney } from "@/lib/money";
@@ -31,16 +32,9 @@ export default async function ChangeOrdersPage({
   searchParams: Promise<{ job?: string; status?: string }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const role = me.role as Role;
   // Field-management review: superintendent + PM + office + admin/super_admin.
   // Authoring (canCreate) stays office/admin.
   if (!FIELD_MGMT.has(role)) redirect("/dashboard");

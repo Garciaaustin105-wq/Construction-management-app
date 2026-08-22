@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
@@ -7,10 +7,9 @@ import Link from "next/link";
 import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera } from "lucide-react";
 
 export default async function OfficePage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser(); if (!user) redirect("/login");
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  const role = (profile?.role as string) ?? "crew";
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
   const showReports = role === "office" || role === "admin";  // /admin/reports excludes super_admin

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import ClientManager, {
@@ -12,17 +13,10 @@ import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 // / admin / super_admin. Mirrors admin/customers' skeleton.
 export default async function ClientsPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!isOfficeLike(role)) redirect("/dashboard");
   // super_admin has no org → no customers to manage here; bounce to platform.
   if (isSuperAdmin(role)) redirect("/admin/orgs");

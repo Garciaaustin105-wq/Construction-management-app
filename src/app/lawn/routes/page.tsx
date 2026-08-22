@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
@@ -47,17 +48,10 @@ export default async function LawnRoutesPage({
   const date = sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
   const [{ data: visitRows }, { data: crewRows }] = await Promise.all([

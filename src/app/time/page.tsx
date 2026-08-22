@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
@@ -68,20 +69,13 @@ export default async function TimeOverviewPage({
   searchParams: Promise<{ weekStart?: string }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
   // Field-management review surface: superintendent + PM + office + admin
   // (super_admin folds in via FIELD_MGMT). Was `!== "office"`, which bounced
   // admin/super_admin AND locked out the PM/super time review this page is.
-  if (!FIELD_MGMT.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
+  if (!FIELD_MGMT.has((me.role) as never)) redirect("/dashboard");
 
   // ---- Week selection (default = current week, Monday-based) ----
   const sp = await searchParams;
@@ -144,7 +138,7 @@ export default async function TimeOverviewPage({
   // FIELD_MGMT can view this page; OFFICE_OR_PM (office/admin/PM/super_admin)
   // can manage time. Superintendent is read-only here until the review/approve
   // features ship (separate SQL-gated deploy).
-  const role = (profile?.role ?? "crew") as never;
+  const role = (me.role) as never;
   const canManage = OFFICE_OR_PM.has(role);
   // Review/approve is FIELD_MGMT (admits superintendent, which OFFICE_OR_PM
   // excludes). Supers can now review time; office/PM can both manage + review.

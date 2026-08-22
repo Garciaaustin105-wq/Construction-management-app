@@ -1,28 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import SubcontractorsManager, {
   type Subcontractor,
 } from "@/components/SubcontractorsManager";
-import { MANAGEMENT } from "@/lib/roles";
+import { MANAGEMENT, type Role } from "@/lib/roles";
 import { isSuperAdmin } from "@/lib/roles";
 
 export default async function SubcontractorsPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role as Role;
   // super_admin (no org) manages via the platform view, not here.
   if (isSuperAdmin(role) || !MANAGEMENT.has(role)) redirect("/dashboard");
-  const orgId = (profile?.organization_id as string | null) ?? "";
+  const orgId = me.orgId ?? "";
 
   const { data } = await supabase
     .from("subcontractors")

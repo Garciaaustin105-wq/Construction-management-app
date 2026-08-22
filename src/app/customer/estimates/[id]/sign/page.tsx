@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import type { EstimatePricing } from "@/lib/money";
 import TopBar from "@/components/TopBar";
@@ -27,10 +28,8 @@ export default async function ProposalSignPage({
   const { id } = await params;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
   // Must be a customer account (profiles.customer_id non-null) — the
   // sign_proposal RPC enforces this too, but bouncing here keeps the page
@@ -38,8 +37,8 @@ export default async function ProposalSignPage({
   // seeing a sign widget they can't use).
   const { data: profile } = await supabase
     .from("profiles")
-    .select("customer_id, full_name, role")
-    .eq("id", user.id)
+    .select("customer_id")
+    .eq("id", me.user.id)
     .maybeSingle();
   const customerId = profile?.customer_id ?? null;
   if (!customerId) redirect("/customer");
@@ -132,7 +131,7 @@ export default async function ProposalSignPage({
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar
         title="Review & Sign"
-        subtitle={user.email ?? ""}
+        subtitle={me.user.email ?? ""}
         showSignOut
         backHref="/customer"
         backLabel="Portal"

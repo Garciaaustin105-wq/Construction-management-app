@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect, notFound } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import SubcontractorDetail, {
@@ -6,7 +7,7 @@ import SubcontractorDetail, {
   type SubAttachment,
   type AttachedJob,
 } from "@/components/SubcontractorDetail";
-import { MANAGEMENT } from "@/lib/roles";
+import { MANAGEMENT, type Role } from "@/lib/roles";
 
 export default async function SubcontractorDetailPage({
   params,
@@ -15,17 +16,10 @@ export default async function SubcontractorDetailPage({
 }) {
   const { id } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role as Role;
   if (!MANAGEMENT.has(role)) redirect("/dashboard");
 
   const [{ data: sub }, { data: atts }, { data: linked }, { data: allJobs }] = await Promise.all([

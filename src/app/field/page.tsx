@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { OFFICE_LIKE } from "@/lib/roles";
 import TopBar from "@/components/TopBar";
@@ -6,10 +6,9 @@ import Link from "next/link";
 import { Camera, Clock, MessagesSquare, ClipboardList, CheckSquare } from "lucide-react";
 
 export default async function FieldPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser(); if (!user) redirect("/login");
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  const role = (profile?.role as string) ?? "crew";
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">

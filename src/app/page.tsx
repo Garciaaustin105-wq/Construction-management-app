@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { BRAND } from "@/lib/brand";
 import { isLawn } from "@/lib/variant";
 
@@ -10,11 +10,8 @@ import { isLawn } from "@/lib/variant";
 // /dashboard via start_url; this mirrors that for plain browser visits so
 // desktop users aren't asked to sign in again every time they open the app.
 export default async function HomePage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (user) redirect(isLawn() ? "/lawn" : "/dashboard");
+  const me = await getMe();
+  if (me) redirect(isLawn() ? "/lawn" : "/dashboard");
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">

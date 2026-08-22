@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
@@ -29,17 +30,10 @@ function fmtDay(date: string): string {
 
 export default async function LawnWeatherPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
   const board = await getLawnWeatherBoard(supabase);

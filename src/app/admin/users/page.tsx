@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import NewUserForm from "./NewUserForm";
 import { isOfficeLike } from "@/lib/roles";
@@ -9,20 +10,13 @@ import { isOfficeLike } from "@/lib/roles";
 // only; everyone else is redirected before the form ever loads.
 export default async function NewUserPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!isOfficeLike(role)) redirect("/dashboard");
 
-  const orgId = (profile?.organization_id as string | null) ?? null;
+  const orgId = me.orgId;
 
   // super_admin provisions users into ANY org → load the org list for the picker.
   let orgs: { id: string; name: string }[] = [];

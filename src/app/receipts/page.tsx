@@ -1,8 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
-import { FIELD_MGMT } from "@/lib/roles";
+import { FIELD_MGMT, type Role } from "@/lib/roles";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import OfficeReceiptsList, {
   type ReceiptRow,
@@ -16,17 +17,10 @@ export default async function ReceiptsOverviewPage({
   searchParams: Promise<{ offset?: string }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role as Role;
   // Admit office / admin / super_admin — the same set BottomNav shows the
   // Receipts tab to. Gating on role === "office" alone bounced admin and
   // super_admin back to /dashboard when they tapped the tab (looked like the

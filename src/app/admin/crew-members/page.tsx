@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import CrewMembersManager from "@/components/CrewMembersManager";
@@ -12,20 +12,12 @@ import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 //    office assigns + marks their visits done. This is the "not tech-savvy /
 //    doesn't want the app" path. See crew_members.sql.
 export default async function CrewMembersPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (isSuperAdmin(role) || !isOfficeLike(role)) redirect("/dashboard");
-  const orgId = (profile?.organization_id as string | null) ?? "";
+  const orgId = me.orgId ?? "";
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">

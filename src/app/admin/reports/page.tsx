@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
@@ -14,22 +14,14 @@ export const dynamic = "force-dynamic";
 // every report to the caller's org (time_entries + receipts office policies
 // admit PM via tier_office_or_pm — see pm_reports_rls.sql).
 export default async function ReportsIndexPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
   // Admit office/admin/PM/super_admin + accountant (read-only financials).
   if (
     !(
-      OFFICE_OR_PM.has((profile?.role ?? "crew") as never) ||
-      ACCOUNTING.has((profile?.role ?? "crew") as never)
+      OFFICE_OR_PM.has((me.role) as never) ||
+      ACCOUNTING.has((me.role) as never)
     )
   )
     redirect("/dashboard");

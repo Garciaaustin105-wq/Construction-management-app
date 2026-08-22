@@ -1,11 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import StatusBadge from "@/components/StatusBadge";
 import { formatMoney, computeTotal } from "@/lib/money";
-import { OFFICE_OR_PM, ACCOUNTING } from "@/lib/roles";
+import { OFFICE_OR_PM, ACCOUNTING, type Role } from "@/lib/roles";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
@@ -16,17 +17,10 @@ export default async function InvoicesPage({
 }) {
   const params = await searchParams;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role as Role;
   // Admit office / admin / project_manager / super_admin so every management
   // role can open the list (was office/admin/PM, which bounced super_admin back
   // to /dashboard). Invoice creation stays office/admin/PM (see /invoices/new).

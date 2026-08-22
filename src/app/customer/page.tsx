@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
@@ -16,15 +17,13 @@ import Link from "next/link";
 
 export default async function CustomerPortal() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("customer_id, full_name, role")
-    .eq("id", user.id)
+    .select("customer_id, full_name")
+    .eq("id", me.user.id)
     .single();
 
   const customerId = profile?.customer_id;
@@ -225,7 +224,7 @@ export default async function CustomerPortal() {
     <div className="min-h-screen bg-gray-50 pb-24">
       <TopBar
         title={profile?.full_name ?? "Project Portal"}
-        subtitle={user.email ?? ""}
+        subtitle={me.user.email ?? ""}
         showSignOut
       />
 

@@ -1,26 +1,18 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import CostCodesManager from "@/components/CostCodesManager";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
 export default async function CostCodesPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   // office + admin manage the code library; super_admin (no org) uses the
   // platform view instead.
   if (isSuperAdmin(role) || !isOfficeLike(role)) redirect("/dashboard");
-  const orgId = (profile?.organization_id as string | null) ?? "";
+  const orgId = me.orgId ?? "";
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">

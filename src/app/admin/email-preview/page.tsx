@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { isOfficeLike } from "@/lib/roles";
 import TopBar from "@/components/TopBar";
@@ -19,22 +19,14 @@ import EmailPreviewClient from "./EmailPreviewClient";
 // lawn-blocked admin list.
 
 export default async function EmailPreviewPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  const role = profile?.role ?? null;
+  const role = (me.hasProfile ? me.role : null);
   if (!isOfficeLike(role)) redirect("/dashboard");
   // super_admin has a null org → no org templates to save against; the client
   // disables the Save button and the /save route 400s on a null org anyway.
-  const canSaveTemplates = !!profile?.organization_id;
+  const canSaveTemplates = !!me.orgId;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">

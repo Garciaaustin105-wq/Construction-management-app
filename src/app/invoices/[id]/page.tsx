@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import StatusBadge from "@/components/StatusBadge";
@@ -20,21 +21,18 @@ export default async function InvoiceDetailPage({
   const { id } = await params;
   const { job: jobParam } = await searchParams;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  // profile / invoice / lineItems / paymentRows are all independent reads —
-  // each depends only on `id` (route param) or `user.id`, never on each
-  // other's results — so fetch them concurrently instead of sequentially.
+  // invoice / lineItems / paymentRows are all independent reads — each depends
+  // only on `id` (the route param), never on each other's results — so fetch
+  // them concurrently instead of sequentially. (The caller's role comes from
+  // the request-cached getMe(), so it costs no query here.)
   const [
-    { data: profile },
     { data: invoice },
     { data: lineItems },
     { data: paymentRows },
   ] = await Promise.all([
-    supabase.from("profiles").select("role").eq("id", user.id).single(),
     supabase
       .from("invoices")
       .select(
@@ -59,7 +57,7 @@ export default async function InvoiceDetailPage({
       .order("paid_at", { ascending: false })
       .order("created_at", { ascending: false }),
   ]);
-  const role = profile?.role ?? "crew";
+  const role = me.role;
 
   if (!invoice) notFound();
 

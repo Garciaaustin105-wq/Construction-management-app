@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
@@ -30,17 +31,10 @@ export default async function WeeklyReportPage({
   }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const reportRole = profile?.role ?? "crew";
+  const reportRole = me.role;
   // Admit office/admin/PM/super_admin + accountant (read-only financials).
   if (
     !(

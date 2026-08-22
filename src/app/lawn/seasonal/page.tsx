@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import EmptyState from "@/components/EmptyState";
@@ -40,17 +41,10 @@ function todayISO(): string {
 
 export default async function SeasonalPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!OFFICE_OR_PM.has(role as never)) redirect("/dashboard");
 
   // Every recurring schedule in the org, with its job's customer. Grouped in

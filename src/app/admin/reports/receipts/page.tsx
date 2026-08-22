@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import ReceiptReportFilters from "@/components/ReceiptReportFilters";
@@ -28,17 +29,10 @@ export default async function ReceiptsReportPage({
   }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  if (!OFFICE_OR_PM.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
+  if (!OFFICE_OR_PM.has((me.role) as never)) redirect("/dashboard");
 
   const sp = await searchParams;
   const filters: Filters = {

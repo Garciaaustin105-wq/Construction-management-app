@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { notFound, redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import Link from "next/link";
@@ -23,7 +24,7 @@ import ScheduleEventsManager, {
 } from "@/components/ScheduleEventsManager";
 import StatusBadge from "@/components/StatusBadge";
 import { Camera, CornerDownRight } from "lucide-react";
-import { MANAGEMENT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
+import { MANAGEMENT, OFFICE_OR_PM, isOfficeLike, type Role } from "@/lib/roles";
 import { formatMoney } from "@/lib/money";
 
 export default async function JobDetailPage({
@@ -33,17 +34,10 @@ export default async function JobDetailPage({
 }) {
   const { id } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const me = await getMe();
+  if (!me) redirect("/login");
+  const user = me.user;
+  const role = me.role as Role;
 
   // Fan out all per-job reads in parallel (was sequential awaits, so the job
   // page waited on job → photos → rfis → blueprints → receipts → crew).

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
@@ -14,19 +15,12 @@ export default async function PhotosPage({
   searchParams: Promise<{ job?: string; uploader?: string; page?: string }>;
 }) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
   // Office photo manager: office / admin / super_admin. Was `!== "office"`,
   // which bounced admin/super_admin back to /dashboard when they tapped Photos.
-  if (!OFFICE_LIKE.has((profile?.role ?? "crew") as never)) redirect("/dashboard");
+  if (!OFFICE_LIKE.has((me.role) as never)) redirect("/dashboard");
 
   const sp = await searchParams;
   const jobFilter = sp.job ?? "";

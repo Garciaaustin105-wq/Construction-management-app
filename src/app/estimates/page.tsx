@@ -1,8 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { computeEstimateTotals, formatMoney } from "@/lib/money";
-import { PIPELINE } from "@/lib/roles";
+import { PIPELINE, type Role } from "@/lib/roles";
 import Link from "next/link";
 import { FileText, Plus } from "lucide-react";
 
@@ -32,17 +33,10 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default async function EstimatesPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const me = await getMe();
+  if (!me) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role as Role;
   // Admit the sales pipeline: sales + PM + office + admin + super_admin
   // (PIPELINE). sales is the dedicated pre-sale/estimator role; PM/office
   // already author estimates. Was OFFICE_OR_PM, which bounced sales.
