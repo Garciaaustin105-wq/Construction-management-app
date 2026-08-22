@@ -5,7 +5,8 @@ import { isLawn } from "@/lib/variant";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
 import Link from "next/link";
-import { Users, Contact, Briefcase, Tag, CreditCard, Building } from "lucide-react";
+import { Users, Contact, Briefcase, Tag, CreditCard, Building, Wifi, Router } from "lucide-react";
+import { isIspOrg } from "@/lib/ispModule";
 
 export default async function ManagePage() {
   const me = await getMe();
@@ -16,6 +17,10 @@ export default async function ManagePage() {
   const isOfficeOrAdmin = role === "office" || role === "admin";
   const showBilling = role === "office" || role === "admin";
   const showPlatform = role === "super_admin";
+  // ISP/fiber module surfaces. Hidden for every org without the flag, exactly
+  // like the Installs nav row — these two tiles are the only way in, so an org
+  // that doesn't have the module never sees them referenced anywhere.
+  const showIsp = isOfficeOrAdmin && (await isIspOrg(me.orgId));
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -48,6 +53,18 @@ export default async function ManagePage() {
             <Link href="/admin/billing" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <CreditCard className="w-5 h-5" />
               <span>Billing</span>
+            </Link>
+          )}
+          {showIsp && (
+            <Link href="/admin/isp/plans" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Wifi className="w-5 h-5" />
+              <span>Plans</span>
+            </Link>
+          )}
+          {showIsp && (
+            <Link href="/admin/isp/billing" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Router className="w-5 h-5" />
+              <span>ISP Billing</span>
             </Link>
           )}
           {showPlatform && (

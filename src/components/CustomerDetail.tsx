@@ -32,18 +32,26 @@ export type CustomerSub = {
   job_name: string;
 };
 
-type Tab = "info" | "jobs" | "subs";
+type Tab = "info" | "jobs" | "subs" | "isp";
 
 export default function CustomerDetail({
   customer,
   jobs,
   subs,
   canEdit = true,
+  ispPanel,
 }: {
   customer: CustomerDetailRow;
   jobs: CustomerJob[];
   subs: CustomerSub[];
   canEdit?: boolean;
+  // ISP/fiber module surface (plan, subscription, router, equipment), passed in
+  // as a SLOT rather than built here on purpose. This component is shared by
+  // construction and lawn tenants; teaching it to fetch isp_* data would make
+  // every org pay for a module one org has. The server page decides whether the
+  // org has the module and passes a node, or doesn't and passes nothing — same
+  // pattern as `accountingSection` on the billing page.
+  ispPanel?: React.ReactNode;
 }) {
   const supabase = createClient();
   const toast = useToast();
@@ -102,6 +110,7 @@ export default function CustomerDetail({
     ...(isLawn()
       ? []
       : [{ key: "subs" as Tab, label: `Subs (${subs.length})` }]),
+    ...(ispPanel ? [{ key: "isp" as Tab, label: "Internet" }] : []),
   ];
 
   return (
@@ -296,6 +305,8 @@ export default function CustomerDetail({
           )}
         </div>
       )}
+
+      {tab === "isp" && ispPanel}
     </div>
   );
 }

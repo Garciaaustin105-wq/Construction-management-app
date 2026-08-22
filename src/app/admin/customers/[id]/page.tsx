@@ -7,7 +7,9 @@ import CustomerDetail, {
   type CustomerJob,
   type CustomerSub,
 } from "@/components/CustomerDetail";
+import IspCustomerPanel from "@/components/IspCustomerPanel";
 import { MANAGEMENT, type Role } from "@/lib/roles";
+import { isIspOrg } from "@/lib/ispModule";
 
 export default async function CustomerDetailPage({
   params,
@@ -85,6 +87,11 @@ export default async function CustomerDetailPage({
     }
   }
 
+  // ISP/fiber module: the "Internet" tab only exists for orgs that have it.
+  // Passing undefined (rather than a component that renders nothing) is what
+  // keeps the tab itself out of the tab bar for every other tenant.
+  const showIsp = await isIspOrg(me.orgId);
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Customer" />
@@ -94,6 +101,11 @@ export default async function CustomerDetailPage({
           jobs={jobs}
           subs={subs}
           canEdit={role === "office" || role === "admin"}
+          ispPanel={
+            showIsp && me.orgId ? (
+              <IspCustomerPanel customerId={id} orgId={me.orgId} />
+            ) : undefined
+          }
         />
       </main>
     </div>
