@@ -105,7 +105,7 @@ function ChangeOrderForm() {
         <button onClick={() => router.push(preselectedJob ? `/jobs/${preselectedJob}` : "/change-orders")} className="text-sm text-blue-600 px-2 py-1 -ml-2 flex items-center gap-1 max-w-[45%]">
           <ArrowLeft className="w-4 h-4 flex-shrink-0" /><span className="truncate">{preselectedJob ? "Back to job" : "Change Orders"}</span>
         </button>
-        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2">New Change Order</h1>
+        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 max-w-[50%] truncate">New Change Order</h1>
         <div className="w-16" />
       </header>
       <main className="max-w-md lg:max-w-2xl mx-auto p-4">

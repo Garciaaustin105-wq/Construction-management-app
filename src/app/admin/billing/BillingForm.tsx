@@ -139,7 +139,7 @@ export default function BillingForm({
           <ArrowLeft className="w-4 h-4" />
           Dashboard
         </button>
-        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2">
+        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 max-w-[50%] truncate">
           Billing
         </h1>
         <div className="w-16" />

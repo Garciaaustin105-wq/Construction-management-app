@@ -309,7 +309,9 @@ function PhotoUploadForm() {
                     <img
                       src={q.previewUrl}
                       alt=""
-                      className={`w-full h-full object-cover ${
+                      // object-contain so the just-taken photo shows in full
+                      // (matches how it renders in the gallery), not cropped.
+                      className={`w-full h-full object-contain ${
                         q.status === "done" ? "opacity-40" : ""
                       }`}
                     />

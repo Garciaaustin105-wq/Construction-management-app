@@ -130,7 +130,10 @@ export default function ActivityTimeline({
                       alt=""
                       loading="lazy"
                       decoding="async"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain opacity-0 transition-opacity duration-300"
+                      onLoad={(e) => {
+                        e.currentTarget.style.opacity = "1";
+                      }}
                     />
                   )}
                 </a>

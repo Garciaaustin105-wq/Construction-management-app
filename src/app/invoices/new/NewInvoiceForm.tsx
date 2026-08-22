@@ -192,7 +192,7 @@ export default function NewInvoiceForm({
             {preselectedJobId ? "Back to job" : "Invoices"}
           </span>
         </button>
-        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2">
+        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 max-w-[50%] truncate">
           New Invoice
         </h1>
         <div className="w-16" />

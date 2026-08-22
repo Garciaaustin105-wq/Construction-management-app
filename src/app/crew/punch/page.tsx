@@ -96,7 +96,7 @@ export default function CrewPunchPage() {
           <ArrowLeft className="w-4 h-4 flex-shrink-0" />
           <span className="truncate">Back to field</span>
         </button>
-        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2">
+        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 max-w-[50%] truncate">
           My Punch List
         </h1>
         <div className="w-16" />

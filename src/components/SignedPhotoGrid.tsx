@@ -64,7 +64,12 @@ export default function SignedPhotoGrid({ photos }: { photos: Photo[] }) {
               alt={p.caption ?? ""}
               loading="lazy"
               decoding="async"
-              className="w-full h-full object-cover"
+              // object-contain: show the whole photo, not a cropped square.
+              // Fade in on load to skip the stretched pre-object-fit paint.
+              className="w-full h-full object-contain opacity-0 transition-opacity duration-300"
+              onLoad={(e) => {
+                e.currentTarget.style.opacity = "1";
+              }}
             />
           </a>
         ) : (

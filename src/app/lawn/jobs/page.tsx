@@ -96,7 +96,7 @@ export default function LawnJobsPage() {
         <button type="button" onClick={() => router.push("/lawn")} className="text-sm text-green-700 px-2 py-1 -ml-2 flex items-center gap-1">
           <ArrowLeft className="w-4 h-4" /> Lawn
         </button>
-        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+        <h1 className="text-lg font-bold text-gray-900 absolute left-1/2 -translate-x-1/2 max-w-[50%] truncate flex items-center gap-1.5">
           <ListChecks className="w-5 h-5 text-green-600" /> Lawn Jobs
         </h1>
         <div className="w-16" />
