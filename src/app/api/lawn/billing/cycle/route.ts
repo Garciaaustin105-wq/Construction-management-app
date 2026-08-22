@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { NextResponse } from "next/server";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { runCycleBilling } from "@/lib/lawnBilling";
@@ -13,19 +14,12 @@ export const dynamic = "force-dynamic";
 
 export async function POST() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) {
     return NextResponse.json({ error: "Office only" }, { status: 403 });
   }

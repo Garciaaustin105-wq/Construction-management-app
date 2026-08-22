@@ -1,26 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ unread: 0 });
   }
+  const user = me.user;
 
   // super_admin has no org, but same_org() short-circuits true for them — so
   // the jobs/photos/RFIs/notifications counts below would bypass tier_office
   // RLS and aggregate EVERY tenant's activity platform-wide. That's a cross-
   // org leak, not a useful "platform inbox." super_admin is a platform role,
   // not an org workspace user, so the badge is always 0 for them.
-  const { data: myProfile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (myProfile?.role === "super_admin") {
+  if (me.isSuperAdmin) {
     return NextResponse.json({ unread: 0 });
   }
 

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { NextResponse } from "next/server";
 import { isOfficeLike } from "@/lib/roles";
 import { getKind } from "@/lib/emailPreview";
@@ -20,19 +21,12 @@ type SaveBody = { event?: string; subject?: string; body?: string };
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  const role = profile?.role ?? null;
+  const role = (me.hasProfile ? me.role : null);
   if (!isOfficeLike(role)) {
     return NextResponse.json(
       { error: "Office or admin only" },
@@ -40,7 +34,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const organizationId = (profile?.organization_id as string | null) ?? null;
+  const organizationId = me.orgId;
   // super_admin has a null org — they have no org templates to save against.
   if (!organizationId) {
     return NextResponse.json(

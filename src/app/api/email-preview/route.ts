@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { NextResponse } from "next/server";
 import { isOfficeLike } from "@/lib/roles";
 import { getKind, type RenderCtx } from "@/lib/emailPreview";
@@ -27,19 +28,12 @@ type PreviewBody = {
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  const role = profile?.role ?? null;
+  const role = (me.hasProfile ? me.role : null);
   if (!isOfficeLike(role)) {
     return NextResponse.json(
       { error: "Office or admin only" },
@@ -59,7 +53,7 @@ export async function POST(request: Request) {
   }
 
   const organizationId =
-    (profile?.organization_id as string | null) ?? null;
+    me.orgId;
 
   // Resolve the org name for branding (falls back to BRAND.company inside the
   // render fns when empty — e.g. super_admin with no org).

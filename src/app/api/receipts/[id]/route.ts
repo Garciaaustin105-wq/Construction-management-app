@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
@@ -13,11 +13,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
@@ -36,13 +33,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
-  const callerOrg = (profile?.organization_id as string | null) ?? null;
+  const role = me.role;
+  const callerOrg = me.orgId;
   const receiptOrg = (receipt.organization_id as string | null) ?? null;
 
   // Service-role delete bypasses RLS, so enforce the org boundary here:
@@ -52,7 +44,7 @@ export async function DELETE(
     if (!callerOrg || callerOrg !== receiptOrg) {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
-    if (!isOfficeLike(role) && receipt.uploaded_by !== user.id) {
+    if (!isOfficeLike(role) && receipt.uploaded_by !== me.user.id) {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
   }

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { OFFICE_OR_PM } from "@/lib/roles";
@@ -50,19 +51,13 @@ export async function POST(
   }
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
+  const user = me.user;
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? null;
+  const role = (me.hasProfile ? me.role : null);
   const officeLike = !!role && OFFICE_OR_PM.has(role as never);
   // Crew / superintendent may advance a visit's status (done / skipped /
   // reopen) so the customer notification suite fires when the CREW marks a

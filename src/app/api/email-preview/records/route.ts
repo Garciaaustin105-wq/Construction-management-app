@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { NextResponse } from "next/server";
 import { isOfficeLike } from "@/lib/roles";
 import { getKind, listRecords } from "@/lib/emailPreview";
@@ -22,19 +23,12 @@ type RecordsBody = { id?: string };
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  const role = profile?.role ?? null;
+  const role = (me.hasProfile ? me.role : null);
   if (!isOfficeLike(role)) {
     return NextResponse.json(
       { error: "Office or admin only" },
@@ -56,7 +50,7 @@ export async function POST(request: Request) {
 
   // No realData → auth-flow email (password_reset / verification), no record
   // to pick. super_admin has a null org → no org records to preview.
-  const organizationId = (profile?.organization_id as string | null) ?? null;
+  const organizationId = me.orgId;
   if (!kind.realData || !organizationId) {
     return NextResponse.json({ records: [], supportsReal: false });
   }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { inviteClientToPortal } from "@/lib/portalInvite";
 import { isOfficeLike } from "@/lib/roles";
 
@@ -42,22 +43,15 @@ function requestOrigin(request: Request): string {
 
 export async function POST(request: Request) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!profile || !isOfficeLike(profile.role)) {
+  if (!me.hasProfile || !isOfficeLike(me.role)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
-  const orgId = profile.organization_id as string | null;
+  const orgId = me.orgId;
   if (!orgId) {
     return NextResponse.json({ error: "No organization" }, { status: 403 });
   }

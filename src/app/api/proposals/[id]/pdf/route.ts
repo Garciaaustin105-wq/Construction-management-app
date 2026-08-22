@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { OFFICE_OR_PM, type Role } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -19,18 +20,11 @@ export async function GET(
   const { id } = await params;
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  const me = await getMeIdentity();
+  if (!me) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  const role = profile?.role as Role | null;
+  const role = me.role as Role | null;
   if (!role || !OFFICE_OR_PM.has(role)) {
     return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }

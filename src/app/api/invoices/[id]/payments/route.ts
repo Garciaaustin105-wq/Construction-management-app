@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
 import { computeTotal } from "@/lib/money";
@@ -120,18 +121,12 @@ export async function POST(
 ) {
   const { id } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user)
+  const me = await getMeIdentity();
+  if (!me)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = me.user;
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (role !== "office" && role !== "admin" && role !== "project_manager")
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
@@ -276,10 +271,8 @@ export async function GET(
 ) {
   const { id } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user)
+  const me = await getMeIdentity();
+  if (!me)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data, error } = await supabase

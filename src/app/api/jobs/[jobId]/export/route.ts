@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMeIdentity } from "@/lib/tenant";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isOfficeLike } from "@/lib/roles";
 import { NextResponse } from "next/server";
@@ -34,17 +35,11 @@ export async function GET(
 ) {
   const { jobId } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const me = await getMeIdentity();
+  if (!me) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const user = me.user;
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const role = profile?.role ?? "crew";
+  const role = me.role;
   if (!isOfficeLike(role)) {
     return NextResponse.json({ error: "Office access required" }, { status: 403 });
   }

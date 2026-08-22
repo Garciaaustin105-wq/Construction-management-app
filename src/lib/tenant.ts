@@ -6,16 +6,40 @@
 // the duplicate `auth.getUser()` (proxy → layout → page → getMyOrg was up to
 // 4×) and the per-page `profiles` re-read across ~90 call sites.
 //
+// TWO ENTRY POINTS, because pages and route handlers have different economics:
+//
+//   getMe()          → identity + org/billing. 3 reads (getUser, profiles,
+//                      organizations). Use in PAGES: the root layout already
+//                      calls it, so `cache()` makes every later caller in that
+//                      render free, and the org fields (orgName / plan /
+//                      planStatus / trialEndsAt / appVariant) are already paid
+//                      for.
+//   getMeIdentity()  → identity ONLY. 2 reads (getUser, profiles). Use in ROUTE
+//                      HANDLERS that need nothing but user / orgId / role /
+//                      hasProfile / isSuperAdmin. An API request renders NO root
+//                      layout, so `cache()` has nothing to dedup against and the
+//                      caller pays every read itself — bundling the organizations
+//                      row there is a wasted round trip. This path restores the
+//                      2-read cost the hand-written `getUser()` + `profiles`
+//                      preamble had before the sweep.
+//
+// `getMe()` is layered ON TOP of `getMeIdentity()` (plus `getOrgRow()`), and both
+// are cached, so a request that calls both still does ONE getUser + ONE profiles
+// read. `getMe()`'s return type and field set are unchanged — the ~68 shipped
+// pages that read `me.orgName` / `me.plan` / `me.appVariant` are unaffected.
+//
 // `getMyOrg` / `requireOrgScoped` are kept as backward-compatible thin wrappers
 // over `getMe` so existing call sites keep working during the sweep; new code
-// should call `getMe()` directly. `getMyOrg`'s old `supabase` param is now
-// optional and ignored (the cached `getMe` makes its own client).
+// should call `getMe()` (pages) or `getMeIdentity()` (routes) directly.
+// `getMyOrg`'s old `supabase` param is now optional and ignored (the cached
+// `getMe` makes its own client).
 
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { User } from "@supabase/supabase-js";
 
-export type MyTenant = {
+// Who the caller is — resolvable from getUser + the profiles row alone.
+export type MyIdentity = {
   // The resolved auth user. Present so callers that used to do their own
   // `auth.getUser()` can read `me.user.id` / `.email` without a second fetch.
   user: User;
@@ -27,9 +51,13 @@ export type MyTenant = {
   // a legitimate crew user (who also resolves to role "crew").
   hasProfile: boolean;
   isSuperAdmin: boolean;
-  // The caller's org display name (from the same embed; null for super_admin).
-  // Folded in so pages that show the workspace name (dashboard, TopBar) don't
-  // each re-query organizations.
+};
+
+// The caller's organization row — one extra read on top of MyIdentity.
+export type MyOrg = {
+  // The caller's org display name (null for super_admin). Folded in so pages
+  // that show the workspace name (dashboard, TopBar) don't each re-query
+  // organizations.
   orgName: string | null;
   // Billing (populated only when orgId is non-null; null for super_admin).
   plan: string | null;
@@ -42,23 +70,19 @@ export type MyTenant = {
   appVariant: "construction" | "lawn";
 };
 
-// Request-scoped cached identity. `cache()` memoizes per request, so the first
-// caller in a render pays the getUser + profiles + organizations reads ONCE and
-// every later caller in the same request gets the same resolved value. Falls
-// back to null when signed out.
+// Unchanged shape — exactly the fields callers had before the split.
+export type MyTenant = MyIdentity & MyOrg;
+
+// Request-scoped cached IDENTITY — getUser + profiles, nothing else (2 reads).
+// `cache()` memoizes per request, so the first caller in a render pays them ONCE
+// and every later caller in the same request gets the same resolved value
+// (including `getMe()`, which is layered on top). Falls back to null when signed
+// out.
 //
-// NOTE: the org read is a SEPARATE query, NOT a PostgREST `organizations(...)`
-// embed on the profiles select. The embed requires a DECLARED FK
-// profiles.organization_id → organizations.id; multi_tenancy_a.sql declares it
-// via `add column if not exists ... references` which is a NO-OP when the column
-// already existed without the FK — so the FK is NOT reliably declared in the
-// live DB, and the embed 400s (PGRST108), which nulled the whole profiles select
-// and broke every caller (dashboard showed "no workspace profile", role fell
-// back to "crew", billing tab vanished). The separate `.eq("id", orgId)` query
-// needs no FK. Re-enable the embed only after `alter table profiles add
-// constraint ... foreign key (organization_id) references organizations(id)` is
-// confirmed live.
-export const getMe = cache(async (): Promise<MyTenant | null> => {
+// This is the right entry point for route handlers: an API request renders no
+// root layout, so there is no earlier caller to share with, and pulling the
+// organizations row for a handler that only checks `role` is a wasted round trip.
+export const getMeIdentity = cache(async (): Promise<MyIdentity | null> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -72,42 +96,66 @@ export const getMe = cache(async (): Promise<MyTenant | null> => {
     .maybeSingle();
 
   const role = profile?.role ?? "crew";
-  const hasProfile = !!profile;
-  const orgId = (profile?.organization_id as string | null) ?? null;
-
-  // Load the org's name + billing columns when scoped to an org (one extra
-  // round-trip; skipped for super_admin, whose orgId is null). RLS allows
-  // same-org reads. Kept separate from the profiles read (see NOTE above).
-  let orgName: string | null = null;
-  let plan: string | null = null;
-  let planStatus: string | null = null;
-  let trialEndsAt: string | null = null;
-  let appVariant: "construction" | "lawn" = "construction";
-  if (orgId) {
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("name, plan, plan_status, trial_ends_at, app_variant")
-      .eq("id", orgId)
-      .maybeSingle();
-    orgName = org?.name ?? null;
-    plan = org?.plan ?? null;
-    planStatus = org?.plan_status ?? null;
-    trialEndsAt = org?.trial_ends_at ?? null;
-    appVariant = org?.app_variant === "lawn" ? "lawn" : "construction";
-  }
 
   return {
     user,
-    orgId,
+    orgId: (profile?.organization_id as string | null) ?? null,
     role,
-    hasProfile,
+    hasProfile: !!profile,
     isSuperAdmin: role === "super_admin",
-    orgName,
-    plan,
-    planStatus,
-    trialEndsAt,
-    appVariant,
   };
+});
+
+// Request-scoped cached ORGANIZATION row (1 read), keyed by orgId so a request
+// that resolves the same org twice pays once. Returns null when the row is
+// missing; callers supply their own defaults.
+//
+// NOTE: this is a SEPARATE query, NOT a PostgREST `organizations(...)` embed on
+// the profiles select in getMeIdentity. The embed requires a DECLARED FK
+// profiles.organization_id → organizations.id; multi_tenancy_a.sql declares it
+// via `add column if not exists ... references` which is a NO-OP when the column
+// already existed without the FK — so the FK is NOT reliably declared in the
+// live DB, and the embed 400s (PGRST108), which nulled the whole profiles select
+// and broke every caller (dashboard showed "no workspace profile", role fell
+// back to "crew", billing tab vanished). The separate `.eq("id", orgId)` query
+// needs no FK. Re-enable the embed only after `alter table profiles add
+// constraint ... foreign key (organization_id) references organizations(id)` is
+// confirmed live.
+export const getOrgRow = cache(async (orgId: string): Promise<MyOrg | null> => {
+  const supabase = await createClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name, plan, plan_status, trial_ends_at, app_variant")
+    .eq("id", orgId)
+    .maybeSingle();
+  if (!org) return null;
+  return {
+    orgName: org.name ?? null,
+    plan: org.plan ?? null,
+    planStatus: org.plan_status ?? null,
+    trialEndsAt: org.trial_ends_at ?? null,
+    appVariant: org.app_variant === "lawn" ? "lawn" : "construction",
+  };
+});
+
+// Identity + org/billing (3 reads), composed from the two cached helpers above
+// so calling both in one request still does ONE getUser + ONE profiles read.
+// Field set is unchanged — every existing page caller keeps working as-is.
+// The org read is skipped entirely for super_admin (orgId null).
+const NO_ORG: MyOrg = {
+  orgName: null,
+  plan: null,
+  planStatus: null,
+  trialEndsAt: null,
+  appVariant: "construction",
+};
+
+export const getMe = cache(async (): Promise<MyTenant | null> => {
+  const id = await getMeIdentity();
+  if (!id) return null;
+  if (!id.orgId) return { ...id, ...NO_ORG };
+  const org = await getOrgRow(id.orgId);
+  return { ...id, ...(org ?? NO_ORG) };
 });
 
 // Backward-compatible alias over the cached `getMe`. The `supabase` arg is now
