@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { OFFICE_LIKE, type Role } from "@/lib/roles";
 import NewInstallForm from "@/components/NewInstallForm";
+import { type CustomerOption } from "@/lib/installs";
 
 // Create an install. Office / admin / PM only — crew never author installs,
 // they only record field activity on ones assigned to them.
@@ -32,7 +33,12 @@ export default async function NewInstallPage() {
       .select("id, name")
       .eq("active", true)
       .order("position"),
-    supabase.from("customers").select("id, name").order("name"),
+    supabase
+      .from("customers")
+      .select(
+        "id, name, contact_name, contact_email, phone, address, service_plan"
+      )
+      .order("name"),
     supabase
       .from("jobs")
       .select("id, name")
@@ -53,7 +59,7 @@ export default async function NewInstallPage() {
         <NewInstallForm
           orgId={me.orgId}
           installTypes={(typesRes.data ?? []) as { id: string; name: string }[]}
-          customers={(customersRes.data ?? []) as { id: string; name: string }[]}
+          customers={(customersRes.data ?? []) as CustomerOption[]}
           jobs={(jobsRes.data ?? []) as { id: string; name: string }[]}
           crew={
             (crewRes.data ?? []) as {

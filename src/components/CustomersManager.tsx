@@ -14,6 +14,7 @@ export type Customer = {
   contact_email: string | null;
   phone: string | null;
   address: string | null;
+  service_plan: string | null;
   notes: string | null;
 };
 
@@ -42,12 +43,13 @@ export default function CustomersManager({
   const [contactEmail, setContactEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+  const [servicePlan, setServicePlan] = useState("");
 
   async function refresh() {
     const { data } = await supabase
       .from("customers")
       .select(
-        "id, name, contact_name, contact_email, phone, address, notes"
+        "id, name, contact_name, contact_email, phone, address, service_plan, notes"
       )
       .order("name");
     setCustomers((data as Customer[]) ?? []);
@@ -66,6 +68,7 @@ export default function CustomersManager({
       contact_email: contactEmail.trim() || null,
       phone: phone.trim() || null,
       address: address.trim() || null,
+      service_plan: servicePlan.trim() || null,
       organization_id: orgId,
     });
     setAdding(false);
@@ -79,6 +82,7 @@ export default function CustomersManager({
     setContactEmail("");
     setPhone("");
     setAddress("");
+    setServicePlan("");
     await refresh();
   }
 
@@ -158,6 +162,13 @@ export default function CustomersManager({
             onChange={setAddress}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
+          <input
+            type="text"
+            placeholder="Service plan (e.g. 1G fiber / 12mo)"
+            value={servicePlan}
+            onChange={(e) => setServicePlan(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
           <button
             type="submit"
             disabled={adding}
@@ -198,6 +209,11 @@ export default function CustomersManager({
                 )}
                 {c.address && (
                   <p className="text-xs text-gray-400 truncate">{c.address}</p>
+                )}
+                {c.service_plan && (
+                  <p className="text-xs text-blue-600 truncate">
+                    Plan: {c.service_plan}
+                  </p>
                 )}
                 <div className="flex flex-col gap-0.5 mt-1">
                   {c.phone && (

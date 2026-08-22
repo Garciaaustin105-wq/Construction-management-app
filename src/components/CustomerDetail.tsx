@@ -16,6 +16,7 @@ export type CustomerDetailRow = {
   contact_email: string | null;
   phone: string | null;
   address: string | null;
+  service_plan: string | null;
   notes: string | null;
   sms_opt_in: boolean | null;
   email_opt_in: boolean | null;
@@ -53,6 +54,7 @@ export default function CustomerDetail({
   const [contactEmail, setContactEmail] = useState(customer.contact_email ?? "");
   const [phone, setPhone] = useState(customer.phone ?? "");
   const [address, setAddress] = useState(customer.address ?? "");
+  const [servicePlan, setServicePlan] = useState(customer.service_plan ?? "");
   const [notes, setNotes] = useState(customer.notes ?? "");
   const [smsOptIn, setSmsOptIn] = useState(customer.sms_opt_in ?? false);
   const [emailOptIn, setEmailOptIn] = useState(customer.email_opt_in ?? true);
@@ -71,6 +73,7 @@ export default function CustomerDetail({
       contact_email: contactEmail.trim() || null,
       phone: phone.trim() || null,
       address: address.trim() || null,
+      service_plan: servicePlan.trim() || null,
       notes: notes.trim() || null,
     };
     // Only the lawn variant has the notification suite — write the opt-in flags
@@ -161,6 +164,13 @@ export default function CustomerDetail({
               onChange={setAddress}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
+            <input
+              type="text"
+              placeholder="Service plan (e.g. 1G fiber / 12mo)"
+              value={servicePlan}
+              onChange={(e) => setServicePlan(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
             <textarea
               placeholder="Notes"
               value={notes}
@@ -223,8 +233,9 @@ export default function CustomerDetail({
               <p className="inline-flex items-center gap-1"><Phone className="w-3 h-3 text-gray-400" /> {customer.phone}</p>
             )}
             {customer.address && <p><span className="text-gray-400">Address:</span> {customer.address}</p>}
+            {customer.service_plan && <p><span className="text-gray-400">Plan:</span> {customer.service_plan}</p>}
             {customer.notes && <p className="whitespace-pre-wrap"><span className="text-gray-400">Notes:</span> {customer.notes}</p>}
-            {!customer.contact_name && !customer.contact_email && !customer.phone && !customer.address && !customer.notes && (
+            {!customer.contact_name && !customer.contact_email && !customer.phone && !customer.address && !customer.service_plan && !customer.notes && (
               <p className="text-gray-400">No additional info.</p>
             )}
           </div>

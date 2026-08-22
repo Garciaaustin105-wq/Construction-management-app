@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import TopBar from "@/components/TopBar";
 import { OFFICE_LIKE, type Role } from "@/lib/roles";
 import EditInstallForm from "@/components/EditInstallForm";
+import { type CustomerOption } from "@/lib/installs";
 
 // Edit an existing install. Office / admin / PM only — the same audience that
 // can create one. Crew never reach this page; their writes go through the
@@ -17,8 +18,13 @@ type Install = {
   install_type_id: string | null;
   title: string;
   status: string;
+  completion_outcome: string | null;
   price: number | string | null;
   address: string | null;
+  priority: string | null;
+  po_number: string | null;
+  site_contact_name: string | null;
+  site_contact_phone: string | null;
   scheduled_at: string | null;
   duration_minutes: number | null;
   assigned_crew: string[] | null;
@@ -43,7 +49,7 @@ export default async function EditInstallPage({
       supabase
         .from("installs")
         .select(
-          "id, job_id, customer_id, install_type_id, title, status, price, address, scheduled_at, duration_minutes, assigned_crew, notes"
+          "id, job_id, customer_id, install_type_id, title, status, completion_outcome, price, address, priority, po_number, site_contact_name, site_contact_phone, scheduled_at, duration_minutes, assigned_crew, notes"
         )
         .eq("id", id)
         .maybeSingle(),
@@ -51,7 +57,12 @@ export default async function EditInstallPage({
         .from("install_types")
         .select("id, name, active")
         .order("position"),
-      supabase.from("customers").select("id, name").order("name"),
+      supabase
+        .from("customers")
+        .select(
+          "id, name, contact_name, contact_email, phone, address, service_plan"
+        )
+        .order("name"),
       supabase
         .from("jobs")
         .select("id, name")
@@ -85,7 +96,7 @@ export default async function EditInstallPage({
         <EditInstallForm
           install={install}
           installTypes={selectableTypes}
-          customers={(customersRes.data ?? []) as { id: string; name: string }[]}
+          customers={(customersRes.data ?? []) as CustomerOption[]}
           jobs={(jobsRes.data ?? []) as { id: string; name: string }[]}
           crew={
             (crewRes.data ?? []) as {

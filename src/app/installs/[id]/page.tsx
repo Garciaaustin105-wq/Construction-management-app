@@ -11,11 +11,14 @@ import {
   StickyNote,
   Briefcase,
   Pencil,
+  Phone,
+  Hash,
 } from "lucide-react";
 import { FIELD_MGMT, OFFICE_LIKE, type Role } from "@/lib/roles";
 import InstallFieldActions from "@/components/InstallFieldActions";
 import InstallIssueActions from "@/components/InstallIssueActions";
 import InstallPhotos from "@/components/InstallPhotos";
+import InstallStatusControl from "@/components/InstallStatusControl";
 import {
   statusCls,
   statusLabel,
@@ -25,6 +28,8 @@ import {
   whenLabel,
   humanDuration,
   totalTrackedMs,
+  priorityCls,
+  priorityLabel,
   type TimeEntry,
 } from "@/lib/installs";
 
@@ -39,6 +44,10 @@ type Install = {
   status: string;
   price: number | string | null;
   address: string | null;
+  priority: string | null;
+  po_number: string | null;
+  site_contact_name: string | null;
+  site_contact_phone: string | null;
   scheduled_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -70,7 +79,7 @@ export default async function InstallDetailPage({
   const { data: installRaw } = await supabase
     .from("installs")
     .select(
-      "id, organization_id, job_id, customer_id, title, status, price, address, scheduled_at, started_at, completed_at, duration_minutes, completion_outcome, has_open_problem, assigned_crew, notes, install_types(name), customers(name), jobs(name)"
+      "id, organization_id, job_id, customer_id, title, status, price, address, priority, po_number, site_contact_name, site_contact_phone, scheduled_at, started_at, completed_at, duration_minutes, completion_outcome, has_open_problem, assigned_crew, notes, install_types(name), customers(name), jobs(name)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -173,12 +182,33 @@ export default async function InstallDetailPage({
             >
               {statusLabel(install.status)}
             </span>
+            {install.priority && install.priority !== "normal" && (
+              <span
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${priorityCls(install.priority)}`}
+              >
+                {priorityLabel(install.priority)}
+              </span>
+            )}
           </div>
 
           {install.address && (
             <p className="text-sm text-gray-600 flex items-center gap-1.5">
               <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
               {install.address}
+            </p>
+          )}
+          {install.po_number && (
+            <p className="text-sm text-gray-600 flex items-center gap-1.5">
+              <Hash className="w-4 h-4 text-gray-400 shrink-0" />
+              PO / ref: {install.po_number}
+            </p>
+          )}
+          {(install.site_contact_name || install.site_contact_phone) && (
+            <p className="text-sm text-gray-600 flex items-center gap-1.5">
+              <Phone className="w-4 h-4 text-gray-400 shrink-0" />
+              {install.site_contact_name}
+              {install.site_contact_name && install.site_contact_phone ? " · " : ""}
+              {install.site_contact_phone}
             </p>
           )}
           {install.jobs?.name && (
@@ -211,6 +241,18 @@ export default async function InstallDetailPage({
             </Link>
           )}
         </section>
+
+        {/* Office status control — the desk can change status and mark an
+            install complete with an outcome from the detail page. The shared
+            component enforces the finished-status invariant. */}
+        {canEdit && (
+          <InstallStatusControl
+            installId={install.id}
+            status={install.status}
+            completionOutcome={install.completion_outcome}
+            canEdit={canEdit}
+          />
+        )}
 
         {/* Scheduled vs actual — the reason both are tracked */}
         <section className="bg-white rounded-lg p-4 shadow-sm">

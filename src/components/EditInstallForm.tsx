@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import { Ban, RotateCcw } from "lucide-react";
+import { SEVERITIES, type CustomerOption } from "@/lib/installs";
+import InstallStatusControl from "@/components/InstallStatusControl";
 
 type Opt = { id: string; name: string };
 type CrewOpt = { id: string; full_name: string | null; email: string; role: string };
@@ -15,8 +17,13 @@ type Install = {
   install_type_id: string | null;
   title: string;
   status: string;
+  completion_outcome: string | null;
   price: number | string | null;
   address: string | null;
+  priority: string | null;
+  po_number: string | null;
+  site_contact_name: string | null;
+  site_contact_phone: string | null;
   scheduled_at: string | null;
   duration_minutes: number | null;
   assigned_crew: string[] | null;
@@ -48,7 +55,7 @@ export default function EditInstallForm({
 }: {
   install: Install;
   installTypes: Opt[];
-  customers: Opt[];
+  customers: CustomerOption[];
   jobs: Opt[];
   crew: CrewOpt[];
 }) {
@@ -64,6 +71,14 @@ export default function EditInstallForm({
   const [price, setPrice] = useState(
     install.price == null ? "" : String(Number(install.price))
   );
+  const [priority, setPriority] = useState(install.priority ?? "normal");
+  const [poNumber, setPoNumber] = useState(install.po_number ?? "");
+  const [siteContactName, setSiteContactName] = useState(
+    install.site_contact_name ?? ""
+  );
+  const [siteContactPhone, setSiteContactPhone] = useState(
+    install.site_contact_phone ?? ""
+  );
   const [scheduledAt, setScheduledAt] = useState(
     toLocalInputValue(install.scheduled_at)
   );
@@ -74,9 +89,17 @@ export default function EditInstallForm({
   const [notes, setNotes] = useState(install.notes ?? "");
   const [saving, setSaving] = useState(false);
 
-  const isCancelled = install.status === "cancelled";
-  const isFinished =
-    install.status === "completed" || install.status === "needs_followup";
+  const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
+
+  function onCustomerChange(id: string) {
+    setCustomerId(id);
+    const c = customers.find((x) => x.id === id);
+    if (!c) return;
+    // On edit, only fill site contact if it's blank — the address is NOT
+    // touched here because it may have been customised for this install.
+    if (!siteContactName.trim() && c.contact_name) setSiteContactName(c.contact_name);
+    if (!siteContactPhone.trim() && c.phone) setSiteContactPhone(c.phone);
+  }
 
   function toggleCrew(id: string) {
     setAssigned((prev) =>
@@ -104,6 +127,10 @@ export default function EditInstallForm({
         job_id: jobId || null,
         address: address.trim() || null,
         price: priceNum,
+        priority: priority || "normal",
+        po_number: poNumber.trim() || null,
+        site_contact_name: siteContactName.trim() || null,
+        site_contact_phone: siteContactPhone.trim() || null,
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
         duration_minutes: duration.trim() === "" ? null : Number(duration),
         assigned_crew: assigned,
@@ -119,34 +146,6 @@ export default function EditInstallForm({
     toast.success("Install updated");
     router.push(`/installs/${install.id}`);
     router.refresh();
-  }
-
-  // Status changes are kept to three deliberate transitions rather than a free
-  // status dropdown, so the office can't leave an install in a state the field
-  // flow can't reason about (e.g. "completed" with no outcome and no end time).
-  async function setStatus(
-    next: "cancelled" | "scheduled",
-    successMsg: string,
-    clearCompletion: boolean
-  ) {
-    setSaving(true);
-    const patch: Record<string, unknown> = { status: next };
-    if (clearCompletion) {
-      patch.completion_outcome = null;
-      patch.completed_at = null;
-    }
-    const { error } = await supabase
-      .from("installs")
-      .update(patch)
-      .eq("id", install.id);
-    if (error) {
-      toast.error(`Failed: ${error.message}`);
-    } else {
-      toast.success(successMsg);
-      router.push(`/installs/${install.id}`);
-      router.refresh();
-    }
-    setSaving(false);
   }
 
   return (
@@ -177,21 +176,51 @@ export default function EditInstallForm({
           </select>
         </label>
 
-        <label className="block">
-          <span className="text-xs font-medium text-gray-600">Customer</span>
-          <select
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+        <div>
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">Customer</span>
+            <select
+              value={customerId}
+              onChange={(e) => onCustomerChange(e.target.value)}
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">— none —</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedCustomer && (
+            <div className="mt-1.5 rounded-lg bg-gray-50 border border-gray-200 p-2 text-xs text-gray-600 space-y-0.5">
+              {selectedCustomer.service_plan && (
+                <p>
+                  <span className="text-gray-400">Plan:</span>{" "}
+                  {selectedCustomer.service_plan}
+                </p>
+              )}
+              {selectedCustomer.contact_email && (
+                <p>
+                  <span className="text-gray-400">Email:</span>{" "}
+                  {selectedCustomer.contact_email}
+                </p>
+              )}
+              {selectedCustomer.phone && (
+                <p>
+                  <span className="text-gray-400">Phone:</span>{" "}
+                  {selectedCustomer.phone}
+                </p>
+              )}
+            </div>
+          )}
+          <Link
+            href="/admin/customers"
+            className="mt-1 inline-block text-xs font-medium text-blue-600"
           >
-            <option value="">— none —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            + New customer
+          </Link>
+        </div>
 
         <label className="block">
           <span className="text-xs font-medium text-gray-600">Attached job</span>
@@ -217,6 +246,59 @@ export default function EditInstallForm({
             className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
           />
         </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">Priority</span>
+          <select
+            value={priority}
+            onChange={(e) => setPriority(e.target.value)}
+            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            {SEVERITIES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-medium text-gray-600">
+            PO / reference #
+          </span>
+          <input
+            value={poNumber}
+            onChange={(e) => setPoNumber(e.target.value)}
+            placeholder="Optional"
+            className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">
+              Site contact
+            </span>
+            <input
+              value={siteContactName}
+              onChange={(e) => setSiteContactName(e.target.value)}
+              placeholder="On-site name"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-gray-600">
+              Contact phone
+            </span>
+            <input
+              type="tel"
+              value={siteContactPhone}
+              onChange={(e) => setSiteContactPhone(e.target.value)}
+              placeholder="On-site phone"
+              className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
       </section>
 
       <section className="bg-white rounded-lg p-4 shadow-sm space-y-3">
@@ -307,48 +389,15 @@ export default function EditInstallForm({
         {saving ? "Saving..." : "Save changes"}
       </button>
 
-      <section className="bg-white rounded-lg p-4 shadow-sm space-y-2">
-        <h2 className="text-sm font-semibold text-gray-900">Status</h2>
-        {isCancelled ? (
-          <>
-            <p className="text-xs text-gray-500">
-              This install is cancelled. Crew can&apos;t see or act on it.
-            </p>
-            <button
-              disabled={saving}
-              onClick={() => setStatus("scheduled", "Install restored", true)}
-              className="w-full flex items-center justify-center gap-2 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium active:bg-gray-50 disabled:opacity-50"
-            >
-              <RotateCcw className="w-4 h-4" /> Restore to scheduled
-            </button>
-          </>
-        ) : (
-          <>
-            {isFinished && (
-              <button
-                disabled={saving}
-                onClick={() =>
-                  setStatus("scheduled", "Reopened for another visit", true)
-                }
-                className="w-full flex items-center justify-center gap-2 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium active:bg-gray-50 disabled:opacity-50"
-              >
-                <RotateCcw className="w-4 h-4" /> Reopen for another visit
-              </button>
-            )}
-            <p className="text-xs text-gray-500">
-              Cancelling keeps the record and its history, but hides it from the
-              crew and the calendar.
-            </p>
-            <button
-              disabled={saving}
-              onClick={() => setStatus("cancelled", "Install cancelled", false)}
-              className="w-full flex items-center justify-center gap-2 border border-red-200 text-red-700 py-3 rounded-lg font-medium active:bg-red-50 disabled:opacity-50"
-            >
-              <Ban className="w-4 h-4" /> Cancel this install
-            </button>
-          </>
-        )}
-      </section>
+      {/* Status lives in a shared control so the detail page and this form
+          enforce the same invariant (a finished status always carries an
+          outcome + completed_at). See InstallStatusControl.tsx. */}
+      <InstallStatusControl
+        installId={install.id}
+        status={install.status}
+        completionOutcome={install.completion_outcome}
+        canEdit
+      />
     </div>
   );
 }

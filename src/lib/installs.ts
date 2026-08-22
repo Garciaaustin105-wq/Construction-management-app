@@ -14,6 +14,19 @@ export type InstallStatus =
 
 export type CompletionOutcome = "completed" | "partial" | "could_not_complete";
 
+// A customer option rich enough for the install create/edit forms to
+// auto-fill the install's address + site contact from the chosen customer and
+// surface the service plan as a reference, instead of the office retyping it.
+export type CustomerOption = {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  phone: string | null;
+  address: string | null;
+  service_plan: string | null;
+};
+
 export const INSTALL_STATUSES: InstallStatus[] = [
   "scheduled",
   "in_progress",
@@ -65,6 +78,19 @@ export function severityCls(s: string): string {
   if (s === "high") return "bg-red-100 text-red-700";
   if (s === "low") return "bg-gray-50 text-gray-500";
   return "bg-gray-100 text-gray-700";
+}
+
+// Priority uses the same low/normal/high value set as problem severity, so it
+// shares the colour helper. The label helper keeps the wording in one place
+// for the list badge, the detail page, and the create/edit form dropdowns.
+export function priorityLabel(p: string | null | undefined): string {
+  if (!p) return "Normal";
+  const found = SEVERITIES.find((x) => x.value === p);
+  return found ? found.label : p;
+}
+
+export function priorityCls(p: string | null | undefined): string {
+  return severityCls(p ?? "normal");
 }
 
 export function outcomeLabel(o: string | null): string | null {

@@ -31,7 +31,7 @@ export default async function CustomerDetailPage({
     supabase
       .from("customers")
       .select(
-        "id, name, contact_name, contact_email, phone, address, notes, sms_opt_in, email_opt_in"
+        "id, name, contact_name, contact_email, phone, address, service_plan, notes, sms_opt_in, email_opt_in"
       )
       .eq("id", id)
       .single(),

@@ -11,6 +11,8 @@ import {
   statusLabel,
   money,
   whenLabel,
+  priorityCls,
+  priorityLabel,
 } from "@/lib/installs";
 
 // Installs list — the ISP / fiber module's main office surface.
@@ -30,6 +32,7 @@ type Row = {
   id: string;
   title: string;
   status: string;
+  priority: string | null;
   price: number | string | null;
   address: string | null;
   scheduled_at: string | null;
@@ -43,7 +46,12 @@ type Row = {
 export default async function InstallsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; problems?: string; attention?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    priority?: string;
+    problems?: string;
+    attention?: string;
+  }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -69,6 +77,7 @@ export default async function InstallsPage({
 
   const sp = await searchParams;
   const statusFilter = sp.status ?? "";
+  const priorityFilter = sp.priority ?? "";
   const problemsOnly = sp.problems === "1";
   // "Needs attention" is the office's real working queue: anything a crew left
   // unfinished OR anything with a problem still open. It deliberately spans two
@@ -77,7 +86,7 @@ export default async function InstallsPage({
   const attentionOnly = sp.attention === "1";
 
   const SELECT =
-    "id, title, status, price, address, scheduled_at, started_at, has_open_problem, completion_outcome, install_types(name), customers(name)";
+    "id, title, status, priority, price, address, scheduled_at, started_at, has_open_problem, completion_outcome, install_types(name), customers(name)";
   const base = () =>
     supabase
       .from("installs")
@@ -111,6 +120,7 @@ export default async function InstallsPage({
   } else {
     let q = base();
     if (statusFilter) q = q.eq("status", statusFilter);
+    if (priorityFilter) q = q.eq("priority", priorityFilter);
     if (problemsOnly) q = q.eq("has_open_problem", true);
     const { data } = await q;
     rowsUnsorted = (data ?? []) as unknown as Row[];
@@ -186,6 +196,7 @@ export default async function InstallsPage({
         {isOfficeSide && (
           <InstallFilters
             currentStatus={statusFilter}
+            currentPriority={priorityFilter}
             problemsOnly={problemsOnly}
             attentionOnly={attentionOnly}
           />
@@ -204,7 +215,7 @@ export default async function InstallsPage({
           <div className="bg-white rounded-lg p-6 text-center">
             <Radio className="w-8 h-8 text-gray-300 mx-auto mb-2" />
             <p className="text-sm font-medium text-gray-700">
-              {statusFilter || problemsOnly || attentionOnly
+              {statusFilter || priorityFilter || problemsOnly || attentionOnly
                 ? "Nothing matches that filter"
                 : "No installs yet"}
             </p>
@@ -246,6 +257,13 @@ export default async function InstallsPage({
                     >
                       {statusLabel(r.status)}
                     </span>
+                    {r.priority && r.priority !== "normal" && (
+                      <span
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${priorityCls(r.priority)}`}
+                      >
+                        {priorityLabel(r.priority)}
+                      </span>
+                    )}
                     {isOfficeSide && (
                       <span className="text-xs font-medium text-gray-700">
                         {money(r.price)}
