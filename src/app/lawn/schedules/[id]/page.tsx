@@ -4,6 +4,7 @@ import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { OFFICE_OR_PM } from "@/lib/roles";
 import TopBar from "@/components/TopBar";
 import { useToast } from "@/components/Toast";
 import { generateDueDates, summarizeSchedule } from "@/lib/lawnRecurrence";
@@ -113,7 +114,11 @@ export default function ScheduleDetailPage({
         .eq("id", user.id)
         .single();
       const role = profile?.role ?? "crew";
-      if (role !== "office" && role !== "admin" && role !== "super_admin") {
+      // Align to /lawn/jobs (OFFICE_OR_PM). This gate previously admitted only
+      // office/admin/super_admin and bounced PMs — so a PM who reached the
+      // jobs list got kicked to /dashboard on opening a schedule. Same set as
+      // the list page they navigated from (office/admin/pm/super_admin).
+      if (!OFFICE_OR_PM.has(role as never)) {
         router.push("/dashboard");
         return;
       }
