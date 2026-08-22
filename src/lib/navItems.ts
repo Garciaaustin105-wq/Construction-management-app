@@ -469,11 +469,14 @@ export function isPublicRoute(pathname: string): boolean {
 // `installs` is a per-ORG feature (organizations.isp_module_enabled), not a
 // per-variant one, so it can't live inside the role branches above — those
 // only see the role and the build-time variant. Instead the two builders are
-// wrapped: the base functions are untouched, and the Installs row is appended
-// afterwards only when the caller passes ispModule.
+// wrapped: the base functions are untouched, and the Installs row is inserted
+// only when the caller passes ispModule.
 //
-// Every existing call site that passes no opts gets a byte-identical nav to
-// before, which is the point — no other tenant's chrome changes.
+// POSITION: inserted right after Home (index 1) — Installs is the headline
+// daily surface for the one org that has the module, so it sits second, not
+// buried at the bottom under Admin/Billing (desktop) or as the trailing cell
+// (mobile). Every existing call site that passes no opts gets a byte-identical
+// nav to before, which is the point — no other tenant's chrome changes.
 //
 // This is UI reachability only. RLS is what protects install data; see the
 // header of src/lib/useIspModule.ts.
@@ -508,7 +511,14 @@ function withIspModule(
   if (!opts?.ispModule) return items;
   if (!role || !INSTALL_ROLES.has(role)) return items;
   if (items.some((i) => i.href === "/installs")) return items;
-  return [...items, INSTALLS_ITEM];
+  // Insert as the 2nd item (right after Home). Every INSTALL_ROLES nav starts
+  // with a Home row, so index 1 is always after it. Falls back to appending if
+  // a nav somehow has no Home row.
+  const homeIdx = items.findIndex((i) => i.href === "/dashboard" || i.href === "/lawn");
+  const insertAt = homeIdx >= 0 ? homeIdx + 1 : items.length;
+  const out = [...items];
+  out.splice(insertAt, 0, INSTALLS_ITEM);
+  return out;
 }
 
 export function buildNavItems(
