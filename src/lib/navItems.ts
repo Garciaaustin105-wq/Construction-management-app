@@ -54,6 +54,7 @@ import {
   Star,
   FlaskConical,
   Package,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -142,6 +143,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       { href: "/estimates", label: "Estimates", Icon: FileText },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
       { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+      // AI admin (slice 1: visit summarization). Office/admin only — the page
+      // gate (src/app/lawn/ai/page.tsx) bounces super_admin + non-office; this
+      // nav entry is in the lawn office/admin fallthrough block so it matches.
+      { href: "/lawn/ai", label: "AI admin", Icon: Sparkles },
       { href: "/lawn/notifications", label: "Notifications", Icon: Bell },
       { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
       { href: "/calendar", label: "Calendar", Icon: Calendar },
@@ -374,6 +379,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/crew/time",
             "/crew/photo",
             "/lawn/insights",
+            "/lawn/ai",
             "/lawn/notifications",
             "/admin/email-preview",
             "/admin/leads",
