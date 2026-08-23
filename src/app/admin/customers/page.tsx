@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
@@ -8,6 +9,7 @@ import CustomersManager, {
 } from "@/components/CustomersManager";
 import { MANAGEMENT, PIPELINE, ACCOUNTING, isSuperAdmin, type Role } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
+import { getBusinessTypes } from "@/lib/businessTypes.server";
 import { MessagesSquare } from "lucide-react";
 
 export default async function CustomersPage() {
@@ -26,6 +28,20 @@ export default async function CustomersPage() {
   )
     redirect("/dashboard");
   const orgId = me.orgId ?? "";
+
+  // Gap 2: an ISP-ONLY org has no construction clients, so the Client Portal
+  // (authed customer accounts + threaded messages, built for construction) is
+  // noise on their busiest screen — and worse, it advertises a subscriber login
+  // that ISP customers deliberately do not get.
+  //
+  // "ISP-only" is the precise test, not "has ISP": Terra Vista is
+  // construction + isp and still runs real construction clients through the
+  // portal, so hiding it from them would remove a feature they use. An org with
+  // NO declared types (business_types.sql not yet run) falls through to the
+  // existing behaviour rather than losing the link.
+  const businessTypes = await getBusinessTypes(me.orgId);
+  const ispOnly =
+    businessTypes.length > 0 && businessTypes.every((t) => t === "isp");
 
   const { data } = await supabase
     .from("customers")
@@ -46,7 +62,7 @@ export default async function CustomersPage() {
             same customers as this page — it read as a duplicate "Customers"
             tab. It's construction-only (the lawn deploy blocks the route),
             so it's linked from here instead, next to the list it shares. */}
-        {!isLawn() && (role === "office" || role === "admin") && (
+        {!isLawn() && !ispOnly && (role === "office" || role === "admin") && (
           <Link
             href="/admin/clients"
             className="flex items-center gap-2 bg-white border border-gray-300 text-gray-900 px-4 py-3 rounded-lg font-semibold text-sm active:bg-gray-50"
@@ -55,11 +71,15 @@ export default async function CustomersPage() {
             Client Portal & Messages
           </Link>
         )}
-        <CustomersManager
-          initial={(data as Customer[]) ?? []}
-          canEdit={role === "office" || role === "admin"}
-          orgId={orgId}
-        />
+        {/* CustomersManager reads ?add=1 via useSearchParams (the dashboard's
+            "Add customer" deep link), which requires a Suspense boundary. */}
+        <Suspense fallback={null}>
+          <CustomersManager
+            initial={(data as Customer[]) ?? []}
+            canEdit={role === "office" || role === "admin"}
+            orgId={orgId}
+          />
+        </Suspense>
       </main>
     </div>
   );

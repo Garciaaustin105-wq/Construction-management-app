@@ -14,6 +14,9 @@ import { isLawn } from "@/lib/variant";
 import PlanBanner from "@/components/PlanBanner";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
+import { isIspOrg } from "@/lib/ispModule";
+import { hasBusinessType } from "@/lib/businessTypes";
+import { getBusinessTypes } from "@/lib/businessTypes.server";
 
 // Small overline label that groups the dashboard tiles into named sections
 // (Create / Manage / Track / Your Work). Kept deliberately understated so it
@@ -91,6 +94,20 @@ export default async function DashboardPage() {
   // Section visibility — each tile inside still keeps its own exact role guard;
   // these only decide whether a labeled section renders at all.
   const showCreate = showOfficeSurface || role === "project_manager";
+
+  // ISP orgs get a direct "Add customer" tile: for a fiber business, signing up
+  // a subscriber IS the daily job, and it was otherwise three taps deep behind
+  // Manage -> Customers (a screen framed around the construction Client
+  // Portal). Office/admin only, same as the rest of this Create block.
+  //
+  // Checks BOTH signals on purpose. isp_module_enabled is the live gate today;
+  // business_types is the new, multi-valued declaration from signup and is
+  // empty until business_types.sql runs. Either alone would mean the tile
+  // silently misses a real ISP org during the migration window.
+  const ispTypes = await getBusinessTypes(me.orgId);
+  const showAddCustomer =
+    showOfficeSurface &&
+    ((await isIspOrg(me.orgId)) || hasBusinessType(ispTypes, "isp"));
   // Manage = office/admin/PM (was MANAGEMENT, which included superintendent —
   // a field role shouldn't be handed cost-code/sub management tiles).
   const showManage = role === "office" || role === "admin" || role === "project_manager";
@@ -236,10 +253,25 @@ export default async function DashboardPage() {
           <section className="space-y-2">
             <SectionHeader>Create</SectionHeader>
             {showOfficeSurface && (
-              <div className="grid grid-cols-3 gap-2">
+              <div
+                className={`grid gap-2 ${showAddCustomer ? "grid-cols-2" : "grid-cols-3"}`}
+              >
+                {showAddCustomer && (
+                  <Link
+                    href="/admin/customers?add=1"
+                    className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+                  >
+                    <Users className="w-5 h-5" />
+                    Add customer
+                  </Link>
+                )}
                 <Link
                   href="/admin/projects/new"
-                  className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
+                  className={`block text-center py-3 rounded-lg font-semibold flex items-center justify-center gap-2 ${
+                    showAddCustomer
+                      ? "bg-white border border-gray-300 text-gray-900 active:bg-gray-50"
+                      : "bg-blue-600 text-white active:bg-blue-700"
+                  }`}
                 >
                   <Plus className="w-5 h-5" />
                   New

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import AddressInput from "@/components/AddressInput";
@@ -35,6 +36,25 @@ export default function CustomersManager({
   const supabase = createClient();
   const toast = useToast();
   const [customers, setCustomers] = useState<Customer[]>(initial);
+
+  // Deep-link support for the dashboard's "Add customer" tile (?add=1).
+  // Without this the tile just dumps you at the top of a customer LIST and you
+  // still have to find the form — which is the "buried under Admin" problem the
+  // tile exists to solve. Focusing the name field means the tile lands you with
+  // a cursor already blinking in the first box.
+  const searchParams = useSearchParams();
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (searchParams.get("add") !== "1") return;
+    // rAF so focus runs after paint; `preventScroll` then an explicit
+    // scrollIntoView keeps the whole form in view instead of jamming the
+    // focused input under the sticky TopBar.
+    const id = requestAnimationFrame(() => {
+      nameInputRef.current?.focus({ preventScroll: true });
+      nameInputRef.current?.scrollIntoView({ block: "center" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [searchParams]);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -127,6 +147,7 @@ export default function CustomersManager({
             <Plus className="w-4 h-4" /> Add Customer
           </h2>
           <input
+            ref={nameInputRef}
             type="text"
             placeholder="Customer / company name *"
             value={name}

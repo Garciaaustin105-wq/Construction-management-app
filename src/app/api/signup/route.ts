@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendVerificationEmail } from "@/lib/email";
 import { ensureStripeCustomer, TRIAL_DAYS } from "@/lib/billing";
+import { parseBusinessTypes, type BusinessType } from "@/lib/businessTypes";
 
 export const dynamic = "force-dynamic";
 
@@ -62,15 +63,23 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { business_name, full_name, email, password, company_website, variant } =
-    body as {
-      business_name?: string;
-      full_name?: string;
-      email?: string;
-      password?: string;
-      company_website?: string;
-      variant?: string;
-    };
+  const {
+    business_name,
+    full_name,
+    email,
+    password,
+    company_website,
+    variant,
+    business_types,
+  } = body as {
+    business_name?: string;
+    full_name?: string;
+    email?: string;
+    password?: string;
+    company_website?: string;
+    variant?: string;
+    business_types?: unknown;
+  };
 
   // Honeypot: a real user never fills the hidden "company_website" field. Bots
   // do. Pretend success so the trap isn't revealed, but do nothing.
@@ -122,11 +131,27 @@ export async function POST(request: Request) {
   // at 25 customers/1 seat/1GB by the DB triggers); construction keeps the
   // 30-day trial. See src/lib/plans.ts (free entry) + plan_limits_v2.sql.
   const isLawnSignup = variant === "lawn";
+
+  // What kind of business is this? Multi-select, independent of app_variant —
+  // an org can be construction + isp. Unrecognized values are dropped rather
+  // than trusted, because this lands in a CHECK-constrained column and a bad
+  // value would fail the whole insert (i.e. lose the signup) rather than just
+  // being ignored.
+  //
+  // Falls back to the deploy variant when the client sends nothing: older
+  // cached form bundles, and any non-browser caller, must still be able to
+  // create a workspace. business_types is never allowed to be empty — the
+  // column's cardinality check would reject it.
+  const declaredTypes = parseBusinessTypes(business_types);
+  const orgBusinessTypes: BusinessType[] =
+    declaredTypes.length > 0 ? declaredTypes : [isLawnSignup ? "lawn" : "construction"];
+
   const { data: org, error: orgErr } = await admin
     .from("organizations")
     .insert({
       name: bizName,
       email: mail,
+      business_types: orgBusinessTypes,
       plan: isLawnSignup ? "free" : "trial",
       // free is a persistent active plan (the column default 'trial' would be
       // misleading for a free org); construction trial leaves plan_status to the

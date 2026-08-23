@@ -5,6 +5,11 @@ import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
 import { isLawn } from "@/lib/variant";
+import {
+  BUSINESS_TYPES,
+  BUSINESS_TYPE_LABELS,
+  type BusinessType,
+} from "@/lib/businessTypes";
 
 // Client form for the public self-serve signup. The org + admin creation
 // happens server-side in /api/signup (service role, env-gated by SAAS_OPEN).
@@ -17,6 +22,14 @@ import { isLawn } from "@/lib/variant";
 // error stays visible until the next submit.
 export default function SignupForm() {
   const [businessName, setBusinessName] = useState("");
+  // Seeded from the deploy variant: someone signing up through the lawn app is
+  // a lawn business until they say otherwise. Never allowed to reach empty —
+  // unticking the last box re-seeds, because the API's column has a
+  // cardinality>=1 check and an empty submit would 500 at the very last step of
+  // signup, which is the worst possible place to fail.
+  const [businessTypes, setBusinessTypes] = useState<BusinessType[]>([
+    isLawn() ? "lawn" : "construction",
+  ]);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,6 +39,14 @@ export default function SignupForm() {
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [successEmail, setSuccessEmail] = useState<string | null>(null);
   const [emailSent, setEmailSent] = useState(true);
+
+  function toggleBusinessType(t: BusinessType) {
+    setBusinessTypes((prev) => {
+      const next = prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t];
+      // Refuse to end up with nothing selected — see the state comment above.
+      return next.length > 0 ? next : prev;
+    });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +66,9 @@ export default function SignupForm() {
         // tenant.ts know whether this is a lawn org. The form knows the deploy
         // variant at build time (NEXT_PUBLIC_APP_VARIANT inlined).
         variant: isLawn() ? "lawn" : "construction",
+        // What the business actually does — independent of `variant` above,
+        // and multi-valued (construction + isp is the motivating case).
+        business_types: businessTypes,
       }),
     });
     const data = await res.json();
@@ -131,6 +155,38 @@ export default function SignupForm() {
           className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
         />
       </label>
+
+      {/* What kind of work they do. Multi-select because plenty of small
+          contractors do more than one — a construction company that also runs
+          fiber is the case that forced this to exist. Seeded with the deploy
+          variant already ticked so the common single-trade signup is one tap
+          of confirmation rather than a decision. */}
+      <fieldset className="block">
+        <legend className="text-sm font-medium text-gray-700">
+          What kind of work do you do?
+        </legend>
+        <p className="mt-0.5 text-xs text-gray-500">
+          Pick everything that applies — you can change this later.
+        </p>
+        <div className="mt-2 space-y-2">
+          {BUSINESS_TYPES.map((t) => (
+            <label
+              key={t}
+              className="flex items-center gap-3 px-3 py-2.5 border border-gray-300 rounded-lg cursor-pointer active:bg-gray-50"
+            >
+              <input
+                type="checkbox"
+                checked={businessTypes.includes(t)}
+                onChange={() => toggleBusinessType(t)}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <span className="text-sm text-gray-800">
+                {BUSINESS_TYPE_LABELS[t]}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       <label className="block">
         <span className="text-sm font-medium text-gray-700">Your name</span>
