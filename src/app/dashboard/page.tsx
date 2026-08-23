@@ -292,8 +292,8 @@ export default async function DashboardPage() {
                 it counts. Tone flags the exception, so a clean desk stays
                 visually quiet and only the numbers needing action stand out. */}
             {showOfficeSurface && (
-              <>
-                <p className="text-[11px] text-gray-400 -mb-2">
+              <div className="space-y-2">
+                <p className="text-[11px] text-gray-400">
                   As of {dateStr} · live counts
                 </p>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -346,7 +346,7 @@ export default async function DashboardPage() {
                     />
                   </Link>
                 </div>
-              </>
+              </div>
             )}
 
             {/* Desktop 3-col: actionable lists get the wide column, the action

@@ -202,8 +202,8 @@ export default async function LawnPage() {
               Tone flags the exception (overdue work, unread customer actions);
               a clean board stays visually quiet. */}
           {showHubTools && (
-            <>
-              <p className="text-[11px] text-gray-400 -mb-2">
+            <div className="space-y-2">
+              <p className="text-[11px] text-gray-400">
                 As of {dateStr} · live counts
               </p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -248,7 +248,7 @@ export default async function LawnPage() {
                   tone={unreadCount > 0 ? "blue" : "default"}
                 />
               </div>
-            </>
+            </div>
           )}
 
           {/* Desktop 3-col: the dispatch lists get the wide column, the action
