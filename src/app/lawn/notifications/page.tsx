@@ -7,6 +7,7 @@ import PageContainer from "@/components/PageContainer";
 import { useToast } from "@/components/Toast";
 import { Loader2, Save, Bell, MessageSquare, Mail } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
+import { OFFICE_LIKE, type Role } from "@/lib/roles";
 
 // Office-only notification settings + template editor (lawn variant). Manages
 // two org-scoped tables via the browser session client (RLS tier_office for
@@ -119,12 +120,12 @@ export default function LawnNotificationsPage() {
         .select("role, organization_id")
         .eq("id", user.id)
         .single();
-      const role = profile?.role ?? "crew";
-      if (
-        role !== "office" &&
-        role !== "admin" &&
-        role !== "super_admin"
-      ) {
+      const role = (profile?.role as Role) ?? "crew";
+      // OFFICE_LIKE = { office, admin, super_admin } — the page's intended
+      // audience (templates/settings are org-scoped; super_admin admitted by
+      // design per the page header comment). Hand-rolled check replaced with
+      // the set so it can't drift from the role taxonomy.
+      if (!OFFICE_LIKE.has(role)) {
         router.push("/dashboard");
         return;
       }

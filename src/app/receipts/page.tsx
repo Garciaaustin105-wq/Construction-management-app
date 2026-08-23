@@ -3,7 +3,7 @@ import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import PageContainer from "@/components/PageContainer";
-import { FIELD_MGMT, type Role } from "@/lib/roles";
+import { FIELD_MGMT, isSuperAdmin, type Role } from "@/lib/roles";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import OfficeReceiptsList, {
   type ReceiptRow,
@@ -26,10 +26,12 @@ export default async function ReceiptsOverviewPage({
   // super_admin back to /dashboard when they tapped the tab (looked like the
   // page just refreshed / sent them home). RLS already returns rows for all
   // three via tier_office (is_office = office/admin, plus super_admin).
-  // Admit field-management (superintendent + PM + office + admin/super_admin)
-  // so a PM running job cost can review receipts. Was OFFICE_LIKE, which bounced
-  // PM. RLS returns rows via tier_office / tier_office_or_pm.
-  if (!FIELD_MGMT.has(role)) redirect("/dashboard");
+  // Admit field-management (superintendent + PM + office + admin) so a PM
+  // running job cost can review receipts. Was OFFICE_LIKE, which bounced PM.
+  // RLS returns rows via tier_office / tier_office_or_pm. super_admin (null org)
+  // is bounced — they have no Receipts tab and would see an empty org-scoped
+  // list (same stance as /admin/customers).
+  if (!FIELD_MGMT.has(role) || isSuperAdmin(role)) redirect("/dashboard");
 
   const sp = await searchParams;
   const offset = Math.max(0, Number(sp.offset ?? "0") || 0);

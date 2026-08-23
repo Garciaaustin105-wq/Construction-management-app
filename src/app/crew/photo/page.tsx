@@ -10,6 +10,7 @@ import FieldCamera from "@/components/FieldCamera";
 import { validateUpload } from "@/lib/uploadValidate";
 import { normalizeImage } from "@/lib/normalizeImage";
 import { resolveLocation, type GpsResult, type GpsStatus } from "@/lib/geo";
+import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
 
 type QStatus = "pending" | "uploading" | "done" | "error";
 type QItem = { id: string; file: File; previewUrl: string; status: QStatus };
@@ -44,8 +45,28 @@ function PhotoUploadForm() {
     setGpsStatus(status);
   }
 
+  // Role gate (client-side UX; RLS is the real data boundary). Admit field
+  // roles + management (the nav audience for the Photos tab: crew/super/PM/
+  // office/admin); bounce sales / accountant / customer / super_admin.
   useEffect(() => {
     (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+      const role = (profile?.role as Role) ?? "crew";
+      if (!(FIELD.has(role) || MANAGEMENT.has(role))) {
+        router.push("/dashboard");
+        return;
+      }
       const { data } = await supabase.from("jobs").select("id, name").eq("type", "construction");
       setJobs(data ?? []);
       // Auto-grab location the moment the page opens so it's ready by the time

@@ -8,6 +8,7 @@ import MonthGrid from "./MonthGrid";
 import AgendaList from "./AgendaList";
 import { getMe } from "@/lib/tenant";
 import { getCalendarEvents } from "@/lib/calendarEvents";
+import { MANAGEMENT, type Role } from "@/lib/roles";
 
 // In-app calendar: a month grid + agenda list of this org's events (job
 // start/end, schedule events, subcontractor dates, invoice due, estimate
@@ -34,6 +35,11 @@ export default async function CalendarPage({
   // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
   const me = await getMe();
   if (!me) redirect("/login");
+  // Calendar is a management scheduling view (office / admin / superintendent /
+  // PM = MANAGEMENT). super_admin (null org) is excluded by MANAGEMENT and
+  // bounced; crew / sales / accountant / customer have no use for it. Was
+  // previously ungated (any signed-in user, incl. customer, could load it).
+  if (!MANAGEMENT.has(me.role as Role)) redirect("/dashboard");
   const tenant = me;
   const user = me.user;
 

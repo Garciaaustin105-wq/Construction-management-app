@@ -7,6 +7,8 @@ import { useToast } from "@/components/Toast";
 import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucide-react";
 import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
 import { isLawn } from "@/lib/variant";
+import { useRouter } from "next/navigation";
+import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 
@@ -44,6 +46,7 @@ function fmtDuration(ms: number): string {
 
 export default function CrewTimePage() {
   const supabase = createClient();
+  const router = useRouter();
   const toast = useToast();
 
   const [userId, setUserId] = useState<string | null>(null);
@@ -104,8 +107,28 @@ export default function CrewTimePage() {
     setLoading(false);
   }
 
+  // Role gate (client-side UX; RLS is the real data boundary). Admit field
+  // roles + management (the nav audience for the Time tab: crew/super/PM/
+  // office/admin); bounce sales / accountant / customer / super_admin.
   useEffect(() => {
     (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+      const role = (profile?.role as Role) ?? "crew";
+      if (!(FIELD.has(role) || MANAGEMENT.has(role))) {
+        router.push("/dashboard");
+        return;
+      }
       await load();
       // Auto-grab location on open so it's ready at clock-in — no manual tap.
       await getLocation();
