@@ -8,30 +8,37 @@ import { forAccount, requireChargeableAccount } from "@/lib/ispBilling";
 
 export const dynamic = "force-dynamic";
 
-// Open a Stripe Billing Portal session so a subscriber can update their card,
-// see their invoices, or cancel.
+// Mint a Stripe Billing Portal link for a subscriber (update card, view
+// invoices, cancel).
 //
-// AUTHORIZATION — two very different callers share this route:
-//   * Office staff acting on a customer's behalf ("their card expired, send
-//     them the link"). Gated by isOfficeLike + org match.
-//   * The subscriber themselves, from /portal/subscription. They may ONLY open
-//     their own, resolved through profiles.customer_id — the same bridge
-//     customer_rls.sql uses. A customer-role caller cannot pass someone else's
-//     customerId, because we ignore the body's customerId for them entirely and
-//     read it off their own profile.
+// OFFICE-ONLY BY DESIGN. ISP subscribers are office-managed `customers` rows —
+// no auth.users, no profiles row, no in-app login. So the subscriber never
+// calls this themselves; the office opens it on their behalf and hands over the
+// link (or the customer follows it from a dunning email).
 //
-// That second rule is the one worth being careful about: accepting customerId
-// from the body for a customer-role user would let any signed-in subscriber
-// open any other subscriber's billing portal, which exposes their invoices and
-// lets them cancel someone else's internet.
+// An earlier revision had a second branch that resolved the caller's own
+// customer_id through profiles.customer_id, for a signed-in subscriber hitting
+// the deleted /portal/subscription page. That branch is gone along with its
+// backing RLS policy — under the office-managed model no subscriber has a
+// profiles row, so it could only ever resolve null and 400. Do not reinstate it
+// without also reinstating the customer-side auth model; a half-restored
+// version (branch without policy, or policy without branch) is the failure this
+// pair was collapsed to avoid.
+//
+// The link Stripe returns is a bearer credential — anyone holding it can view
+// invoices and cancel service. Send it to the customer directly; don't post it
+// anywhere shared.
 
 export async function POST(request: Request) {
   const tenant = await getMe();
   if (!tenant) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  if (!tenant.orgId) {
-    return NextResponse.json({ error: "No organization" }, { status: 403 });
+  if (!isOfficeLike(tenant.role) || !tenant.orgId) {
+    return NextResponse.json(
+      { error: "Only office staff can open a subscriber's billing portal" },
+      { status: 403 }
+    );
   }
 
   const admin = createAdminClient();
@@ -39,25 +46,9 @@ export async function POST(request: Request) {
     customerId?: string;
   };
 
-  let customerId: string | null = null;
-
-  if (isOfficeLike(tenant.role)) {
-    customerId = body.customerId ?? null;
-  } else {
-    // Subscriber path: derive from their own profile, never from the request.
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("customer_id")
-      .eq("id", tenant.user.id)
-      .maybeSingle();
-    customerId = (profile?.customer_id as string | null) ?? null;
-  }
-
+  const customerId = body.customerId ?? null;
   if (!customerId) {
-    return NextResponse.json(
-      { error: "No customer account found" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Missing customer" }, { status: 400 });
   }
 
   const { data: sub } = await admin
@@ -91,7 +82,7 @@ export async function POST(request: Request) {
       session = await stripe.billingPortal.sessions.create(
         {
           customer: sub.stripe_customer_id,
-          return_url: `${origin}/portal/subscription`,
+          return_url: `${origin}/isp/checkout/complete`,
         },
         opts
       );
@@ -124,7 +115,7 @@ export async function POST(request: Request) {
       session = await stripe.billingPortal.sessions.create(
         {
           customer: sub.stripe_customer_id,
-          return_url: `${origin}/portal/subscription`,
+          return_url: `${origin}/isp/checkout/complete`,
         },
         opts
       );

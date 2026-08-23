@@ -462,7 +462,8 @@ export function isPublicRoute(pathname: string): boolean {
     pathname.startsWith("/co/") || // customer change-order portal (token link)
     pathname.startsWith("/s/") || // reviewer submittal portal (token link)
     pathname.startsWith("/v/") || // customer lawn visit photo portal (token link)
-    pathname.startsWith("/customer/") // customer portal sub-routes
+    pathname.startsWith("/customer/") || // customer portal sub-routes
+    pathname === "/isp/checkout/complete" // ISP subscriber's Stripe return page
   );
 }
 // ── ISP / fiber module (hidden, per-org) ────────────────────────────────────

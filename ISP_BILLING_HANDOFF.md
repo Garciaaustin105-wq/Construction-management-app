@@ -4,6 +4,25 @@
 > seen this repo. All facts below were verified live/by-code on 2026-08-22.
 > Decisions marked **(decided)** were settled with the product owner.
 
+> **2026-08-22 — PARTIALLY SUPERSEDED. Read `ISP_BILLING_COMPLETED.md` first.**
+> Features 1–5 (plan catalog, org Stripe connection, subscriptions, dunning,
+> ISP customer profile) are **already built and committed** as `612b38c`. Do
+> not rebuild them.
+> Two sections below are **retired** and must NOT be implemented as written:
+> **(a)** the BYO-secret-keys model in "Two design decisions" #1 and Feature 3
+> — the owner chose **Stripe Connect**; the shipped code stores only an
+> `acct_…` id and no credentials. **(b)** any in-app subscriber login/portal —
+> ISP subscribers are office-managed records with no `auth.users`/`profiles`
+> row; `/portal/subscription` was built and has since been **deleted**.
+> Corrections are inline below, marked ⛔ RETIRED / ✅ ACTUAL.
+> This file is **append-only** from here: add dated notes, never rewrite
+> accepted decisions.
+>
+> **Phase 2 (Feature 0 business-type at signup, Feature 1 Add-customer on
+> Home) is now BUILT** — 2026-08-22, see `ISP_BILLING_COMPLETED.md` § Phase 2.
+> Pending migrations, in order: `isp_billing_a.sql`, `isp_billing_b.sql`,
+> `business_types.sql`. None has been run.
+
 ## What this is
 Build the customer + billing layer for the ISP module (fiber/ISP feature). The installs module (`installs`, `install_types`, `install_*` child tables, photos) and a free-text `customers.service_plan` already exist and are live for one org (Terra Vista). This adds: **business-type at signup**, **ISP customer onboarding (office-managed, no login)**, **owner-defined plan catalog**, **per-org customer billing via the org's own Stripe account**, **missed-payment dunning**, and **ISP customer-profile fields** (router rental, online status, equipment).
 
@@ -28,8 +47,9 @@ Build the customer + billing layer for the ISP module (fiber/ISP feature). The i
 - Repo: `C:\Users\garci_9e2kg3l\Projects\lowvoltage-app`. Branch to work on: `feat/isp-installs-module`. Supabase project `avmqteevisqxwmmxkrbg`. Verify DB state live via `information_schema`/`pg_policy`/`pg_proc` — never infer from `.sql` files. SQL migrations live at repo root, idempotent (`add column if not exists`), no DROP. New SQL must be run by the user in the Supabase SQL Editor.
 - RLS helpers (SECURITY DEFINER, `multi_tenancy_a.sql`): `tier_office(org_id)`, `tier_office_or_pm(org_id)`, `tier_management(org_id)`, `same_org(uid, org_id)`. Office write policies: `for all ... using/with check (tier_office_or_pm(organization_id))`. Crew never get direct UPDATE on `installs` (their writes are SECURITY DEFINER RPCs). Superuser bypasses RLS.
 - **Stripe pivot (DO NOT VIOLATE):** the platform never touches customer money. `src/lib/billing.ts`'s `getStripe()` uses `process.env.STRIPE_SECRET_KEY` = the **platform's** key, used ONLY to bill ORGS for their SaaS subscription (`organizations.stripe_customer_id`/`stripe_subscription_id`, `saas_billing.sql`; webhook `src/app/api/stripe/webhook/route.ts`). The old customer-pay/Connect path was deliberately removed (`drop_connect_columns.sql`, `STRIPE_BILLING_SETUP.md`, `payments.sql`/`pushInvoice.ts`/`provider.ts` headers, `InvoiceStatusBanner.tsx` no-Pay-button contract).
-  - **This feature does NOT reverse the pivot.** Each org connects **their own** Stripe account; their ISP subscribers pay the org directly. The platform only stores the org's Stripe credentials (encrypted) and calls the Stripe API with the org's key. The platform's Stripe account is never used for customer charges. (Owner's words: "i dont want us to have anything to do with how the admins of other org deal with their money.")
-- Reuse the encrypted-per-org-credential pattern that already powers accounting integrations: `src/lib/accounting/crypto.ts` (AES with `ACCOUNTING_TOKEN_ENCRYPTION_KEY`), `accounting_connections.sql` (`accounting_connections` table, one row per org×provider, `tier_office` RLS), `src/lib/accounting/connections.ts` (`getUsableTokens`/`getConnections`).
+  - **This feature does NOT reverse the pivot.** Each org connects **their own** Stripe account; their ISP subscribers pay the org directly. The platform's Stripe account is never used to hold customer money. (Owner's words: "i dont want us to have anything to do with how the admins of other org deal with their money.")
+    - ⛔ **CORRECTION 2026-08-22:** the struck phrase "the platform only stores the org's Stripe credentials (encrypted) and calls the Stripe API with the org's key" describes the retired BYO-keys design. ✅ **ACTUAL:** the platform stores **no credentials at all**, only an `acct_…` id, and calls Stripe with the **platform** key plus the org's `Stripe-Account` header. Funds settle directly in the org's balance; the platform takes no fee and is never in the funds flow.
+- ⛔ **RETIRED for ISP billing (2026-08-22)** — applies to *accounting* integrations only; ISP billing stores no credentials and must not import `crypto.ts`. ~~Reuse the encrypted-per-org-credential pattern~~: `src/lib/accounting/crypto.ts` (AES with `ACCOUNTING_TOKEN_ENCRYPTION_KEY`), `accounting_connections.sql` (`accounting_connections` table, one row per org×provider, `tier_office` RLS), `src/lib/accounting/connections.ts` (`getUsableTokens`/`getConnections`).
 - Existing customer-billing plumbing to reuse (org-scoped, bills end-customers today via offline/invoice): `invoices` + `invoice_line_items` (`quotes_invoices.sql`, `invoices_standalone.sql`), `payments` (`payments.sql`, offline cash/check/other), `deliverInvoice` + share-token public view (`invoice_send.sql`, `src/lib/invoiceSend.ts`), `invoices.due_date`/`amount_paid`, `pushInvoiceToAllConnectedProviders` (auto-pushed on proposal e-sign — precedent for auto-syncing ISP invoices to QBO/Xero/FreshBooks).
 - `install_types` is the pattern to mirror for a plan catalog: org-scoped, `name`/`position`/`active`, unique on `(organization_id, lower(name))`, `office_manage_install_types` RLS, org-wide read.
 - `customers` is generic: `id, organization_id, name, contact_name, contact_email, phone, address, service_plan (free text), notes, sms_opt_in, email_opt_in, accounting_external_id`. **No ISP profile fields exist today.** `install_materials.serial_number` tracks per-install equipment (ONT/router) but there's no customer-level equipment record. Note: the `profiles.customer_id` bridge + "Customer see own record" RLS exist for the construction Client Portal — ISP customers have no `profiles` row, so those policies simply don't apply to them.
@@ -39,7 +59,21 @@ Build the customer + billing layer for the ISP module (fiber/ISP feature). The i
 
 ## Two design decisions to settle with the user (if not already)
 
-1. **Org-Stripe connect model.** Recommended: **BYO Stripe keys** — org admin pastes their own `sk_live_…`/`sk_test_…` + webhook signing secret into a `/admin/isp/billing` settings page; stored encrypted via the `crypto.ts` pattern in a new `isp_stripe_connections` table (one row per org, `tier_office` RLS). The app constructs a per-org Stripe client from the stored key and creates Checkout Sessions / Subscriptions / Customer Portal sessions for that org's customers; money lands in the org's Stripe account, never the platform's. Alternative: Stripe Connect (Express/Standard) — heavier, requires Connect on the platform account, but avoids storing raw secret keys. Flag the security trade-off (stored live secret key) and let the user choose; recommend BYO keys unless they have compliance reasons.
+1. ~~**Org-Stripe connect model.** Recommended: **BYO Stripe keys**…~~
+   ⛔ **RETIRED 2026-08-22 — SETTLED, DO NOT IMPLEMENT.** The owner chose
+   **Stripe Connect**, to stay least-involved in other orgs' money.
+   ✅ **ACTUAL (shipped in `612b38c`):** `isp_connect_accounts` stores **only**
+   an `acct_…` id — no secret keys, no `stripe_secret_key_enc`, no
+   `crypto.ts`. Onboarding is `accounts.create` + a Stripe-hosted account link
+   (**no OAuth** — Stripe's single-platform policy makes it unsuitable, so
+   there is no `ca_…` client id and no redirect URI). Charges are **direct**,
+   via the `Stripe-Account` header, with
+   `controller.losses.payments = "stripe"`, `fees.payer = "account"`,
+   `stripe_dashboard.type = "full"`, `requirement_collection = "stripe"`.
+   **Liability invariant — never add `transfer_data`,
+   `application_fee_amount`, or `on_behalf_of`** to `ispBilling.ts` /
+   `ispSubscriptions.ts`; any of them moves subscriber chargebacks onto the
+   platform's balance. See the header of `src/lib/ispBilling.ts`.
 2. **Plan catalog vs free-text.** `customers.service_plan` (free text) already exists. Recommended: add an `isp_plans` catalog (mirrors `install_types`) and an `isp_subscriptions` table; keep `customers.service_plan` as a free-text fallback for ad-hoc/non-catalog plans. A customer's active subscription → their plan.
 
 ## Feature 0 — Business type at signup
@@ -58,7 +92,29 @@ New org-scoped table, mirror `install_types`:
 - RLS: `office_manage_isp_plans` (for all, `tier_office_or_pm`), `same_org_read_isp_plans` (SELECT).
 - Office CRUD UI at `/admin/isp/plans` (reuse the `install_types` admin pattern if one exists, else CustomersManager-style list+add). Seeded for Terra Vista: e.g. "100M fiber", "1G fiber", "1G fiber / 12mo".
 
-## Feature 3 — Per-org Stripe connection (`isp_stripe_connections`)
+## Feature 3 — Per-org Stripe connection ⛔ RETIRED (built as Connect; see below)
+
+> ⛔ **RETIRED 2026-08-22 — DO NOT IMPLEMENT AS WRITTEN.** The whole
+> stored-secret-key design below is superseded by Stripe Connect and is already
+> built. The bullets are kept only so the change is traceable.
+>
+> ✅ **ACTUAL, shipped in `612b38c`:**
+> - Table is **`isp_connect_accounts`**, not `isp_stripe_connections`. Columns:
+>   `stripe_account_id` (`acct_…`), `status`, `charges_enabled`,
+>   `payouts_enabled`, `details_submitted`, `livemode`, `requirements`.
+>   **No `*_key_enc` columns. No credentials at rest. `crypto.ts` is not
+>   imported by any ISP code — if you are reaching for it here, stop.**
+> - `/admin/isp/billing` has **no key-paste form**. It's Connect / Continue in
+>   Stripe / Refresh status / Disconnect, plus the dunning grace-days setting.
+> - There is **no `getOrgStripeClient(orgId)`**. `billing.ts::getStripe()` (the
+>   platform key) is the API *caller*, and every subscriber-facing call passes
+>   **`forAccount(acct)`** → the `Stripe-Account` header, so the object is
+>   created on the org's account. `billing.ts` is unmodified and stays
+>   platform-SaaS-only, as the original bullet correctly required.
+> - Webhook is `/api/isp/stripe/webhook` with `STRIPE_ISP_WEBHOOK_SECRET`,
+>   routed by **`event.account`** — no decrypt-matching of per-org secrets. The
+>   Stripe dashboard endpoint must have **"Events on connected accounts"**
+>   checked or `event.account` arrives empty and every delivery is ignored.
 - New table: `id, organization_id (unique), stripe_secret_key_enc text, stripe_webhook_secret_enc text, mode text check in ('live','test')`, `charges_enabled bool`, `created_at/updated_at`. `tier_office` RLS. Encrypt with `src/lib/accounting/crypto.ts` (reuse, do not reinvent).
 - Settings page `/admin/isp/billing`: admin pastes their Stripe secret key + webhook secret, chooses live/test, "Test connection" button (creates a throwaway Stripe client, retrieves balance, stores on success). Show connected status.
 - **Per-org Stripe client helper** in a new `src/lib/ispBilling.ts` (do NOT touch `billing.ts`/`getStripe()`): `getOrgStripeClient(orgId)` → decrypt the org's key, `new Stripe(key, {apiVersion})`. All customer-charge code uses this. `billing.ts` remains platform-SaaS-only.

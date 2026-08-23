@@ -204,8 +204,8 @@ export async function enrollCustomer(params: {
       mode: "subscription",
       customer: stripeCustomerId,
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/portal/subscription?checkout=success`,
-      cancel_url: `${origin}/portal/subscription?checkout=canceled`,
+      success_url: `${origin}/isp/checkout/complete?checkout=success`,
+      cancel_url: `${origin}/isp/checkout/complete?checkout=canceled`,
       // Stamped so the webhook can tie the resulting subscription back to our
       // row without a lookup-by-customer heuristic.
       subscription_data: {

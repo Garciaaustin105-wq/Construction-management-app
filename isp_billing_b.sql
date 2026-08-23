@@ -94,18 +94,27 @@ create policy management_read_isp_subscriptions on public.isp_subscriptions
   for select to authenticated
   using (public.tier_management(organization_id));
 
--- The subscriber sees their own enrollment, via the same profiles.customer_id
--- bridge customer_rls.sql established. SELECT only — a customer changing their
--- own subscription status is exactly the hole this must not have.
+-- NO customer-side SELECT policy. This is deliberate, not an omission.
+--
+-- ISP subscribers are office-managed `customers` rows: no auth.users entry, no
+-- profiles row, no in-app login. A policy resolving through
+-- profiles.customer_id (the construction Client Portal bridge in
+-- customer_rls.sql) could therefore never match anyone — it would be dead RLS
+-- that reads like a live feature and implies a subscriber login that does not
+-- exist. An earlier draft of this file had exactly that policy; it was removed
+-- before this migration was ever run, together with /portal/subscription and
+-- the subscriber branch of /api/isp/subscriptions/portal.
+--
+-- The subscriber's actual self-service surface is the Stripe-hosted Billing
+-- Portal, which needs no row in this database at all.
+--
+-- If an in-app subscriber portal is built later, add the policy back THEN,
+-- against whatever auth model actually ships — and restore the API branch in
+-- the same change. Half of this pair without the other is broken either way.
+--
+-- drop, not create: clears the policy from any database where an earlier draft
+-- of this file was applied, so re-running converges on the intended state.
 drop policy if exists customer_read_own_isp_subscription on public.isp_subscriptions;
-create policy customer_read_own_isp_subscription on public.isp_subscriptions
-  for select to authenticated
-  using (
-    public.same_org(auth.uid(), organization_id)
-    and customer_id in (
-      select profiles.customer_id from public.profiles where profiles.id = auth.uid()
-    )
-  );
 
 
 -- ============================================================================
@@ -288,6 +297,6 @@ revoke all on function public.guard_install_create_suspended() from public, anon
 -- select c.relname, p.polname, p.polcmd from pg_policy p
 --   join pg_class c on c.oid=p.polrelid
 --   where c.relname in ('isp_subscriptions','isp_customer_profiles') order by 1,2;
---   -- expect 4 + 3
+--   -- expect 3 + 3 (no customer-side policy — see section 1)
 -- select tgname from pg_trigger where tgname like 'trg_isp%'
 --   or tgname = 'trg_guard_install_create_suspended' order by 1;        -- expect 5
