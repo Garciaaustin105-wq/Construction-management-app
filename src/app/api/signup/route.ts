@@ -118,16 +118,24 @@ export async function POST(request: Request) {
   }
 
   // 1. Create the organization.
+  // Lawn signups land on the capped FREE tier (no card, never expires, walled
+  // at 25 customers/1 seat/1GB by the DB triggers); construction keeps the
+  // 30-day trial. See src/lib/plans.ts (free entry) + plan_limits_v2.sql.
+  const isLawnSignup = variant === "lawn";
   const { data: org, error: orgErr } = await admin
     .from("organizations")
     .insert({
       name: bizName,
       email: mail,
-      plan: "trial",
+      plan: isLawnSignup ? "free" : "trial",
+      // free is a persistent active plan (the column default 'trial' would be
+      // misleading for a free org); construction trial leaves plan_status to the
+      // column default.
+      ...(isLawnSignup ? { plan_status: "active" } : {}),
       // Stamp the platform variant sent by the signup form (construction app
       // sends "construction", lawn app sends "lawn"). Drives the DB trigger
       // guard + tenant.ts appVariant. Defaults to construction if absent.
-      app_variant: variant === "lawn" ? "lawn" : "construction",
+      app_variant: isLawnSignup ? "lawn" : "construction",
     })
     .select("id")
     .single();
@@ -189,12 +197,15 @@ export async function POST(request: Request) {
   // 4. Link the org's owner_id back to the new admin profile.
   await admin.from("organizations").update({ owner_id: newUserId }).eq("id", org.id);
 
-  // 4b. Create the Stripe customer + start the 14-day trial. NON-FATAL: if
-  //     Stripe isn't configured (e.g. local dev) or errors, the workspace still
-  //     works — plan stays 'trial' with trial_ends_at null, which effectiveStatus
-  //     treats as an open (non-expiring) trial. The customer is backfilled on the
-  //     first billing interaction via ensureStripeCustomer.
-  if (process.env.STRIPE_SECRET_KEY) {
+  // 4b. CONSTRUCTION ONLY: create the Stripe customer + start the 30-day trial.
+  //     Lawn signups land on the free tier — no Stripe customer is created (no
+  //     card required; free never expires) and no trial_ends_at is set. The
+  //     Stripe customer is backfilled on the first billing interaction via
+  //     ensureStripeCustomer if the free org ever upgrades. NON-FATAL: if Stripe
+  //     isn't configured (e.g. local dev) or errors, the construction workspace
+  //     still works — plan stays 'trial' with trial_ends_at null, which
+  //     effectiveStatus treats as an open (non-expiring) trial.
+  if (!isLawnSignup && process.env.STRIPE_SECRET_KEY) {
     try {
       await ensureStripeCustomer({
         id: org.id,

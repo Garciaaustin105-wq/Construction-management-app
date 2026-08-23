@@ -73,6 +73,7 @@ export default function BillingForm({
   }, [status, toast]);
 
   const labelMap: Record<string, string> = {
+    free: "Free",
     trial: "Trial",
     starter: "Starter",
     pro: "Pro",

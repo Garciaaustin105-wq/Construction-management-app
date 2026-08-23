@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMe } from "@/lib/tenant";
 import { isOfficeLike } from "@/lib/roles";
+import { assertNotFreePlan } from "@/lib/planGate";
 import { getProvider } from "@/lib/accounting/provider";
 import { signState } from "@/lib/accounting/crypto";
 import "@/lib/accounting/providers"; // registers adapters in the registry
@@ -27,6 +28,12 @@ export async function POST(request: Request) {
       { status: 403 }
     );
   }
+
+  // Accounting sync is a paid feature — free (lawn) orgs can't connect. Reads
+  // + disconnect stay open so a lapsed-paid org can still manage/clean up an
+  // existing connection. 402 before any provider/OAuth work so no state is set.
+  const freeGate = assertNotFreePlan(tenant);
+  if (freeGate) return freeGate;
 
   const body = (await request.json().catch(() => ({}))) as {
     provider?: string;

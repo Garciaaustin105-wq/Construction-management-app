@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import TopBar from "@/components/TopBar";
 import { OFFICE_LIKE } from "@/lib/roles";
+import { effectivePlan } from "@/lib/planGate";
+import { getLimits } from "@/lib/plans";
 import RouteMapPlanner from "@/components/RouteMapPlanner";
 import type { RouteStop, CrewInfo } from "@/lib/lawnRouting";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
@@ -97,6 +99,12 @@ export default async function LawnRoutesPage({
     (c) => ({ id: c.id, name: c.name || "Crew" })
   );
 
+  // Route-opt daily cap from the org's effective plan (null = unlimited for
+  // paid/trial; 5/day for free; 0 for expired/canceled). Client-enforced soft
+  // cap as a stopgap — the server-side Distance Matrix proxy + hard quota is
+  // the Step 7 fast-follow (route_opt_quota.sql + /api/lawn/route-optimize).
+  const routeOptCap = getLimits(effectivePlan(me)).maxRouteOptsPerDay;
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Route Planner" subtitle="Map + drag to order" />
@@ -139,7 +147,7 @@ export default async function LawnRoutesPage({
 
         {/* key={date} remounts the planner so local crew-assignment state
             resets cleanly when the dispatcher changes days. */}
-        <RouteMapPlanner key={date} date={date} stops={stops} crews={crews} />
+        <RouteMapPlanner key={date} date={date} stops={stops} crews={crews} routeOptCap={routeOptCap} />
       </main>
     </div>
   );
