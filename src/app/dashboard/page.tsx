@@ -2,9 +2,13 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+import Card, { CardHeader } from "@/components/ui/Card";
+import { LinkButton } from "@/components/ui/Button";
+import KpiTile from "@/components/charts/KpiTile";
 import { formatMoney, computeTotal } from "@/lib/money";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import Link from "next/link";
@@ -15,16 +19,20 @@ import PlanBanner from "@/components/PlanBanner";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
 
-// Small overline label that groups the dashboard tiles into named sections
-// (Create / Manage / Track / Your Work). Kept deliberately understated so it
-// reads as a section divider, not a heading that competes with content titles.
-function SectionHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
-      {children}
-    </h2>
-  );
-}
+// Job status → badge tone. Domain-specific to jobs (estimate/invoice statuses
+// have their own maps on their own pages), so the map lives with the page that
+// renders it — the shared StatusBadge stays tone-only.
+const JOB_TONE: Record<string, BadgeTone> = {
+  scheduled: "neutral",
+  in_progress: "warning",
+  on_hold: "danger",
+  completed: "success",
+};
+
+// Overline for a Quick Actions group. Understated on purpose — these label a
+// dense sidebar of links, they aren't headings competing with card titles.
+const GROUP_LABEL =
+  "text-[11px] font-semibold text-gray-400 uppercase tracking-wide mt-3 first:mt-0";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -38,6 +46,9 @@ export default async function DashboardPage() {
   // looks like a successful login to the wrong project — surface the broken
   // state so it gets fixed. ("Users read own profile" is just id = auth.uid(),
   // so a null result reliably means no profile, not an RLS hiccup.)
+  //
+  // Deliberately NOT PageContainer: this is an error state, not the dashboard.
+  // It keeps the bare shell so it can't pick up dashboard chrome.
   if (!me.hasProfile) {
     return (
       <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -108,8 +119,19 @@ export default async function DashboardPage() {
 
   // Fan out the independent reads in parallel (was sequential awaits, so the
   // dashboard waited on jobs → photos → rfis → invoices one after another).
-  const [jobsRes, photosRes, rfisRes, invoicesRes, notificationsRes] =
-    await Promise.all([
+  // The four head+count reads that feed the KPI strip ride in the SAME
+  // Promise.all so the strip costs no serial round trips.
+  const [
+    jobsRes,
+    photosRes,
+    rfisRes,
+    invoicesRes,
+    notificationsRes,
+    estimatesCountRes,
+    unpaidCountRes,
+    changeOrdersCountRes,
+    dailyLogsCountRes,
+  ] = await Promise.all([
       // super_admin (platform view) doesn't use jobs/photos — skip the
       // cross-org query (RLS would return every org's rows; not needed here).
       showPlatform
@@ -118,7 +140,8 @@ export default async function DashboardPage() {
             .from("jobs")
             .select("id, name, status, customers(name)")
             .eq("type", "construction")
-            .order("created_at", { ascending: false }),
+            .order("created_at", { ascending: false })
+            .limit(8),
       showPlatform
         ? Promise.resolve({ data: [] })
         : supabase
@@ -150,12 +173,47 @@ export default async function DashboardPage() {
             .order("created_at", { ascending: false })
             .limit(10)
         : Promise.resolve({ data: [] }),
+      // ---- KPI strip counts (office/admin only; head+count, no rows) --------
+      // Filters mirror each list page's status map exactly, so a KPI tile and
+      // the list it drills into can never disagree about what it's counting.
+      // estimates open pipeline (draft + sent)
+      showOfficeSurface
+        ? supabase
+            .from("estimates")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["draft", "sent"])
+        : Promise.resolve({ count: 0 }),
+      // unpaid invoices (sent)
+      showOfficeSurface
+        ? supabase
+            .from("invoices")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "sent")
+        : Promise.resolve({ count: 0 }),
+      // change orders pending review (sent + submitted)
+      showOfficeSurface
+        ? supabase
+            .from("change_orders")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["sent", "submitted"])
+        : Promise.resolve({ count: 0 }),
+      // daily logs awaiting review (submitted)
+      showOfficeSurface
+        ? supabase
+            .from("daily_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "submitted")
+        : Promise.resolve({ count: 0 }),
     ]);
 
   const jobs = jobsRes.data;
   const photos = photosRes.data;
   const rfis = rfisRes.data;
   const unpaidInvoices = invoicesRes.data;
+  const estimatesCount = estimatesCountRes.count ?? 0;
+  const unpaidCount = unpaidCountRes.count ?? 0;
+  const changeOrdersCount = changeOrdersCountRes.count ?? 0;
+  const dailyLogsCount = dailyLogsCountRes.count ?? 0;
   const notifications = (notificationsRes.data ?? []) as Array<{
     id: string;
     type: string;
@@ -195,503 +253,466 @@ export default async function DashboardPage() {
 
   const unpaidTotal = unpaidRows.reduce((sum, r) => sum + r.total, 0);
 
+  // Honest freshness line: these are SSR counts, recomputed on every navigation
+  // and on pull-to-refresh — not a cached snapshot, and not a live socket.
+  const dateStr = new Date().toLocaleDateString();
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title={orgName} subtitle={`Signed in as ${role}`} />
-
-      <main className="max-w-md lg:max-w-7xl mx-auto p-4 space-y-6">
-        <RoleOnboarding role={role} variant="construction" />
-        <PlanBanner />
-        <ClientPullToRefresh>
-        {/* Super admin: platform view (no org, so no office grid). */}
-        {showPlatform && (
-          <div className="space-y-2">
-            <Link
-              href="/admin/orgs"
-              className="block bg-blue-600 text-white text-center py-4 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-            >
-              <Building className="w-5 h-5" />
-              Platform · All Organizations
-            </Link>
-            <Link
-              href="/admin/users"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Users className="w-5 h-5" />
-              Users
-            </Link>
-            <Link
-              href="/admin/dev"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Terminal className="w-5 h-5" />
-              Dev · Analytics &amp; system
-            </Link>
-          </div>
-        )}
-
-        {/* CREATE — office/admin quick actions, or the PM invoice grid. PM is
-            not on the office surface, so it gets its own two-tile grid here. */}
-        {showCreate && (
-          <section className="space-y-2">
-            <SectionHeader>Create</SectionHeader>
+    <PageContainer
+      title={orgName}
+      subtitle={`Signed in as ${role}`}
+      maxWidth="wide"
+      mainClassName="space-y-6"
+    >
+      <RoleOnboarding role={role} variant="construction" />
+      <PlanBanner />
+      <ClientPullToRefresh>
+        {showPlatform ? (
+          /* Super admin: platform view (no org, so no office grid, no KPIs). */
+          <Card>
+            <CardHeader title="Platform" subtitle="No organization attached" />
+            <div className="space-y-2">
+              <LinkButton href="/admin/orgs" block>
+                <Building className="w-4 h-4" />
+                Platform · All Organizations
+              </LinkButton>
+              <LinkButton href="/admin/users" variant="secondary" block>
+                <Users className="w-4 h-4" />
+                Users
+              </LinkButton>
+              <LinkButton href="/admin/dev" variant="secondary" block>
+                <Terminal className="w-4 h-4" />
+                Dev · Analytics &amp; system
+              </LinkButton>
+            </div>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {/* KPI strip — office/admin only. Every tile drills into the list
+                it counts. Tone flags the exception, so a clean desk stays
+                visually quiet and only the numbers needing action stand out. */}
             {showOfficeSurface && (
-              <div className="grid grid-cols-3 gap-2">
-                <Link
-                  href="/admin/projects/new"
-                  className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-5 h-5" />
-                  New
-                </Link>
-                <Link
-                  href="/estimates"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Calculator className="w-5 h-5" />
-                  Estimates
-                </Link>
-                <Link
-                  href="/invoices/new"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Receipt className="w-5 h-5" />
-                  Invoice
-                </Link>
-              </div>
-            )}
-            {role === "project_manager" && (
-              <div className="grid grid-cols-2 gap-2">
-                <Link
-                  href="/invoices/new"
-                  className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-                >
-                  <Receipt className="w-5 h-5" />
-                  Invoice
-                </Link>
-                <Link
-                  href="/invoices"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Receipt className="w-5 h-5" />
-                  All Invoices
-                </Link>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* SUPERINTENDENT — field-management surface (runs the site). Review
-            features land next phase; for now these are the entry points so a
-            super isn't dropped onto an office grid they can't act on. */}
-        {showSuper && (
-          <section className="space-y-2">
-            <SectionHeader>Field</SectionHeader>
-            <div className="grid grid-cols-3 gap-2">
-              <Link
-                href="/crew/time"
-                className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-              >
-                <Clock className="w-5 h-5" />
-                Time
-              </Link>
-              <Link
-                href="/daily-logs"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <ClipboardList className="w-5 h-5" />
-                Logs
-              </Link>
-              <Link
-                href="/punch"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <CheckSquare className="w-5 h-5" />
-                Punch
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Link
-                href="/change-orders"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <FileDiff className="w-5 h-5" />
-                Change Orders
-              </Link>
-              <Link
-                href="/crew/photo"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Images className="w-5 h-5" />
-                Photos
-              </Link>
-            </div>
-          </section>
-        )}
-
-        {/* SALES — pre-sale funnel (estimates + leads + pipeline). No field
-            tabs, no invoices/billing. */}
-        {showSales && (
-          <section className="space-y-2">
-            <SectionHeader>Sales</SectionHeader>
-            <div className="grid grid-cols-3 gap-2">
-              <Link
-                href="/estimates/new"
-                className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-              >
-                <FileText className="w-5 h-5" />
-                New Estimate
-              </Link>
-              <Link
-                href="/estimates"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <FileText className="w-5 h-5" />
-                Estimates
-              </Link>
-              <Link
-                href="/admin/customers"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Building2 className="w-5 h-5" />
-                Leads
-              </Link>
-            </div>
-            <Link
-              href="/admin/insights"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <TrendingUp className="w-5 h-5" />
-              Pipeline Insights
-            </Link>
-          </section>
-        )}
-
-        {/* ACCOUNTANT — read-only financials. No write surfaces, no field. */}
-        {showAccountant && (
-          <section className="space-y-2">
-            <SectionHeader>Financials</SectionHeader>
-            <div className="grid grid-cols-3 gap-2">
-              <Link
-                href="/invoices"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Receipt className="w-5 h-5" />
-                Invoices
-              </Link>
-              <Link
-                href="/admin/customers"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Building2 className="w-5 h-5" />
-                Customers
-              </Link>
-              <Link
-                href="/admin/reports"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <FileSpreadsheet className="w-5 h-5" />
-                Reports
-              </Link>
-            </div>
-            <Link
-              href="/admin/insights"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <TrendingUp className="w-5 h-5" />
-              Insights
-            </Link>
-          </section>
-        )}
-
-        {/* MANAGE — admin (users + org settings) + MANAGEMENT (cost codes,
-            subs, customers). Each tile keeps its own role guard. */}
-        {showManage && (
-          <section className="space-y-2">
-            <SectionHeader>Manage</SectionHeader>
-            {role === "admin" && (
-              <div className="grid grid-cols-2 gap-2">
-                <Link
-                  href="/admin/users"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Users className="w-5 h-5" />
-                  Users
-                </Link>
-                <Link
-                  href="/admin/org"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Building className="w-5 h-5" />
-                  Org Settings
-                </Link>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              {showOfficeSurface && (
-                <Link
-                  href="/admin/cost-codes"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Tag className="w-5 h-5" />
-                  Codes
-                </Link>
-              )}
-              {MANAGEMENT.has(role) && (
-                <Link
-                  href="/admin/subcontractors"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Briefcase className="w-5 h-5" />
-                  Subs
-                </Link>
-              )}
-              {MANAGEMENT.has(role) && (
-                <Link
-                  href="/admin/customers"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Building2 className="w-5 h-5" />
-                  Customers
-                </Link>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* TRACK — time/photos/reports (office) + calendar (every org user
-            except super_admin). Office gets the grid; everyone else just gets
-            the full-width calendar link. */}
-        {showTrack && (
-          <section className="space-y-2">
-            <SectionHeader>Track</SectionHeader>
-            {(showOfficeSurface || showSuper) ? (
-              <div className="grid grid-cols-3 gap-2">
-                <Link
-                  href="/time"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Clock className="w-5 h-5" />
-                  Time
-                </Link>
-                <Link
-                  href="/photos"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Images className="w-5 h-5" />
-                  Photos
-                </Link>
-                <Link
-                  href="/calendar"
-                  className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-                >
-                  <Calendar className="w-5 h-5" />
-                  Calendar
-                </Link>
-              </div>
-            ) : (
-              <Link
-                href="/calendar"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Calendar className="w-5 h-5" />
-                Calendar
-              </Link>
-            )}
-            {showOfficeSurface && (
-              <Link
-                href="/admin/reports"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <FileSpreadsheet className="w-5 h-5" />
-                Reports
-              </Link>
-            )}
-          </section>
-        )}
-
-        {/* YOUR WORK — jobs, photos, invoices, RFIs. Each subsection keeps its
-            own role guard; this header just labels the group. */}
-        <SectionHeader>Your Work</SectionHeader>
-        {/* Desktop: 2-col (3-col on xl) grid so the four work sections read as a
-            dashboard, not a phone feed. Mobile keeps the vertical space-y-6
-            stack in the exact same DOM order (Jobs, Photos, Invoices, RFIs).
-            lg:items-start stops shorter cards from stretching to match a tall
-            neighbor. */}
-        <div className="space-y-6 lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0 lg:items-start xl:grid-cols-3">
-
-        {/* Notifications — office-like feed of customer actions (estimate
-            accepted/declined, invoice paid). RLS-scoped to the caller's org. */}
-        {showNotifications && (
-          <section>
-            <NotificationsFeed notifications={notifications} />
-          </section>
-        )}
-
-        {/* Jobs as cards — tap to view detail */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-            Your Jobs
-          </h2>
-          <div className="space-y-2">
-            {jobs?.map((job) => (
-              <Link
-                key={job.id}
-                href={`/jobs/${job.id}`}
-                className="block bg-white rounded-lg p-4 shadow-sm active:bg-gray-50"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {job.name}
-                    </p>
-                    <p className="text-sm text-gray-500 truncate">
-                      {(job.customers as unknown as { name: string } | null)?.name ?? "—"}
-                    </p>
-                  </div>
-                  <StatusBadge status={job.status} />
-                </div>
-              </Link>
-            ))}
-            {(!jobs || jobs.length === 0) && (
-              <div className="bg-white rounded-lg">
-                <EmptyState
-                  icon={EmptyIcons.Briefcase}
-                  title="No jobs yet"
-                  description={
-                    showOfficeSurface
-                      ? "Tap “New Project” above to create your first job."
-                      : "Your assigned jobs will show up here once the office assigns them."
-                  }
-                />
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Recent photos as thumbnails */}
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase">
-              Recent Photos
-            </h2>
-            {showOfficeSurface && photos && photos.length > 0 && (
-              <Link href="/photos" className="text-xs text-blue-600 font-medium">
-                View all
-              </Link>
-            )}
-          </div>
-          {photos && photos.length > 0 ? (
-            <SignedPhotoGrid
-              photos={photos.map((p) => ({
-                id: p.id,
-                storage_path: p.storage_path,
-                caption: p.caption,
-              }))}
-            />
-          ) : (
-            <div className="bg-white rounded-lg">
-              <EmptyState
-                icon={EmptyIcons.Camera}
-                title="No photos yet"
-                description="Field photos uploaded by your crew will show up here."
-              />
-            </div>
-          )}
-        </section>
-
-        {/* Unpaid invoices — office / admin */}
-        {showOfficeSurface && (
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase flex items-center gap-1">
-                <Receipt className="w-4 h-4" />
-                Unpaid Invoices
-              </h2>
-              <Link
-                href="/invoices?status=sent"
-                className="text-xs text-blue-600 font-medium"
-              >
-                View all
-              </Link>
-            </div>
-            {unpaidRows.length > 0 ? (
               <>
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2 flex justify-between items-center">
-                  <span className="text-sm text-amber-800 font-medium">
-                    {unpaidRows.length} invoice{unpaidRows.length === 1 ? "" : "s"} outstanding
-                  </span>
-                  <span className="text-base font-bold text-amber-900">
-                    {formatMoney(unpaidTotal)}
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {unpaidRows.map((inv) => (
-                    <Link
-                      key={inv.id}
-                      href={`/invoices/${inv.id}`}
-                      className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
-                    >
-                      <div className="flex justify-between items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-gray-900 truncate">
-                            {inv.customerName}
-                          </p>
-                          <p className="text-xs text-gray-500 truncate">
-                            {inv.jobName} ·{" "}
-                            {new Date(inv.createdAt).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <span className="text-sm font-bold text-gray-900">
-                          {formatMoney(inv.total)}
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
+                <p className="text-[11px] text-gray-400 -mb-2">
+                  As of {dateStr} · live counts
+                </p>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  <Link
+                    href="/estimates"
+                    className="block rounded-lg hover:shadow-md transition-shadow"
+                  >
+                    <KpiTile
+                      label="Estimates"
+                      value={String(estimatesCount)}
+                      sub="draft + sent"
+                      icon={FileText}
+                      tone={estimatesCount > 0 ? "amber" : "default"}
+                    />
+                  </Link>
+                  <Link
+                    href="/invoices?status=sent"
+                    className="block rounded-lg hover:shadow-md transition-shadow"
+                  >
+                    <KpiTile
+                      label="Unpaid"
+                      value={String(unpaidCount)}
+                      sub="awaiting payment"
+                      icon={Receipt}
+                      tone={unpaidCount > 0 ? "red" : "default"}
+                    />
+                  </Link>
+                  <Link
+                    href="/change-orders"
+                    className="block rounded-lg hover:shadow-md transition-shadow"
+                  >
+                    <KpiTile
+                      label="Change Orders"
+                      value={String(changeOrdersCount)}
+                      sub="pending review"
+                      icon={FileDiff}
+                      tone={changeOrdersCount > 0 ? "amber" : "default"}
+                    />
+                  </Link>
+                  <Link
+                    href="/daily-logs"
+                    className="block rounded-lg hover:shadow-md transition-shadow"
+                  >
+                    <KpiTile
+                      label="Daily Logs"
+                      value={String(dailyLogsCount)}
+                      sub="awaiting review"
+                      icon={ClipboardList}
+                      tone={dailyLogsCount > 0 ? "amber" : "default"}
+                    />
+                  </Link>
                 </div>
               </>
-            ) : (
-              <div className="bg-white rounded-lg">
-                <EmptyState
-                  icon={EmptyIcons.FileText}
-                  title="All paid up"
-                  description="No outstanding invoices right now."
-                />
-              </div>
             )}
-          </section>
-        )}
 
-        {/* RFIs — shown to office / admin */}
-        {showOfficeSurface && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-              Recent RFIs
-            </h2>
-            <div className="bg-white rounded-lg shadow-sm divide-y">
-              {rfis?.map((r) => (
-                <div key={r.id} className="p-3">
-                  <p className="text-sm text-gray-900">{r.question}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {(r.jobs as unknown as { name: string } | null)?.name ?? "—"} ·{" "}
-                    <span className="font-medium">{r.status}</span>
-                  </p>
-                </div>
-              ))}
-              {(!rfis || rfis.length === 0) && (
-                <EmptyState
-                  icon={EmptyIcons.Inbox}
-                  title="No RFIs yet"
-                  description="Submitted RFIs from your crew will appear here."
-                />
-              )}
+            {/* Desktop 3-col: actionable lists get the wide column, the action
+                rail sits beside them. Collapses to one column on mobile in DOM
+                order (lists first, then the rail). lg:items-start stops a short
+                card stretching to match a tall neighbor. */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:items-start">
+              {/* ---- MAIN ------------------------------------------------- */}
+              <div className="lg:col-span-2 space-y-6">
+                <Card>
+                  <CardHeader
+                    title="Your Jobs"
+                    subtitle={`${jobs?.length ?? 0} shown`}
+                  />
+                  {jobs && jobs.length > 0 ? (
+                    <div className="divide-y divide-gray-100">
+                      {jobs.map((job) => (
+                        <Link
+                          key={job.id}
+                          href={`/jobs/${job.id}`}
+                          className="flex justify-between items-start gap-2 py-3 active:bg-gray-50"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 truncate">
+                              {job.name}
+                            </p>
+                            <p className="text-sm text-gray-500 truncate">
+                              {(job.customers as unknown as { name: string } | null)?.name ?? "—"}
+                            </p>
+                          </div>
+                          <StatusBadge tone={JOB_TONE[job.status] ?? "neutral"}>
+                            {job.status.replace("_", " ")}
+                          </StatusBadge>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={EmptyIcons.Briefcase}
+                      title="No jobs yet"
+                      description={
+                        showOfficeSurface
+                          ? "Tap “New Project” above to create your first job."
+                          : "Your assigned jobs will show up here once the office assigns them."
+                      }
+                    />
+                  )}
+                </Card>
+
+                {showOfficeSurface && (
+                  <Card>
+                    <CardHeader
+                      title="Unpaid Invoices"
+                      action={
+                        <LinkButton
+                          href="/invoices?status=sent"
+                          variant="secondary"
+                          size="sm"
+                        >
+                          View all
+                        </LinkButton>
+                      }
+                    />
+                    {unpaidRows.length > 0 ? (
+                      <>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2 flex justify-between items-center">
+                          <span className="text-sm text-amber-800 font-medium">
+                            {unpaidRows.length} invoice{unpaidRows.length === 1 ? "" : "s"} outstanding
+                          </span>
+                          <span className="text-base font-bold text-amber-900">
+                            {formatMoney(unpaidTotal)}
+                          </span>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                          {unpaidRows.map((inv) => (
+                            <Link
+                              key={inv.id}
+                              href={`/invoices/${inv.id}`}
+                              className="flex justify-between items-start gap-2 py-3 active:bg-gray-50"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="font-semibold text-gray-900 truncate">
+                                  {inv.customerName}
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">
+                                  {inv.jobName} ·{" "}
+                                  {new Date(inv.createdAt).toLocaleDateString()}
+                                </p>
+                              </div>
+                              <span className="text-sm font-bold text-gray-900">
+                                {formatMoney(inv.total)}
+                              </span>
+                            </Link>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <EmptyState
+                        icon={EmptyIcons.FileText}
+                        title="All paid up"
+                        description="No outstanding invoices right now."
+                      />
+                    )}
+                  </Card>
+                )}
+
+                {showOfficeSurface && (
+                  <Card>
+                    <CardHeader title="Recent RFIs" />
+                    {rfis && rfis.length > 0 ? (
+                      <div className="divide-y divide-gray-100">
+                        {rfis.map((r) => (
+                          <div key={r.id} className="py-3">
+                            <p className="text-sm text-gray-900">{r.question}</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {(r.jobs as unknown as { name: string } | null)?.name ?? "—"} ·{" "}
+                              <span className="font-medium">{r.status}</span>
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <EmptyState
+                        icon={EmptyIcons.Inbox}
+                        title="No RFIs yet"
+                        description="Submitted RFIs from your crew will appear here."
+                      />
+                    )}
+                  </Card>
+                )}
+              </div>
+
+              {/* ---- SIDE ------------------------------------------------- */}
+              <div className="space-y-6">
+                {/* Quick actions — the old full-width tile stack, compacted
+                    into a sidebar. Every tile keeps its original role guard
+                    and destination; only the presentation changed. */}
+                <Card>
+                  <CardHeader title="Quick actions" />
+
+                  {showCreate && (
+                    <>
+                      <p className={GROUP_LABEL}>Create</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {showOfficeSurface && (
+                          <>
+                            <LinkButton href="/admin/projects/new" variant="secondary" size="sm">
+                              <Plus className="w-4 h-4" />
+                              New
+                            </LinkButton>
+                            <LinkButton href="/estimates" variant="secondary" size="sm">
+                              <Calculator className="w-4 h-4" />
+                              Estimates
+                            </LinkButton>
+                            <LinkButton href="/invoices/new" variant="secondary" size="sm">
+                              <Receipt className="w-4 h-4" />
+                              Invoice
+                            </LinkButton>
+                          </>
+                        )}
+                        {role === "project_manager" && (
+                          <>
+                            <LinkButton href="/invoices/new" variant="secondary" size="sm">
+                              <Receipt className="w-4 h-4" />
+                              Invoice
+                            </LinkButton>
+                            <LinkButton href="/invoices" variant="secondary" size="sm">
+                              <Receipt className="w-4 h-4" />
+                              All Invoices
+                            </LinkButton>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {showSuper && (
+                    <>
+                      <p className={GROUP_LABEL}>Field</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <LinkButton href="/crew/time" variant="secondary" size="sm">
+                          <Clock className="w-4 h-4" />
+                          Time
+                        </LinkButton>
+                        <LinkButton href="/daily-logs" variant="secondary" size="sm">
+                          <ClipboardList className="w-4 h-4" />
+                          Logs
+                        </LinkButton>
+                        <LinkButton href="/punch" variant="secondary" size="sm">
+                          <CheckSquare className="w-4 h-4" />
+                          Punch
+                        </LinkButton>
+                        <LinkButton href="/change-orders" variant="secondary" size="sm">
+                          <FileDiff className="w-4 h-4" />
+                          Change Orders
+                        </LinkButton>
+                        <LinkButton href="/crew/photo" variant="secondary" size="sm">
+                          <Images className="w-4 h-4" />
+                          Photos
+                        </LinkButton>
+                      </div>
+                    </>
+                  )}
+
+                  {showSales && (
+                    <>
+                      <p className={GROUP_LABEL}>Sales</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <LinkButton href="/estimates/new" variant="secondary" size="sm">
+                          <FileText className="w-4 h-4" />
+                          New Estimate
+                        </LinkButton>
+                        <LinkButton href="/estimates" variant="secondary" size="sm">
+                          <FileText className="w-4 h-4" />
+                          Estimates
+                        </LinkButton>
+                        <LinkButton href="/admin/customers" variant="secondary" size="sm">
+                          <Building2 className="w-4 h-4" />
+                          Leads
+                        </LinkButton>
+                        <LinkButton href="/admin/insights" variant="secondary" size="sm">
+                          <TrendingUp className="w-4 h-4" />
+                          Pipeline Insights
+                        </LinkButton>
+                      </div>
+                    </>
+                  )}
+
+                  {showAccountant && (
+                    <>
+                      <p className={GROUP_LABEL}>Financials</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <LinkButton href="/invoices" variant="secondary" size="sm">
+                          <Receipt className="w-4 h-4" />
+                          Invoices
+                        </LinkButton>
+                        <LinkButton href="/admin/customers" variant="secondary" size="sm">
+                          <Building2 className="w-4 h-4" />
+                          Customers
+                        </LinkButton>
+                        <LinkButton href="/admin/reports" variant="secondary" size="sm">
+                          <FileSpreadsheet className="w-4 h-4" />
+                          Reports
+                        </LinkButton>
+                        <LinkButton href="/admin/insights" variant="secondary" size="sm">
+                          <TrendingUp className="w-4 h-4" />
+                          Insights
+                        </LinkButton>
+                      </div>
+                    </>
+                  )}
+
+                  {showManage && (
+                    <>
+                      <p className={GROUP_LABEL}>Manage</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {role === "admin" && (
+                          <>
+                            <LinkButton href="/admin/users" variant="secondary" size="sm">
+                              <Users className="w-4 h-4" />
+                              Users
+                            </LinkButton>
+                            <LinkButton href="/admin/org" variant="secondary" size="sm">
+                              <Building className="w-4 h-4" />
+                              Org Settings
+                            </LinkButton>
+                          </>
+                        )}
+                        {showOfficeSurface && (
+                          <LinkButton href="/admin/cost-codes" variant="secondary" size="sm">
+                            <Tag className="w-4 h-4" />
+                            Codes
+                          </LinkButton>
+                        )}
+                        {MANAGEMENT.has(role) && (
+                          <LinkButton href="/admin/subcontractors" variant="secondary" size="sm">
+                            <Briefcase className="w-4 h-4" />
+                            Subs
+                          </LinkButton>
+                        )}
+                        {MANAGEMENT.has(role) && (
+                          <LinkButton href="/admin/customers" variant="secondary" size="sm">
+                            <Building2 className="w-4 h-4" />
+                            Customers
+                          </LinkButton>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {showTrack && (
+                    <>
+                      <p className={GROUP_LABEL}>Track</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {showOfficeSurface || showSuper ? (
+                          <>
+                            <LinkButton href="/time" variant="secondary" size="sm">
+                              <Clock className="w-4 h-4" />
+                              Time
+                            </LinkButton>
+                            <LinkButton href="/photos" variant="secondary" size="sm">
+                              <Images className="w-4 h-4" />
+                              Photos
+                            </LinkButton>
+                            <LinkButton href="/calendar" variant="secondary" size="sm">
+                              <Calendar className="w-4 h-4" />
+                              Calendar
+                            </LinkButton>
+                          </>
+                        ) : (
+                          <LinkButton href="/calendar" variant="secondary" size="sm">
+                            <Calendar className="w-4 h-4" />
+                            Calendar
+                          </LinkButton>
+                        )}
+                        {showOfficeSurface && (
+                          <LinkButton href="/admin/reports" variant="secondary" size="sm">
+                            <FileSpreadsheet className="w-4 h-4" />
+                            Reports
+                          </LinkButton>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </Card>
+
+                {/* Notifications — office-like feed of customer actions
+                    (estimate accepted/declined, invoice paid). RLS-scoped to
+                    the caller's org. Renders its own titled white box, so no
+                    Card wrapper. */}
+                {showNotifications && (
+                  <NotificationsFeed notifications={notifications} />
+                )}
+
+                <Card>
+                  <CardHeader
+                    title="Recent Photos"
+                    action={
+                      showOfficeSurface && photos && photos.length > 0 ? (
+                        <LinkButton href="/photos" variant="secondary" size="sm">
+                          View all
+                        </LinkButton>
+                      ) : undefined
+                    }
+                  />
+                  {photos && photos.length > 0 ? (
+                    <SignedPhotoGrid
+                      photos={photos.map((p) => ({
+                        id: p.id,
+                        storage_path: p.storage_path,
+                        caption: p.caption,
+                      }))}
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={EmptyIcons.Camera}
+                      title="No photos yet"
+                      description="Field photos uploaded by your crew will show up here."
+                    />
+                  )}
+                </Card>
+              </div>
             </div>
-          </section>
+          </div>
         )}
-        </div>
-        </ClientPullToRefresh>
-      </main>
-
-    </div>
+      </ClientPullToRefresh>
+    </PageContainer>
   );
 }

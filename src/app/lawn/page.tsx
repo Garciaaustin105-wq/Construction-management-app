@@ -1,7 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import PageContainer from "@/components/PageContainer";
+import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState from "@/components/EmptyState";
+import Card, { CardHeader } from "@/components/ui/Card";
+import { LinkButton } from "@/components/ui/Button";
+import KpiTile from "@/components/charts/KpiTile";
 import { FIELD_MGMT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
@@ -21,6 +25,7 @@ import {
   Contact,
   TrendingUp,
   Snowflake,
+  Bell,
 } from "lucide-react";
 
 // Row shapes for the relation joins (Supabase types these loosely, so we cast
@@ -66,16 +71,9 @@ function dueLabel(dueDate: string): string {
   return new Date(`${dueDate}T00:00:00.000Z`).toLocaleDateString();
 }
 
-// Small uppercase section divider — matches the local SectionHeader used on
-// /dashboard (each page keeps its own so the hub reads as grouped sections, not
-// a flat tile soup). Keep it a div, not a competing heading.
-function SectionHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
-      {children}
-    </h2>
-  );
-}
+// Overline for a Quick Actions group — matches /dashboard's sidebar.
+const GROUP_LABEL =
+  "text-[11px] font-semibold text-gray-400 uppercase tracking-wide mt-3 first:mt-0";
 
 export default async function LawnPage() {
   const supabase = await createClient();
@@ -117,7 +115,7 @@ export default async function LawnPage() {
   const today = new Date().toISOString().slice(0, 10);
 
   // Today's Route + recurring schedules + the office notifications feed. RLS
-  // scopes all three to this user's org. The notifications query mirrors
+  // scopes all of them to this user's org. The notifications query mirrors
   // /dashboard: lawn office users redirect to /lawn and never load /dashboard,
   // so the customer-action feed (estimate accepted/declined, invoice paid) is
   // surfaced here instead.
@@ -126,6 +124,7 @@ export default async function LawnPage() {
     { data: schedules },
     { data: notificationsData },
     { count: crewCount },
+    { count: unreadRaw },
   ] = await Promise.all([
     supabase
       .from("lawn_visits")
@@ -151,6 +150,12 @@ export default async function LawnPage() {
     // there's no dead redirect for them. head+count = one cheap round-trip,
     // folded into the existing Promise.all (no extra serial query).
     supabase.from("crew_members").select("id", { count: "exact", head: true }),
+    // Unread notifications for the KPI strip. Same table + same RLS scope as
+    // the feed above, so this adds no new exposure — just a count.
+    supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .is("read_at", null),
   ]);
 
   const visitRows = (visits as unknown as VisitRow[] | null) ?? [];
@@ -164,265 +169,312 @@ export default async function LawnPage() {
     read_at: string | null;
     created_at: string;
   }>;
+  const unreadCount = unreadRaw ?? 0;
 
   // Solo-owner field mode (see crew_members count above). The office/admin
   // owner running the work with no crews gets a "Today's Route" link into the
   // crew's streamlined My Route field flow (mark done / skip / photos / nav).
   const solo = officeLike && (crewCount ?? 0) === 0;
 
+  // KPI values — derived in JS from rows already fetched (no extra queries).
+  // The visits query is already `status=pending AND due_date <= today`, so
+  // these two partitions cover it exactly.
+  const todayCount = visitRows.filter((v) => v.due_date === today).length;
+  const overdueCount = visitRows.filter((v) => v.due_date < today).length;
+  const activeScheduleCount = scheduleRows.filter((s) => s.active).length;
+
+  // Honest freshness line: SSR counts, recomputed each navigation + on PTR.
+  const dateStr = new Date().toLocaleDateString();
+
+  const showHubTools = officeLike || officeOrPm;
+
   return (
-    <PageContainer title="Lawn" subtitle="Recurring routes & today's visits" maxWidth="list" mainClassName="space-y-6">
+    <PageContainer
+      title="Lawn"
+      subtitle="Recurring routes & today's visits"
+      maxWidth="wide"
+      mainClassName="space-y-6"
+    >
       <RoleOnboarding role={role} variant="lawn" />
-
-      {/* ── Today — the actionable dispatch list (top of page) ───────── */}
-      <section className="space-y-2">
-        <SectionHeader>Today</SectionHeader>
-        {visitRows.length === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={CalendarDays}
-              title="Nothing due today"
-              description="Pending lawn visits due today or overdue will show up here."
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {visitRows.map((v) => {
-              const jobName = v.jobs?.name ?? "—";
-              const custName = v.jobs?.customers?.name ?? null;
-              return (
+      <ClientPullToRefresh>
+        <div className="space-y-6">
+          {/* KPI strip — the dispatch numbers that decide what to do next.
+              Tone flags the exception (overdue work, unread customer actions);
+              a clean board stays visually quiet. */}
+          {showHubTools && (
+            <>
+              <p className="text-[11px] text-gray-400 -mb-2">
+                As of {dateStr} · live counts
+              </p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
                 <Link
-                  key={v.id}
-                  href={`/lawn/visits/${v.id}`}
-                  className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
+                  href="/lawn/calendar"
+                  className="block rounded-lg hover:shadow-md transition-shadow"
                 >
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-gray-900 truncate">
-                        {jobName}
-                      </p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {custName ? `${custName} · ` : ""}
-                        {v.jobs?.address ?? "—"}
-                      </p>
-                    </div>
-                    <span
-                      className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                        STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
-                      } whitespace-nowrap`}
-                    >
-                      {dueLabel(v.due_date)}
-                    </span>
-                  </div>
+                  <KpiTile
+                    label="Today's visits"
+                    value={String(todayCount)}
+                    sub="due today"
+                    icon={CalendarDays}
+                  />
                 </Link>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* ── Recurring schedules ──────────────────────────────────────── */}
-      <section className="space-y-2">
-        <SectionHeader>Recurring schedules</SectionHeader>
-        {scheduleRows.length === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={Sprout}
-              title="No recurring schedules yet"
-              description="Create a lawn job to set up a recurring route."
-              action={
-                officeLike ? (
-                  <Link
-                    href="/lawn/new"
-                    className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
-                  >
-                    <Plus className="w-4 h-4" />
-                    New lawn job
-                  </Link>
-                ) : undefined
-              }
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {scheduleRows.map((s) => {
-              const jobName = s.jobs?.name ?? "—";
-              const custName = s.jobs?.customers?.name ?? null;
-              const sched = {
-                frequency: s.frequency,
-                days_of_week: s.days_of_week,
-                day_of_month: s.day_of_month,
-                price_per_visit: Number(s.price_per_visit) || 0,
-              };
-              return (
                 <Link
-                  key={s.id}
-                  href={`/lawn/schedules/${s.id}`}
-                  className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
+                  href="/lawn/calendar"
+                  className="block rounded-lg hover:shadow-md transition-shadow"
                 >
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-gray-900 truncate">
-                        {jobName}
-                      </p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {custName ? `${custName} · ` : ""}
-                        {s.service_type ?? "Service"}
-                        {!s.active && " · paused"}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {summarizeSchedule(sched)}
-                      </p>
-                    </div>
-                    <span
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${
-                        s.active
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      {s.active ? "Active" : "Paused"}
-                    </span>
-                  </div>
+                  <KpiTile
+                    label="Overdue"
+                    value={String(overdueCount)}
+                    sub="past due date"
+                    icon={CalendarDays}
+                    tone={overdueCount > 0 ? "red" : "default"}
+                  />
                 </Link>
-              );
-            })}
+                {/* No /lawn/schedules index route exists (only
+                    /lawn/schedules/[id]) — the schedules list IS the card
+                    below, so this tile is deliberately not a link. */}
+                <KpiTile
+                  label="Active schedules"
+                  value={String(activeScheduleCount)}
+                  sub={`${scheduleRows.length} total`}
+                  icon={Sprout}
+                />
+                {/* No notifications list page on either variant — plain tile. */}
+                <KpiTile
+                  label="Unread"
+                  value={String(unreadCount)}
+                  sub="notifications"
+                  icon={Bell}
+                  tone={unreadCount > 0 ? "blue" : "default"}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Desktop 3-col: the dispatch lists get the wide column, the action
+              rail sits beside them. Collapses to one column on mobile in DOM
+              order (Today, Schedules, then the rail). */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:items-start">
+            {/* ---- MAIN --------------------------------------------------- */}
+            <div className="lg:col-span-2 space-y-6">
+              <Card>
+                <CardHeader title="Today" subtitle={`${visitRows.length} due`} />
+                {visitRows.length === 0 ? (
+                  <EmptyState
+                    icon={CalendarDays}
+                    title="Nothing due today"
+                    description="Pending lawn visits due today or overdue will show up here."
+                  />
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {visitRows.map((v) => {
+                      const jobName = v.jobs?.name ?? "—";
+                      const custName = v.jobs?.customers?.name ?? null;
+                      return (
+                        <Link
+                          key={v.id}
+                          href={`/lawn/visits/${v.id}`}
+                          className="flex justify-between items-start gap-2 py-3 active:bg-gray-50"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 truncate">
+                              {jobName}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {custName ? `${custName} · ` : ""}
+                              {v.jobs?.address ?? "—"}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-1 rounded ${
+                              STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
+                            } whitespace-nowrap`}
+                          >
+                            {dueLabel(v.due_date)}
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+
+              <Card>
+                <CardHeader
+                  title="Recurring schedules"
+                  subtitle={`${scheduleRows.length} total`}
+                />
+                {scheduleRows.length === 0 ? (
+                  <EmptyState
+                    icon={Sprout}
+                    title="No recurring schedules yet"
+                    description="Create a lawn job to set up a recurring route."
+                    action={
+                      officeLike ? (
+                        <Link
+                          href="/lawn/new"
+                          className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
+                        >
+                          <Plus className="w-4 h-4" />
+                          New lawn job
+                        </Link>
+                      ) : undefined
+                    }
+                  />
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {scheduleRows.map((s) => {
+                      const jobName = s.jobs?.name ?? "—";
+                      const custName = s.jobs?.customers?.name ?? null;
+                      const sched = {
+                        frequency: s.frequency,
+                        days_of_week: s.days_of_week,
+                        day_of_month: s.day_of_month,
+                        price_per_visit: Number(s.price_per_visit) || 0,
+                      };
+                      return (
+                        <Link
+                          key={s.id}
+                          href={`/lawn/schedules/${s.id}`}
+                          className="flex justify-between items-start gap-2 py-3 active:bg-gray-50"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 truncate">
+                              {jobName}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {custName ? `${custName} · ` : ""}
+                              {s.service_type ?? "Service"}
+                              {!s.active && " · paused"}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {summarizeSchedule(sched)}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${
+                              s.active
+                                ? "bg-green-100 text-green-700"
+                                : "bg-gray-100 text-gray-500"
+                            }`}
+                          >
+                            {s.active ? "Active" : "Paused"}
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            {/* ---- SIDE --------------------------------------------------- */}
+            <div className="space-y-6">
+              {/* Solo owner: the single most important link on the page — they
+                  ARE the crew. Keeps its green: this is a lawn surface accent,
+                  not a Button primary (those stay blue on both deploys). */}
+              {solo && (
+                <Link
+                  href="/lawn/my-route"
+                  className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
+                >
+                  <Sprout className="w-5 h-5" />
+                  Today&rsquo;s Route
+                </Link>
+              )}
+
+              {/* Quick actions — the old tile sections, compacted into a rail.
+                  Every tile keeps its original role guard + destination, so a
+                  viewer never sees a tile that would bounce them. */}
+              {showHubTools && (
+                <Card>
+                  <CardHeader title="Quick actions" />
+
+                  <p className={GROUP_LABEL}>Plan</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {officeLike && (
+                      <LinkButton href="/lawn/new" variant="secondary" size="sm">
+                        <Plus className="w-4 h-4" />
+                        New lawn job
+                      </LinkButton>
+                    )}
+                    {officeLike && (
+                      <LinkButton href="/lawn/calendar" variant="secondary" size="sm">
+                        <Calendar className="w-4 h-4" />
+                        Route calendar
+                      </LinkButton>
+                    )}
+                    {officeLike && (
+                      <LinkButton href="/lawn/routes" variant="secondary" size="sm">
+                        <Route className="w-4 h-4" />
+                        Routes
+                      </LinkButton>
+                    )}
+                    {officeOrPm && (
+                      <LinkButton href="/lawn/seasonal" variant="secondary" size="sm">
+                        <Snowflake className="w-4 h-4" />
+                        Seasonal
+                      </LinkButton>
+                    )}
+                    {officeLike && (
+                      <LinkButton href="/lawn/weather" variant="secondary" size="sm">
+                        <CloudSun className="w-4 h-4" />
+                        Weather
+                      </LinkButton>
+                    )}
+                  </div>
+
+                  {officeLike && (
+                    <>
+                      <p className={GROUP_LABEL}>Customers &amp; service</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <LinkButton href="/admin/customers" variant="secondary" size="sm">
+                          <Contact className="w-4 h-4" />
+                          Customers
+                        </LinkButton>
+                        <LinkButton href="/lawn/services" variant="secondary" size="sm">
+                          <Scissors className="w-4 h-4" />
+                          Services
+                        </LinkButton>
+                      </div>
+                    </>
+                  )}
+
+                  {officeLike && (
+                    <>
+                      <p className={GROUP_LABEL}>Money</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <LinkButton href="/lawn/billing" variant="secondary" size="sm">
+                          <FileText className="w-4 h-4" />
+                          Billing
+                        </LinkButton>
+                        <LinkButton href="/invoices" variant="secondary" size="sm">
+                          <Users className="w-4 h-4" />
+                          Invoices
+                        </LinkButton>
+                      </div>
+                    </>
+                  )}
+
+                  <p className={GROUP_LABEL}>Insights</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <LinkButton href="/lawn/insights" variant="secondary" size="sm">
+                      <TrendingUp className="w-4 h-4" />
+                      Insights
+                    </LinkButton>
+                  </div>
+                </Card>
+              )}
+
+              {/* Recent activity — customer-action notifications. Surfaced here
+                  because lawn office users land on /lawn, not /dashboard.
+                  RLS-scoped to this org. NotificationsFeed renders its own
+                  "Notifications" heading + white box, so no Card wrapper. */}
+              <NotificationsFeed notifications={notifications} />
+            </div>
           </div>
-        )}
-      </section>
-
-      {/* ── Plan — dispatch & scheduling tools ────────────────────────
-          Tiles are role-gated to their destination page's admission set so
-          a viewer never sees a tile that would bounce them (audit #6). */}
-      {(officeLike || officeOrPm) && (
-        <section className="space-y-2">
-          <SectionHeader>Plan</SectionHeader>
-          <div className="grid grid-cols-2 gap-2">
-            {officeLike && (
-              <Link
-                href="/lawn/new"
-                className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
-              >
-                <Plus className="w-5 h-5" />
-                New lawn job
-              </Link>
-            )}
-            {officeLike && (
-              <Link
-                href="/lawn/calendar"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Calendar className="w-5 h-5" />
-                Route calendar
-              </Link>
-            )}
-            {officeLike && (
-              <Link
-                href="/lawn/routes"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Route className="w-5 h-5" />
-                Routes
-              </Link>
-            )}
-            {solo && (
-              <Link
-                href="/lawn/my-route"
-                className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
-              >
-                <Sprout className="w-5 h-5" />
-                Today&rsquo;s Route
-              </Link>
-            )}
-            {officeOrPm && (
-              <Link
-                href="/lawn/seasonal"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <Snowflake className="w-5 h-5" />
-                Seasonal
-              </Link>
-            )}
-            {officeLike && (
-              <Link
-                href="/lawn/weather"
-                className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-              >
-                <CloudSun className="w-5 h-5" />
-                Weather
-              </Link>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* ── Customers & service ─────────────────────────────────────── */}
-      {officeLike && (
-        <section className="space-y-2">
-          <SectionHeader>Customers &amp; service</SectionHeader>
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              href="/admin/customers"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Contact className="w-5 h-5" />
-              Customers
-            </Link>
-            <Link
-              href="/lawn/services"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Scissors className="w-5 h-5" />
-              Services
-            </Link>
-          </div>
-        </section>
-      )}
-
-      {/* ── Money — billing & invoices ────────────────────────────────
-          "Record payment" (cash/check) lands here in Phase C. */}
-      {officeLike && (
-        <section className="space-y-2">
-          <SectionHeader>Money</SectionHeader>
-          <div className="grid grid-cols-2 gap-2">
-            <Link
-              href="/lawn/billing"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <FileText className="w-5 h-5" />
-              Billing
-            </Link>
-            <Link
-              href="/invoices"
-              className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-            >
-              <Users className="w-5 h-5" />
-              Invoices
-            </Link>
-          </div>
-        </section>
-      )}
-
-      {/* ── Insights — owner analytics (admits every hub viewer) ────── */}
-      <section className="space-y-2">
-        <SectionHeader>Insights</SectionHeader>
-        <Link
-          href="/lawn/insights"
-          className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2"
-        >
-          <TrendingUp className="w-5 h-5" />
-          Insights
-        </Link>
-      </section>
-
-      {/* ── Recent activity — customer-action notifications ──────────
-          Surfaced here because lawn office users land on /lawn, not
-          /dashboard. RLS-scoped to this org. NotificationsFeed renders its
-          own "Notifications" label (same as /dashboard), so no SectionHeader
-          here — that would double up. */}
-      <section>
-        <NotificationsFeed notifications={notifications} />
-      </section>
+        </div>
+      </ClientPullToRefresh>
     </PageContainer>
   );
 }
