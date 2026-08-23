@@ -11,6 +11,10 @@
     {
       "path": "/api/lawn/cron/remind",
       "schedule": "8 13 * * *"
+    },
+    {
+      "path": "/api/leads/cron/follow-up",
+      "schedule": "45 13 * * *"
     }
   ]
 }

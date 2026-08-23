@@ -132,6 +132,10 @@ export async function POST(request: Request) {
       // misleading for a free org); construction trial leaves plan_status to the
       // column default.
       ...(isLawnSignup ? { plan_status: "active" } : {}),
+      // Lawn orgs get a public lead-form token immediately so the office can
+      // share /lead/{token} the moment they land (the CRM lead pipeline).
+      // Construction orgs get none for launch (no lead form) — left null.
+      ...(isLawnSignup ? { lead_form_token: crypto.randomUUID() } : {}),
       // Stamp the platform variant sent by the signup form (construction app
       // sends "construction", lawn app sends "lawn"). Drives the DB trigger
       // guard + tenant.ts appVariant. Defaults to construction if absent.

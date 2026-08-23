@@ -49,6 +49,7 @@ import {
   UsersRound,
   Images,
   Terminal,
+  UserPlus,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -126,6 +127,7 @@ export function buildNavItems(role: Role | string | null): NavItem[] {
       { href: "/crew/photo", label: "Photos", Icon: Camera },
       { href: "/crew/time", label: "Time", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
+      { href: "/admin/leads", label: "Leads", Icon: UserPlus },
       { href: "/admin/crew-members", label: "Crew", Icon: UsersRound },
       { href: "/estimates", label: "Estimates", Icon: FileText },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
@@ -364,6 +366,7 @@ export function buildMobileNav(role: Role | string | null): NavItem[] {
             "/lawn/insights",
             "/lawn/notifications",
             "/admin/email-preview",
+            "/admin/leads",
           ],
         },
         {
@@ -461,6 +464,7 @@ export function isPublicRoute(pathname: string): boolean {
     pathname.startsWith("/co/") || // customer change-order portal (token link)
     pathname.startsWith("/s/") || // reviewer submittal portal (token link)
     pathname.startsWith("/v/") || // customer lawn visit photo portal (token link)
+    pathname.startsWith("/lead/") || // public lead capture form (token link)
     pathname.startsWith("/customer/") // customer portal sub-routes
   );
 }

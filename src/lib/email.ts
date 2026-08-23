@@ -1287,3 +1287,82 @@ export async function sendSubmittalEmail(
     };
   }
 }
+
+export type SendLeadWelcomeEmailInput = {
+  to: string;
+  name: string; // lead contact_name || lead.name
+  orgName: string;
+};
+
+// Auto-reply sent to a prospect the moment they submit the public lead form
+// (/lead/{token} → /api/leads). Mirrors the non-fatal sendSubmittalEmail
+// pattern: returns { data: null, error: { message: "email not configured" } }
+// when RESEND_API_KEY is unset rather than throwing — the public capture route
+// treats a failed send as a logged non-fatal (the lead is still captured) and
+// must never 500 over a transient provider issue.
+export function renderLeadWelcomeEmail(
+  input: SendLeadWelcomeEmailInput
+): { subject: string; html: string } {
+  const org = escapeHtml(input.orgName);
+  const name = escapeHtml(input.name || "there");
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);">
+        <tr><td style="padding:24px 28px;background:${BRAND.themeColorDark};">
+          <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:.02em;">${org}</p>
+          <p style="margin:4px 0 0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Thanks for reaching out</p>
+        </td></tr>
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 4px;color:#6b7280;font-size:14px;">Hi ${name},</p>
+          <p style="margin:0 0 20px;color:#111827;font-size:16px;line-height:1.5;">
+            Thanks for your interest in <strong>${org}</strong>! We've received
+            your request and a member of our team will reach out to you shortly
+            to discuss your property and how we can help.
+          </p>
+          <p style="margin:0;color:#111827;font-size:16px;line-height:1.5;">
+            If you have any questions in the meantime, just reply to this email
+            and we'll get back to you.
+          </p>
+          <p style="margin:16px 0 0;color:#9ca3af;font-size:12px;line-height:1.5;">
+            If you didn't expect to hear from ${org}, you can safely ignore this
+            email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by ${org} via ${BRAND.company}.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  return { subject: `Thanks for your interest in ${input.orgName}!`, html };
+}
+
+export async function sendLeadWelcomeEmail(
+  input: SendLeadWelcomeEmailInput
+): Promise<{ data: { id: string } | null; error: { message: string } | null }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { data: null, error: { message: "email not configured" } };
+  }
+  const { subject, html } = renderLeadWelcomeEmail(input);
+  const resend = new Resend(apiKey);
+  try {
+    return await resend.emails.send({
+      from: fromAddress(),
+      to: input.to,
+      subject,
+      html,
+    });
+  } catch (err) {
+    return {
+      data: null,
+      error: { message: err instanceof Error ? err.message : "email send failed" },
+    };
+  }
+}
