@@ -52,6 +52,7 @@ export default function TopBar({
             logoUrl={branding.logoUrl}
             alt={BRAND.shortName}
             size={28}
+            wordmarkFallback
           />
         )}
         <div className="min-w-0">
