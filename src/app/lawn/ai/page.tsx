@@ -53,16 +53,20 @@ export default async function LawnAiPage() {
 
   // Customer picker options. Read with the SESSION client, so RLS scopes this
   // to the caller's org exactly as it does on /lawn/new — no new access
-  // decision, and nothing here needs the service role.
+  // decision, and nothing here needs the service role. email_opt_in is carried
+  // so the AI-admin UI can gate the marketing-flavored "upsell" email type on
+  // it without a round trip (slice 2 — see src/app/api/ai/draft-customer-email).
   const supabase = await createClient();
   const { data } = await supabase
     .from("customers")
-    .select("id, name")
+    .select("id, name, email_opt_in")
     .order("name");
 
-  const customers = ((data ?? []) as { id: string; name: string | null }[])
-    .filter((c): c is CustomerOption => !!c.name)
-    .map((c) => ({ id: c.id, name: c.name }));
+  const customers: CustomerOption[] = (
+    (data ?? []) as { id: string; name: string | null; email_opt_in: boolean | null }[]
+  )
+    .filter((c): c is { id: string; name: string; email_opt_in: boolean | null } => !!c.name)
+    .map((c) => ({ id: c.id, name: c.name, emailOptIn: c.email_opt_in === true }));
 
   return (
     <PageContainer

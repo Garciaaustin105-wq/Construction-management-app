@@ -54,6 +54,52 @@ export interface SummarizeVisitsResponse {
   quota: AiQuota;
 }
 
+// ── Slice 2: draft a customer email ─────────────────────────────────────────
+// The office picks a customer + an email type; the server reads that customer's
+// lawn history (visits, recurring schedule, chemical applications, invoices —
+// all reached THROUGH jobs.customer_id except invoices, which has its own) and
+// an LLM drafts a plain-text email the office copies into their own mail client.
+// No in-app send this slice (copy + mailto only) — see the route header.
+
+/** Which kind of customer email to draft. `upsell` is marketing-flavored: the
+ *  UI only offers it when the selected customer has email_opt_in = true. */
+export type CustomerEmailType = "season_recap" | "renewal" | "check_in" | "upsell";
+
+export interface DraftCustomerEmailRequest {
+  /** Required — email drafts are per-customer (no org-wide draft). */
+  customerId: string;
+  type: CustomerEmailType;
+  /** YYYY-MM-DD context-window start. Defaults to 365 days ago (an email
+   *  references a season, not a billing month). */
+  from?: string;
+  /** YYYY-MM-DD context-window end. Defaults to today. */
+  to?: string;
+}
+
+export interface DraftCustomerEmailResponse {
+  /** False when there isn't enough lawn history to draft — `body` then holds a
+   *  human-readable reason and the UI shows it as info (no copy/mailto). No LLM
+   *  call and no quota are consumed in that case. */
+  draftable: boolean;
+  /** Empty string when `draftable` is false. */
+  subject: string;
+  /** Plain text, "\n" between paragraphs — ready for clipboard and a mailto:
+   *  body parameter. When `!draftable`, the reason text. */
+  body: string;
+  customerName: string;
+  /** `customers.contact_email` for the mailto link. null = no email on file
+   *  (the UI then offers Copy only, not "Open in email"). */
+  customerEmail: string | null;
+  /** `customers.email_opt_in`. The UI uses this to gate the `upsell` type. */
+  emailOptIn: boolean;
+  /** Visits in the context window. */
+  visitCount: number;
+  /** Whether a recurring schedule exists (renewal relevance). */
+  hasSchedule: boolean;
+  /** Quota AFTER this action was recorded (mirrors slice 1). */
+  quota: AiQuota;
+}
+
 /** Thrown for any non-2xx from an /api/ai route. `status` lets the UI tell an
  *  over-quota 429 apart from a genuine failure. */
 export class AiRequestError extends Error {
@@ -98,6 +144,23 @@ export async function summarizeVisits(
   });
   if (!res.ok) throw new AiRequestError(await readError(res), res.status);
   return (await res.json()) as SummarizeVisitsResponse;
+}
+
+/** Draft a customer email from that customer's lawn history. Consumes one AI
+ *  action (unless `draftable` comes back false — then nothing was spent).
+ *  Same error contract as summarizeVisits: 401/403/400/402/429/502/503. */
+export async function draftCustomerEmail(
+  body: DraftCustomerEmailRequest,
+  signal?: AbortSignal
+): Promise<DraftCustomerEmailResponse> {
+  const res = await fetch("/api/ai/draft-customer-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw new AiRequestError(await readError(res), res.status);
+  return (await res.json()) as DraftCustomerEmailResponse;
 }
 
 /** True when the org's tier has no AI at all (as opposed to having AI but
