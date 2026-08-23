@@ -40,13 +40,21 @@ editor** — it mangles single quotes. In order:
 
 1. `isp_billing_a.sql` — plan catalog, Connect link, webhook event log, grace-days column
 2. `isp_billing_b.sql` — subscriptions, ISP customer profiles, suspension trigger
+3. `business_types.sql` — `organizations.business_types` + backfill
 
-Both are additive and idempotent (safe to re-run). Verification queries are
-commented at the bottom of each file.
+**None of the three has been run.** They were validated by executing each
+against the live database inside `begin; … rollback;` and confirming nothing
+persisted — that proves the syntax, FK targets, RLS helper signatures, and
+trigger bodies are correct against the real schema, but it applied nothing. Run
+each for real; do not assume any part is already in place.
+
+Order matters for the first two (`b` references `isp_plans` from `a`).
+`business_types.sql` is independent and can go last. Verification queries are
+commented at the bottom of each file — run them.
 
 > `isp_billing_a.sql` includes `customers.service_plan`, which supersedes the
-> standalone `customers_service_plan.sql`. If that column already exists the
-> statement is a no-op.
+> standalone `customers_service_plan.sql`. That column already exists (it was
+> applied separately), so the statement is a no-op.
 
 ---
 
@@ -158,6 +166,36 @@ Use a **test-mode** platform key so the connected account is test-mode too.
    is now blocked by `guard_install_create_suspended()`.
 5. Pay the open invoice in Stripe → status `active`, grace cleared, restoration
    email sent.
+
+### ⚠️ Do the dunning cycle FIRST — it is the highest-risk path
+
+Steps 3–5 above are not optional polish. Dunning is **doubly untested**:
+
+1. The handler code has never run against a real Stripe event, like the rest
+   of this feature; **and**
+2. the cron was **never wired up** — the `/api/isp/cron/dunning` entry was
+   missing from `vercel.json` until commit `d70978b`. So even where the code
+   was deployed, the sweep never fired. No subscriber has ever been suspended
+   by this system, and the code path that does it has never executed anywhere.
+
+Everything else here fails loudly (a broken Checkout link is obvious). Dunning
+fails **silently and in the customer's favour** — non-paying subscribers simply
+stay connected forever, and nobody notices until someone audits revenue. The
+inverse bug is worse: a mis-wired sweep that suspends paying customers.
+
+So before any merge to `main`, walk the full cycle end to end and confirm all
+four transitions actually happen:
+
+| Event | Expected |
+|---|---|
+| `invoice.payment_failed` | `past_due`, `grace_until` set, warning email sent |
+| grace expires → cron runs | `suspended`, `service_suspended` flips, email sent |
+| new install attempted | blocked by `guard_install_create_suspended()` |
+| `invoice.paid` | back to `active`, grace + warning cleared, restore email |
+
+Check the cron is actually scheduled in the Vercel dashboard after deploy —
+a `vercel.json` entry that didn't deploy looks exactly like "nobody is past
+due."
 
 ### Confirm the platform surface is untouched
 
