@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMe } from "@/lib/tenant";
 import { isOfficeLike } from "@/lib/roles";
+import { assertNotFreePlan } from "@/lib/planGate";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getUsableTokens } from "@/lib/accounting/connections";
 import { getProvider } from "@/lib/accounting/provider";
@@ -41,6 +42,10 @@ export async function POST(request: Request) {
       { status: 403 }
     );
   }
+
+  // Accounting sync is a paid feature — free (lawn) orgs are blocked here.
+  const freeGate = assertNotFreePlan(tenant);
+  if (freeGate) return freeGate;
 
   const body = (await request.json().catch(() => ({}))) as {
     provider?: string;

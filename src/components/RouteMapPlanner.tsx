@@ -49,14 +49,62 @@ export default function RouteMapPlanner({
   date,
   stops: initial,
   crews,
+  routeOptCap = null,
 }: {
   date: string;
   stops: RouteStop[];
   crews: CrewInfo[];
+  /** Daily route-optimization cap from the org's plan (null = unlimited for
+   *  paid/trial; 5/day for free; 0 for expired/canceled). Client-enforced soft
+   *  cap as a STOPGAP — bypassable from the console, deters casual overuse.
+   *  The server-side Distance Matrix proxy + hard DB quota is the fast-follow
+   *  (route_opt_quota.sql + /api/lawn/route-optimize). */
+  routeOptCap?: number | null;
 }) {
   const router = useRouter();
   const supabase = createClient();
   const toast = useToast();
+
+  // Route-opt soft cap (free tier): count Optimize clicks per calendar day in
+  // localStorage. Keyed by the ACTUAL day (not the route `date` being viewed) so
+  // the cap is "per day per org" regardless of which day's route is open. Reads
+  // come back empty in private mode / cleared storage — render the button
+  // enabled (worst case: a few extra free clicks; the server cap is the real
+  // enforcement).
+  const ROUTE_OPT_KEY = "terra-route-opt-day";
+  const [routeOptUsed, setRouteOptUsed] = useState<number>(() => {
+    if (routeOptCap == null) return 0; // no cap → don't touch storage
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const raw = localStorage.getItem(ROUTE_OPT_KEY);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw) as { day?: string; n?: number };
+      if (parsed.day !== today) return 0; // rolled over → reset
+      return typeof parsed.n === "number" ? parsed.n : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const routeOptRemaining =
+    routeOptCap == null ? Infinity : Math.max(0, routeOptCap - routeOptUsed);
+  const routeOptBlocked = routeOptCap != null && routeOptRemaining <= 0;
+
+  // Increment today's route-opt counter (free-tier soft cap). No-op when there
+  // is no cap. Wrapped — storage can throw in private mode / when blocked.
+  function bumpRouteOpt() {
+    if (routeOptCap == null) return;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const next = routeOptUsed + 1;
+      localStorage.setItem(
+        ROUTE_OPT_KEY,
+        JSON.stringify({ day: today, n: next })
+      );
+      setRouteOptUsed(next);
+    } catch {
+      // best-effort — the cap is a soft deterrent, not money-critical
+    }
+  }
 
   // Seed the ordered list: keep a previously-saved order if any stop has a
   // route_order; otherwise seed via nearest-neighbor so the map opens
@@ -172,53 +220,86 @@ export default function RouteMapPlanner({
   // nearest-neighbor walk + 2-opt refinement (no Google API call, so no cap).
   // It's an estimate rather than live drive time, but still meaningfully
   // better than the unoptimized greedy order for a big day.
+  // Haversine estimate fallback: reorder mapped stops by straight-line
+  // nearest-neighbor + 2-opt. Used when there are too many stops for a single
+  // Google Distance Matrix request (>25) OR when the server proxy is
+  // unavailable (503 — GOOGLE_MAPS_SERVER_KEY not configured). No Google call,
+  // so it never consumes the route-opt quota. Non-destructive (local state only).
+  function applyHaversineOptimize(mappedStops: RouteStop[]) {
+    const optimized = refineRouteHaversine(nearestNeighborRoute(mappedStops));
+    const unmapped = ordered.filter((s) => !s.pos);
+    setOrdered([...optimized, ...unmapped]);
+  }
+
   async function optimizeOrder() {
     const mapped = ordered.filter((s) => s.pos);
     if (mapped.length < 2) {
       toast.info("Pin at least 2 stops to optimize the order.");
       return;
     }
+    // Free-tier route-opt soft cap (stopgap): block once the daily allotment is
+    // used up. Bypassable from the console — the server proxy + DB quota is the
+    // real enforcement (fast-follow).
+    if (routeOptBlocked) {
+      toast.warning(
+        `Daily route-optimization limit reached (${routeOptCap}/day on the Free plan). Upgrade for unlimited optimizations.`
+      );
+      return;
+    }
     if (mapped.length > 25) {
       setOptimizing(true);
-      const optimized = refineRouteHaversine(nearestNeighborRoute(mapped));
-      const unmapped = ordered.filter((s) => !s.pos);
-      setOrdered([...optimized, ...unmapped]);
+      applyHaversineOptimize(mapped);
       setOptimizing(false);
       toast.success(
         "Reordered by estimated distance (too many stops for live drive-time) — review and Save."
       );
+      bumpRouteOpt();
       return;
     }
     setOptimizing(true);
     try {
-      const gmaps = await loadGoogleMaps();
+      // Server-side Google Distance Matrix (quota-capped per org per day via
+      // route_opt_quota — free 5/day; the client soft cap above is just a
+      // pre-check to avoid a wasted round trip). Returns an N×N duration matrix
+      // in seconds; null pairs are unreachable.
       const positions = mapped.map((s) => ({ lat: s.pos!.lat, lng: s.pos!.lng }));
-      const service = new gmaps.maps.DistanceMatrixService();
-      const res = await service.getDistanceMatrix({
-        origins: positions,
-        destinations: positions,
-        travelMode: gmaps.maps.TravelMode.DRIVING,
+      const r = await fetch("/api/lawn/route-optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origins: positions, destinations: positions }),
       });
-      // Build an N×N duration matrix (seconds). Unreachable pairs (status !==
-      // OK) are left as Infinity so nearestNeighborByMatrix falls back to
-      // haversine for that leg instead of stalling.
-      const n = mapped.length;
-      const matrix: number[][] = Array.from({ length: n }, () =>
-        new Array(n).fill(Infinity)
-      );
-      for (let i = 0; i < n; i++) {
-        const elements = res.rows[i]?.elements ?? [];
-        for (let j = 0; j < n; j++) {
-          const el = elements[j];
-          if (el && el.status === "OK" && typeof el.duration?.value === "number") {
-            matrix[i][j] = el.duration.value;
-          }
-        }
+      if (r.status === 429) {
+        // Server quota hit (raced past the client pre-check, or caps changed
+        // server-side). Sync the local counter so the button disables + nudge.
+        setRouteOptUsed(routeOptCap ?? 0);
+        toast.warning(
+          "Daily route-optimization limit reached on the Free plan. Upgrade for unlimited optimizations."
+        );
+        return;
       }
+      if (r.status === 503) {
+        // Server key not configured — degrade gracefully to a haversine
+        // estimate (no Google spend, no quota consumed). Not an error.
+        applyHaversineOptimize(mapped);
+        toast.success("Reordered by estimated distance — review and Save.");
+        return;
+      }
+      if (!r.ok) {
+        toast.error("Could not optimize the order — please try again.");
+        return;
+      }
+      const { durations } = (await r.json()) as { durations: (number | null)[][] };
+      // N×N duration matrix (seconds). null pairs (unreachable) → Infinity so
+      // nearestNeighborByMatrix falls back to haversine for that leg instead of
+      // stalling (matches the old in-browser DistanceMatrixService behavior).
+      const matrix: number[][] = durations.map((row) =>
+        row.map((d) => (typeof d === "number" ? d : Infinity))
+      );
       const optimized = nearestNeighborByMatrix(mapped, matrix);
       const unmapped = ordered.filter((s) => !s.pos);
       setOrdered([...optimized, ...unmapped]);
       toast.success("Reordered by real drive time — review and Save.");
+      bumpRouteOpt();
     } catch {
       toast.error("Could not optimize the order — please try again.");
     } finally {
@@ -407,8 +488,15 @@ export default function RouteMapPlanner({
           {mappedCount >= 2 && (
             <button
               onClick={optimizeOrder}
-              disabled={optimizing}
+              disabled={optimizing || routeOptBlocked}
               className="inline-flex items-center gap-1 text-green-700 font-semibold disabled:opacity-50"
+              title={
+                routeOptCap != null
+                  ? routeOptBlocked
+                    ? `Free plan limit reached (${routeOptCap}/day) — upgrade for unlimited`
+                    : `${routeOptRemaining} route optimization${routeOptRemaining === 1 ? "" : "s"} left today (Free plan)`
+                  : undefined
+              }
             >
               {optimizing ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -416,6 +504,11 @@ export default function RouteMapPlanner({
                 <Sparkles className="w-3.5 h-3.5" />
               )}
               Optimize order
+              {routeOptCap != null && !routeOptBlocked && (
+                <span className="text-gray-400 font-normal">
+                  ({routeOptRemaining} left)
+                </span>
+              )}
             </button>
           )}
           {unmapped.length > 0 && (
@@ -437,6 +530,21 @@ export default function RouteMapPlanner({
           {unmapped.length === 1 ? "s" : "ve"} no pin — geocode it or set it on the
           map so it&rsquo;s included in the order.
         </p>
+      )}
+
+      {routeOptBlocked && (
+        <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-300 rounded p-2 flex items-center justify-between gap-2">
+          <span>
+            Daily route-optimization limit reached ({routeOptCap}/day on the Free
+            plan). You can still drag to reorder manually.
+          </span>
+          <button
+            onClick={() => router.push("/admin/billing")}
+            className="text-green-700 font-semibold underline shrink-0"
+          >
+            Upgrade
+          </button>
+        </div>
       )}
 
       {/* Map */}

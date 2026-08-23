@@ -143,6 +143,7 @@ begin
   -- pro is variant-aware: lawn 75GB (before/after photos), construction 25GB.
   v_max := case
     when v_eff = 'trial'                       then null
+    when v_eff = 'free'                            then 1::bigint  * 1024 * 1024 * 1024
     when v_eff = 'enterprise'                       then null
     when v_eff = 'pro' and v_variant = 'lawn'       then 75::bigint * 1024 * 1024 * 1024
     when v_eff = 'pro'                              then 25::bigint * 1024 * 1024 * 1024

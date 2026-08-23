@@ -275,7 +275,7 @@ async function applySubscription(sub: Stripe.Subscription): Promise<void> {
   const admin = createAdminClient();
   const { data: org } = await admin
     .from("organizations")
-    .select("id")
+    .select("id, app_variant")
     .eq("stripe_customer_id", customerId)
     .maybeSingle();
   if (!org) return; // event for an unknown customer — nothing to sync
@@ -299,8 +299,22 @@ async function applySubscription(sub: Stripe.Subscription): Promise<void> {
     subscription_amount_cents: subAmountCents(sub),
   };
   if (status === "canceled") {
-    update.plan = "canceled";
-    update.subscription_amount_cents = 0;
+    // Cancel-to-free (lawn only): a canceled lawn subscription drops to the
+    // capped free tier — the org keeps its data and stays usable, with new
+    // creates blocked by the DB triggers until usage is trimmed under 25.
+    // Construction cancels to 'canceled' (locked out; resubscribe to resume).
+    // Stripe can fire customer.subscription.updated with status=canceled
+    // BEFORE customer.subscription.deleted, so this branch must agree with
+    // the deleted handler below to keep the final state stable.
+    if (org.app_variant === "lawn") {
+      update.plan = "free";
+      update.plan_status = "active";
+      update.subscription_amount_cents = 0;
+      update.trial_ends_at = null;
+    } else {
+      update.plan = "canceled";
+      update.subscription_amount_cents = 0;
+    }
   } else if (tier) {
     update.plan = tier;
   }
@@ -350,12 +364,36 @@ export async function syncSubscriptionFromEvent(
       const customerId =
         typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
       if (customerId) {
-        await patchByCustomer(customerId, {
-          plan: "canceled",
-          plan_status: "canceled",
-          stripe_subscription_id: sub.id,
-          subscription_amount_cents: 0,
-        });
+        // Variant-aware cancel: fetch the org's app_variant to pick the landing
+        // plan. (Not patchByCustomer — the patch depends on the variant, so we
+        // fetch first. The logic mirrors applySubscription's canceled branch so
+        // an updated+deleted event pair converges on the same final state.)
+        const admin = createAdminClient();
+        const { data: org } = await admin
+          .from("organizations")
+          .select("id, app_variant")
+          .eq("stripe_customer_id", customerId)
+          .maybeSingle();
+        if (!org) break;
+        if (org.app_variant === "lawn") {
+          // Cancel-to-free: lawn drops to the capped free tier (data kept, new
+          // creates blocked by the DB triggers until under 25).
+          await admin.from("organizations").update({
+            plan: "free",
+            plan_status: "active",
+            stripe_subscription_id: sub.id,
+            subscription_amount_cents: 0,
+            trial_ends_at: null,
+          }).eq("id", org.id);
+        } else {
+          // Construction: locked out; resubscribe to resume.
+          await admin.from("organizations").update({
+            plan: "canceled",
+            plan_status: "canceled",
+            stripe_subscription_id: sub.id,
+            subscription_amount_cents: 0,
+          }).eq("id", org.id);
+        }
       }
       break;
     }

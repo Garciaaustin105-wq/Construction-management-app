@@ -13,6 +13,11 @@
 --                  starter crew=25, pro crew=150, enterprise(null)
 --                  starter customers=100, pro customers=1000, enterprise(null)
 --   trial:         unlimited.  expired/canceled: 0 (block all creates).
+--   free:          jobs=25, crew=3, customers=25 (lawn-only tier; variant-
+--                  independent — a construction plan='free' is an invalid state
+--                  no code produces, capping it at lawn-free values is the safe
+--                  failure). free is NOT in the expired/canceled block-create, so
+--                  free orgs CAN create up to the caps.
 --
 -- ⚠️ BEHAVIOR CHANGE for existing orgs: they were grandfathered to Pro (see
 -- saas_billing.sql §4). Construction Pro now caps jobs at 50 (was 100). A
@@ -62,6 +67,7 @@ begin
   -- Max jobs per tier per variant (mirror src/lib/plans.ts maxJobs).
   v_max := case
     when v_eff = 'trial'     then null
+    when v_eff = 'free'      then 25
     when v_eff = 'enterprise' then (case when v_variant = 'lawn' then 500 else null end)
     when v_eff = 'pro'        then (case when v_variant = 'lawn' then 150 else 50 end)
     when v_eff = 'starter'    then (case when v_variant = 'lawn' then 25 else 10 end)
@@ -125,6 +131,7 @@ begin
   -- Max crew_members per tier per variant (mirror src/lib/plans.ts maxCrewMembers).
   v_max := case
     when v_eff = 'trial'     then null
+    when v_eff = 'free'      then 3
     when v_eff = 'enterprise' then null
     when v_eff = 'pro'        then (case when v_variant = 'lawn' then 150 else 100 end)
     when v_eff = 'starter'    then (case when v_variant = 'lawn' then 25 else 15 end)
@@ -190,6 +197,7 @@ begin
 
   v_max := case
     when v_eff = 'trial'      then null
+    when v_eff = 'free'       then 25
     when v_eff = 'enterprise' then null
     when v_eff = 'pro'        then (case when v_variant = 'lawn' then 1000 else 500 end)
     when v_eff = 'starter'    then (case when v_variant = 'lawn' then 100 else 50 end)

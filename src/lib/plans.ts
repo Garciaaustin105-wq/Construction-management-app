@@ -24,6 +24,7 @@ import { isLawn } from "@/lib/variant";
 export const TRIAL_DAYS = 30;
 
 export type PlanTier =
+  | "free"
   | "trial"
   | "starter"
   | "pro"
@@ -60,6 +61,12 @@ export interface PlanConfig {
    *  starter none, pro 100, Business 5000, expired/canceled 0. Mirrored in
    *  ai_action_gating.sql ai_action_max() so the DB + app agree. */
   maxAiActionsPerMonth: number | null;
+  /** Max route optimizations (Google Distance Matrix calls) per calendar day
+   *  per org. Variant-INDEPENDENT (Google bills per call regardless of variant).
+   *  null = unlimited (paid + trial). 0 = route opt disabled (expired/canceled).
+   *  free = 5/day (the conversion hook — capped, not blocked). Mirrored in
+   *  route_opt_quota.sql route_opt_max() so the DB + app agree. */
+  maxRouteOptsPerDay: number | null;
   /** Display order on the billing page. */
   order: number;
   /** One-line description for the billing cards. */
@@ -82,8 +89,30 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: null,
     maxCustomers: null,
     maxAiActionsPerMonth: 25,
+    maxRouteOptsPerDay: null,
     order: 0,
     blurb: "Full access for 30 days — no card required.",
+  },
+  // free is a LAWN-ONLY tier (construction keeps the trial). It's defined here
+  // only because the Record<PlanTier, PlanConfig> type requires every key — no
+  // construction code path ever emits plan='free'. Defense-in-depth: if a DB
+  // edit/bug ever sets a construction org to free, these bounded caps (matching
+  // the lawn free tier) apply instead of the unlimited fall-through to trial.
+  free: {
+    label: "Free",
+    priceId: null,
+    priceMonthly: 0,
+    maxUsers: 1,
+    maxJobs: 25,
+    maxLineItemsPerDoc: 10,
+    maxStorageBytes: 1 * GB,
+    storageCustom: false,
+    maxCrewMembers: 3,
+    maxCustomers: 25,
+    maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: 5,
+    order: -1,
+    blurb: "Solo operator, up to 25 customers. No card required.",
   },
   starter: {
     label: "Starter",
@@ -99,6 +128,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 15,
     maxCustomers: 50,
     maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: null,
     order: 1,
     blurb: "For small crews getting organized.",
   },
@@ -114,6 +144,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 100,
     maxCustomers: 500,
     maxAiActionsPerMonth: 100,
+    maxRouteOptsPerDay: null,
     order: 2,
     blurb: "For growing contractors running multiple jobs.",
   },
@@ -129,6 +160,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: null,
     maxCustomers: null,
     maxAiActionsPerMonth: 5000,
+    maxRouteOptsPerDay: null,
     order: 3,
     blurb: "Unlimited users + jobs. Need more storage? Call us.",
   },
@@ -144,6 +176,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 0,
     maxCustomers: 0,
     maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: 0,
     order: 99,
     blurb: "Trial ended — subscribe to keep creating.",
   },
@@ -159,6 +192,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 0,
     maxCustomers: 0,
     maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: 0,
     order: 99,
     blurb: "Subscription canceled — resubscribe to resume.",
   },
@@ -180,8 +214,34 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: null,
     maxCustomers: null,
     maxAiActionsPerMonth: 25,
+    maxRouteOptsPerDay: null,
     order: 0,
     blurb: "Full access for 30 days — no card required.",
+  },
+  // free is the lawn variant's default signup tier — a persistent, capped,
+  // no-card plan that REPLACES the 30-day trial (decision 2026-08-22). It gives
+  // the solo operator the operational power competitors gate (seasonal pause,
+  // skip-visit, working route-opt, bulk scheduling, before/after photos — all
+  // already built) and walls at 25 customers / 1 seat / 1GB. Paid differentiators
+  // + real-future-cost items are gated: accounting sync (route gate, Step 6),
+  // AI (0 actions), route-opt-at-scale (5/day soft cap, full server cap is the
+  // Step 7 fast-follow). Cancel-to-free: a paid lawn sub that cancels drops here
+  // (keeps data, new creates blocked by the DB triggers until under cap).
+  free: {
+    label: "Free",
+    priceId: null,
+    priceMonthly: 0,
+    maxUsers: 1,
+    maxJobs: 25,
+    maxLineItemsPerDoc: 10,
+    maxStorageBytes: 1 * GB,
+    storageCustom: false,
+    maxCrewMembers: 3,
+    maxCustomers: 25,
+    maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: 5,
+    order: -1,
+    blurb: "Solo operator, up to 25 customers. No card required.",
   },
   starter: {
     label: "Starter",
@@ -195,6 +255,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 25,
     maxCustomers: 100,
     maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: null,
     order: 1,
     blurb: "For a solo operator or small route.",
   },
@@ -216,6 +277,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 150,
     maxCustomers: 1000,
     maxAiActionsPerMonth: 100,
+    maxRouteOptsPerDay: null,
     order: 2,
     blurb: "For growing lawn businesses with multiple crews.",
   },
@@ -231,6 +293,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: null,
     maxCustomers: null,
     maxAiActionsPerMonth: 5000,
+    maxRouteOptsPerDay: null,
     order: 3,
     blurb: "For established operations. Need more storage? Call us.",
   },
@@ -246,6 +309,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 0,
     maxCustomers: 0,
     maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: 0,
     order: 99,
     blurb: "Trial ended — subscribe to keep creating.",
   },
@@ -261,6 +325,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCrewMembers: 0,
     maxCustomers: 0,
     maxAiActionsPerMonth: 0,
+    maxRouteOptsPerDay: 0,
     order: 99,
     blurb: "Subscription canceled — resubscribe to resume.",
   },
@@ -303,6 +368,7 @@ export interface PlanLimits {
   maxCrewMembers: number | null;
   maxCustomers: number | null;
   maxAiActionsPerMonth: number | null;
+  maxRouteOptsPerDay: number | null;
 }
 
 export function getLimits(plan: string): PlanLimits {
@@ -316,5 +382,6 @@ export function getLimits(plan: string): PlanLimits {
     maxCrewMembers: cfg.maxCrewMembers,
     maxCustomers: cfg.maxCustomers,
     maxAiActionsPerMonth: cfg.maxAiActionsPerMonth,
+    maxRouteOptsPerDay: cfg.maxRouteOptsPerDay,
   };
 }

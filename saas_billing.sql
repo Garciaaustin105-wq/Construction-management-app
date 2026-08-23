@@ -37,7 +37,7 @@ alter table public.organizations
 
 alter table public.organizations
   add constraint organizations_plan_check
-  check (plan in ('trial','starter','pro','enterprise','expired','canceled'));
+  check (plan in ('trial','starter','pro','enterprise','expired','canceled','free'));
 
 -- ---------------------------------------------------------------------------
 -- 3. billing_events: webhook idempotency + audit log
@@ -64,69 +64,12 @@ create policy "Super admin read billing events" on public.billing_events
 -- the service role bypasses RLS. No client ever mutates this table.
 
 -- ---------------------------------------------------------------------------
--- 3b. Job-create guard: block new jobs when the org's plan is expired/canceled
---     or when it has reached its job cap. Fires on every jobs INSERT (client
---     inserts included — triggers run even for service-role writes). The caps
---     mirror src/lib/plans.ts (keep them in sync if you change a tier's limit).
+-- 3b. REMOVED — the variant-aware guard_job_create in plan_limits_v2.sql is the
+--     source of truth. This older non-variant copy was a "last-applied-wins"
+--     drift hazard: re-running saas_billing.sql after plan_limits_v2.sql would
+--     silently regress the trigger (drop+create here overwrites the newer one).
+--     Do NOT re-add a guard_job_create here — edit plan_limits_v2.sql instead.
 -- ---------------------------------------------------------------------------
-create or replace function public.guard_job_create()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_plan        text;
-  v_status      text;
-  v_trial_ends  timestamptz;
-  v_eff         text;
-  v_count       bigint;
-  v_max         int;
-begin
-  select plan, plan_status, trial_ends_at
-    into v_plan, v_status, v_trial_ends
-    from public.organizations
-    where id = new.organization_id;
-  if not found then
-    return new;
-  end if;
-
-  -- Effective plan (lazy trial expiry, same as src/lib/billing.ts effectiveStatus).
-  v_eff := v_plan;
-  if v_plan = 'trial' and v_trial_ends is not null and now() > v_trial_ends then
-    v_eff := 'expired';
-  end if;
-
-  if v_eff in ('expired', 'canceled') then
-    raise exception 'Your plan does not allow new jobs. Subscribe to continue using Terra Vista.';
-  end if;
-
-  -- Max jobs per tier (mirror src/lib/plans.ts).
-  v_max := case v_eff
-    when 'starter'    then 10
-    when 'pro'        then 100
-    when 'enterprise' then null
-    when 'trial'      then null
-    else null
-  end;
-
-  if v_max is not null then
-    select count(*) into v_count
-      from public.jobs
-      where organization_id = new.organization_id;
-    if v_count >= v_max then
-      raise exception 'Job limit reached (%s) on the %s plan. Upgrade to add more jobs.', v_max, v_eff;
-    end if;
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists trg_guard_job_create on public.jobs;
-create trigger trg_guard_job_create
-  before insert on public.jobs
-  for each row execute function public.guard_job_create();
 
 -- ---------------------------------------------------------------------------
 -- 4. Grandfather every existing org to Pro/active so nothing breaks on deploy.
