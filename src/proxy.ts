@@ -81,6 +81,7 @@ const LAWN_BLOCKED_API_PREFIXES = [
   "/api/lawn/billing",
   "/api/lawn/schedules", // bulk-edit + bulk-pause (defense-in-depth; RLS already org-scopes)
   "/api/lawn/geocode", // pin-drop geocoding (route planner, defense-in-depth)
+  "/api/lawn/applications", // chemical application log + CSV export (lawn only)
 ];
 
 export async function proxy(request: NextRequest) {

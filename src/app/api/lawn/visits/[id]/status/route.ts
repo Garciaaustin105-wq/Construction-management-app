@@ -9,6 +9,8 @@ import {
   anySent,
 } from "@/lib/customerNotifications";
 import { buildStaticMapUrl } from "@/lib/staticMap";
+import { effectiveStatus, type OrgBilling } from "@/lib/billing";
+import { publicBaseUrl } from "@/lib/invoiceSend";
 
 export const dynamic = "force-dynamic";
 
@@ -195,11 +197,16 @@ export async function POST(
     if (customerId && organizationId) {
       const { data: org } = await admin
         .from("organizations")
-        .select("name")
+        .select("name, plan, plan_status, trial_ends_at")
         .eq("id", organizationId)
         .maybeSingle();
-      const orgName =
-        (org as unknown as { name: string | null } | null)?.name ?? null;
+      const orgRow = org as unknown as {
+        name: string | null;
+        plan: string | null;
+        plan_status: string | null;
+        trial_ends_at: string | null;
+      } | null;
+      const orgName = orgRow?.name ?? null;
 
       if (shouldNotifyDone) {
         const photoLink = buildPhotoLink(cur.share_token);
@@ -228,6 +235,42 @@ export async function POST(
         // the helper (getTemplate returns null → skipped; buildReviewLink
         // returns null → {{review_link}} renders empty, but the office controls
         // whether the template is active at all).
+        //
+        // ── Rating-gate intercept (Pro upsell) ──────────────────────────────
+        // Paid orgs (trial/starter/pro/enterprise — anything not free/expired)
+        // get the intercept: mint a review_requests row and link the customer to
+        // /r/{token}. There they pick a rating — happy (4-5★) → Google Business
+        // Profile, unhappy (1-3★) → internal feedback the office sees. A bad
+        // experience never becomes a public 1★. Free / expired orgs keep the
+        // legacy direct-to-GBP link (the un-gated upsell pressure) by leaving
+        // reviewLink undefined, which falls back to buildReviewLink inside the
+        // helper. A mint failure also degrades to the legacy GBP link.
+        const billing: OrgBilling = {
+          plan: orgRow?.plan ?? "trial",
+          planStatus: orgRow?.plan_status ?? "trial",
+          trialEndsAt: orgRow?.trial_ends_at ?? null,
+          stripeCustomerId: null,
+          stripeSubscriptionId: null,
+          subscriptionAmountCents: 0,
+        };
+        const eff = effectiveStatus(billing);
+        const gated = eff.plan !== "free" && eff.plan !== "expired";
+        let reviewLink: string | undefined;
+        if (gated) {
+          const { data: rr } = await admin
+            .from("review_requests")
+            .insert({
+              organization_id: organizationId,
+              customer_id: customerId,
+              visit_id: id,
+              channel: "email",
+            })
+            .select("token")
+            .single();
+          const rrToken = (rr as unknown as { token: string } | null)?.token;
+          if (rrToken) reviewLink = `${publicBaseUrl()}/r/${rrToken}`;
+        }
+
         const reviewResults = await sendCustomerNotification({
           supabase: admin,
           event: "review_request",
@@ -239,6 +282,7 @@ export async function POST(
           serviceDate: cur.due_date,
           orgName,
           mapImageUrl,
+          reviewLink,
         });
 
         notified = anySent(completeResults) || anySent(reviewResults);
