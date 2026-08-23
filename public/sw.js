@@ -10,7 +10,7 @@
 // nav, layout, and components live in the cached bundle, so a nav restructure
 // (e.g. the mobile section-hubs) needs a bump too or installed clients keep
 // showing the old tab bar. No reinstall needed — the new SW purges on activate.
-const CACHE = "terra-vista-v6";
+const CACHE = "terra-vista-v7";
 // Only precache public, auth-free assets. /dashboard etc. get cached on first
 // visit via the navigation handler (they require a session, so precaching them
 // at install time would store a login redirect).
