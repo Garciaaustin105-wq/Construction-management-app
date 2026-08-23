@@ -3,7 +3,18 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+
+// Change-order status -> badge tone. Matches the list page's map so the badge
+// reads the same on both screens.
+const STATUS_TONE: Record<string, BadgeTone> = {
+  draft: "neutral",
+  submitted: "brand",
+  sent: "brand",
+  approved: "success",
+  rejected: "danger",
+  void: "danger",
+};
 import NumberInput from "@/components/NumberInput";
 import { formatMoney } from "@/lib/money";
 import { OFFICE_OR_PM } from "@/lib/roles";
@@ -232,7 +243,9 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
         <div className="bg-white rounded-lg shadow-sm p-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-gray-500">Status</span>
-            <StatusBadge status={co.status} />
+            <StatusBadge tone={STATUS_TONE[co.status] ?? "neutral"} size="md">
+              {co.status.replace("_", " ")}
+            </StatusBadge>
           </div>
           <p className="text-xs text-gray-500">
             {co.jobs?.name ?? ""}

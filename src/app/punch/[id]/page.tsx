@@ -3,8 +3,27 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import StatusBadge from "@/components/StatusBadge";
+import HighlightsHeader from "@/components/ui/HighlightsHeader";
+import Button from "@/components/ui/Button";
+// Labels, tones and the valid-transition table all come from the lifecycle
+// module — the single source shared with the list page.
+import {
+  PUNCH_STATUS_LABEL,
+  PUNCH_STATUS_TONE,
+  validTransitions,
+  type PunchStatus,
+} from "@/lib/lifecycles/punch";
 import { FIELD_MGMT } from "@/lib/roles";
+
+// Verb for the button that moves an item INTO each status. Keyed by the
+// transition target (not the current status) so it stays correct if the
+// lifecycle table changes.
+const ADVANCE_LABEL: Record<PunchStatus, string> = {
+  in_progress: "Start",
+  complete: "Mark Complete",
+  open: "Reopen",
+  void: "Void",
+};
 
 type PunchItem = {
   id: string;
@@ -130,8 +149,11 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
 
   async function advance() {
     if (!item) return;
-    const next =
-      item.status === "open" ? "in_progress" : item.status === "in_progress" ? "complete" : "open";
+    // Next status comes from the lifecycle table (was a hand-written ternary
+    // that duplicated it). Terminal statuses have no next; the button that
+    // calls this is hidden in that case, so this is belt-and-braces.
+    const next = validTransitions(item.status as PunchStatus)[0];
+    if (!next) return;
     setSaving(true);
     const supabaseMod = await import("@/lib/supabase/client");
     const supabase = supabaseMod.createClient();
@@ -184,6 +206,14 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
 
   const backHref = preselectedJob ? `/jobs/${preselectedJob}` : "/punch";
 
+  // The DB column is `text`; the lifecycle module owns the domain.
+  const status = item.status as PunchStatus;
+  // Which action renders = status-valid (lifecycle) x role-allowed. The role
+  // split is unchanged: canEdit (FIELD_MGMT) users manage status through the
+  // Status select + Save below; everyone else gets the one-tap advance button.
+  const nextStatus = validTransitions(status)[0];
+  const canAdvance = !canEdit && !!nextStatus;
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
@@ -201,11 +231,34 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
       </header>
 
       <main className="max-w-md lg:max-w-2xl mx-auto p-4 space-y-4">
+        <HighlightsHeader
+          title={item.title}
+          subtitle={item.location ?? undefined}
+          status={{
+            label: PUNCH_STATUS_LABEL[status] ?? item.status,
+            tone: PUNCH_STATUS_TONE[status] ?? "neutral",
+          }}
+          accent={PUNCH_STATUS_TONE[status] ?? "brand"}
+          fields={[
+            { label: "Priority", value: item.priority },
+            {
+              label: "Due",
+              value: item.due_date
+                ? new Date(item.due_date).toLocaleDateString()
+                : "—",
+            },
+          ]}
+          actions={
+            canAdvance ? (
+              <Button type="button" onClick={advance} disabled={saving} size="sm">
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {ADVANCE_LABEL[nextStatus]}
+              </Button>
+            ) : undefined
+          }
+        />
+
         <div className="bg-white rounded-lg shadow-sm p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-500">Status</span>
-            <StatusBadge status={item.status} />
-          </div>
 
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Title</span>
@@ -373,16 +426,6 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
           </button>
         )}
 
-        {!canEdit && item.status !== "void" && (
-          <button
-            onClick={advance}
-            disabled={saving}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {item.status === "open" ? "Start" : item.status === "in_progress" ? "Mark Complete" : "Reopen"}
-          </button>
-        )}
       </main>
     </div>
   );

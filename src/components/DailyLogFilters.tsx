@@ -1,20 +1,22 @@
 "use client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 export default function DailyLogFilters({ jobs, currentJob, currentStatus, currentFrom, currentTo }: { jobs: { id: string; name: string }[]; currentJob: string; currentStatus: string; currentFrom: string; currentTo: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [job, setJob] = useState(currentJob);
   const [status, setStatus] = useState(currentStatus);
   const [from, setFrom] = useState(currentFrom);
   const [to, setTo] = useState(currentTo);
 
   function go() {
-    const p = new URLSearchParams();
-    if (job) p.set("job", job);
-    if (status) p.set("status", status);
-    if (from) p.set("from", from);
-    if (to) p.set("to", to);
+    // Seed from the current URL so the list's `?view=` (cards/table) survives.
+    const p = new URLSearchParams(searchParams.toString());
+    if (job) p.set("job", job); else p.delete("job");
+    if (status) p.set("status", status); else p.delete("status");
+    if (from) p.set("from", from); else p.delete("from");
+    if (to) p.set("to", to); else p.delete("to");
     const qs = p.toString();
     router.push(qs ? `/daily-logs?${qs}` : "/daily-logs");
   }

@@ -1,6 +1,6 @@
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import CrewMembersManager from "@/components/CrewMembersManager";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
@@ -20,11 +20,8 @@ export default async function CrewMembersPage() {
   const orgId = me.orgId ?? "";
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Crew Members" subtitle="Crew roster for scheduling" />
-      <main className="max-w-md lg:max-w-3xl mx-auto p-4">
-        <CrewMembersManager orgId={orgId} />
-      </main>
-    </div>
+    <PageContainer title="Crew Members" subtitle="Crew roster for scheduling" maxWidth="form">
+      <CrewMembersManager orgId={orgId} />
+    </PageContainer>
   );
 }

@@ -4,7 +4,24 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney, computeTotal } from "@/lib/money";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+
+// Estimate status -> badge tone (was the legacy StatusBadge's shared palette).
+const ESTIMATE_STATUS_TONE: Record<string, BadgeTone> = {
+  draft: "neutral",
+  sent: "brand",
+  approved: "success",
+  rejected: "danger",
+  converted: "success",
+};
+
+// Invoice status -> badge tone (was the legacy StatusBadge's shared palette).
+const INVOICE_STATUS_TONE: Record<string, BadgeTone> = {
+  draft: "neutral",
+  sent: "brand",
+  paid: "success",
+  void: "neutral",
+};
 import { Receipt, Calculator } from "lucide-react";
 
 interface LawnJobFinancialsProps {
@@ -150,7 +167,7 @@ export default function LawnJobFinancials({ jobId, canEdit }: LawnJobFinancialsP
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <StatusBadge status={e.status} />
+                <StatusBadge tone={ESTIMATE_STATUS_TONE[e.status] ?? "neutral"}>{e.status.replace("_", " ")}</StatusBadge>
                 <span className="text-sm font-semibold text-gray-900">
                   {formatMoney(e.total)}
                 </span>
@@ -182,7 +199,7 @@ export default function LawnJobFinancials({ jobId, canEdit }: LawnJobFinancialsP
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <StatusBadge status={inv.status} />
+                <StatusBadge tone={INVOICE_STATUS_TONE[inv.status] ?? "neutral"}>{inv.status.replace("_", " ")}</StatusBadge>
                 <span className="text-sm font-semibold text-gray-900">
                   {formatMoney(
                     inv.status === "sent" && inv.amountPaid > 0

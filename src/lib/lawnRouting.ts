@@ -250,6 +250,45 @@ export function estDriveMinutes(miles: number): number {
 }
 
 /**
+ * Google Maps' `dir/?api=1` URL caps the routed trip at a limited number of
+ * stops (origin + destination + waypoints). 9 is the safe ceiling that every
+ * Maps client (iOS app, Android app, web) honors; beyond that the trailing
+ * stops are silently dropped, so we cap here and surface `routed < total` to
+ * the caller so it can warn the user.
+ */
+export const MAX_NAV_STOPS = 9;
+
+/**
+ * Build a Google Maps turn-by-turn driving-directions URL from an ordered list
+ * of stops. Origin = first stop, destination = last, the rest as waypoints, in
+ * list order. Only stops with a map pin (`pos`) are routable — unpinned stops
+ * are skipped (the office planner has "Geocode all" to pin them first).
+ *
+ * Opening this URL on a phone launches the Google Maps APP (the `api=1` flag
+ * requests the app/URL scheme), and Google Maps is itself a CarPlay + Android
+ * Auto app, so the route mirrors to the dash automatically — no native SDK work
+ * needed. Returns `{ url: null }` when fewer than 2 stops are pinned.
+ */
+export function buildGoogleMapsDirUrl(
+  stops: RouteStop[]
+): { url: string | null; routed: number; total: number } {
+  const pinned = stops.filter((s) => s.pos != null);
+  const total = pinned.length;
+  if (total < 2) return { url: null, routed: 0, total };
+  const capped = pinned.slice(0, MAX_NAV_STOPS);
+  const origin = `${capped[0].pos!.lat},${capped[0].pos!.lng}`;
+  const destination = `${capped[capped.length - 1].pos!.lat},${capped[capped.length - 1].pos!.lng}`;
+  const waypoints = capped
+    .slice(1, -1)
+    .map((s) => `${s.pos!.lat},${s.pos!.lng}`)
+    .join("|");
+  const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${
+    waypoints ? `&waypoints=${waypoints}` : ""
+  }&travelmode=driving`;
+  return { url, routed: capped.length, total };
+}
+
+/**
  * Deterministic k-means clustering of mapped stops into `k` geographic zones.
  * Unmapped stops are returned as a single trailing "Unmapped" zone.
  *

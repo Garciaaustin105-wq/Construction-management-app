@@ -32,10 +32,11 @@ import {
   clusterZones,
   routeMiles,
   estDriveMinutes,
+  buildGoogleMapsDirUrl,
   type RouteStop,
   type CrewInfo,
 } from "@/lib/lawnRouting";
-import { Save, Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles, Users } from "lucide-react";
+import { Save, Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles, Users, Navigation } from "lucide-react";
 
 // Google Maps touches window — load the map client-only.
 const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
@@ -142,6 +143,10 @@ export default function RouteMapPlanner({
   const mappedCount = ordered.filter((s) => s.pos).length;
   const unmapped = ordered.filter((s) => !s.pos);
   const miles = useMemo(() => routeMiles(ordered), [ordered]);
+  // Turn-by-turn nav link from the current ordered, pinned stops. Updates live
+  // as the dispatcher drags/reorders, so the button always matches the plan on
+  // screen. Capped at MAX_NAV_STOPS; `routed < total` warns when stops are cut.
+  const nav = useMemo(() => buildGoogleMapsDirUrl(ordered), [ordered]);
 
   function setStopPos(visitId: string, pos: { lat: number; lng: number } | null) {
     setOrdered((prev) =>
@@ -485,6 +490,27 @@ export default function RouteMapPlanner({
           )}
         </span>
         <div className="flex items-center gap-3">
+          {nav.url && (
+            <a
+              href={nav.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-green-700 font-semibold"
+              title={
+                nav.routed < nav.total
+                  ? `Google Maps caps a trip — opens the first ${nav.routed} of ${nav.total} pinned stops`
+                  : "Open this route in Google Maps (turn-by-turn, CarPlay / Android Auto)"
+              }
+            >
+              <Navigation className="w-3.5 h-3.5" />
+              Open in Maps
+              {nav.routed < nav.total && (
+                <span className="text-gray-400 font-normal">
+                  ({nav.routed}/{nav.total})
+                </span>
+              )}
+            </a>
+          )}
           {mappedCount >= 2 && (
             <button
               onClick={optimizeOrder}

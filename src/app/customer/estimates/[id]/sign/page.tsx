@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import type { EstimatePricing } from "@/lib/money";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import EstimateDocument from "@/components/EstimateDocument";
 import ProposalSignPanel from "@/components/ProposalSignPanel";
 
@@ -128,72 +128,62 @@ export default async function ProposalSignPage({
     : undefined;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      <TopBar
-        title="Review & Sign"
-        subtitle={me.user.email ?? ""}
-        showSignOut
-        backHref="/customer"
-        backLabel="Portal"
-      />
-
-      <main className="max-w-md mx-auto p-4 space-y-4">
-        {/* Proposal cover — accent banner + intro letter, above the estimate */}
-        <div className="overflow-hidden rounded-lg shadow-sm bg-white">
-          <div
-            className="px-5 py-4 text-white"
-            style={
-              accentStyle ?? { backgroundColor: "#1e293b" /* slate-800 brand-dark fallback */ }
-            }
-          >
-            <p className="text-xs uppercase tracking-wider opacity-90">
-              Proposal from {orgName || "your contractor"}
-            </p>
-            <p className="text-lg font-bold tracking-tight mt-0.5">
-              {jobName}
+    <PageContainer title="Review & Sign" subtitle={me.user.email ?? ""} showSignOut backHref="/customer" backLabel="Portal" maxWidth="form">
+      {/* Proposal cover — accent banner + intro letter, above the estimate */}
+      <div className="overflow-hidden rounded-lg shadow-sm bg-white">
+        <div
+          className="px-5 py-4 text-white"
+          style={
+            accentStyle ?? { backgroundColor: "#1e293b" /* slate-800 brand-dark fallback */ }
+          }
+        >
+          <p className="text-xs uppercase tracking-wider opacity-90">
+            Proposal from {orgName || "your contractor"}
+          </p>
+          <p className="text-lg font-bold tracking-tight mt-0.5">
+            {jobName}
+          </p>
+        </div>
+        {intro && (
+          <div className="p-4">
+            <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+              {intro}
             </p>
           </div>
-          {intro && (
-            <div className="p-4">
-              <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                {intro}
-              </p>
-            </div>
-          )}
-        </div>
+        )}
+      </div>
 
-        <EstimateDocument
-          orgName={orgName}
-          orgAddress={orgAddress}
-          orgPhone={orgPhone}
-          orgEmail={orgEmail}
-          orgLogoUrl={orgLogoUrl}
-          customerName={customerName}
-          jobName={jobName}
-          status={est.status}
-          sentAt={est.sent_at}
-          approvedAt={est.approved_at}
-          rejectedAt={est.rejected_at}
-          validUntil={est.valid_until}
-          customerNotes={est.customer_notes}
-          estimateNumber={est.estimate_number}
-          projectAddress={projectAddress}
-          pricing={pricing}
-          showItemized={est.show_itemized ?? true}
-          exclusions={est.exclusions}
-          terms={est.terms}
-          paymentSchedule={est.payment_schedule}
-          items={items}
-        />
+      <EstimateDocument
+        orgName={orgName}
+        orgAddress={orgAddress}
+        orgPhone={orgPhone}
+        orgEmail={orgEmail}
+        orgLogoUrl={orgLogoUrl}
+        customerName={customerName}
+        jobName={jobName}
+        status={est.status}
+        sentAt={est.sent_at}
+        approvedAt={est.approved_at}
+        rejectedAt={est.rejected_at}
+        validUntil={est.valid_until}
+        customerNotes={est.customer_notes}
+        estimateNumber={est.estimate_number}
+        projectAddress={projectAddress}
+        pricing={pricing}
+        showItemized={est.show_itemized ?? true}
+        exclusions={est.exclusions}
+        terms={est.terms}
+        paymentSchedule={est.payment_schedule}
+        items={items}
+      />
 
-        {/* E-signature widget — authed customer only */}
-        <div className="bg-white rounded-lg shadow-sm p-4 space-y-2">
-          <h2 className="text-sm font-semibold text-gray-700 uppercase">
-            Sign to accept
-          </h2>
-          <ProposalSignPanel estimateId={id} />
-        </div>
-      </main>
-    </div>
+      {/* E-signature widget — authed customer only */}
+      <div className="bg-white rounded-lg shadow-sm p-4 space-y-2">
+        <h2 className="text-sm font-semibold text-gray-700 uppercase">
+          Sign to accept
+        </h2>
+        <ProposalSignPanel estimateId={id} />
+      </div>
+    </PageContainer>
   );
 }

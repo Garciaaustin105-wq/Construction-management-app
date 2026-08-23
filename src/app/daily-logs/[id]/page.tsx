@@ -3,7 +3,16 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import StatusBadge from "@/components/StatusBadge";
+import HighlightsHeader from "@/components/ui/HighlightsHeader";
+import Button from "@/components/ui/Button";
+// Labels, tones and the valid-transition table all come from the lifecycle
+// module — the single source shared with the list page.
+import {
+  DAILY_LOG_STATUS_LABEL,
+  DAILY_LOG_STATUS_TONE,
+  validTransitions,
+  type DailyLogStatus,
+} from "@/lib/lifecycles/daily-log";
 import { FIELD_MGMT } from "@/lib/roles";
 
 type Log = {
@@ -93,6 +102,10 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
   }
 
   if (!authorized) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><p className="text-gray-500">Loading...</p></div>;
+  // The DB column is `text`; the lifecycle module owns the domain.
+  const status = (log?.status ?? "submitted") as DailyLogStatus;
+  // Which action renders = status-valid x role-allowed. canEdit is untouched.
+  const canReview = canEdit && validTransitions(status).includes("reviewed");
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
@@ -105,13 +118,37 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
       <main className="max-w-md lg:max-w-2xl mx-auto p-4">
         {log && (
           <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-sm font-semibold text-gray-500">Log Date</p>
-                <p className="text-base text-gray-900">{log.log_date}</p>
-              </div>
-              <StatusBadge status={log.status} />
-            </div>
+            <HighlightsHeader
+              title="Daily Log"
+              subtitle={log.log_date}
+              status={{
+                label: DAILY_LOG_STATUS_LABEL[status] ?? log.status,
+                tone: DAILY_LOG_STATUS_TONE[status] ?? "neutral",
+              }}
+              accent={DAILY_LOG_STATUS_TONE[status] ?? "brand"}
+              fields={[
+                { label: "Log date", value: log.log_date },
+                { label: "Crew", value: log.crew_count ?? "—" },
+                {
+                  label: "Reviewed",
+                  value: log.reviewed_at
+                    ? new Date(log.reviewed_at).toLocaleDateString()
+                    : "—",
+                },
+              ]}
+              actions={
+                // Status-valid (lifecycle) x role-allowed (canEdit = FIELD_MGMT,
+                // unchanged). Previously the Mark-reviewed button was hand-gated
+                // on `log.status === "submitted"` and lived INSIDE the edit form,
+                // where its missing type="button" made it submit the form too.
+                canReview ? (
+                  <Button type="button" onClick={handleMarkReviewed} disabled={loading} size="sm">
+                    {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {loading ? "Marking reviewed..." : "Mark reviewed"}
+                  </Button>
+                ) : undefined
+              }
+            />
             {canEdit && (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
@@ -145,11 +182,6 @@ function DailyLogForm({ params }: { params: Promise<{ id: string }> }) {
                 <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
                   {loading && <Loader2 className="w-5 h-5 animate-spin" />}{loading ? "Saving..." : "Save"}
                 </button>
-                {log.status === "submitted" && (
-                  <button onClick={handleMarkReviewed} disabled={loading} className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-base active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2">
-                    {loading && <Loader2 className="w-5 h-5 animate-spin" />}{loading ? "Marking reviewed..." : "Mark reviewed"}
-                  </button>
-                )}
               </form>
             )}
             {!canEdit && (

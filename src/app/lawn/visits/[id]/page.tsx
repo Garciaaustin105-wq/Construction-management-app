@@ -4,7 +4,18 @@ import { useState, useEffect, use, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
+import HighlightsHeader from "@/components/ui/HighlightsHeader";
+import Button from "@/components/ui/Button";
+// Labels, tones and the valid-transition table all come from the lifecycle
+// module — the single source shared with the lawn list views. The tones
+// match the hand-rolled STATUS_CHIP map this replaced.
+import {
+  LAWN_VISIT_STATUS_LABEL,
+  LAWN_VISIT_STATUS_TONE,
+  validTransitions,
+  type LawnVisitStatus,
+} from "@/lib/lifecycles/lawn-visit";
 import SignedPhotoGrid from "@/components/SignedPhotoGrid";
 import SendVisitPhotos from "@/components/SendVisitPhotos";
 import dynamic from "next/dynamic";
@@ -15,7 +26,6 @@ import {
   Loader2,
   Check,
   X,
-  Calendar,
   Camera,
   Images,
   RotateCcw,
@@ -62,12 +72,7 @@ type Visit = {
 
 type Photo = { id: string; storage_path: string; caption: string | null };
 
-const STATUS_CHIP: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-800",
-  done: "bg-green-100 text-green-800",
-  skipped: "bg-gray-100 text-gray-500",
-  paused: "bg-blue-100 text-blue-700",
-};
+
 
 export default function VisitDetailPage({
   params,
@@ -171,7 +176,7 @@ export default function VisitDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function updateStatus(status: string, skipReason?: string) {
+  async function updateStatus(status: LawnVisitStatus, skipReason?: string) {
     if (!visit) return;
     setBusy(true);
     // Both office and crew route through the /status API. The API admits
@@ -382,233 +387,229 @@ export default function VisitDetailPage({
   const custEmail = visit.jobs?.customers?.contact_email ?? null;
   const custPhone = visit.jobs?.customers?.phone ?? null;
 
+  // lawn_visits.status has NO DB check constraint — the lifecycle module IS the
+  // enforcement source here (see its header comment).
+  const status = visit.status as LawnVisitStatus;
+  const nextStatuses = validTransitions(status);
+  // Which action renders = status-valid (lifecycle) x role-allowed. The role
+  // split is unchanged: crew and office can both mark done; Skip and Reopen
+  // stay office-only.
+  const canMarkDone = nextStatuses.includes("done");
+  const canSkip = isOffice && nextStatuses.includes("skipped");
+  const canReopen = isOffice && nextStatuses.includes("pending");
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
+    <PageContainer title={jobName} backHref={ isOffice ? `/lawn/schedules/${visit.recurring_schedule_id}` : "/lawn/my-route" } backLabel={isOffice ? "Schedule" : "Route"} maxWidth="list">
+      <HighlightsHeader
         title={jobName}
-        backHref={
-          isOffice
-            ? `/lawn/schedules/${visit.recurring_schedule_id}`
-            : "/lawn/my-route"
-        }
-        backLabel={isOffice ? "Schedule" : "Route"}
+        subtitle={custName ?? undefined}
+        status={{
+          label: LAWN_VISIT_STATUS_LABEL[status] ?? visit.status,
+          tone: LAWN_VISIT_STATUS_TONE[status] ?? "neutral",
+        }}
+        accent={LAWN_VISIT_STATUS_TONE[status] ?? "brand"}
+        fields={[
+          { label: "Due", value: visit.due_date },
+          { label: "Address", value: jobAddress ?? "—" },
+          {
+            label: "Completed",
+            value: visit.completed_at
+              ? new Date(visit.completed_at).toLocaleDateString()
+              : "—",
+          },
+        ]}
       />
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
-          <div className="flex justify-between items-start">
-            <div className="min-w-0">
-              <p className="text-xs text-gray-500">{custName ?? "—"}</p>
-              <p className="font-semibold text-gray-900 flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-gray-400" />
-                {visit.due_date}
-              </p>
-              {jobAddress && <p className="text-xs text-gray-500">{jobAddress}</p>}
-            </div>
-            <span
-              className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                STATUS_CHIP[visit.status] ?? "bg-gray-100 text-gray-600"
-              }`}
-            >
-              {visit.status}
-            </span>
-          </div>
+      <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
+        {status === "skipped" && visit.skip_reason && (
+          <p className="text-xs text-gray-500">
+            Skipped · {visit.skip_reason}
+          </p>
+        )}
 
-          {visit.status === "skipped" && visit.skip_reason && (
-            <p className="text-xs text-gray-500">
-              Skipped · {visit.skip_reason}
-            </p>
-          )}
-
-          {/* Status actions */}
-          {showSkipPicker ? (
-            <SkipReasonPicker
-              busy={busy}
-              onConfirm={(reason) => updateStatus("skipped", reason)}
-              onCancel={() => setShowSkipPicker(false)}
-            />
-          ) : (
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              {visit.status !== "done" && (
-                <button
-                  type="button"
-                  onClick={() => updateStatus("done")}
-                  disabled={busy}
-                  className="bg-green-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  Mark done
-                </button>
-              )}
-              {isOffice && visit.status !== "skipped" && (
-                <button
-                  type="button"
-                  onClick={() => setShowSkipPicker(true)}
-                  disabled={busy}
-                  className="bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
-                >
-                  <X className="w-4 h-4" />
-                  Skip
-                </button>
-              )}
-              {isOffice && visit.status !== "pending" && (
-                <button
-                  type="button"
-                  onClick={() => updateStatus("pending")}
-                  disabled={busy}
-                  className="bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  Reopen
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Move date + on-my-way — office only */}
-          {isOffice && (moving ? (
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={moveDate}
-                onChange={(e) => setMoveDate(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-              />
-              <button
+        {/* Status actions — which ones render is the lifecycle's call now. */}
+        {showSkipPicker ? (
+          <SkipReasonPicker
+            busy={busy}
+            onConfirm={(reason) => updateStatus("skipped", reason)}
+            onCancel={() => setShowSkipPicker(false)}
+          />
+        ) : (
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            {canMarkDone && (
+              <Button type="button" onClick={() => updateStatus("done")} disabled={busy}>
+                <Check className="w-4 h-4" />
+                Mark done
+              </Button>
+            )}
+            {canSkip && (
+              <Button
                 type="button"
-                onClick={confirmMove}
+                variant="secondary"
+                onClick={() => setShowSkipPicker(true)}
                 disabled={busy}
-                className="text-sm text-blue-600 font-semibold"
               >
-                Save
-              </button>
-              <button
+                <X className="w-4 h-4" />
+                Skip
+              </Button>
+            )}
+            {canReopen && (
+              <Button
                 type="button"
-                onClick={() => {
-                  setMoving(false);
-                  setMoveDate("");
-                }}
-                className="text-sm text-gray-500"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setMoving(true);
-                  setMoveDate(visit.due_date);
-                }}
+                variant="secondary"
+                onClick={() => updateStatus("pending")}
                 disabled={busy}
-                className="text-sm text-blue-600 font-medium"
               >
-                Move date
-              </button>
-              <button
-                type="button"
-                onClick={onMyWay}
-                disabled={busy || sendingOMW}
-                className="text-sm text-green-700 font-semibold flex items-center gap-1.5 disabled:opacity-50"
-              >
-                {sendingOMW ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Send className="w-3.5 h-3.5" />
-                )}
-                On my way
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Property profile (lawn_jobs 1:1) */}
-        <LawnPropertyDetails
-          jobId={visit.job_id}
-          initial={property}
-          canEdit={isOffice}
-        />
-
-        {/* Crew assignment — office only */}
-        {isOffice && crew.length > 0 && (
-          <div className="bg-white rounded-lg p-4 shadow-sm">
-            <label className="block">
-              <span className="text-sm font-medium text-gray-700">Assign crew</span>
-              <select
-                value={visit.crew_id ?? ""}
-                onChange={(e) => assignCrew(e.target.value)}
-                className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
-              >
-                <option value="">— Unassigned —</option>
-                {crew.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.user_id ? "" : " — no app login"}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <RotateCcw className="w-4 h-4" />
+                Reopen
+              </Button>
+            )}
           </div>
         )}
 
-        {/* Before / after photos */}
-        <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700">Before / after photos</h2>
-          <div className="grid grid-cols-2 gap-2">
+        {/* Move date + on-my-way — office only */}
+        {isOffice && (moving ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={moveDate}
+              onChange={(e) => setMoveDate(e.target.value)}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
-              className="bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 flex items-center justify-center gap-2"
+              onClick={confirmMove}
+              disabled={busy}
+              className="text-sm text-blue-600 font-semibold"
             >
-              <Camera className="w-4 h-4" />
-              Take / add photos
+              Save
             </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              multiple
-              capture="environment"
-              onChange={(e) => handleFiles(e.target.files)}
-              className="hidden"
-            />
+            <button
+              type="button"
+              onClick={() => {
+                setMoving(false);
+                setMoveDate("");
+              }}
+              className="text-sm text-gray-500"
+            >
+              Cancel
+            </button>
           </div>
-          {uploading && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Uploading…
-            </div>
-          )}
-          {photos.length > 0 ? (
-            <>
-              <SignedPhotoGrid photos={photos} />
-              {/* Send the visit's photo-portal link + a short note to the
-                  customer. Requires at least one photo (enforced here by only
-                  rendering when photos.length > 0, and again server-side). */}
-              <SendVisitPhotos
-                visitId={visit.id}
-                customerEmail={custEmail}
-                customerPhone={custPhone}
-              />
-            </>
-          ) : (
-            <p className="text-xs text-gray-400 flex items-center gap-1">
-              <Images className="w-3.5 h-3.5" />
-              No photos attached to this visit yet.
-            </p>
-          )}
-        </div>
+        ) : (
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setMoving(true);
+                setMoveDate(visit.due_date);
+              }}
+              disabled={busy}
+              className="text-sm text-blue-600 font-medium"
+            >
+              Move date
+            </button>
+            <button
+              type="button"
+              onClick={onMyWay}
+              disabled={busy || sendingOMW}
+              className="text-sm text-green-700 font-semibold flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {sendingOMW ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              On my way
+            </button>
+          </div>
+        ))}
+      </div>
 
-        {isOffice && (
-          <Link
-            href={`/jobs/${visit.job_id}`}
-            className="block text-center text-sm text-blue-600 font-medium py-2"
+      {/* Property profile (lawn_jobs 1:1) */}
+      <LawnPropertyDetails
+        jobId={visit.job_id}
+        initial={property}
+        canEdit={isOffice}
+      />
+
+      {/* Crew assignment — office only */}
+      {isOffice && crew.length > 0 && (
+        <div className="bg-white rounded-lg p-4 shadow-sm">
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Assign crew</span>
+            <select
+              value={visit.crew_id ?? ""}
+              onChange={(e) => assignCrew(e.target.value)}
+              className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+            >
+              <option value="">— Unassigned —</option>
+              {crew.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {c.user_id ? "" : " — no app login"}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {/* Before / after photos */}
+      <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+        <h2 className="text-sm font-semibold text-gray-700">Before / after photos</h2>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 flex items-center justify-center gap-2"
           >
-            Open job →
-          </Link>
+            <Camera className="w-4 h-4" />
+            Take / add photos
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            capture="environment"
+            onChange={(e) => handleFiles(e.target.files)}
+            className="hidden"
+          />
+        </div>
+        {uploading && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Uploading…
+          </div>
         )}
-      </main>
-    </div>
+        {photos.length > 0 ? (
+          <>
+            <SignedPhotoGrid photos={photos} />
+            {/* Send the visit's photo-portal link + a short note to the
+                customer. Requires at least one photo (enforced here by only
+                rendering when photos.length > 0, and again server-side). */}
+            <SendVisitPhotos
+              visitId={visit.id}
+              customerEmail={custEmail}
+              customerPhone={custPhone}
+            />
+          </>
+        ) : (
+          <p className="text-xs text-gray-400 flex items-center gap-1">
+            <Images className="w-3.5 h-3.5" />
+            No photos attached to this visit yet.
+          </p>
+        )}
+      </div>
+
+      {isOffice && (
+        <Link
+          href={`/jobs/${visit.job_id}`}
+          className="block text-center text-sm text-blue-600 font-medium py-2"
+        >
+          Open job →
+        </Link>
+      )}
+    </PageContainer>
   );
 }

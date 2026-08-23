@@ -3,7 +3,18 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ClipboardCheck, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+
+// Inspection status -> badge tone. The legacy shared palette had no entry for
+// required/passed/failed/na, so all four fell through to gray; they get real
+// tones here.
+const INSPECTION_STATUS_TONE: Record<string, BadgeTone> = {
+  required: "warning",
+  scheduled: "neutral",
+  passed: "success",
+  failed: "danger",
+  na: "muted",
+};
 import { OFFICE_OR_PM } from "@/lib/roles";
 import { projectTypeLabel, seedJobInspections } from "@/lib/inspectionTemplates";
 
@@ -230,7 +241,7 @@ function InspectionsForm({ params }: { params: Promise<{ id: string }> }) {
                     onChange={(e) => patch(row.id, { title: e.target.value })}
                     className="block flex-1 px-3 py-2 border border-gray-300 rounded-lg text-base disabled:bg-gray-50"
                   />
-                  <StatusBadge status={row.status} />
+                  <StatusBadge tone={INSPECTION_STATUS_TONE[row.status] ?? "neutral"}>{row.status.replace("_", " ")}</StatusBadge>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">

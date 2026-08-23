@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { FIELD_MGMT, type Role } from "@/lib/roles";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import OfficeReceiptsList, {
@@ -50,35 +50,30 @@ export default async function ReceiptsOverviewPage({
   const hasMore = rows.length === PAGE_SIZE;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Receipts" subtitle="All shared expense receipts" />
-
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {rows.length === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={EmptyIcons.Briefcase}
-              title="No shared receipts"
-              description="When crew share receipts from a job, they'll appear here with the project tag, vendor, and amount for your tax records."
-            />
-          </div>
-        ) : (
-          <>
-            <OfficeReceiptsList rows={rows} />
-            {hasMore && (
-              <div className="text-center pt-1">
-                <Link
-                  href={`/receipts?offset=${offset + PAGE_SIZE}`}
-                  className="inline-block text-sm text-blue-600 font-medium"
-                >
-                  Load more →
-                </Link>
-              </div>
-            )}
-          </>
-        )}
-      </main>
-
-    </div>
+    <PageContainer title="Receipts" subtitle="All shared expense receipts" maxWidth="list">
+      {rows.length === 0 ? (
+        <div className="bg-surface rounded-lg border border-line shadow-sm">
+          <EmptyState
+            icon={EmptyIcons.Briefcase}
+            title="No shared receipts"
+            description="When crew share receipts from a job, they'll appear here with the project tag, vendor, and amount for your tax records."
+          />
+        </div>
+      ) : (
+        <>
+          <OfficeReceiptsList rows={rows} />
+          {hasMore && (
+            <div className="text-center pt-1">
+              <Link
+                href={`/receipts?offset=${offset + PAGE_SIZE}`}
+                className="inline-block text-sm text-blue-600 font-medium"
+              >
+                Load more →
+              </Link>
+            </div>
+          )}
+        </>
+      )}
+    </PageContainer>
   );
 }

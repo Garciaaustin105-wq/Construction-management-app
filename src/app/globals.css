@@ -12,6 +12,20 @@
   --brand: #2563eb;
   --brand-dark: #1e3a8a;
   --brand-bg: #dbeafe;
+
+  /* Semantic surface/text/status tokens for shared UI primitives. New
+     components use these (bg-surface / border-line / text-muted / text-success
+     etc.) so a future dark mode or rebrand is one place, not hundreds. Existing
+     pages still use raw bg-gray-* / text-gray-* — those are NOT migrated this
+     pass (scope/risk); the tokens are additive. */
+  --surface: #ffffff;        /* card / panel background */
+  --surface-muted: #f9fafb;  /* gray-50, page background tint */
+  --line: #e5e7eb;           /* gray-200, hairline borders */
+  --muted: #6b7280;           /* gray-500, secondary text */
+  --muted-strong: #4b5563;    /* gray-600, labels */
+  --success: #16a34a;         /* green-600 */
+  --warning: #d97706;         /* amber-600 */
+  --danger: #dc2626;          /* red-600 */
 }
 
 @theme inline {
@@ -20,6 +34,14 @@
   --color-brand: var(--brand);
   --color-brand-dark: var(--brand-dark);
   --color-brand-bg: var(--brand-bg);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
 }
 
 /* Mobile-friendly: prevent overscroll bounce, smoother scrolling */

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
 import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X } from "lucide-react";
@@ -39,6 +39,15 @@ const SkipReasonPicker = dynamic(
 // status-only changes and server-checks crew_id === auth.uid(). Tapping a card
 // opens the visit page for before/after photos + details (opened to crew for
 // their own visits).
+//
+// Solo-owner field mode: an office/admin with ZERO crew_members is admitted
+// here as the field worker — unassigned visits (crew_id is null) count as
+// theirs, plus any visits they self-assigned (crew_id = their own id). /status
+// already admits office/admin (officeLike), so one-tap done/skip + the
+// customer notification suite fire unchanged; the crew_id===auth.uid() guard
+// only applies to crew/super callers, not to the office/admin owner. The
+// moment the org adds a crew_member, the owner reverts to dispatcher and is
+// bounced to /dashboard (the Route Planner is their tool).
 //
 // A read-only Google driving-path map of today's pinned stops sits above the
 // list, with an "Open in Google Maps" link that launches turn-by-turn nav.
@@ -191,6 +200,7 @@ export default function MyRoutePage() {
   const toast = useToast();
   const [visits, setVisits] = useState<Visit[]>([]);
   const [authorized, setAuthorized] = useState(false);
+  const [soloMode, setSoloMode] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -209,26 +219,56 @@ export default function MyRoutePage() {
         .eq("id", user.id)
         .single();
       const role = profile?.role ?? "crew";
-      if (role !== "crew" && role !== "superintendent") {
+
+      const crewLike = role === "crew" || role === "superintendent";
+      const officeLike = role === "office" || role === "admin";
+      // Solo-owner field mode: an office/admin running the work with NO
+      // crew_members becomes the field worker — they get the same streamlined
+      // My Route a crew gets, and unassigned visits (crew_id is null) count as
+      // theirs. The moment the org adds a real crew, the owner reverts to
+      // dispatcher (the Route Planner) and is bounced from here. /status
+      // already admits office/admin, so one-tap done/skip + the customer
+      // notification suite fire unchanged.
+      let solo = false;
+      if (crewLike) {
+        // proceed — field crew / superintendent on their own visits.
+      } else if (officeLike) {
+        const { count } = await supabase
+          .from("crew_members")
+          .select("id", { count: "exact", head: true });
+        solo = (count ?? 0) === 0;
+        if (!solo) {
+          router.push("/dashboard");
+          return;
+        }
+      } else {
         router.push("/dashboard");
         return;
       }
+      setSoloMode(solo);
       setAuthorized(true);
 
-      // My pending visits due within the next 14 days (RLS crew-read keyed on
-      // crew_id = auth.uid() admits exactly my rows). Nests the job's map pin
-      // (lawn_jobs) so the driving-path map can plot today's stops.
+      // My pending visits due within the next 14 days. Crew/super: only visits
+      // assigned to me (RLS crew-read keyed on crew_id = auth.uid() also scopes
+      // to mine). Solo owner: my own visits + every unassigned visit (there are
+      // no crews to own them). Nests the job's map pin (lawn_jobs) so the
+      // driving-path map can plot today's stops.
       const horizon = new Date();
       horizon.setDate(horizon.getDate() + 14);
       const horizonDate = horizon.toISOString().slice(0, 10);
-      const { data: rows } = await supabase
+      let q = supabase
         .from("lawn_visits")
         .select(
           "id, job_id, due_date, status, route_order, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))"
         )
-        .eq("crew_id", user.id)
         .eq("status", "pending")
-        .lte("due_date", horizonDate)
+        .lte("due_date", horizonDate);
+      if (solo) {
+        q = q.or(`crew_id.eq.${user.id},crew_id.is.null`);
+      } else {
+        q = q.eq("crew_id", user.id);
+      }
+      const { data: rows } = await q
         .order("due_date", { ascending: true })
         .order("route_order", { ascending: true, nullsFirst: false });
       setVisits((rows as unknown as Visit[]) ?? []);
@@ -336,62 +376,68 @@ export default function MyRoutePage() {
       : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="My Route" subtitle="Your assigned lawn visits" />
-
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-6">
-        {visits.length === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={Sprout}
-              title="No visits assigned to you"
-              description="Lawn visits the office assigns to you will show up here, grouped by day."
-            />
-          </div>
-        ) : (
-          <>
-            {todayStops.length >= 2 && (
-              <div className="space-y-2">
-                <GoogleRouteMap stops={todayStops} readOnly showDirections />
-                {dirUrl && (
-                  <a
-                    href={dirUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 bg-green-600 text-white py-2 px-3 rounded-lg font-semibold text-sm active:bg-green-700"
-                  >
-                    <Navigation className="w-4 h-4" /> Open in Google Maps
-                  </a>
-                )}
-              </div>
-            )}
-            <Section
-              label="Overdue"
-              list={overdue}
-              icon={<CalendarDays className="w-3.5 h-3.5" />}
-              busyId={busyId}
-              onDone={markDone}
-              onSkip={skipVisit}
-            />
-            <Section
-              label="Today"
-              list={todays}
-              icon={<CalendarDays className="w-3.5 h-3.5" />}
-              busyId={busyId}
-              onDone={markDone}
-              onSkip={skipVisit}
-            />
-            <Section
-              label="Upcoming"
-              list={upcoming}
-              icon={<CalendarDays className="w-3.5 h-3.5" />}
-              busyId={busyId}
-              onDone={markDone}
-              onSkip={skipVisit}
-            />
-          </>
-        )}
-      </main>
-    </div>
+    <PageContainer title="My Route" subtitle="Your assigned lawn visits" maxWidth="list" mainClassName="space-y-6">
+      {soloMode && (
+        <p className="text-[11px] text-blue-800 bg-blue-50 border border-blue-200 rounded p-2">
+          Solo mode — you have no crews yet, so every unassigned visit shows here
+          as yours. Add a crew in the Route Planner to hand visits off.
+        </p>
+      )}
+      {visits.length === 0 ? (
+        <div className="bg-white rounded-lg">
+          <EmptyState
+            icon={Sprout}
+            title={soloMode ? "No visits scheduled" : "No visits assigned to you"}
+            description={
+              soloMode
+                ? "Lawn visits coming up in the next 14 days will show up here, grouped by day."
+                : "Lawn visits the office assigns to you will show up here, grouped by day."
+            }
+          />
+        </div>
+      ) : (
+        <>
+          {todayStops.length >= 2 && (
+            <div className="space-y-2">
+              <GoogleRouteMap stops={todayStops} readOnly showDirections />
+              {dirUrl && (
+                <a
+                  href={dirUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 bg-green-600 text-white py-2 px-3 rounded-lg font-semibold text-sm active:bg-green-700"
+                >
+                  <Navigation className="w-4 h-4" /> Open in Google Maps
+                </a>
+              )}
+            </div>
+          )}
+          <Section
+            label="Overdue"
+            list={overdue}
+            icon={<CalendarDays className="w-3.5 h-3.5" />}
+            busyId={busyId}
+            onDone={markDone}
+            onSkip={skipVisit}
+          />
+          <Section
+            label="Today"
+            list={todays}
+            icon={<CalendarDays className="w-3.5 h-3.5" />}
+            busyId={busyId}
+            onDone={markDone}
+            onSkip={skipVisit}
+          />
+          <Section
+            label="Upcoming"
+            list={upcoming}
+            icon={<CalendarDays className="w-3.5 h-3.5" />}
+            busyId={busyId}
+            onDone={markDone}
+            onSkip={skipVisit}
+          />
+        </>
+      )}
+    </PageContainer>
   );
 }

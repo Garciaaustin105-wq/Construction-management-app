@@ -1,8 +1,19 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { notFound, redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
-import StatusBadge from "@/components/StatusBadge";
+import PageContainer from "@/components/PageContainer";
+import HighlightsHeader from "@/components/ui/HighlightsHeader";
+import Card from "@/components/ui/Card";
+import SectionHeader from "@/components/SectionHeader";
+// Labels + tones come from the invoice lifecycle module — the single source
+// shared with the list page. (The local copies this replaced had drifted:
+// void was `neutral` here and `muted` on the list.)
+import {
+  INVOICE_STATUS_LABEL,
+  INVOICE_STATUS_TONE,
+  type InvoiceStatus,
+} from "@/lib/lifecycles/invoice";
+
 import { formatMoney, computeTotal } from "@/lib/money";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
 import { listProviderOptions } from "@/lib/accounting/provider";
@@ -107,6 +118,8 @@ export default async function InvoiceDetailPage({
   // the adapter registry populated by the providers.ts side-effect import.
   const isOffice =
     role === "office" || role === "admin" || role === "project_manager";
+  // The DB column is `text`; the lifecycle module owns the domain.
+  const status = invoice.status as InvoiceStatus;
   let connectedProviders: { id: string; label: string }[] = [];
   if (isOffice) {
     const { data: conns } = await supabase
@@ -120,194 +133,190 @@ export default async function InvoiceDetailPage({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
-        title="Invoice"
-        subtitle={customerName}
-        backHref={jobParam ? `/jobs/${jobParam}` : undefined}
-        backLabel={jobParam ? "Back to job" : undefined}
+    <PageContainer title="Invoice" subtitle={customerName} backHref={jobParam ? `/jobs/${jobParam}` : undefined} backLabel={jobParam ? "Back to job" : undefined} maxWidth="list">
+      <HighlightsHeader
+        title={customerName}
+        subtitle={
+          invoice.job_id ? (
+            <Link href={`/jobs/${invoice.job_id}`} className="text-blue-600 underline">
+              {jobName}
+            </Link>
+          ) : (
+            "Standalone estimate (no job)"
+          )
+        }
+        status={{
+          label: INVOICE_STATUS_LABEL[status] ?? invoice.status,
+          tone: INVOICE_STATUS_TONE[status] ?? "neutral",
+        }}
+        accent={INVOICE_STATUS_TONE[status] ?? "brand"}
+        fields={[
+          {
+            label: "Total",
+            value: (
+              <span className="text-lg font-bold text-gray-900">{formatMoney(total)}</span>
+            ),
+          },
+          { label: "Issued", value: new Date(invoice.created_at).toLocaleDateString() },
+          {
+            label: "Sent",
+            value: invoice.sent_at
+              ? new Date(invoice.sent_at).toLocaleDateString()
+              : "—",
+          },
+          {
+            label: "Paid",
+            value: invoice.paid_at
+              ? new Date(invoice.paid_at).toLocaleDateString()
+              : "—",
+          },
+        ]}
       />
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <section className="bg-white rounded-lg p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <StatusBadge status={invoice.status} size="md" />
-            <span className="text-2xl font-bold text-gray-900">
-              {formatMoney(total)}
-            </span>
+      <Card>
+        <InvoiceDueDate
+          invoiceId={invoice.id}
+          initial={invoice.due_date}
+          canEdit={
+            role === "office" ||
+            role === "admin" ||
+            role === "project_manager"
+          }
+        />
+        {amountPaid > 0 && invoice.status !== "paid" && (
+          <div className="mt-3 pt-3 border-t border-line space-y-1 text-sm">
+            <div className="flex justify-between text-muted">
+              <span>Invoice total</span>
+              <span className="tabular-nums">{formatMoney(total)}</span>
+            </div>
+            <div className="flex justify-between text-muted">
+              <span>Paid so far</span>
+              <span className="tabular-nums">−{formatMoney(amountPaid)}</span>
+            </div>
+            <div className="flex justify-between font-semibold text-gray-900">
+              <span>Balance due</span>
+              <span className="tabular-nums">{formatMoney(balanceDue)}</span>
+            </div>
           </div>
-          <p className="text-sm text-gray-700">
-            <span className="text-gray-500">Customer:</span> {customerName}
-          </p>
-          {invoice.job_id ? (
-            <p className="text-sm text-gray-700">
-              <span className="text-gray-500">Job:</span>{" "}
-              <Link href={`/jobs/${invoice.job_id}`} className="text-blue-600 underline">
-                {jobName}
-              </Link>
-            </p>
-          ) : (
-            <p className="text-sm text-gray-700">
-              <span className="text-gray-500">Job:</span>{" "}
-              <span className="text-gray-500">Standalone estimate (no job)</span>
-            </p>
-          )}
-          <InvoiceDueDate
-            invoiceId={invoice.id}
-            initial={invoice.due_date}
-            canEdit={
-              role === "office" ||
-              role === "admin" ||
-              role === "project_manager"
-            }
-          />
-          <p className="text-xs text-gray-400 mt-2">
-            Issued {new Date(invoice.created_at).toLocaleDateString()}
-            {invoice.sent_at && (
-              <> · Sent {new Date(invoice.sent_at).toLocaleDateString()}</>
-            )}
-            {invoice.paid_at && (
-              <> · Paid {new Date(invoice.paid_at).toLocaleDateString()}</>
-            )}
-          </p>
-          {amountPaid > 0 && invoice.status !== "paid" && (
-            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1 text-sm">
-              <div className="flex justify-between text-gray-500">
-                <span>Invoice total</span>
-                <span className="tabular-nums">{formatMoney(total)}</span>
-              </div>
-              <div className="flex justify-between text-gray-500">
-                <span>Paid so far</span>
-                <span className="tabular-nums">−{formatMoney(amountPaid)}</span>
-              </div>
-              <div className="flex justify-between font-semibold text-gray-900">
-                <span>Balance due</span>
-                <span className="tabular-nums">{formatMoney(balanceDue)}</span>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {invoice.estimate_id && (
-          <Link
-            href={`/estimates/${invoice.estimate_id}${jobParam ? `?job=${jobParam}` : ""}`}
-            className="block bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900 active:bg-blue-100"
-          >
-            ← View source estimate
-          </Link>
         )}
+      </Card>
 
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-            Line items ({items.length})
-          </h2>
-          {items.length === 0 ? (
-            <div className="bg-white rounded-lg">
-              <EmptyState
-                icon={EmptyIcons.FileText}
-                title="No line items"
-                description="This invoice has no items."
-              />
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm divide-y">
-              {items.map((item) => {
-                const lineTotal =
-                  Number(item.quantity) * Number(item.unit_price);
-                return (
-                  <div key={item.id} className="p-3">
-                    <div className="flex justify-between items-start gap-2">
-                      <p className="text-sm text-gray-900 flex-1 min-w-0">
-                        {item.description}
-                      </p>
-                      <p className="text-sm font-semibold text-gray-900">
-                        {formatMoney(lineTotal)}
-                      </p>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {item.quantity} × {formatMoney(Number(item.unit_price))}
+      {invoice.estimate_id && (
+        <Link
+          href={`/estimates/${invoice.estimate_id}${jobParam ? `?job=${jobParam}` : ""}`}
+          className="block bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900 active:bg-blue-100"
+        >
+          ← View source estimate
+        </Link>
+      )}
+
+      <section>
+        <SectionHeader className="mb-2">Line items ({items.length})</SectionHeader>
+        {items.length === 0 ? (
+          <div className="bg-white rounded-lg">
+            <EmptyState
+              icon={EmptyIcons.FileText}
+              title="No line items"
+              description="This invoice has no items."
+            />
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm divide-y">
+            {items.map((item) => {
+              const lineTotal =
+                Number(item.quantity) * Number(item.unit_price);
+              return (
+                <div key={item.id} className="p-3">
+                  <div className="flex justify-between items-start gap-2">
+                    <p className="text-sm text-gray-900 flex-1 min-w-0">
+                      {item.description}
+                    </p>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {formatMoney(lineTotal)}
                     </p>
                   </div>
-                );
-              })}
-              <div className="p-3 bg-gray-50 flex justify-between items-center rounded-b-lg">
-                <span className="text-sm font-semibold text-gray-900">Total</span>
-                <span className="text-base font-bold text-gray-900">
-                  {formatMoney(total)}
-                </span>
-              </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {item.quantity} × {formatMoney(Number(item.unit_price))}
+                  </p>
+                </div>
+              );
+            })}
+            <div className="p-3 bg-gray-50 flex justify-between items-center rounded-b-lg">
+              <span className="text-sm font-semibold text-gray-900">Total</span>
+              <span className="text-base font-bold text-gray-900">
+                {formatMoney(total)}
+              </span>
             </div>
-          )}
-        </section>
-
-        {/* Recorded offline payments (cash / check / other). The office can
-            record more via the Record payment button in InvoiceActions. */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-            Payments ({payments.length})
-          </h2>
-          {payments.length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm p-3 text-sm text-gray-500">
-              No payments recorded yet
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm divide-y">
-              {payments.map((p) => {
-                const chip =
-                  p.method === "cash"
-                    ? "bg-green-100 text-green-700"
-                    : p.method === "check"
-                      ? "bg-blue-100 text-blue-700"
-                      : "bg-gray-100 text-gray-600";
-                return (
-                  <div key={p.id} className="p-3 flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${chip}`}
-                        >
-                          {p.method}
-                        </span>
-                        <span className="text-sm font-semibold text-gray-900 tabular-nums">
-                          {formatMoney(p.amount)}
-                        </span>
-                      </div>
-                      {p.reference && (
-                        <p className="text-xs text-gray-500 mt-0.5 truncate">
-                          Ref: {p.reference}
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {new Date(p.paid_at).toLocaleDateString()}
-                        {p.recorded_by_name ? ` · by ${p.recorded_by_name}` : ""}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-              <div className="p-3 bg-gray-50 flex justify-between items-center rounded-b-lg">
-                <span className="text-sm font-semibold text-gray-900">Paid so far</span>
-                <span className="text-base font-bold text-gray-900 tabular-nums">
-                  {formatMoney(amountPaid)}
-                </span>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {(role === "office" || role === "admin" || role === "project_manager") && (
-          <InvoiceActions
-            invoiceId={invoice.id}
-            status={invoice.status}
-            balanceDue={balanceDue}
-            customerEmail={customerEmail}
-            customerPhone={customerPhone}
-            connectedProviders={connectedProviders}
-            accountingExternalId={accountingExternalId}
-          />
+          </div>
         )}
-      </main>
+      </section>
 
-    </div>
+      {/* Recorded offline payments (cash / check / other). The office can
+          record more via the Record payment button in InvoiceActions. */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+          Payments ({payments.length})
+        </h2>
+        {payments.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-sm p-3 text-sm text-gray-500">
+            No payments recorded yet
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm divide-y">
+            {payments.map((p) => {
+              const chip =
+                p.method === "cash"
+                  ? "bg-green-100 text-green-700"
+                  : p.method === "check"
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-gray-100 text-gray-600";
+              return (
+                <div key={p.id} className="p-3 flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${chip}`}
+                      >
+                        {p.method}
+                      </span>
+                      <span className="text-sm font-semibold text-gray-900 tabular-nums">
+                        {formatMoney(p.amount)}
+                      </span>
+                    </div>
+                    {p.reference && (
+                      <p className="text-xs text-gray-500 mt-0.5 truncate">
+                        Ref: {p.reference}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {new Date(p.paid_at).toLocaleDateString()}
+                      {p.recorded_by_name ? ` · by ${p.recorded_by_name}` : ""}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+            <div className="p-3 bg-gray-50 flex justify-between items-center rounded-b-lg">
+              <span className="text-sm font-semibold text-gray-900">Paid so far</span>
+              <span className="text-base font-bold text-gray-900 tabular-nums">
+                {formatMoney(amountPaid)}
+              </span>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {(role === "office" || role === "admin" || role === "project_manager") && (
+        <InvoiceActions
+          invoiceId={invoice.id}
+          status={status}
+          balanceDue={balanceDue}
+          customerEmail={customerEmail}
+          customerPhone={customerPhone}
+          connectedProviders={connectedProviders}
+          accountingExternalId={accountingExternalId}
+        />
+      )}
+    </PageContainer>
   );
 }

@@ -1,12 +1,16 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
 import { FIELD_MGMT, type Role } from "@/lib/roles";
 import Link from "next/link";
 import { Plus, ClipboardList, Download } from "lucide-react";
 import { formatMoney } from "@/lib/money";
 import ChangeOrderFilters from "@/components/ChangeOrderFilters";
+import PageContainer from "@/components/PageContainer";
+import { LinkButton } from "@/components/ui/Button";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -19,17 +23,33 @@ type Row = {
   jobs: { name: string } | null;
 };
 
-function statusCls(s: string): string {
-  if (s === "approved") return "bg-green-100 text-green-700";
-  if (s === "rejected" || s === "void") return "bg-red-100 text-red-700";
-  if (s === "sent" || s === "submitted") return "bg-blue-100 text-blue-600";
-  return "bg-gray-100 text-gray-600";
-}
+// Change-order status → badge tone. Mirrors the previous statusCls() colors:
+// approved green, rejected/void red, sent/submitted blue, everything else gray.
+const STATUS_TONE: Record<string, BadgeTone> = {
+  approved: "success",
+  rejected: "danger",
+  void: "danger",
+  sent: "brand",
+  submitted: "brand",
+  draft: "neutral",
+};
+
+type ChangeOrderView = {
+  id: string;
+  coNumber: string | null;
+  title: string;
+  jobName: string;
+  status: string;
+  createdAt: string;
+  signedAmount: number;
+};
+
+const MODES: ViewMode[] = ["cards", "table"];
 
 export default async function ChangeOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string; status?: string }>;
+  searchParams: Promise<{ job?: string; status?: string; view?: string }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -43,6 +63,8 @@ export default async function ChangeOrdersPage({
   const sp = await searchParams;
   const jobFilter = sp.job ?? "";
   const statusFilter = sp.status ?? "";
+  const rawView = sp.view as ViewMode | undefined;
+  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: jobs } = await supabase
     .from("jobs")
@@ -58,82 +80,134 @@ export default async function ChangeOrdersPage({
   if (jobFilter) q = q.eq("job_id", jobFilter);
   if (statusFilter) q = q.eq("status", statusFilter);
   const { data: rowsRaw } = await q;
-  const rows = (rowsRaw ?? []) as unknown as Row[];
+  const rows: ChangeOrderView[] = ((rowsRaw ?? []) as unknown as Row[]).map((r) => ({
+    id: r.id,
+    coNumber: r.co_number,
+    title: r.title,
+    jobName: r.jobs?.name ?? "",
+    status: r.status,
+    createdAt: r.created_at,
+    signedAmount: r.is_credit ? -r.amount : r.amount,
+  }));
 
   const exportHref = `/api/reports/change-orders?${jobFilter ? `job=${jobFilter}` : ""}${
     statusFilter ? `&status=${statusFilter}` : ""
   }`.replace(/^\/api\/reports\/change-orders\?&/, "/api/reports/change-orders?");
 
+  const columns: Column<ChangeOrderView>[] = [
+    {
+      key: "title",
+      header: "Change Order",
+      cell: (r) => (
+        <span className="font-medium text-gray-900">
+          {r.coNumber ? `${r.coNumber} · ` : ""}
+          {r.title}
+        </span>
+      ),
+    },
+    { key: "job", header: "Job", cell: (r) => r.jobName || "—" },
+    {
+      key: "status",
+      header: "Status",
+      cell: (r) => (
+        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+          {r.status.replace("_", " ")}
+        </StatusBadge>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      hideOnMobile: true,
+      cell: (r) => (
+        <span className="font-semibold text-gray-900">{formatMoney(r.signedAmount)}</span>
+      ),
+    },
+    {
+      key: "date",
+      header: "Created",
+      hideOnMobile: true,
+      cell: (r) => new Date(r.createdAt).toLocaleDateString(),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Change Orders" subtitle="Scope & price changes" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <ChangeOrderFilters
-          jobs={jobs ?? []}
-          currentJob={jobFilter}
-          currentStatus={statusFilter}
-        />
-        {canCreate && (
-          <Link
-            href="/change-orders/new"
-            className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-          >
-            <Plus className="w-5 h-5" /> New Change Order
-          </Link>
-        )}
-        {rows.length === 0 ? (
-          <div className="bg-white rounded-lg p-6 text-center">
-            <ClipboardList className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-700">No change orders yet</p>
-            <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-              Manage and track changes to your project scope and price.
-            </p>
+    <PageContainer title="Change Orders" subtitle="Scope & price changes" maxWidth="list">
+      <ListToolbar
+        modes={MODES}
+        defaultMode="cards"
+        count={rows.length}
+        action={
+          canCreate ? (
+            <LinkButton href="/change-orders/new">
+              <Plus className="w-4 h-4" />
+              New
+            </LinkButton>
+          ) : undefined
+        }
+        filters={
+          <div className="w-full">
+            <ChangeOrderFilters
+              jobs={jobs ?? []}
+              currentJob={jobFilter}
+              currentStatus={statusFilter}
+            />
           </div>
-        ) : (
-          <div className="space-y-2">
-            {rows.map((r) => (
-              <Link
-                key={r.id}
-                href={`/change-orders/${r.id}`}
-                className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {r.co_number ? `${r.co_number} · ` : ""}
-                      {r.title}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {r.jobs?.name ?? ""}
-                      {` · ${new Date(r.created_at).toLocaleDateString()}`}
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
-                      {formatMoney(r.is_credit ? -r.amount : r.amount)}
-                    </span>
-                    <span
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusCls(
-                        r.status
-                      )}`}
-                    >
-                      {r.status.replace("_", " ")}
-                    </span>
-                  </div>
+        }
+      />
+
+      {rows.length === 0 ? (
+        <div className="bg-surface rounded-lg border border-line shadow-sm p-6 text-center">
+          <ClipboardList className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-gray-900">No change orders yet</p>
+          <p className="text-xs text-muted mt-1 max-w-xs mx-auto">
+            Manage and track changes to your project scope and price.
+          </p>
+        </div>
+      ) : view === "table" ? (
+        <DataTable columns={columns} rows={rows} rowHref={(r) => `/change-orders/${r.id}`} />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <Link
+              key={r.id}
+              href={`/change-orders/${r.id}`}
+              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
+            >
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-gray-900 truncate">
+                    {r.coNumber ? `${r.coNumber} · ` : ""}
+                    {r.title}
+                  </p>
+                  <p className="text-xs text-muted truncate">
+                    {r.jobName}
+                    {` · ${new Date(r.createdAt).toLocaleDateString()}`}
+                  </p>
                 </div>
-              </Link>
-            ))}
-          </div>
-        )}
-        {rows.length > 0 && (
-          <Link
-            href={exportHref}
-            className="block bg-white border border-gray-300 text-gray-800 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <Download className="w-4 h-4" /> Export Excel
-          </Link>
-        )}
-      </main>
-    </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-sm font-semibold text-gray-900">
+                    {formatMoney(r.signedAmount)}
+                  </span>
+                  <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+                    {r.status.replace("_", " ")}
+                  </StatusBadge>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <Link
+          href={exportHref}
+          className="flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-800 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50"
+        >
+          <Download className="w-4 h-4" /> Export Excel
+        </Link>
+      )}
+    </PageContainer>
   );
 }

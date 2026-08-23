@@ -1,19 +1,50 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
 import { Building, Users as UsersIcon, ArrowRight } from "lucide-react";
 import { getMe } from "@/lib/tenant";
+import PageContainer from "@/components/PageContainer";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable, { type Column } from "@/components/ui/DataTable";
+
+type OrgRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  plan: string | null;
+  plan_status: string | null;
+  trial_ends_at: string | null;
+  subscription_amount_cents: number | null;
+  created_at: string;
+};
+
+// Plan status → badge tone. Platform-specific (an org's billing state is not
+// an estimate/invoice/job status), so the map lives with the page that uses it.
+const PLAN_STATUS_TONE: Record<string, BadgeTone> = {
+  active: "success",
+  past_due: "warning",
+};
+
+const MODES: ViewMode[] = ["cards", "table"];
 
 // Platform view — super_admin only. Lists every organization with a member
 // count and a link to edit that org's business info. Any non-super_admin is
 // bounced to the dashboard.
-export default async function OrgsPage() {
+export default async function OrgsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   const supabase = await createClient();
   // One cached identity read (shared with the root layout) instead of
   // getUser() + getMyOrg()'s own getUser() + profiles + organizations.
   const tenant = await getMe();
   if (!tenant || !tenant.isSuperAdmin) redirect("/dashboard");
+
+  const sp = await searchParams;
+  const rawView = sp.view as ViewMode | undefined;
+  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: orgs } = await supabase
     .from("organizations")
@@ -36,16 +67,7 @@ export default async function OrgsPage() {
     }
   }
 
-  const list = (orgs ?? []) as {
-    id: string;
-    name: string;
-    email: string | null;
-    plan: string | null;
-    plan_status: string | null;
-    trial_ends_at: string | null;
-    subscription_amount_cents: number | null;
-    created_at: string;
-  }[];
+  const list = (orgs ?? []) as OrgRow[];
 
   // Platform MRR: sum of active subscriptions' monthly amount.
   const mrrCents = list.reduce(
@@ -61,24 +83,68 @@ export default async function OrgsPage() {
     maximumFractionDigits: 0,
   });
 
+  const columns: Column<OrgRow>[] = [
+    {
+      key: "name",
+      header: "Organization",
+      cell: (o) => (
+        <span className="font-medium text-gray-900 inline-flex items-center gap-1.5">
+          <Building className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          {o.name}
+        </span>
+      ),
+    },
+    { key: "email", header: "Email", cell: (o) => o.email ?? "—" },
+    {
+      key: "members",
+      header: "Members",
+      align: "right",
+      hideOnMobile: true,
+      cell: (o) => counts.get(o.id) ?? 0,
+    },
+    {
+      key: "plan",
+      header: "Plan",
+      hideOnMobile: true,
+      cell: (o) => (o.plan ? <StatusBadge tone="neutral">{o.plan}</StatusBadge> : "—"),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (o) =>
+        o.plan_status && o.plan_status !== "trial" ? (
+          <StatusBadge tone={PLAN_STATUS_TONE[o.plan_status] ?? "muted"}>
+            {o.plan_status}
+          </StatusBadge>
+        ) : o.plan === "trial" && o.trial_ends_at ? (
+          <span className="text-xs text-muted">
+            trial ends {new Date(o.trial_ends_at).toLocaleDateString()}
+          </span>
+        ) : (
+          "—"
+        ),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
-        title="Platform"
-        subtitle={`${list.length} organization${list.length === 1 ? "" : "s"} · ${mrr}/mo`}
-      />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
+    <PageContainer
+      title="Platform"
+      subtitle={`${list.length} organization${list.length === 1 ? "" : "s"} · ${mrr}/mo`}
+      maxWidth="list"
+    >
+      <ListToolbar modes={MODES} defaultMode="cards" count={list.length} />
+
+      {list.length === 0 ? (
+        <p className="text-sm text-muted text-center py-6">No organizations yet.</p>
+      ) : view === "table" ? (
+        <DataTable columns={columns} rows={list} rowHref={(o) => `/admin/org?org=${o.id}`} />
+      ) : (
         <div className="space-y-2">
-          {list.length === 0 && (
-            <p className="text-sm text-gray-500 text-center py-6">
-              No organizations yet.
-            </p>
-          )}
           {list.map((org) => (
             <Link
               key={org.id}
               href={`/admin/org?org=${org.id}`}
-              className="block bg-white rounded-lg p-4 shadow-sm active:bg-gray-50"
+              className="block bg-surface rounded-lg border border-line shadow-sm p-4 active:bg-gray-50"
             >
               <div className="flex items-start justify-between">
                 <div className="min-w-0 flex-1">
@@ -87,9 +153,7 @@ export default async function OrgsPage() {
                     {org.name}
                   </p>
                   {org.email && (
-                    <p className="text-xs text-gray-500 truncate mt-0.5">
-                      {org.email}
-                    </p>
+                    <p className="text-xs text-muted truncate mt-0.5">{org.email}</p>
                   )}
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
                     <span className="text-xs text-gray-600 inline-flex items-center gap-1">
@@ -97,25 +161,20 @@ export default async function OrgsPage() {
                       {counts.get(org.id) ?? 0} members
                     </span>
                     {org.plan && (
-                      <span className="text-[10px] uppercase tracking-wide bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                      <StatusBadge tone="neutral" className="uppercase tracking-wide">
                         {org.plan}
-                      </span>
+                      </StatusBadge>
                     )}
                     {org.plan_status && org.plan_status !== "trial" && (
-                      <span
-                        className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                          org.plan_status === "active"
-                            ? "bg-green-100 text-green-700"
-                            : org.plan_status === "past_due"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-gray-100 text-gray-500"
-                        }`}
+                      <StatusBadge
+                        tone={PLAN_STATUS_TONE[org.plan_status] ?? "muted"}
+                        className="uppercase tracking-wide"
                       >
                         {org.plan_status}
-                      </span>
+                      </StatusBadge>
                     )}
                     {org.plan === "trial" && org.trial_ends_at && (
-                      <span className="text-[10px] text-gray-500">
+                      <span className="text-[10px] text-muted">
                         trial ends {new Date(org.trial_ends_at).toLocaleDateString()}
                       </span>
                     )}
@@ -126,7 +185,7 @@ export default async function OrgsPage() {
             </Link>
           ))}
         </div>
-      </main>
-    </div>
+      )}
+    </PageContainer>
   );
 }

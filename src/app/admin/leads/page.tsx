@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/server-gate";
 import { OFFICE_OR_PM } from "@/lib/roles";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import LeadsBoard from "@/components/LeadsBoard";
 import type { Lead } from "@/lib/leads";
 
@@ -56,17 +56,14 @@ export default async function LeadsPage() {
       ?.lead_form_token ?? null;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Leads" subtitle="Pipeline" />
-      <main className="max-w-md lg:max-w-7xl mx-auto p-4">
-        <Suspense fallback={null}>
-          <LeadsBoard
-            initial={(data as Lead[] | null) ?? []}
-            orgId={me.orgId ?? ""}
-            leadFormToken={leadFormToken}
-          />
-        </Suspense>
-      </main>
-    </div>
+    <PageContainer title="Leads" subtitle="Pipeline" maxWidth="full">
+      <Suspense fallback={null}>
+        <LeadsBoard
+          initial={(data as Lead[] | null) ?? []}
+          orgId={me.orgId ?? ""}
+          leadFormToken={leadFormToken}
+        />
+      </Suspense>
+    </PageContainer>
   );
 }

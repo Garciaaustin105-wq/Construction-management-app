@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect, notFound } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import SubcontractorDetail, {
   type SubDetail,
   type SubAttachment,
@@ -56,17 +56,14 @@ export default async function SubcontractorDetailPage({
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Subcontractor" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
-        <SubcontractorDetail
-          sub={sub as unknown as SubDetail}
-          attachments={(atts as SubAttachment[]) ?? []}
-          attachedJobs={attachedJobs}
-          allJobs={(allJobs as { id: string; name: string }[]) ?? []}
-          canEdit={role === "office" || role === "admin" || role === "project_manager"}
-        />
-      </main>
-    </div>
+    <PageContainer title="Subcontractor" maxWidth="list">
+      <SubcontractorDetail
+        sub={sub as unknown as SubDetail}
+        attachments={(atts as SubAttachment[]) ?? []}
+        attachedJobs={attachedJobs}
+        allJobs={(allJobs as { id: string; name: string }[]) ?? []}
+        canEdit={role === "office" || role === "admin" || role === "project_manager"}
+      />
+    </PageContainer>
   );
 }

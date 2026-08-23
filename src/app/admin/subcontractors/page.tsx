@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import SubcontractorsManager, {
   type Subcontractor,
 } from "@/components/SubcontractorsManager";
@@ -24,15 +24,12 @@ export default async function SubcontractorsPage() {
     .order("company");
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Subcontractors" subtitle={role === "superintendent" ? "Read-only" : "Directory"} />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
-        <SubcontractorsManager
-          initial={(data as Subcontractor[]) ?? []}
-          canEdit={role === "office" || role === "admin" || role === "project_manager"}
-          orgId={orgId}
-        />
-      </main>
-    </div>
+    <PageContainer title="Subcontractors" subtitle={role === "superintendent" ? "Read-only" : "Directory"} maxWidth="list">
+      <SubcontractorsManager
+        initial={(data as Subcontractor[]) ?? []}
+        canEdit={role === "office" || role === "admin" || role === "project_manager"}
+        orgId={orgId}
+      />
+    </PageContainer>
   );
 }

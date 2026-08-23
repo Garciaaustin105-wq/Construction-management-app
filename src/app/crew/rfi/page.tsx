@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { HelpCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -87,60 +87,51 @@ function RfiForm() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
-        title="Submit RFI"
-        backHref={preselectedJob ? `/jobs/${preselectedJob}` : undefined}
-        backLabel={
-          jobs.find((j) => j.id === preselectedJob)?.name ?? "Back to job"
-        }
-      />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
-        <form onSubmit={handleSubmit} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">Job</span>
-            <select
-              value={jobId}
-              onChange={(e) => setJobId(e.target.value)}
-              required
-              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
-            >
-              <option value="">Select job</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">Question</span>
-            <textarea
-              placeholder="What do you need clarified?"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              required
-              rows={6}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-amber-600 text-white py-4 rounded-lg font-semibold text-base active:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-2"
+    <PageContainer title="Submit RFI" backHref={preselectedJob ? `/jobs/${preselectedJob}` : undefined} backLabel={ jobs.find((j) => j.id === preselectedJob)?.name ?? "Back to job" } maxWidth="list">
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
+        <label className="block">
+          <span className="text-sm font-medium text-gray-700">Job</span>
+          <select
+            value={jobId}
+            onChange={(e) => setJobId(e.target.value)}
+            required
+            className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
           >
-            {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <HelpCircle className="w-5 h-5" />
-            )}
-            {loading ? "Submitting..." : "Submit RFI"}
-          </button>
-        </form>
-      </main>
-    </div>
+            <option value="">Select job</option>
+            {jobs.map((j) => (
+              <option key={j.id} value={j.id}>
+                {j.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-medium text-gray-700">Question</span>
+          <textarea
+            placeholder="What do you need clarified?"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            required
+            rows={6}
+            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
+          />
+        </label>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-amber-600 text-white py-4 rounded-lg font-semibold text-base active:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <HelpCircle className="w-5 h-5" />
+          )}
+          {loading ? "Submitting..." : "Submit RFI"}
+        </button>
+      </form>
+    </PageContainer>
   );
 }
 

@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { getMe } from "@/lib/tenant";
 import {
   Building,
@@ -198,168 +198,162 @@ export default async function DevPanelPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
-        title="Dev"
-        subtitle={`${orgs.length} org${orgs.length === 1 ? "" : "s"} · ${fmtMoney(mrrCents)}/mo`}
-      />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {/* Summary tiles */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-          <StatTile icon={Building} label="Organizations" value={String(orgs.length)} />
-          <StatTile icon={CircleDollarSign} label="Platform MRR" value={fmtMoney(mrrCents)} />
-          <StatTile icon={TrendingUp} label="Active subs" value={String(activeCount)} />
-          <StatTile icon={Activity} label="Trials" value={String(trialCount)} />
-        </div>
+    <PageContainer title="Dev" subtitle={`${orgs.length} org${orgs.length === 1 ? "" : "s"} · ${fmtMoney(mrrCents)}/mo`} maxWidth="list">
+      {/* Summary tiles */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <StatTile icon={Building} label="Organizations" value={String(orgs.length)} />
+        <StatTile icon={CircleDollarSign} label="Platform MRR" value={fmtMoney(mrrCents)} />
+        <StatTile icon={TrendingUp} label="Active subs" value={String(activeCount)} />
+        <StatTile icon={Activity} label="Trials" value={String(trialCount)} />
+      </div>
 
-        {/* Tenant growth — 12-month bar list */}
-        <section className="bg-white rounded-lg shadow-sm p-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3 flex items-center gap-1">
-            <TrendingUp className="w-4 h-4" />
-            Tenant Growth · last 12 months
-          </h2>
-          <div className="flex items-end gap-1 h-28">
-            {months.map((m) => (
-              <div key={m.key} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                <span className="text-[10px] font-mono text-gray-700 tabular-nums">
-                  {m.count || ""}
-                </span>
-                <div
-                  className="w-full bg-blue-500 rounded-t"
-                  style={{ height: `${(m.count / maxMonth) * 100}%`, minHeight: m.count ? "4px" : "0" }}
-                  title={`${m.label}: ${m.count}`}
-                />
-                <span className="text-[10px] text-gray-400 truncate w-full text-center">
-                  {m.label}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Distribution + variant split */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
-          <DistCard title="Plan">
-            {[...planCounts.entries()].map(([k, n]) => (
-              <DistRow key={k} label={k} n={n} total={orgs.length} />
-            ))}
-          </DistCard>
-          <DistCard title="Plan status">
-            {[...statusCounts.entries()].map(([k, n]) => (
-              <DistRow key={k} label={k} n={n} total={orgs.length} />
-            ))}
-          </DistCard>
-          <DistCard title="Variant">
-            <DistRow label="construction" n={variantCounts.construction} total={orgs.length} />
-            <DistRow label="lawn" n={variantCounts.lawn} total={orgs.length} />
-          </DistCard>
-        </div>
-
-        {/* Tenant health table */}
-        <section className="bg-white rounded-lg shadow-sm overflow-hidden">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase p-4 pb-2 flex items-center gap-1">
-            <Building className="w-4 h-4" />
-            Tenant Health
-          </h2>
-          {health.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-6">No organizations yet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-gray-50 text-gray-500">
-                  <tr>
-                    <th className="text-left font-medium px-3 py-2">Org</th>
-                    <th className="text-left font-medium px-3 py-2">Variant</th>
-                    <th className="text-left font-medium px-3 py-2">Plan</th>
-                    <th className="text-left font-medium px-3 py-2">Status</th>
-                    <th className="text-right font-medium px-3 py-2">Members</th>
-                    <th className="text-right font-medium px-3 py-2">Jobs</th>
-                    <th className="text-right font-medium px-3 py-2">Invoices</th>
-                    <th className="text-left font-medium px-3 py-2">Last activity</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {health.map((o) => {
-                    const last = lastActivity.get(o.id);
-                    const stale = !last || now - new Date(last).getTime() > 30 * 86_400_000;
-                    return (
-                      <tr key={o.id} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 font-medium text-gray-900 truncate max-w-[180px]">
-                          {o.name}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center gap-1 ${o.app_variant === "lawn" ? "text-green-700" : "text-gray-600"}`}>
-                            {o.app_variant === "lawn" ? <Sprout className="w-3 h-3" /> : <Building className="w-3 h-3" />}
-                            {o.app_variant ?? "construction"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-gray-600 capitalize">{o.plan ?? "—"}</td>
-                        <td className="px-3 py-2">
-                          {o.plan_status ? (
-                            <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${STATUS_STYLE[o.plan_status] ?? "bg-gray-100 text-gray-600"}`}>
-                              {o.plan_status}
-                            </span>
-                          ) : (
-                            <span className="text-gray-400">—</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-700">
-                          <Users className="w-3 h-3 inline mr-0.5 text-gray-400" />
-                          {memberCounts.get(o.id) ?? 0}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-700">
-                          {jobsByOrg.get(o.id) ?? 0}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-700">
-                          {invoicesByOrg.get(o.id) ?? 0}
-                        </td>
-                        <td className={`px-3 py-2 ${stale ? "text-amber-700 font-medium" : "text-gray-600"}`}>
-                          {relativeDays(last)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+      {/* Tenant growth — 12-month bar list */}
+      <section className="bg-white rounded-lg shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3 flex items-center gap-1">
+          <TrendingUp className="w-4 h-4" />
+          Tenant Growth · last 12 months
+        </h2>
+        <div className="flex items-end gap-1 h-28">
+          {months.map((m) => (
+            <div key={m.key} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+              <span className="text-[10px] font-mono text-gray-700 tabular-nums">
+                {m.count || ""}
+              </span>
+              <div
+                className="w-full bg-blue-500 rounded-t"
+                style={{ height: `${(m.count / maxMonth) * 100}%`, minHeight: m.count ? "4px" : "0" }}
+                title={`${m.label}: ${m.count}`}
+              />
+              <span className="text-[10px] text-gray-400 truncate w-full text-center">
+                {m.label}
+              </span>
             </div>
-          )}
-        </section>
+          ))}
+        </div>
+      </section>
 
-        {/* System events — Stripe webhook audit */}
-        <section className="bg-white rounded-lg shadow-sm p-4">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3 flex items-center gap-1">
-            <Webhook className="w-4 h-4" />
-            System Events · recent billing webhooks
-          </h2>
-          {events.length === 0 ? (
-            <p className="text-sm text-gray-500">No webhook events recorded.</p>
-          ) : (
-            <ul className="divide-y divide-gray-100">
-              {events.map((e) => (
-                <li key={e.id} className="py-2 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
-                      {e.event_type}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {orgNameById.get(e.organization_id ?? "") ?? "—"}
-                    </p>
-                  </div>
-                  <span className="text-xs text-gray-400 flex-shrink-0">
-                    {new Date(e.created_at).toLocaleString([], {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </main>
-    </div>
+      {/* Distribution + variant split */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+        <DistCard title="Plan">
+          {[...planCounts.entries()].map(([k, n]) => (
+            <DistRow key={k} label={k} n={n} total={orgs.length} />
+          ))}
+        </DistCard>
+        <DistCard title="Plan status">
+          {[...statusCounts.entries()].map(([k, n]) => (
+            <DistRow key={k} label={k} n={n} total={orgs.length} />
+          ))}
+        </DistCard>
+        <DistCard title="Variant">
+          <DistRow label="construction" n={variantCounts.construction} total={orgs.length} />
+          <DistRow label="lawn" n={variantCounts.lawn} total={orgs.length} />
+        </DistCard>
+      </div>
+
+      {/* Tenant health table */}
+      <section className="bg-white rounded-lg shadow-sm overflow-hidden">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase p-4 pb-2 flex items-center gap-1">
+          <Building className="w-4 h-4" />
+          Tenant Health
+        </h2>
+        {health.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-6">No organizations yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="text-left font-medium px-3 py-2">Org</th>
+                  <th className="text-left font-medium px-3 py-2">Variant</th>
+                  <th className="text-left font-medium px-3 py-2">Plan</th>
+                  <th className="text-left font-medium px-3 py-2">Status</th>
+                  <th className="text-right font-medium px-3 py-2">Members</th>
+                  <th className="text-right font-medium px-3 py-2">Jobs</th>
+                  <th className="text-right font-medium px-3 py-2">Invoices</th>
+                  <th className="text-left font-medium px-3 py-2">Last activity</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {health.map((o) => {
+                  const last = lastActivity.get(o.id);
+                  const stale = !last || now - new Date(last).getTime() > 30 * 86_400_000;
+                  return (
+                    <tr key={o.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-medium text-gray-900 truncate max-w-[180px]">
+                        {o.name}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex items-center gap-1 ${o.app_variant === "lawn" ? "text-green-700" : "text-gray-600"}`}>
+                          {o.app_variant === "lawn" ? <Sprout className="w-3 h-3" /> : <Building className="w-3 h-3" />}
+                          {o.app_variant ?? "construction"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-gray-600 capitalize">{o.plan ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {o.plan_status ? (
+                          <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${STATUS_STYLE[o.plan_status] ?? "bg-gray-100 text-gray-600"}`}>
+                            {o.plan_status}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-700">
+                        <Users className="w-3 h-3 inline mr-0.5 text-gray-400" />
+                        {memberCounts.get(o.id) ?? 0}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-700">
+                        {jobsByOrg.get(o.id) ?? 0}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono tabular-nums text-gray-700">
+                        {invoicesByOrg.get(o.id) ?? 0}
+                      </td>
+                      <td className={`px-3 py-2 ${stale ? "text-amber-700 font-medium" : "text-gray-600"}`}>
+                        {relativeDays(last)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* System events — Stripe webhook audit */}
+      <section className="bg-white rounded-lg shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3 flex items-center gap-1">
+          <Webhook className="w-4 h-4" />
+          System Events · recent billing webhooks
+        </h2>
+        {events.length === 0 ? (
+          <p className="text-sm text-gray-500">No webhook events recorded.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {events.map((e) => (
+              <li key={e.id} className="py-2 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {e.event_type}
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {orgNameById.get(e.organization_id ?? "") ?? "—"}
+                  </p>
+                </div>
+                <span className="text-xs text-gray-400 flex-shrink-0">
+                  {new Date(e.created_at).toLocaleString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </PageContainer>
   );
 }
 

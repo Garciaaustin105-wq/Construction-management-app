@@ -1,11 +1,15 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import Link from "next/link";
 import { computeEstimateTotals, formatMoney } from "@/lib/money";
 import { PIPELINE, type Role } from "@/lib/roles";
-import Link from "next/link";
 import { FileText, Plus } from "lucide-react";
+import PageContainer from "@/components/PageContainer";
+import { LinkButton } from "@/components/ui/Button";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type EstimateRow = {
   id: string;
@@ -31,7 +35,33 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: "Rejected",
 };
 
-export default async function EstimatesPage() {
+// Status → badge tone. Domain-specific to estimates (invoice/job/daily-log
+// pages own their own map) — kept here next to the label map it pairs with.
+const STATUS_TONE: Record<string, BadgeTone> = {
+  draft: "neutral",
+  sent: "brand",
+  approved: "success",
+  converted: "success",
+  rejected: "danger",
+};
+
+type EstimateView = {
+  id: string;
+  status: string;
+  title: string | null;
+  estimateNumber: string | null;
+  jobName: string;
+  createdAt: string;
+  total: number;
+};
+
+const MODES: ViewMode[] = ["cards", "table"];
+
+export default async function EstimatesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   const supabase = await createClient();
   const me = await getMe();
   if (!me) redirect("/login");
@@ -42,8 +72,6 @@ export default async function EstimatesPage() {
   // already author estimates. Was OFFICE_OR_PM, which bounced sales.
   if (!PIPELINE.has(role)) redirect("/dashboard");
   // Estimate creation: the whole pipeline set (sales/PM/office/admin/super_admin)
-  // — see /estimates/new gate. Was office/admin only, which locked PM out of
-  // authoring (a PM-discrepancy bug) and excluded sales.
   const canCreate = PIPELINE.has(role);
 
   const { data: estimates } = await supabase
@@ -53,7 +81,7 @@ export default async function EstimatesPage() {
     )
     .order("created_at", { ascending: false });
 
-  const rows = (estimates as EstimateRow[] | null ?? []).map((e) => {
+  const rows: EstimateView[] = (estimates as EstimateRow[] | null ?? []).map((e) => {
     const items = (e.estimate_line_items as { quantity: number; unit_price: number }[]) ?? [];
     const totals = computeEstimateTotals(items, {
       markupPct: Number(e.markup_pct) || 0,
@@ -79,63 +107,103 @@ export default async function EstimatesPage() {
     };
   });
 
+  const sp = await searchParams;
+  const rawView = sp.view as ViewMode | undefined;
+  const view: ViewMode = rawView && (MODES as string[]).includes(rawView) ? rawView : "cards";
+
+  const columns: Column<EstimateView>[] = [
+    {
+      key: "title",
+      header: "Estimate",
+      cell: (r) => (
+        <span className="font-medium text-gray-900">{r.title || r.jobName}</span>
+      ),
+    },
+    { key: "number", header: "Number", cell: (r) => r.estimateNumber ?? "—" },
+    { key: "job", header: "Job", cell: (r) => r.jobName },
+    {
+      key: "status",
+      header: "Status",
+      cell: (r) => (
+        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+          {STATUS_LABEL[r.status] ?? r.status}
+        </StatusBadge>
+      ),
+    },
+    {
+      key: "total",
+      header: "Total",
+      align: "right",
+      hideOnMobile: true,
+      cell: (r) => <span className="font-semibold text-gray-900">{formatMoney(r.total)}</span>,
+    },
+    {
+      key: "date",
+      header: "Created",
+      hideOnMobile: true,
+      cell: (r) => new Date(r.createdAt).toLocaleDateString(),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Estimates" subtitle="Cost-coded job pricing" />
+    <PageContainer title="Estimates" subtitle="Cost-coded job pricing" maxWidth="list">
+      <ListToolbar
+        modes={MODES}
+        defaultMode="cards"
+        count={rows.length}
+        action={
+          canCreate ? (
+            <LinkButton href="/estimates/new">
+              <Plus className="w-4 h-4" />
+              New
+            </LinkButton>
+          ) : undefined
+        }
+      />
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {canCreate && (
-          <Link
-            href="/estimates/new"
-            className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            New Estimate
-          </Link>
-        )}
-
-        {rows.length === 0 ? (
-          <div className="bg-white rounded-lg p-6 text-center">
-            <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-700">No estimates yet</p>
-            <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-              Build a cost-coded estimate for a job, then preview and send it to
-              the customer for approval.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {rows.map((r) => (
-              <Link
-                key={r.id}
-                href={`/estimates/${r.id}`}
-                className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {r.title || r.jobName}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {r.estimateNumber ? `${r.estimateNumber} · ` : ""}
-                      {r.title ? `${r.jobName} · ` : ""}
-                      {new Date(r.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                      {STATUS_LABEL[r.status] ?? r.status}
-                    </span>
-                    <span className="text-sm font-semibold text-gray-900">
-                      {formatMoney(r.total)}
-                    </span>
-                  </div>
+      {rows.length === 0 ? (
+        <div className="bg-surface rounded-lg border border-line shadow-sm p-6 text-center">
+          <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-gray-900">No estimates yet</p>
+          <p className="text-xs text-muted mt-1 max-w-xs mx-auto">
+            Build a cost-coded estimate for a job, then preview and send it to
+            the customer for approval.
+          </p>
+        </div>
+      ) : view === "table" ? (
+        <DataTable columns={columns} rows={rows} rowHref={(r) => `/estimates/${r.id}`} />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <Link
+              key={r.id}
+              href={`/estimates/${r.id}`}
+              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
+            >
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-gray-900 truncate">
+                    {r.title || r.jobName}
+                  </p>
+                  <p className="text-xs text-muted truncate">
+                    {r.estimateNumber ? `${r.estimateNumber} · ` : ""}
+                    {r.title ? `${r.jobName} · ` : ""}
+                    {new Date(r.createdAt).toLocaleDateString()}
+                  </p>
                 </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </main>
-    </div>
+                <div className="flex flex-col items-end gap-1">
+                  <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+                    {STATUS_LABEL[r.status] ?? r.status}
+                  </StatusBadge>
+                  <span className="text-sm font-semibold text-gray-900">
+                    {formatMoney(r.total)}
+                  </span>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </PageContainer>
   );
 }

@@ -12,7 +12,7 @@ import {
 } from "@/lib/money";
 import { startOfWeek, addDays, toISODate, hoursFromMs } from "@/lib/weekUtils";
 import { arAgingBuckets, overdueTotal } from "@/lib/insights";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import KpiTile from "@/components/charts/KpiTile";
 import BarChart, { type BarDatum } from "@/components/charts/BarChart";
 import {
@@ -331,97 +331,94 @@ export default async function LawnInsightsPage() {
   const planStatusLabel = billing?.planStatus ?? tenant.planStatus;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Insights" subtitle="Owner dashboard" />
-      <main className="max-w-md lg:max-w-6xl mx-auto p-4 space-y-4">
-        <Link
-          href="/lawn"
-          className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back to Lawn
-        </Link>
+    <PageContainer title="Insights" subtitle="Owner dashboard" maxWidth="wide">
+      <Link
+        href="/lawn"
+        className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back to Lawn
+      </Link>
 
-        {/* Plan / MRR banner */}
-        <div className="bg-white rounded-lg p-4 shadow-sm flex items-center gap-3">
-          <span className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-green-700" />
-          </span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-gray-900">
-              {planLabel}
-              {planStatusLabel ? (
-                <span className="ml-2 text-[11px] uppercase tracking-wide text-gray-400 font-medium">
-                  {planStatusLabel}
-                </span>
-              ) : null}
-            </p>
-            <p className="text-xs text-gray-500">
-              Monthly plan {formatMoney(mrr)} · {activeCustomers} customer{activeCustomers === 1 ? "" : "s"}
-            </p>
-          </div>
+      {/* Plan / MRR banner */}
+      <div className="bg-white rounded-lg p-4 shadow-sm flex items-center gap-3">
+        <span className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+          <Sparkles className="w-5 h-5 text-green-700" />
+        </span>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-gray-900">
+            {planLabel}
+            {planStatusLabel ? (
+              <span className="ml-2 text-[11px] uppercase tracking-wide text-gray-400 font-medium">
+                {planStatusLabel}
+              </span>
+            ) : null}
+          </p>
+          <p className="text-xs text-gray-500">
+            Monthly plan {formatMoney(mrr)} · {activeCustomers} customer{activeCustomers === 1 ? "" : "s"}
+          </p>
         </div>
+      </div>
 
-        {/* KPI tiles */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-          <KpiTile label="Outstanding A/R" value={formatMoney(outstandingAR)} icon={Receipt} />
-          <KpiTile label="Overdue A/R" value={formatMoney(overdueAR)} icon={AlertTriangle} tone={overdueAR > 0 ? "red" : "default"} />
-          <KpiTile label="Collected (mo)" value={formatMoney(collectedThisMonth)} icon={DollarSign} tone="green" />
-          <KpiTile label="Recurring / yr" value={formatMoney(recurringAnnualized)} icon={Repeat} tone="blue" />
-          <KpiTile label="Active customers" value={String(activeCustomers)} icon={Contact} tone="blue" />
-          <KpiTile label="Visits done (wk)" value={String(visitsDoneThisWeek)} icon={Sprout} tone="green" />
-          <KpiTile label="Crew hrs (wk)" value={crewHoursThisWeek.toFixed(1)} icon={Clock} />
-          <KpiTile label="Estimate pipeline" value={formatMoney(pipelineValue)} icon={FileText} />
-        </div>
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+        <KpiTile label="Outstanding A/R" value={formatMoney(outstandingAR)} icon={Receipt} />
+        <KpiTile label="Overdue A/R" value={formatMoney(overdueAR)} icon={AlertTriangle} tone={overdueAR > 0 ? "red" : "default"} />
+        <KpiTile label="Collected (mo)" value={formatMoney(collectedThisMonth)} icon={DollarSign} tone="green" />
+        <KpiTile label="Recurring / yr" value={formatMoney(recurringAnnualized)} icon={Repeat} tone="blue" />
+        <KpiTile label="Active customers" value={String(activeCustomers)} icon={Contact} tone="blue" />
+        <KpiTile label="Visits done (wk)" value={String(visitsDoneThisWeek)} icon={Sprout} tone="green" />
+        <KpiTile label="Crew hrs (wk)" value={crewHoursThisWeek.toFixed(1)} icon={Clock} />
+        <KpiTile label="Estimate pipeline" value={formatMoney(pipelineValue)} icon={FileText} />
+      </div>
 
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <ChartCard title="Revenue collected per month" subtitle="Last 12 months (paid invoices)">
-            <BarChart data={revenueByMonth} formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)} showTotals />
-          </ChartCard>
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <ChartCard title="Revenue collected per month" subtitle="Last 12 months (paid invoices)">
+          <BarChart data={revenueByMonth} formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)} showTotals />
+        </ChartCard>
 
-          <ChartCard title="Visits per week" subtitle="Done · pending · skipped (12 weeks)">
-            <BarChart data={visitsByWeek} formatValue={(n) => String(Math.round(n))} showTotals />
-          </ChartCard>
+        <ChartCard title="Visits per week" subtitle="Done · pending · skipped (12 weeks)">
+          <BarChart data={visitsByWeek} formatValue={(n) => String(Math.round(n))} showTotals />
+        </ChartCard>
 
-          <ChartCard title="Invoices by status" subtitle="All invoices in range">
-            <BarChart data={invoicesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
-          </ChartCard>
+        <ChartCard title="Invoices by status" subtitle="All invoices in range">
+          <BarChart data={invoicesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
+        </ChartCard>
 
-          <ChartCard title="A/R aging" subtitle="Open invoice balances by days past due">
-            <BarChart
-              data={[
-                { label: "Current", segments: [{ value: aging.current, color: "#16a34a" }] },
-                { label: "0-30", segments: [{ value: aging.d0_30, color: "#f59e0b" }] },
-                { label: "31-60", segments: [{ value: aging.d31_60, color: "#f97316" }] },
-                { label: "61-90", segments: [{ value: aging.d61_90, color: "#ef4444" }] },
-                { label: "90+", segments: [{ value: aging.d90_plus, color: "#7f1d1d" }] },
-              ]}
-              formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)}
-              showTotals
-              emptyText="No open invoices"
-            />
-          </ChartCard>
+        <ChartCard title="A/R aging" subtitle="Open invoice balances by days past due">
+          <BarChart
+            data={[
+              { label: "Current", segments: [{ value: aging.current, color: "#16a34a" }] },
+              { label: "0-30", segments: [{ value: aging.d0_30, color: "#f59e0b" }] },
+              { label: "31-60", segments: [{ value: aging.d31_60, color: "#f97316" }] },
+              { label: "61-90", segments: [{ value: aging.d61_90, color: "#ef4444" }] },
+              { label: "90+", segments: [{ value: aging.d90_plus, color: "#7f1d1d" }] },
+            ]}
+            formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)}
+            showTotals
+            emptyText="No open invoices"
+          />
+        </ChartCard>
 
-          <ChartCard title="Estimates by status" subtitle="All estimates">
-            <BarChart data={estimatesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
-          </ChartCard>
+        <ChartCard title="Estimates by status" subtitle="All estimates">
+          <BarChart data={estimatesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
+        </ChartCard>
 
-          <ChartCard title="Crew hours per crew" subtitle="Last 8 weeks, top 6">
-            <BarChart data={crewBars} formatValue={(n) => `${Math.round(n)}h`} showTotals emptyText="No time clocked yet" />
-          </ChartCard>
+        <ChartCard title="Crew hours per crew" subtitle="Last 8 weeks, top 6">
+          <BarChart data={crewBars} formatValue={(n) => `${Math.round(n)}h`} showTotals emptyText="No time clocked yet" />
+        </ChartCard>
 
-          <ChartCard title="Top customers by revenue" subtitle="Collected (paid invoices)">
-            <BarChart data={topCustomers} formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)} showTotals emptyText="No paid invoices yet" />
-          </ChartCard>
-        </div>
+        <ChartCard title="Top customers by revenue" subtitle="Collected (paid invoices)">
+          <BarChart data={topCustomers} formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)} showTotals emptyText="No paid invoices yet" />
+        </ChartCard>
+      </div>
 
-        <p className="text-[11px] text-gray-400 text-center pt-1">
-          All figures are scoped to your organization. Revenue is from paid
-          invoices; A/R is open invoice balances. Recurring/yr is an annualized
-          run-rate from active schedules.
-        </p>
-      </main>
-    </div>
+      <p className="text-[11px] text-gray-400 text-center pt-1">
+        All figures are scoped to your organization. Revenue is from paid
+        invoices; A/R is open invoice balances. Recurring/yr is an annualized
+        run-rate from active schedules.
+      </p>
+    </PageContainer>
   );
 }
 

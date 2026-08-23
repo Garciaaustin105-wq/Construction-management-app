@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import PhotoLightbox from "@/components/PhotoLightbox";
 import PhotoFilters from "@/components/PhotoFilters";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
@@ -119,62 +119,63 @@ export default async function PhotosPage({
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Photos" subtitle={`${filteredById.length} of ${all.length}`} />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <PhotoFilters
-          jobs={jobs}
-          uploaders={uploaders}
-          currentJob={jobFilter}
-          currentUploader={uploaderFilter}
-        />
+    <PageContainer
+      title="Photos"
+      subtitle={`${filteredById.length} of ${all.length}`}
+      maxWidth="list"
+    >
+      <PhotoFilters
+        jobs={jobs}
+        uploaders={uploaders}
+        currentJob={jobFilter}
+        currentUploader={uploaderFilter}
+      />
 
-        <section>
-          {photosForLightbox.length > 0 ? (
-            <PhotoLightbox photos={photosForLightbox} canDelete />
-          ) : (
-            <div className="bg-white rounded-lg">
-              <EmptyState
-                icon={EmptyIcons.Camera}
-                title="No photos"
-                description={
-                  all.length === 0
-                    ? "Field photos uploaded by your crew will show up here."
-                    : "No photos match these filters."
-                }
-              />
-            </div>
-          )}
-        </section>
-
-        {pageCount > 1 && (
-          <div className="flex items-center justify-between pt-1">
-            {page > 0 ? (
-              <Link
-                href={pageHref(page - 1)}
-                className="text-sm text-blue-600 font-medium"
-              >
-                ← Prev
-              </Link>
-            ) : (
-              <span className="text-sm text-gray-300">← Prev</span>
-            )}
-            <span className="text-xs text-gray-500">
-              Page {page + 1} of {pageCount}
-            </span>
-            {page < pageCount - 1 ? (
-              <Link
-                href={pageHref(page + 1)}
-                className="text-sm text-blue-600 font-medium"
-              >
-                Next →
-              </Link>
-            ) : (
-              <span className="text-sm text-gray-300">Next →</span>
-            )}
+      <section>
+        {photosForLightbox.length > 0 ? (
+          <PhotoLightbox photos={photosForLightbox} canDelete />
+        ) : (
+          <div className="bg-surface rounded-lg border border-line shadow-sm">
+            <EmptyState
+              icon={EmptyIcons.Camera}
+              title="No photos"
+              description={
+                all.length === 0
+                  ? "Field photos uploaded by your crew will show up here."
+                  : "No photos match these filters."
+              }
+            />
           </div>
         )}
-      </main>
-    </div>
+      </section>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between pt-1">
+          {page > 0 ? (
+            <Link
+              href={pageHref(page - 1)}
+              className="text-sm text-blue-600 font-medium"
+            >
+              ← Prev
+            </Link>
+          ) : (
+            <span className="text-sm text-gray-300">← Prev</span>
+          )}
+          <span className="text-xs text-muted">
+            Page {page + 1} of {pageCount}
+          </span>
+          {page < pageCount - 1 ? (
+            <Link
+              href={pageHref(page + 1)}
+              className="text-sm text-blue-600 font-medium"
+            >
+              Next →
+            </Link>
+          ) : (
+            <span className="text-sm text-gray-300">Next →</span>
+          )}
+        </div>
+      )}
+    </PageContainer>
   );
 }

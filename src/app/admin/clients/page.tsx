@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import ClientManager, {
   type ClientRow,
 } from "@/app/admin/clients/ClientManager";
@@ -56,11 +56,8 @@ export default async function ClientsPage() {
   }));
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Client Portal" subtitle="Invite customers & reply to messages" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
-        <ClientManager initial={rows} canEdit={role === "office" || role === "admin"} />
-      </main>
-    </div>
+    <PageContainer title="Client Portal" subtitle="Invite customers & reply to messages" maxWidth="list">
+      <ClientManager initial={rows} canEdit={role === "office" || role === "admin"} />
+    </PageContainer>
   );
 }

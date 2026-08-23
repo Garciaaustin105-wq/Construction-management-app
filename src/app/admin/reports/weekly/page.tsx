@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import WeeklyReportFilters from "@/components/WeeklyReportFilters";
 import {
   addDays,
@@ -243,218 +243,214 @@ export default async function WeeklyReportPage({
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Per-Worker Report" subtitle={rangeLabel} />
+    <PageContainer title="Per-Worker Report" subtitle={rangeLabel} maxWidth="list">
+      <Link href="/admin/reports" className="text-xs text-blue-600 font-medium">
+        ← All reports
+      </Link>
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <Link href="/admin/reports" className="text-xs text-blue-600 font-medium">
-          ← All reports
-        </Link>
+      {/* Filters (date range + job / worker / cost code) */}
+      <div className="bg-white rounded-lg p-3 shadow-sm">
+        <WeeklyReportFilters
+          jobs={jobs}
+          workers={workerOptions}
+          costCodes={costCodes}
+          current={current}
+          showCostCode={!isLawn()}
+        />
+      </div>
 
-        {/* Filters (date range + job / worker / cost code) */}
+      {/* Download */}
+      <a
+        href={exportHref}
+        download
+        className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
+      >
+        <Download className="w-5 h-5" />
+        Download Excel
+      </a>
+
+      {dayCount > 31 && (
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+          Range is {dayCount} days — the Daily Hours sheet is omitted from the
+          Excel export (too wide). All other sheets still include the full range.
+        </p>
+      )}
+
+      {/* Totals strip */}
+      <div className="grid grid-cols-2 gap-2">
         <div className="bg-white rounded-lg p-3 shadow-sm">
-          <WeeklyReportFilters
-            jobs={jobs}
-            workers={workerOptions}
-            costCodes={costCodes}
-            current={current}
-            showCostCode={!isLawn()}
-          />
-        </div>
-
-        {/* Download */}
-        <a
-          href={exportHref}
-          download
-          className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2"
-        >
-          <Download className="w-5 h-5" />
-          Download Excel
-        </a>
-
-        {dayCount > 31 && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-            Range is {dayCount} days — the Daily Hours sheet is omitted from the
-            Excel export (too wide). All other sheets still include the full range.
+          <p className="text-xs text-gray-500">Total hours</p>
+          <p className="text-lg font-bold text-gray-900">
+            {fmtDuration(totalHours * 3_600_000)}
           </p>
-        )}
-
-        {/* Totals strip */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Total hours</p>
-            <p className="text-lg font-bold text-gray-900">
-              {fmtDuration(totalHours * 3_600_000)}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Photos</p>
-            <p className="text-lg font-bold text-gray-900">{totalPhotos}</p>
-          </div>
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Receipts submitted</p>
-            <p className="text-lg font-bold text-gray-900">
-              {formatMoney(totalSubmitted)}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Owed to crew</p>
-            <p className="text-lg font-bold text-amber-700">
-              {formatMoney(totalOwed)}
-            </p>
-          </div>
         </div>
+        <div className="bg-white rounded-lg p-3 shadow-sm">
+          <p className="text-xs text-gray-500">Photos</p>
+          <p className="text-lg font-bold text-gray-900">{totalPhotos}</p>
+        </div>
+        <div className="bg-white rounded-lg p-3 shadow-sm">
+          <p className="text-xs text-gray-500">Receipts submitted</p>
+          <p className="text-lg font-bold text-gray-900">
+            {formatMoney(totalSubmitted)}
+          </p>
+        </div>
+        <div className="bg-white rounded-lg p-3 shadow-sm">
+          <p className="text-xs text-gray-500">Owed to crew</p>
+          <p className="text-lg font-bold text-amber-700">
+            {formatMoney(totalOwed)}
+          </p>
+        </div>
+      </div>
 
-        {/* On-screen timesheet — day × worker hours grid (the in-app
-            "timesheet"; the Excel export already has a Daily Hours sheet).
-            Only for ranges ≤ 14 days so it stays readable on mobile. */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-            Timesheet
-          </h2>
-          {rows.length === 0 ? (
-            <div className="bg-white rounded-lg p-6 text-center shadow-sm">
-              <p className="text-sm text-gray-500">
-                No activity in this range{jobId || workerId || codeId ? " for these filters" : ""}.
-              </p>
-            </div>
-          ) : !showTimesheet ? (
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <p className="text-sm text-gray-500">
-                This range is {dayCount} days — too wide for the on-screen grid.
-                Switch to a 2-week or shorter range to see the day-by-day
-                timesheet, or download the Excel (Daily Hours sheet).
-              </p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm overflow-x-auto">
-              <table className="w-full text-sm border-collapse min-w-[640px]">
-                <thead>
-                  <tr className="text-[10px] uppercase text-gray-500">
-                    <th className="text-left font-semibold px-2 py-2 sticky left-0 bg-white">
-                      Worker
-                    </th>
+      {/* On-screen timesheet — day × worker hours grid (the in-app
+          "timesheet"; the Excel export already has a Daily Hours sheet).
+          Only for ranges ≤ 14 days so it stays readable on mobile. */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+          Timesheet
+        </h2>
+        {rows.length === 0 ? (
+          <div className="bg-white rounded-lg p-6 text-center shadow-sm">
+            <p className="text-sm text-gray-500">
+              No activity in this range{jobId || workerId || codeId ? " for these filters" : ""}.
+            </p>
+          </div>
+        ) : !showTimesheet ? (
+          <div className="bg-white rounded-lg p-4 shadow-sm">
+            <p className="text-sm text-gray-500">
+              This range is {dayCount} days — too wide for the on-screen grid.
+              Switch to a 2-week or shorter range to see the day-by-day
+              timesheet, or download the Excel (Daily Hours sheet).
+            </p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm overflow-x-auto">
+            <table className="w-full text-sm border-collapse min-w-[640px]">
+              <thead>
+                <tr className="text-[10px] uppercase text-gray-500">
+                  <th className="text-left font-semibold px-2 py-2 sticky left-0 bg-white">
+                    Worker
+                  </th>
+                  {dayColumns.map((iso) => {
+                    const d = new Date(iso + "T00:00:00");
+                    return (
+                      <th key={iso} className="font-semibold px-2 py-2 text-center">
+                        {d.toLocaleDateString([], { weekday: "short" })}
+                        <br />
+                        {d.getDate()}
+                      </th>
+                    );
+                  })}
+                  <th className="font-semibold px-2 py-2 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((w, i) => (
+                  <tr key={i} className="border-t border-gray-100">
+                    <td className="px-2 py-2 font-medium text-gray-900 sticky left-0 bg-white truncate max-w-[140px]">
+                      {w.name}
+                    </td>
                     {dayColumns.map((iso) => {
-                      const d = new Date(iso + "T00:00:00");
+                      const ms = w.byDay[iso] ?? 0;
                       return (
-                        <th key={iso} className="font-semibold px-2 py-2 text-center">
-                          {d.toLocaleDateString([], { weekday: "short" })}
-                          <br />
-                          {d.getDate()}
-                        </th>
+                        <td
+                          key={iso}
+                          className={`px-2 py-2 text-center font-mono tabular-nums ${
+                            ms > 0 ? "text-gray-900" : "text-gray-300"
+                          }`}
+                        >
+                          {ms > 0 ? fmtDuration(ms) : "—"}
+                        </td>
                       );
                     })}
-                    <th className="font-semibold px-2 py-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((w, i) => (
-                    <tr key={i} className="border-t border-gray-100">
-                      <td className="px-2 py-2 font-medium text-gray-900 sticky left-0 bg-white truncate max-w-[140px]">
-                        {w.name}
-                      </td>
-                      {dayColumns.map((iso) => {
-                        const ms = w.byDay[iso] ?? 0;
-                        return (
-                          <td
-                            key={iso}
-                            className={`px-2 py-2 text-center font-mono tabular-nums ${
-                              ms > 0 ? "text-gray-900" : "text-gray-300"
-                            }`}
-                          >
-                            {ms > 0 ? fmtDuration(ms) : "—"}
-                          </td>
-                        );
-                      })}
-                      <td className="px-2 py-2 text-right font-mono font-semibold tabular-nums text-gray-900">
-                        {fmtDuration(w.ms)}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
-                    <td className="px-2 py-2 text-gray-600 sticky left-0 bg-gray-50">
-                      Daily total
-                    </td>
-                    {dayColumns.map((iso) => (
-                      <td
-                        key={iso}
-                        className="px-2 py-2 text-center font-mono tabular-nums text-gray-900"
-                      >
-                        {dayTotals[iso] > 0 ? fmtDuration(dayTotals[iso]) : "—"}
-                      </td>
-                    ))}
-                    <td className="px-2 py-2 text-right font-mono tabular-nums text-gray-900">
-                      {fmtDuration(totalHours * 3_600_000)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {/* Per-worker cards */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
-            By Worker ({rows.length})
-          </h2>
-          {rows.length === 0 ? (
-            <div className="bg-white rounded-lg p-6 text-center shadow-sm">
-              <p className="text-sm text-gray-500">
-                No activity in this range{jobId || workerId || codeId ? " for these filters" : ""}.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {rows.map((w, i) => (
-                <div key={i} className="bg-white rounded-lg p-3 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 truncate">
-                        {w.name}
-                      </p>
-                      <p className="text-xs text-gray-500 capitalize">
-                        {w.role}
-                      </p>
-                    </div>
-                    <span className="text-sm font-bold text-gray-900">
+                    <td className="px-2 py-2 text-right font-mono font-semibold tabular-nums text-gray-900">
                       {fmtDuration(w.ms)}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1 mt-2 text-center">
-                    <div className="bg-gray-50 rounded p-1">
-                      <Briefcase className="w-3 h-3 text-gray-400 mx-auto" />
-                      <p className="text-xs font-semibold text-gray-900">
-                        {w.projects.size}
-                      </p>
-                      <p className="text-[10px] text-gray-400">projects</p>
-                    </div>
-                    <div className="bg-gray-50 rounded p-1">
-                      <Camera className="w-3 h-3 text-gray-400 mx-auto" />
-                      <p className="text-xs font-semibold text-gray-900">
-                        {w.photos}
-                      </p>
-                      <p className="text-[10px] text-gray-400">photos</p>
-                    </div>
-                    <div className="bg-gray-50 rounded p-1">
-                      <Receipt className="w-3 h-3 text-gray-400 mx-auto" />
-                      <p className="text-xs font-semibold text-gray-900">
-                        {formatMoney(w.owed)}
-                      </p>
-                      <p className="text-[10px] text-gray-400">owed</p>
-                    </div>
-                  </div>
-                  {w.projects.size > 0 && (
-                    <p className="text-xs text-gray-500 mt-2">
-                      {[...w.projects].sort().join(", ")}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
+                  <td className="px-2 py-2 text-gray-600 sticky left-0 bg-gray-50">
+                    Daily total
+                  </td>
+                  {dayColumns.map((iso) => (
+                    <td
+                      key={iso}
+                      className="px-2 py-2 text-center font-mono tabular-nums text-gray-900"
+                    >
+                      {dayTotals[iso] > 0 ? fmtDuration(dayTotals[iso]) : "—"}
+                    </td>
+                  ))}
+                  <td className="px-2 py-2 text-right font-mono tabular-nums text-gray-900">
+                    {fmtDuration(totalHours * 3_600_000)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Per-worker cards */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+          By Worker ({rows.length})
+        </h2>
+        {rows.length === 0 ? (
+          <div className="bg-white rounded-lg p-6 text-center shadow-sm">
+            <p className="text-sm text-gray-500">
+              No activity in this range{jobId || workerId || codeId ? " for these filters" : ""}.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((w, i) => (
+              <div key={i} className="bg-white rounded-lg p-3 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">
+                      {w.name}
                     </p>
-                  )}
+                    <p className="text-xs text-gray-500 capitalize">
+                      {w.role}
+                    </p>
+                  </div>
+                  <span className="text-sm font-bold text-gray-900">
+                    {fmtDuration(w.ms)}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
+                <div className="grid grid-cols-3 gap-1 mt-2 text-center">
+                  <div className="bg-gray-50 rounded p-1">
+                    <Briefcase className="w-3 h-3 text-gray-400 mx-auto" />
+                    <p className="text-xs font-semibold text-gray-900">
+                      {w.projects.size}
+                    </p>
+                    <p className="text-[10px] text-gray-400">projects</p>
+                  </div>
+                  <div className="bg-gray-50 rounded p-1">
+                    <Camera className="w-3 h-3 text-gray-400 mx-auto" />
+                    <p className="text-xs font-semibold text-gray-900">
+                      {w.photos}
+                    </p>
+                    <p className="text-[10px] text-gray-400">photos</p>
+                  </div>
+                  <div className="bg-gray-50 rounded p-1">
+                    <Receipt className="w-3 h-3 text-gray-400 mx-auto" />
+                    <p className="text-xs font-semibold text-gray-900">
+                      {formatMoney(w.owed)}
+                    </p>
+                    <p className="text-[10px] text-gray-400">owed</p>
+                  </div>
+                </div>
+                {w.projects.size > 0 && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    {[...w.projects].sort().join(", ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </PageContainer>
   );
 }

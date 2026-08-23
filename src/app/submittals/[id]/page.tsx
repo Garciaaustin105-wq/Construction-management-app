@@ -3,7 +3,16 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Trash2 } from "lucide-react";
 import { useToast } from "@/components/Toast";
-import StatusBadge from "@/components/StatusBadge";
+import HighlightsHeader from "@/components/ui/HighlightsHeader";
+import Button from "@/components/ui/Button";
+// Labels, tones and the valid-transition table all come from the lifecycle
+// module — the single source shared with the list page.
+import {
+  SUBMITTAL_STATUS_LABEL,
+  SUBMITTAL_STATUS_TONE,
+  validTransitions,
+  type SubmittalStatus,
+} from "@/lib/lifecycles/submittal";
 import { OFFICE_OR_PM } from "@/lib/roles";
 
 type Submittal = {
@@ -241,6 +250,15 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
   const editable = sub.status === "draft" || sub.status === "returned";
   const backHref = preselectedJob ? `/jobs/${preselectedJob}` : "/submittals";
 
+  // The DB column is `text`; the lifecycle module owns the domain.
+  const status = sub.status as SubmittalStatus;
+  const nextStatuses = validTransitions(status);
+  // Which status action renders = status-valid (lifecycle) x role-allowed.
+  // Role is unchanged: the page already bounced anyone outside OFFICE_OR_PM,
+  // so reaching here IS the role permission for both actions.
+  const canSend = nextStatuses.includes("submitted");
+  const canClose = nextStatuses.includes("closed");
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
@@ -258,14 +276,52 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
       </header>
 
       <main className="max-w-md lg:max-w-2xl mx-auto p-4 space-y-4">
+        <HighlightsHeader
+          title={sub.title || sub.submittal_number || "Submittal"}
+          subtitle={sub.submittal_number ?? undefined}
+          status={{
+            label: SUBMITTAL_STATUS_LABEL[status] ?? sub.status,
+            tone: SUBMITTAL_STATUS_TONE[status] ?? "neutral",
+          }}
+          accent={SUBMITTAL_STATUS_TONE[status] ?? "brand"}
+          fields={[
+            { label: "Created", value: new Date(sub.created_at).toLocaleDateString() },
+            {
+              label: "Sent",
+              value: sub.sent_at ? new Date(sub.sent_at).toLocaleDateString() : "—",
+            },
+            {
+              label: "Returned",
+              value: sub.returned_at
+                ? new Date(sub.returned_at).toLocaleDateString()
+                : "—",
+            },
+            { label: "Ball in court", value: sub.ball_in_court },
+          ]}
+          actions={
+            <>
+              {canSend && (
+                <Button type="button" onClick={sendToArchitect} disabled={busy} size="sm">
+                  {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Send to Reviewer
+                </Button>
+              )}
+              {canClose && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={closeSubmittal}
+                  disabled={busy}
+                  size="sm"
+                >
+                  Close Submittal
+                </Button>
+              )}
+            </>
+          }
+        />
+
         <div className="bg-white rounded-lg shadow-sm p-4 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-500">Status</span>
-            <StatusBadge status={sub.status} />
-          </div>
-          <p className="text-xs text-gray-500">
-            {`Created ${new Date(sub.created_at).toLocaleDateString()}`}
-          </p>
           {sub.sent_at && (
             <p className="text-xs text-blue-600">
               Sent to reviewer {new Date(sub.sent_at).toLocaleDateString()}
@@ -391,26 +447,6 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
           </button>
         )}
 
-        {(sub.status === "draft" || sub.status === "returned") && (
-          <button
-            onClick={sendToArchitect}
-            disabled={busy}
-            className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-            Send to Architect / Reviewer
-          </button>
-        )}
-
-        {sub.status === "returned" && (
-          <button
-            onClick={closeSubmittal}
-            disabled={busy}
-            className="w-full bg-white border border-gray-300 text-gray-800 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50"
-          >
-            Close Submittal
-          </button>
-        )}
       </main>
     </div>
   );

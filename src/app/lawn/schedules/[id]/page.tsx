@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { OFFICE_OR_PM } from "@/lib/roles";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { useToast } from "@/components/Toast";
 import { generateDueDates, summarizeSchedule } from "@/lib/lawnRecurrence";
 import { Loader2, RefreshCw, Pause, Play, Calendar } from "lucide-react";
@@ -479,279 +479,275 @@ export default function ScheduleDetailPage({
   });
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title={jobName} backHref="/lawn" backLabel="Lawn" />
-
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
-          <div className="flex justify-between items-start">
-            <div className="min-w-0">
-              <p className="text-xs text-gray-500">{custName ?? "—"}</p>
-              <p className="font-semibold text-gray-900">{schedule.service_type ?? "Service"}</p>
-            </div>
-            <span
-              className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                schedule.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
-              }`}
-            >
-              {schedule.active
-                ? "Active"
-                : schedule.paused_until
-                  ? `Paused → ${schedule.paused_until}`
-                  : "Paused"}
-            </span>
+    <PageContainer title={jobName} backHref="/lawn" backLabel="Lawn" maxWidth="list">
+      <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
+        <div className="flex justify-between items-start">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500">{custName ?? "—"}</p>
+            <p className="font-semibold text-gray-900">{schedule.service_type ?? "Service"}</p>
           </div>
-          <p className="text-sm text-gray-700">{schedSummary}</p>
-          <p className="text-xs text-gray-500">
-            Season: {schedule.start_date}
-            {schedule.end_date ? ` → ${schedule.end_date}` : " → open"}
-          </p>
-          {!schedule.active && schedule.paused_until && (
-            <p className="text-xs text-blue-600 font-medium">
-              Auto-resumes {schedule.paused_until}
-            </p>
-          )}
-          {schedule.notes && (
-            <p className="text-xs text-gray-500 pt-1 border-t border-gray-100">
-              {schedule.notes}
-            </p>
-          )}
-
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={toggleActive}
-              disabled={busy}
-              className="flex-1 bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
-            >
-              {schedule.active ? (
-                <>
-                  <Pause className="w-4 h-4" />
-                  Pause route
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  Resume
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={regenerate}
-              disabled={regenerating}
-              className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
-            >
-              {regenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-              Generate / extend
-            </button>
-          </div>
-
-          {/* Export this property's full record (photos, visits, invoices) as a
-              ZIP — the "keep your data" companion so removing an old account
-              (e.g. to fit a lower plan after a season ends) isn't data loss.
-              Server route /api/jobs/[id]/export is office-gated + reads this
-              job_id's photos/visits/estimates/invoices. */}
-          <a
-            href={`/api/jobs/${schedule.job_id}/export`}
-            className="block w-full text-center bg-gray-100 text-gray-700 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-200"
+          <span
+            className={`text-[10px] font-semibold px-2 py-1 rounded ${
+              schedule.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+            }`}
           >
-            Export this property (ZIP)
-          </a>
-          <p className="text-xs text-gray-400 text-center">
-            Download all photos, visits &amp; records before removing an old account.
+            {schedule.active
+              ? "Active"
+              : schedule.paused_until
+                ? `Paused → ${schedule.paused_until}`
+                : "Paused"}
+          </span>
+        </div>
+        <p className="text-sm text-gray-700">{schedSummary}</p>
+        <p className="text-xs text-gray-500">
+          Season: {schedule.start_date}
+          {schedule.end_date ? ` → ${schedule.end_date}` : " → open"}
+        </p>
+        {!schedule.active && schedule.paused_until && (
+          <p className="text-xs text-blue-600 font-medium">
+            Auto-resumes {schedule.paused_until}
           </p>
+        )}
+        {schedule.notes && (
+          <p className="text-xs text-gray-500 pt-1 border-t border-gray-100">
+            {schedule.notes}
+          </p>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            type="button"
+            onClick={toggleActive}
+            disabled={busy}
+            className="flex-1 bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {schedule.active ? (
+              <>
+                <Pause className="w-4 h-4" />
+                Pause route
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4" />
+                Resume
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={regenerate}
+            disabled={regenerating}
+            className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {regenerating ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            Generate / extend
+          </button>
         </div>
 
-        {/* Recurring schedule — mow days, frequency, season, service, price.
-            Editable after creation (was read-only for life). Saving updates the
-            row; tap "Reset upcoming" below to apply the new cadence to future
-            visits (deletes future pending, preserves done/skipped history). */}
-        <RecurringScheduleEditor
-          scheduleId={schedule.id}
-          initial={{
-            frequency: schedule.frequency as "weekly" | "biweekly" | "monthly",
-            interval_weeks: schedule.interval_weeks,
-            days_of_week: schedule.days_of_week,
-            day_of_month: schedule.day_of_month,
-            start_date: schedule.start_date,
-            end_date: schedule.end_date,
-            service_type: schedule.service_type,
-            price_per_visit: Number(schedule.price_per_visit) || 0,
-            notes: schedule.notes,
-          }}
-          lawnServices={lawnServices}
-          canEdit={authorized}
-          onSaved={onScheduleSaved}
-        />
-        <button
-          type="button"
-          onClick={resetUpcoming}
-          disabled={resetting || !schedule.active}
-          className="w-full bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+        {/* Export this property's full record (photos, visits, invoices) as a
+            ZIP — the "keep your data" companion so removing an old account
+            (e.g. to fit a lower plan after a season ends) isn't data loss.
+            Server route /api/jobs/[id]/export is office-gated + reads this
+            job_id's photos/visits/estimates/invoices. */}
+        <a
+          href={`/api/jobs/${schedule.job_id}/export`}
+          className="block w-full text-center bg-gray-100 text-gray-700 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-200"
         >
-          {resetting ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          Reset upcoming visits
-        </button>
-        <p className="text-xs text-gray-400 -mt-2">
-          Clears future pending visits and regenerates them from the saved
- schedule. Past visits are kept.
+          Export this property (ZIP)
+        </a>
+        <p className="text-xs text-gray-400 text-center">
+          Download all photos, visits &amp; records before removing an old account.
         </p>
+      </div>
 
-        {/* Property location / name / notes — editable after creation (same
-            JobDetailsEditor as the construction job page; edits the jobs row by
-            id, since a lawn job's address/description live on jobs). */}
-        <section className="bg-white rounded-lg p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">Location</h2>
-          <JobDetailsEditor
-            jobId={schedule.job_id}
-            initialName={schedule.jobs?.name ?? ""}
-            initialAddress={schedule.jobs?.address ?? null}
-            initialDescription={schedule.jobs?.description ?? null}
-            canEdit={authorized}
-            onSaved={onJobDetailsSaved}
-          />
-        </section>
+      {/* Recurring schedule — mow days, frequency, season, service, price.
+          Editable after creation (was read-only for life). Saving updates the
+          row; tap "Reset upcoming" below to apply the new cadence to future
+          visits (deletes future pending, preserves done/skipped history). */}
+      <RecurringScheduleEditor
+        scheduleId={schedule.id}
+        initial={{
+          frequency: schedule.frequency as "weekly" | "biweekly" | "monthly",
+          interval_weeks: schedule.interval_weeks,
+          days_of_week: schedule.days_of_week,
+          day_of_month: schedule.day_of_month,
+          start_date: schedule.start_date,
+          end_date: schedule.end_date,
+          service_type: schedule.service_type,
+          price_per_visit: Number(schedule.price_per_visit) || 0,
+          notes: schedule.notes,
+        }}
+        lawnServices={lawnServices}
+        canEdit={authorized}
+        onSaved={onScheduleSaved}
+      />
+      <button
+        type="button"
+        onClick={resetUpcoming}
+        disabled={resetting || !schedule.active}
+        className="w-full bg-white border border-gray-300 text-gray-900 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+      >
+        {resetting ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <RefreshCw className="w-4 h-4" />
+        )}
+        Reset upcoming visits
+      </button>
+      <p className="text-xs text-gray-400 -mt-2">
+        Clears future pending visits and regenerates them from the saved
+ schedule. Past visits are kept.
+      </p>
 
-        {/* Customer + crew assignment — editable after creation. JobDetailsEditor
-            only covers name/address/description; this handles jobs.customer_id +
-            jobs.assigned_crew (reassign customer / change crew). */}
-        <JobAssignmentEditor
+      {/* Property location / name / notes — editable after creation (same
+          JobDetailsEditor as the construction job page; edits the jobs row by
+          id, since a lawn job's address/description live on jobs). */}
+      <section className="bg-white rounded-lg p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">Location</h2>
+        <JobDetailsEditor
           jobId={schedule.job_id}
-          initialCustomerId={schedule.jobs?.customer_id ?? null}
-          initialCrew={schedule.jobs?.assigned_crew ?? []}
+          initialName={schedule.jobs?.name ?? ""}
+          initialAddress={schedule.jobs?.address ?? null}
+          initialDescription={schedule.jobs?.description ?? null}
           canEdit={authorized}
-          onSaved={onAssignmentSaved}
+          onSaved={onJobDetailsSaved}
         />
+      </section>
 
-        {/* Property profile (lawn_jobs 1:1) */}
-        <LawnPropertyDetails
-          jobId={schedule.job_id}
-          initial={property}
-          canEdit={authorized}
-        />
+      {/* Customer + crew assignment — editable after creation. JobDetailsEditor
+          only covers name/address/description; this handles jobs.customer_id +
+          jobs.assigned_crew (reassign customer / change crew). */}
+      <JobAssignmentEditor
+        jobId={schedule.job_id}
+        initialCustomerId={schedule.jobs?.customer_id ?? null}
+        initialCrew={schedule.jobs?.assigned_crew ?? []}
+        canEdit={authorized}
+        onSaved={onAssignmentSaved}
+      />
 
-        {/* Estimates & invoices for this lawn job — create + manage from the
-            Lawn tab via deep-links to the shared creators (?job=). */}
-        <LawnJobFinancials jobId={schedule.job_id} canEdit={authorized} />
+      {/* Property profile (lawn_jobs 1:1) */}
+      <LawnPropertyDetails
+        jobId={schedule.job_id}
+        initial={property}
+        canEdit={authorized}
+      />
 
-        <div>
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
-            Visits ({visits.length})
-          </h2>
-          {visits.length === 0 ? (
-            <div className="bg-white rounded-lg p-4 text-center">
-              <p className="text-sm text-gray-500">
-                No visits yet. Tap &ldquo;Generate / extend&rdquo; to seed upcoming dates.
-              </p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm divide-y">
-              {visits.map((v) => (
-                <div key={v.id} className="p-3 space-y-2">
-                  <div className="flex justify-between items-center">
+      {/* Estimates & invoices for this lawn job — create + manage from the
+          Lawn tab via deep-links to the shared creators (?job=). */}
+      <LawnJobFinancials jobId={schedule.job_id} canEdit={authorized} />
+
+      <div>
+        <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">
+          Visits ({visits.length})
+        </h2>
+        {visits.length === 0 ? (
+          <div className="bg-white rounded-lg p-4 text-center">
+            <p className="text-sm text-gray-500">
+              No visits yet. Tap &ldquo;Generate / extend&rdquo; to seed upcoming dates.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm divide-y">
+            {visits.map((v) => (
+              <div key={v.id} className="p-3 space-y-2">
+                <div className="flex justify-between items-center">
+                  <Link
+                    href={`/lawn/visits/${v.id}`}
+                    className="text-sm font-medium text-gray-900 flex items-center gap-1.5"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                    {v.due_date}
+                  </Link>
+                  <span
+                    className={`text-[10px] font-semibold px-2 py-1 rounded ${
+                      STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {v.status}
+                  </span>
+                </div>
+                {v.status === "skipped" && v.skip_reason && (
+                  <p className="text-xs text-gray-500">
+                    Skipped · {v.skip_reason}
+                  </p>
+                )}
+                {v.status === "pending" && skippingId === v.id ? (
+                  <SkipReasonPicker
+                    busy={busy}
+                    onConfirm={(reason) => skipVisit(v.id, reason)}
+                    onCancel={() => setSkippingId(null)}
+                  />
+                ) : (
+                  v.status === "pending" && (
+                  <div className="flex flex-wrap gap-2">
                     <Link
                       href={`/lawn/visits/${v.id}`}
-                      className="text-sm font-medium text-gray-900 flex items-center gap-1.5"
+                      className="text-xs text-blue-600 font-medium"
                     >
-                      <Calendar className="w-3.5 h-3.5 text-gray-400" />
-                      {v.due_date}
+                      Open
                     </Link>
-                    <span
-                      className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                        STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {v.status}
-                    </span>
+                    {movingId === v.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="date"
+                          value={moveDate}
+                          onChange={(e) => setMoveDate(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => confirmMove(v.id)}
+                          disabled={busy}
+                          className="text-xs text-blue-600 font-medium"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMovingId(null);
+                            setMoveDate("");
+                          }}
+                          className="text-xs text-gray-500"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMovingId(v.id);
+                            setMoveDate(v.due_date);
+                          }}
+                          disabled={busy}
+                          className="text-xs text-gray-600 font-medium"
+                        >
+                          Move
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSkippingId(v.id)}
+                          disabled={busy}
+                          className="text-xs text-gray-600 font-medium"
+                        >
+                          Skip
+                        </button>
+                      </>
+                    )}
                   </div>
-                  {v.status === "skipped" && v.skip_reason && (
-                    <p className="text-xs text-gray-500">
-                      Skipped · {v.skip_reason}
-                    </p>
-                  )}
-                  {v.status === "pending" && skippingId === v.id ? (
-                    <SkipReasonPicker
-                      busy={busy}
-                      onConfirm={(reason) => skipVisit(v.id, reason)}
-                      onCancel={() => setSkippingId(null)}
-                    />
-                  ) : (
-                    v.status === "pending" && (
-                    <div className="flex flex-wrap gap-2">
-                      <Link
-                        href={`/lawn/visits/${v.id}`}
-                        className="text-xs text-blue-600 font-medium"
-                      >
-                        Open
-                      </Link>
-                      {movingId === v.id ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="date"
-                            value={moveDate}
-                            onChange={(e) => setMoveDate(e.target.value)}
-                            className="px-2 py-1 border border-gray-300 rounded text-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => confirmMove(v.id)}
-                            disabled={busy}
-                            className="text-xs text-blue-600 font-medium"
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMovingId(null);
-                              setMoveDate("");
-                            }}
-                            className="text-xs text-gray-500"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMovingId(v.id);
-                              setMoveDate(v.due_date);
-                            }}
-                            disabled={busy}
-                            className="text-xs text-gray-600 font-medium"
-                          >
-                            Move
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSkippingId(v.id)}
-                            disabled={busy}
-                            className="text-xs text-gray-600 font-medium"
-                          >
-                            Skip
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    )
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </main>
-    </div>
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </PageContainer>
   );
 }

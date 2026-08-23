@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { OFFICE_LIKE } from "@/lib/roles";
 import LawnCycleBillingButton from "@/components/LawnCycleBillingButton";
@@ -89,88 +89,84 @@ export default async function LawnBillingPage() {
   const totalVisits = visits.length;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Lawn Billing" subtitle="Monthly cycle invoicing" />
+    <PageContainer title="Lawn Billing" subtitle="Monthly cycle invoicing" maxWidth="list">
+      <Link
+        href="/lawn"
+        className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back to Lawn
+      </Link>
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <Link
-          href="/lawn"
-          className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back to Lawn
-        </Link>
-
-        {totalVisits === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={FileText}
-              title="Nothing to bill"
-              description="Completed lawn visits awaiting invoice will appear here. Mark visits done from the route or visit page to make them billable."
-            />
-          </div>
-        ) : (
-          <>
-            <div className="bg-white rounded-lg p-3 shadow-sm flex justify-between items-center">
-              <div>
-                <p className="text-xs text-gray-500">
-                  {totalVisits} done visit{totalVisits === 1 ? "" : "s"} ·{" "}
-                  {groups.length} customer{groups.length === 1 ? "" : "s"}
-                </p>
-                <p className="font-bold text-gray-900">{money(grandTotal)}</p>
-              </div>
-              <span className="text-[10px] font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">
-                Unbilled
-              </span>
+      {totalVisits === 0 ? (
+        <div className="bg-white rounded-lg">
+          <EmptyState
+            icon={FileText}
+            title="Nothing to bill"
+            description="Completed lawn visits awaiting invoice will appear here. Mark visits done from the route or visit page to make them billable."
+          />
+        </div>
+      ) : (
+        <>
+          <div className="bg-white rounded-lg p-3 shadow-sm flex justify-between items-center">
+            <div>
+              <p className="text-xs text-gray-500">
+                {totalVisits} done visit{totalVisits === 1 ? "" : "s"} ·{" "}
+                {groups.length} customer{groups.length === 1 ? "" : "s"}
+              </p>
+              <p className="font-bold text-gray-900">{money(grandTotal)}</p>
             </div>
+            <span className="text-[10px] font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">
+              Unbilled
+            </span>
+          </div>
 
-            {groups.map((g) => (
-              <div key={g.customerId} className="bg-white rounded-lg p-3 shadow-sm space-y-2">
-                <div className="flex justify-between items-start">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {g.customerName ?? "—"}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {g.visits.length} visit{g.visits.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                  <p className="font-semibold text-gray-900 whitespace-nowrap">
-                    {money(g.total)}
+          {groups.map((g) => (
+            <div key={g.customerId} className="bg-white rounded-lg p-3 shadow-sm space-y-2">
+              <div className="flex justify-between items-start">
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-900 truncate">
+                    {g.customerName ?? "—"}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {g.visits.length} visit{g.visits.length === 1 ? "" : "s"}
                   </p>
                 </div>
-                <ul className="text-xs text-gray-500 divide-y">
-                  {g.visits.map((v) => (
-                    <li key={v.id} className="py-1 flex justify-between gap-2">
-                      <span className="truncate">
-                        {v.recurring_schedules?.service_type ?? "Lawn service"} ·{" "}
-                        {v.due_date}
-                      </span>
-                      <span className="whitespace-nowrap">
-                        {money(Number(v.recurring_schedules?.price_per_visit ?? 0))}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <p className="font-semibold text-gray-900 whitespace-nowrap">
+                  {money(g.total)}
+                </p>
               </div>
-            ))}
-
-            {noCustomerCount > 0 && (
-              <p className="text-xs text-amber-700">
-                {noCustomerCount} done visit{noCustomerCount === 1 ? "" : "s"}{" "}
-                skipped — no customer on the job. Assign a customer to bill them.
-              </p>
-            )}
-
-            <div className="pt-2">
-              <LawnCycleBillingButton />
-              <p className="text-[11px] text-gray-400 text-center mt-2">
-                Creates one invoice per customer with a line per visit; visits are
-                marked billed so they won&rsquo;t be invoiced again.
-              </p>
+              <ul className="text-xs text-gray-500 divide-y">
+                {g.visits.map((v) => (
+                  <li key={v.id} className="py-1 flex justify-between gap-2">
+                    <span className="truncate">
+                      {v.recurring_schedules?.service_type ?? "Lawn service"} ·{" "}
+                      {v.due_date}
+                    </span>
+                    <span className="whitespace-nowrap">
+                      {money(Number(v.recurring_schedules?.price_per_visit ?? 0))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </>
-        )}
-      </main>
-    </div>
+          ))}
+
+          {noCustomerCount > 0 && (
+            <p className="text-xs text-amber-700">
+              {noCustomerCount} done visit{noCustomerCount === 1 ? "" : "s"}{" "}
+              skipped — no customer on the job. Assign a customer to bill them.
+            </p>
+          )}
+
+          <div className="pt-2">
+            <LawnCycleBillingButton />
+            <p className="text-[11px] text-gray-400 text-center mt-2">
+              Creates one invoice per customer with a line per visit; visits are
+              marked billed so they won&rsquo;t be invoiced again.
+            </p>
+          </div>
+        </>
+      )}
+    </PageContainer>
   );
 }

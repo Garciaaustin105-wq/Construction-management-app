@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { useToast } from "@/components/Toast";
 import { Loader2, Save, Bell, MessageSquare, Mail } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
@@ -220,203 +220,199 @@ export default function LawnNotificationsPage() {
   })).filter((g) => g.rows.length > 0);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Notifications" backHref="/lawn" backLabel="Lawn" />
+    <PageContainer title="Notifications" backHref="/lawn" backLabel="Lawn" maxWidth="list">
+      {/* Global settings */}
+      <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+        <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+          <Bell className="w-4 h-4 text-green-600" />
+          Customer notifications
+        </h2>
+        <p className="text-xs text-gray-500">
+          Templated email &amp; text messages sent to customers at visit
+          milestones. Email works now; text (SMS) sends once Twilio is
+          configured. Per-customer opt-in is set on each customer.
+        </p>
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {/* Global settings */}
-        <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-            <Bell className="w-4 h-4 text-green-600" />
-            Customer notifications
-          </h2>
-          <p className="text-xs text-gray-500">
-            Templated email &amp; text messages sent to customers at visit
-            milestones. Email works now; text (SMS) sends once Twilio is
-            configured. Per-customer opt-in is set on each customer.
-          </p>
+        <label className="flex items-center justify-between gap-2 py-1">
+          <span className="text-sm font-medium text-gray-700">
+            Enable notifications
+          </span>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="w-5 h-5 rounded border-gray-300 text-green-600"
+          />
+        </label>
 
-          <label className="flex items-center justify-between gap-2 py-1">
-            <span className="text-sm font-medium text-gray-700">
-              Enable notifications
-            </span>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="w-5 h-5 rounded border-gray-300 text-green-600"
-            />
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Google review URL
           </label>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Google review URL
-            </label>
-            <input
-              type="url"
-              placeholder="https://g.page/your-business/review"
-              value={reviewUrl}
-              onChange={(e) => setReviewUrl(e.target.value)}
-              className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm"
-            />
-            <p className="text-[11px] text-gray-400 mt-1">
-              Used by the “Review request” template&rsquo;s <code>{`{{review_link}}`}</code>.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={saveSettings}
-            disabled={savingSettings}
-            className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {savingSettings ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Save className="w-4 h-4" />
-            )}
-            Save settings
-          </button>
+          <input
+            type="url"
+            placeholder="https://g.page/your-business/review"
+            value={reviewUrl}
+            onChange={(e) => setReviewUrl(e.target.value)}
+            className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm"
+          />
+          <p className="text-[11px] text-gray-400 mt-1">
+            Used by the “Review request” template&rsquo;s <code>{`{{review_link}}`}</code>.
+          </p>
         </div>
 
-        {/* Token legend */}
-        <div className="bg-gray-100 rounded-lg p-3 text-[11px] text-gray-500">
-          <p className="font-semibold text-gray-600 mb-0.5">Available tokens</p>
-          <p className="font-mono break-words">{TOKENS}</p>
-        </div>
+        <button
+          type="button"
+          onClick={saveSettings}
+          disabled={savingSettings}
+          className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {savingSettings ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Save className="w-4 h-4" />
+          )}
+          Save settings
+        </button>
+      </div>
 
-        {/* Templates grouped by event */}
-        {grouped.map((g) => (
-          <div key={g.event} className="space-y-2">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
-              {EVENT_LABEL[g.event] ?? g.event}
-            </h3>
-            <p className="text-[11px] text-gray-400 -mt-1">
-              {EVENT_HINT[g.event] ?? ""}
-            </p>
-            {g.rows.map((t) => {
-              const draft = drafts[t.id] ?? { subject: "", body: "" };
-              const dirty =
-                (t.channel === "email"
-                  ? (t.subject ?? "") !== draft.subject.trim()
-                  : false) || t.body !== draft.body;
-              // SMS isn't live yet — render a read-only "Coming soon" card and
-              // skip the editable controls so the office can't toggle/edit a
-              // channel that won't deliver.
-              if (t.channel === "sms" && !SMS_ENABLED) {
-                return (
-                  <div
-                    key={t.id}
-                    className="bg-white rounded-lg p-3 shadow-sm space-y-2 opacity-80"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
-                        <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
-                        Text (SMS)
-                      </span>
-                      <span className="text-[10px] font-semibold px-2 py-1 rounded bg-amber-100 text-amber-700">
-                        Coming soon
-                      </span>
-                    </div>
-                    <textarea
-                      readOnly
-                      value={draft.body}
-                      rows={2}
-                      className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono bg-gray-50 text-gray-400 cursor-not-allowed"
-                    />
-                    <p className="text-[11px] text-gray-400">
-                      Text messaging arrives once Twilio is configured.
-                    </p>
-                  </div>
-                );
-              }
+      {/* Token legend */}
+      <div className="bg-gray-100 rounded-lg p-3 text-[11px] text-gray-500">
+        <p className="font-semibold text-gray-600 mb-0.5">Available tokens</p>
+        <p className="font-mono break-words">{TOKENS}</p>
+      </div>
+
+      {/* Templates grouped by event */}
+      {grouped.map((g) => (
+        <div key={g.event} className="space-y-2">
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+            {EVENT_LABEL[g.event] ?? g.event}
+          </h3>
+          <p className="text-[11px] text-gray-400 -mt-1">
+            {EVENT_HINT[g.event] ?? ""}
+          </p>
+          {g.rows.map((t) => {
+            const draft = drafts[t.id] ?? { subject: "", body: "" };
+            const dirty =
+              (t.channel === "email"
+                ? (t.subject ?? "") !== draft.subject.trim()
+                : false) || t.body !== draft.body;
+            // SMS isn't live yet — render a read-only "Coming soon" card and
+            // skip the editable controls so the office can't toggle/edit a
+            // channel that won't deliver.
+            if (t.channel === "sms" && !SMS_ENABLED) {
               return (
                 <div
                   key={t.id}
-                  className={`bg-white rounded-lg p-3 shadow-sm space-y-2 ${
-                    t.active ? "" : "opacity-60"
-                  }`}
+                  className="bg-white rounded-lg p-3 shadow-sm space-y-2 opacity-80"
                 >
                   <div className="flex items-center justify-between">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
-                      {t.channel === "email" ? (
-                        <Mail className="w-3.5 h-3.5 text-gray-400" />
-                      ) : (
-                        <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
-                      )}
-                      {t.channel === "email" ? "Email" : "Text (SMS)"}
+                      <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
+                      Text (SMS)
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => toggleActive(t)}
-                      disabled={busyId === t.id}
-                      className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                        t.active
-                          ? "bg-green-100 text-green-700"
-                          : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      {t.active ? "Active" : "Inactive"}
-                    </button>
+                    <span className="text-[10px] font-semibold px-2 py-1 rounded bg-amber-100 text-amber-700">
+                      Coming soon
+                    </span>
                   </div>
-
-                  {t.channel === "email" && (
-                    <input
-                      type="text"
-                      placeholder="Email subject"
-                      value={draft.subject}
-                      onChange={(e) =>
-                        setDrafts((d) => ({
-                          ...d,
-                          [t.id]: { ...d[t.id], subject: e.target.value },
-                        }))
-                      }
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    />
-                  )}
                   <textarea
-                    placeholder="Message body"
+                    readOnly
                     value={draft.body}
+                    rows={2}
+                    className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono bg-gray-50 text-gray-400 cursor-not-allowed"
+                  />
+                  <p className="text-[11px] text-gray-400">
+                    Text messaging arrives once Twilio is configured.
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <div
+                key={t.id}
+                className={`bg-white rounded-lg p-3 shadow-sm space-y-2 ${
+                  t.active ? "" : "opacity-60"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
+                    {t.channel === "email" ? (
+                      <Mail className="w-3.5 h-3.5 text-gray-400" />
+                    ) : (
+                      <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
+                    )}
+                    {t.channel === "email" ? "Email" : "Text (SMS)"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => toggleActive(t)}
+                    disabled={busyId === t.id}
+                    className={`text-[10px] font-semibold px-2 py-1 rounded ${
+                      t.active
+                        ? "bg-green-100 text-green-700"
+                        : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {t.active ? "Active" : "Inactive"}
+                  </button>
+                </div>
+
+                {t.channel === "email" && (
+                  <input
+                    type="text"
+                    placeholder="Email subject"
+                    value={draft.subject}
                     onChange={(e) =>
                       setDrafts((d) => ({
                         ...d,
-                        [t.id]: { ...d[t.id], body: e.target.value },
+                        [t.id]: { ...d[t.id], subject: e.target.value },
                       }))
                     }
-                    rows={t.channel === "email" ? 5 : 2}
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   />
+                )}
+                <textarea
+                  placeholder="Message body"
+                  value={draft.body}
+                  onChange={(e) =>
+                    setDrafts((d) => ({
+                      ...d,
+                      [t.id]: { ...d[t.id], body: e.target.value },
+                    }))
+                  }
+                  rows={t.channel === "email" ? 5 : 2}
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                />
 
-                  <button
-                    type="button"
-                    onClick={() => saveTemplate(t)}
-                    disabled={savingId === t.id || !dirty}
-                    className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-40 flex items-center justify-center gap-2"
-                  >
-                    {savingId === t.id ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Save className="w-4 h-4" />
-                    )}
-                    Save template
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                <button
+                  type="button"
+                  onClick={() => saveTemplate(t)}
+                  disabled={savingId === t.id || !dirty}
+                  className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  {savingId === t.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  Save template
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
 
-        {templates.length === 0 && (
-          <div className="bg-white rounded-lg p-6 text-center">
-            <Bell className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-700">No templates yet</p>
-            <p className="text-xs text-gray-500 mt-1">
-              Run <code>customer_notifications.sql</code> in the Supabase SQL
-              editor to seed the default templates.
-            </p>
-          </div>
-        )}
-      </main>
-    </div>
+      {templates.length === 0 && (
+        <div className="bg-white rounded-lg p-6 text-center">
+          <Bell className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-gray-700">No templates yet</p>
+          <p className="text-xs text-gray-500 mt-1">
+            Run <code>customer_notifications.sql</code> in the Supabase SQL
+            editor to seed the default templates.
+          </p>
+        </div>
+      )}
+    </PageContainer>
   );
 }

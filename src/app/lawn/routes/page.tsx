@@ -2,13 +2,13 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { effectivePlan } from "@/lib/planGate";
 import { getLimits } from "@/lib/plans";
 import RouteMapPlanner from "@/components/RouteMapPlanner";
 import type { RouteStop, CrewInfo } from "@/lib/lawnRouting";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 // Office route planner: clusters the day's lawn visits into geographic zones
 // (from lawn_jobs map pins) + nearest-neighbor ordering, so a dispatcher can
@@ -106,49 +106,44 @@ export default async function LawnRoutesPage({
   const routeOptCap = getLimits(effectivePlan(me)).maxRouteOptsPerDay;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Route Planner" subtitle="Map + drag to order" />
-
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
+    <PageContainer
+      title="Route Planner"
+      subtitle="Map + drag to order"
+      maxWidth="list"
+      backHref="/lawn"
+      backLabel="Back to Lawn"
+    >
+      {/* Date nav */}
+      <div className="flex items-center justify-between bg-white rounded-lg p-2 shadow-sm">
         <Link
-          href="/lawn"
-          className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
+          href={`/lawn/routes?date=${shiftDate(date, -1)}`}
+          className="flex items-center gap-1 text-sm text-gray-700 font-medium px-2 py-1 rounded active:bg-gray-100"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to Lawn
+          <ChevronLeft className="w-4 h-4" /> Prev
         </Link>
-
-        {/* Date nav */}
-        <div className="flex items-center justify-between bg-white rounded-lg p-2 shadow-sm">
+        {date !== today ? (
           <Link
-            href={`/lawn/routes?date=${shiftDate(date, -1)}`}
-            className="flex items-center gap-1 text-sm text-gray-700 font-medium px-2 py-1 rounded active:bg-gray-100"
+            href="/lawn/routes"
+            className="text-sm text-green-700 font-semibold px-2 py-1 rounded active:bg-green-50"
           >
-            <ChevronLeft className="w-4 h-4" /> Prev
+            Today
           </Link>
-          {date !== today ? (
-            <Link
-              href="/lawn/routes"
-              className="text-sm text-green-700 font-semibold px-2 py-1 rounded active:bg-green-50"
-            >
-              Today
-            </Link>
-          ) : (
-            <span className="text-sm text-gray-400 font-medium px-2 py-1">
-              Today
-            </span>
-          )}
-          <Link
-            href={`/lawn/routes?date=${shiftDate(date, 1)}`}
-            className="flex items-center gap-1 text-sm text-gray-700 font-medium px-2 py-1 rounded active:bg-gray-100"
-          >
-            Next <ChevronRight className="w-4 h-4" />
-          </Link>
-        </div>
+        ) : (
+          <span className="text-sm text-gray-400 font-medium px-2 py-1">
+            Today
+          </span>
+        )}
+        <Link
+          href={`/lawn/routes?date=${shiftDate(date, 1)}`}
+          className="flex items-center gap-1 text-sm text-gray-700 font-medium px-2 py-1 rounded active:bg-gray-100"
+        >
+          Next <ChevronRight className="w-4 h-4" />
+        </Link>
+      </div>
 
-        {/* key={date} remounts the planner so local crew-assignment state
-            resets cleanly when the dispatcher changes days. */}
-        <RouteMapPlanner key={date} date={date} stops={stops} crews={crews} routeOptCap={routeOptCap} />
-      </main>
-    </div>
+      {/* key={date} remounts the planner so local crew-assignment state
+          resets cleanly when the dispatcher changes days. */}
+      <RouteMapPlanner key={date} date={date} stops={stops} crews={crews} routeOptCap={routeOptCap} />
+    </PageContainer>
   );
 }

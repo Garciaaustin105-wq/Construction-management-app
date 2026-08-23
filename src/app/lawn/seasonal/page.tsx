@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import SeasonalActions from "@/components/SeasonalActions";
 import { OFFICE_OR_PM } from "@/lib/roles";
@@ -96,77 +96,69 @@ export default async function SeasonalPage() {
   const today = todayISO();
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
-        title="Seasonal"
-        subtitle="Pause or reopen a customer's routes for the off-season"
-        backHref="/lawn"
-      />
-
-      <main className="max-w-md lg:max-w-2xl mx-auto p-4 space-y-4">
-        {customers.length === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={Snowflake}
-              title="No recurring schedules"
-              description="Customers with a recurring lawn schedule appear here so you can pause them for winter and reopen in spring."
-            />
-          </div>
-        ) : (
-          customers.map((c) => {
-            const total = c.activeCount + c.pausedCount;
-            const status =
-              c.pausedCount === 0
-                ? { label: "Active", chip: "bg-green-100 text-green-700" }
-                : c.activeCount === 0
-                  ? {
-                      label: "Paused for winter",
-                      chip: "bg-blue-100 text-blue-700",
-                    }
-                  : { label: "Mixed", chip: "bg-amber-100 text-amber-800" };
-            return (
-              <div
-                key={c.id}
-                className="bg-white rounded-lg p-4 shadow-sm space-y-3"
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {c.name}
+    <PageContainer title="Seasonal" subtitle="Pause or reopen a customer's routes for the off-season" backHref="/lawn" maxWidth="form">
+      {customers.length === 0 ? (
+        <div className="bg-white rounded-lg">
+          <EmptyState
+            icon={Snowflake}
+            title="No recurring schedules"
+            description="Customers with a recurring lawn schedule appear here so you can pause them for winter and reopen in spring."
+          />
+        </div>
+      ) : (
+        customers.map((c) => {
+          const total = c.activeCount + c.pausedCount;
+          const status =
+            c.pausedCount === 0
+              ? { label: "Active", chip: "bg-green-100 text-green-700" }
+              : c.activeCount === 0
+                ? {
+                    label: "Paused for winter",
+                    chip: "bg-blue-100 text-blue-700",
+                  }
+                : { label: "Mixed", chip: "bg-amber-100 text-amber-800" };
+          return (
+            <div
+              key={c.id}
+              className="bg-white rounded-lg p-4 shadow-sm space-y-3"
+            >
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-900 truncate">
+                    {c.name}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {c.activeCount} active · {c.pausedCount} paused · {total}{" "}
+                    total
+                  </p>
+                  {c.pausedCount > 0 && c.pausedUntil && (
+                    <p className="text-xs text-blue-600 font-medium">
+                      Auto-resumes {c.pausedUntil}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {c.activeCount} active · {c.pausedCount} paused · {total}{" "}
-                      total
-                    </p>
-                    {c.pausedCount > 0 && c.pausedUntil && (
-                      <p className="text-xs text-blue-600 font-medium">
-                        Auto-resumes {c.pausedUntil}
-                      </p>
-                    )}
-                  </div>
-                  <span
-                    className={`text-[10px] font-semibold px-2 py-1 rounded whitespace-nowrap ${status.chip}`}
-                  >
-                    {status.label}
-                  </span>
+                  )}
                 </div>
-
-                {/* Per-customer pause/reopen. min pause date defaults to today
-                    (you can't pause the past); reopen starts the service
-                    window fresh. */}
-                <SeasonalActions
-                  customerId={c.id}
-                  customerName={c.name}
-                  activeCount={c.activeCount}
-                  pausedCount={c.pausedCount}
-                  pausedUntil={c.pausedUntil}
-                  today={today}
-                />
+                <span
+                  className={`text-[10px] font-semibold px-2 py-1 rounded whitespace-nowrap ${status.chip}`}
+                >
+                  {status.label}
+                </span>
               </div>
-            );
-          })
-        )}
-      </main>
-    </div>
+
+              {/* Per-customer pause/reopen. min pause date defaults to today
+                  (you can't pause the past); reopen starts the service
+                  window fresh. */}
+              <SeasonalActions
+                customerId={c.id}
+                customerName={c.name}
+                activeCount={c.activeCount}
+                pausedCount={c.pausedCount}
+                pausedUntil={c.pausedUntil}
+                today={today}
+              />
+            </div>
+          );
+        })
+      )}
+    </PageContainer>
   );
 }

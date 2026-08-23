@@ -2,13 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import { useToast } from "@/components/Toast";
 import { Play, Square, Loader2, MapPin, Clock, Trash2, AlertCircle } from "lucide-react";
 import { resolveLocation, type GpsResult, type GpsStatus, type GpsSource } from "@/lib/geo";
 import { isLawn } from "@/lib/variant";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
-import StatusBadge from "@/components/StatusBadge";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+
+// Time-entry review status -> badge tone (was the legacy StatusBadge palette).
+const TIME_STATUS_TONE: Record<string, BadgeTone> = {
+  pending: "warning",
+  approved: "success",
+  rejected: "danger",
+};
 
 type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
@@ -200,215 +207,212 @@ export default function CrewTimePage() {
   const elapsed = openEntry ? now - new Date(openEntry.clock_in_at).getTime() : 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Time Clock" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="w-7 h-7 animate-spin text-gray-400" />
+    <PageContainer title="Time Clock" maxWidth="list">
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-7 h-7 animate-spin text-gray-400" />
+        </div>
+      ) : openEntry ? (
+        /* ---- Clocked in: show the live timer + clock out ---- */
+        <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+          <div className="flex items-center gap-2 text-green-700">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-sm font-semibold uppercase">On the clock</span>
           </div>
-        ) : openEntry ? (
-          /* ---- Clocked in: show the live timer + clock out ---- */
-          <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
-            <div className="flex items-center gap-2 text-green-700">
-              <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-sm font-semibold uppercase">On the clock</span>
-            </div>
-            <div className="text-center py-2">
-              <p className="font-mono text-4xl font-bold tabular-nums text-gray-900">
-                {fmtDuration(elapsed)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                Since {new Date(openEntry.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </p>
-            </div>
-            <div className="text-sm text-gray-700 space-y-0.5">
-              <p className="font-medium truncate">{jobNameById[openEntry.job_id] ?? "—"}</p>
-              {openEntry.cost_code_id && (
-                <p className="text-xs text-gray-500 truncate">
-                  {codeLabelById[openEntry.cost_code_id]}
-                </p>
-              )}
-              {openEntry.note && <p className="text-xs text-gray-500">{openEntry.note}</p>}
-              {typeof openEntry.lat === "number" && typeof openEntry.lng === "number" && (
-                <a
-                  href={`https://www.google.com/maps?q=${openEntry.lat},${openEntry.lng}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`inline-flex items-center gap-1 text-xs hover:underline mt-1 ${
-                    openEntry.location_source === "ip" ? "text-amber-600" : "text-blue-600"
-                  }`}
-                >
-                  <MapPin className="w-3 h-3" />
-                  {openEntry.location_source === "ip"
-                    ? `Clocked in (approx) at ${openEntry.lat.toFixed(3)}, ${openEntry.lng.toFixed(3)}`
-                    : `Clocked in at ${openEntry.lat.toFixed(4)}, ${openEntry.lng.toFixed(4)}`}
-                </a>
-              )}
-            </div>
-            <button
-              onClick={clockOut}
-              disabled={busy}
-              className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold active:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
-              Clock Out
-            </button>
+          <div className="text-center py-2">
+            <p className="font-mono text-4xl font-bold tabular-nums text-gray-900">
+              {fmtDuration(elapsed)}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Since {new Date(openEntry.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </p>
           </div>
-        ) : (
-          /* ---- Clocked out: clock-in form ---- */
-          <form onSubmit={clockIn} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
-            <label className="block">
-              <span className="text-sm font-medium text-gray-700">Job</span>
-              <select
-                value={jobId}
-                onChange={(e) => setJobId(e.target.value)}
-                required
-                className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+          <div className="text-sm text-gray-700 space-y-0.5">
+            <p className="font-medium truncate">{jobNameById[openEntry.job_id] ?? "—"}</p>
+            {openEntry.cost_code_id && (
+              <p className="text-xs text-gray-500 truncate">
+                {codeLabelById[openEntry.cost_code_id]}
+              </p>
+            )}
+            {openEntry.note && <p className="text-xs text-gray-500">{openEntry.note}</p>}
+            {typeof openEntry.lat === "number" && typeof openEntry.lng === "number" && (
+              <a
+                href={`https://www.google.com/maps?q=${openEntry.lat},${openEntry.lng}`}
+                target="_blank"
+                rel="noreferrer"
+                className={`inline-flex items-center gap-1 text-xs hover:underline mt-1 ${
+                  openEntry.location_source === "ip" ? "text-amber-600" : "text-blue-600"
+                }`}
               >
-                <option value="">Select job</option>
-                {jobs.map((j) => (
-                  <option key={j.id} value={j.id}>{j.name}</option>
+                <MapPin className="w-3 h-3" />
+                {openEntry.location_source === "ip"
+                  ? `Clocked in (approx) at ${openEntry.lat.toFixed(3)}, ${openEntry.lng.toFixed(3)}`
+                  : `Clocked in at ${openEntry.lat.toFixed(4)}, ${openEntry.lng.toFixed(4)}`}
+              </a>
+            )}
+          </div>
+          <button
+            onClick={clockOut}
+            disabled={busy}
+            className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold active:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
+            Clock Out
+          </button>
+        </div>
+      ) : (
+        /* ---- Clocked out: clock-in form ---- */
+        <form onSubmit={clockIn} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Job</span>
+            <select
+              value={jobId}
+              onChange={(e) => setJobId(e.target.value)}
+              required
+              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+            >
+              <option value="">Select job</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>{j.name}</option>
+              ))}
+            </select>
+          </label>
+
+          {!isLawn() && (
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">Cost code (optional)</span>
+              <select
+                value={costCodeId}
+                onChange={(e) => setCostCodeId(e.target.value)}
+                className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white"
+              >
+                <option value="">No code</option>
+                {costCodes.map((c) => (
+                  <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
                 ))}
               </select>
             </label>
+          )}
 
-            {!isLawn() && (
-              <label className="block">
-                <span className="text-sm font-medium text-gray-700">Cost code (optional)</span>
-                <select
-                  value={costCodeId}
-                  onChange={(e) => setCostCodeId(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white"
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700">Note (optional)</span>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="What are you working on?"
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
+            />
+          </label>
+
+          {/* Location — auto-captured on page open */}
+          <div className="text-xs space-y-1.5">
+            {gpsStatus === "ok" && gps ? (
+              <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded">
+                <MapPin className="w-3.5 h-3.5" />
+                Location tagged · {gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}
+                {gps.accuracy ? ` (±${Math.round(gps.accuracy)}m)` : ""}
+              </span>
+            ) : gpsStatus === "ip" && gps ? (
+              <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                <MapPin className="w-3.5 h-3.5" />
+                Approximate location (network) · {gps.lat.toFixed(3)}, {gps.lng.toFixed(3)}
+              </span>
+            ) : gpsStatus === "getting" ? (
+              <span className="inline-flex items-center gap-1 text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Getting location…
+              </span>
+            ) : gpsStatus === "denied" || gpsStatus === "unavailable" ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 space-y-1.5">
+                <p className="flex items-center gap-1.5 text-amber-800 font-medium">
+                  <AlertCircle className="w-4 h-4" />
+                  Location is off — clock-in pin will be blank
+                </p>
+                <p className="text-amber-700">
+                  Enable location in your phone/browser settings to record
+                  exactly where you clocked in.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGpsStatus("getting");
+                    getLocation();
+                  }}
+                  className="inline-flex items-center gap-1 text-amber-900 font-semibold underline"
                 >
-                  <option value="">No code</option>
-                  {costCodes.map((c) => (
-                    <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <label className="block">
-              <span className="text-sm font-medium text-gray-700">Note (optional)</span>
-              <input
-                type="text"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="What are you working on?"
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base"
-              />
-            </label>
-
-            {/* Location — auto-captured on page open */}
-            <div className="text-xs space-y-1.5">
-              {gpsStatus === "ok" && gps ? (
-                <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 px-2 py-1 rounded">
                   <MapPin className="w-3.5 h-3.5" />
-                  Location tagged · {gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}
-                  {gps.accuracy ? ` (±${Math.round(gps.accuracy)}m)` : ""}
-                </span>
-              ) : gpsStatus === "ip" && gps ? (
-                <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded">
-                  <MapPin className="w-3.5 h-3.5" />
-                  Approximate location (network) · {gps.lat.toFixed(3)}, {gps.lng.toFixed(3)}
-                </span>
-              ) : gpsStatus === "getting" ? (
-                <span className="inline-flex items-center gap-1 text-gray-500">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Getting location…
-                </span>
-              ) : gpsStatus === "denied" || gpsStatus === "unavailable" ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 space-y-1.5">
-                  <p className="flex items-center gap-1.5 text-amber-800 font-medium">
-                    <AlertCircle className="w-4 h-4" />
-                    Location is off — clock-in pin will be blank
-                  </p>
-                  <p className="text-amber-700">
-                    Enable location in your phone/browser settings to record
-                    exactly where you clocked in.
-                  </p>
+                  Try again
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-base active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
+            Clock In
+          </button>
+        </form>
+      )}
+
+      {/* Recent entries */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
+          <Clock className="w-4 h-4" />
+          Recent Shifts
+        </h2>
+        {recent.length === 0 ? (
+          <div className="bg-white rounded-lg p-6 text-center">
+            <p className="text-sm text-gray-500">No past shifts yet</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
+            {recent.map((e) => {
+              const dur = new Date(e.clock_out_at!).getTime() - new Date(e.clock_in_at).getTime();
+              return (
+                <div key={e.id} className="p-3 flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {jobNameById[e.job_id] ?? "—"}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(e.clock_in_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}
+                      {new Date(e.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {" → "}
+                      {new Date(e.clock_out_at!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                    {e.cost_code_id && (
+                      <p className="text-xs text-blue-600 truncate">{codeLabelById[e.cost_code_id]}</p>
+                    )}
+                  </div>
+                  <span className="font-mono text-sm font-semibold text-gray-700 tabular-nums">
+                    {fmtDuration(dur)}
+                  </span>
+                  {e.status && e.status !== "pending" && (
+                    <StatusBadge tone={TIME_STATUS_TONE[e.status] ?? "neutral"}>{e.status.replace("_", " ")}</StatusBadge>
+                  )}
+                  <TimeEntryEditModal
+                    entry={e}
+                    jobs={jobs}
+                    costCodes={costCodes}
+                    variant={isLawn() ? "lawn" : "construction"}
+                  />
                   <button
-                    type="button"
-                    onClick={() => {
-                      setGpsStatus("getting");
-                      getLocation();
-                    }}
-                    className="inline-flex items-center gap-1 text-amber-900 font-semibold underline"
+                    onClick={() => removeEntry(e)}
+                    className="text-red-600 p-1.5 rounded hover:bg-red-50 flex-shrink-0"
+                    title="Delete entry"
                   >
-                    <MapPin className="w-3.5 h-3.5" />
-                    Try again
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
-              ) : null}
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-base active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-              Clock In
-            </button>
-          </form>
+              );
+            })}
+          </div>
         )}
-
-        {/* Recent entries */}
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-1">
-            <Clock className="w-4 h-4" />
-            Recent Shifts
-          </h2>
-          {recent.length === 0 ? (
-            <div className="bg-white rounded-lg p-6 text-center">
-              <p className="text-sm text-gray-500">No past shifts yet</p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
-              {recent.map((e) => {
-                const dur = new Date(e.clock_out_at!).getTime() - new Date(e.clock_in_at).getTime();
-                return (
-                  <div key={e.id} className="p-3 flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {jobNameById[e.job_id] ?? "—"}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {new Date(e.clock_in_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}
-                        {new Date(e.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        {" → "}
-                        {new Date(e.clock_out_at!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                      {e.cost_code_id && (
-                        <p className="text-xs text-blue-600 truncate">{codeLabelById[e.cost_code_id]}</p>
-                      )}
-                    </div>
-                    <span className="font-mono text-sm font-semibold text-gray-700 tabular-nums">
-                      {fmtDuration(dur)}
-                    </span>
-                    {e.status && e.status !== "pending" && (
-                      <StatusBadge status={e.status} />
-                    )}
-                    <TimeEntryEditModal
-                      entry={e}
-                      jobs={jobs}
-                      costCodes={costCodes}
-                      variant={isLawn() ? "lawn" : "construction"}
-                    />
-                    <button
-                      onClick={() => removeEntry(e)}
-                      className="text-red-600 p-1.5 rounded hover:bg-red-50 flex-shrink-0"
-                      title="Delete entry"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
+      </section>
+    </PageContainer>
   );
 }

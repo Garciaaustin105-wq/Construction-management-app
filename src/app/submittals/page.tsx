@@ -1,11 +1,15 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
 import { FIELD_MGMT, type Role } from "@/lib/roles";
 import Link from "next/link";
 import { Plus, FileText, Download } from "lucide-react";
 import SubmittalFilters from "@/components/SubmittalFilters";
+import PageContainer from "@/components/PageContainer";
+import { LinkButton } from "@/components/ui/Button";
+import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -19,17 +23,38 @@ type Row = {
   jobs: { name: string } | null;
 };
 
-function statusCls(s: string): string {
-  if (s === "closed") return "bg-green-100 text-green-700";
-  if (s === "returned") return "bg-amber-100 text-amber-800";
-  if (s === "submitted") return "bg-blue-100 text-blue-600";
-  return "bg-gray-100 text-gray-600";
+// Submittal status → badge tone. Mirrors the previous statusCls(): closed
+// green, returned amber, submitted blue, everything else gray.
+const STATUS_TONE: Record<string, BadgeTone> = {
+  closed: "success",
+  returned: "warning",
+  submitted: "brand",
+  draft: "neutral",
+};
+
+type SubmittalView = {
+  id: string;
+  submittalNumber: string | null;
+  title: string;
+  jobName: string;
+  csiSection: string;
+  status: string;
+  ballInCourt: string;
+  createdAt: string;
+};
+
+const MODES: ViewMode[] = ["cards", "table"];
+
+// The ball-in-court pill was indigo-on-architect / gray otherwise. `brand` is
+// the closest tone in the shared palette; office stays neutral.
+function courtLabel(v: string): string {
+  return v === "architect" ? "Architect" : "Office";
 }
 
 export default async function SubmittalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string; status?: string }>;
+  searchParams: Promise<{ job?: string; status?: string; view?: string }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -43,6 +68,8 @@ export default async function SubmittalsPage({
   const sp = await searchParams;
   const jobFilter = sp.job ?? "";
   const statusFilter = sp.status ?? "";
+  const rawView = sp.view as ViewMode | undefined;
+  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: jobs } = await supabase
     .from("jobs")
@@ -58,89 +85,134 @@ export default async function SubmittalsPage({
   if (jobFilter) q = q.eq("job_id", jobFilter);
   if (statusFilter) q = q.eq("status", statusFilter);
   const { data: rowsRaw } = await q;
-  const rows = (rowsRaw ?? []) as unknown as Row[];
+  const rows: SubmittalView[] = ((rowsRaw ?? []) as unknown as Row[]).map((r) => ({
+    id: r.id,
+    submittalNumber: r.submittal_number,
+    title: r.title,
+    jobName: r.jobs?.name ?? "",
+    csiSection: r.csi_section ?? "",
+    status: r.status,
+    ballInCourt: r.ball_in_court,
+    createdAt: r.created_at,
+  }));
 
   const exportHref = `/api/reports/submittals?${jobFilter ? `job=${jobFilter}` : ""}${
     statusFilter ? `&status=${statusFilter}` : ""
   }`.replace(/^\/api\/reports\/submittals\?&/, "/api/reports/submittals?");
 
+  const columns: Column<SubmittalView>[] = [
+    {
+      key: "title",
+      header: "Submittal",
+      cell: (r) => (
+        <span className="font-medium text-gray-900">
+          {r.submittalNumber ? `${r.submittalNumber} · ` : ""}
+          {r.title}
+        </span>
+      ),
+    },
+    { key: "job", header: "Job", cell: (r) => r.jobName || "—" },
+    { key: "csi", header: "CSI", hideOnMobile: true, cell: (r) => r.csiSection || "—" },
+    {
+      key: "status",
+      header: "Status",
+      cell: (r) => (
+        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
+      ),
+    },
+    {
+      key: "court",
+      header: "Ball in court",
+      hideOnMobile: true,
+      cell: (r) => (
+        <StatusBadge tone={r.ballInCourt === "architect" ? "brand" : "neutral"}>
+          {courtLabel(r.ballInCourt)}
+        </StatusBadge>
+      ),
+    },
+    {
+      key: "date",
+      header: "Created",
+      hideOnMobile: true,
+      cell: (r) => new Date(r.createdAt).toLocaleDateString(),
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Submittals" subtitle="Submittal log & review" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        <SubmittalFilters
-          jobs={jobs ?? []}
-          currentJob={jobFilter}
-          currentStatus={statusFilter}
-        />
-        {canCreate && (
-          <Link
-            href="/submittals/new"
-            className="block bg-blue-600 text-white text-center py-3 rounded-lg font-semibold active:bg-blue-700 flex items-center justify-center gap-2"
-          >
-            <Plus className="w-5 h-5" /> New Submittal
-          </Link>
-        )}
-        {rows.length === 0 ? (
-          <div className="bg-white rounded-lg p-6 text-center">
-            <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-700">No submittals yet</p>
-            <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-              Track submittals to architects, owners, and reviewers.
-            </p>
+    <PageContainer title="Submittals" subtitle="Submittal log & review" maxWidth="list">
+      <ListToolbar
+        modes={MODES}
+        defaultMode="cards"
+        count={rows.length}
+        action={
+          canCreate ? (
+            <LinkButton href="/submittals/new">
+              <Plus className="w-4 h-4" />
+              New
+            </LinkButton>
+          ) : undefined
+        }
+        filters={
+          <div className="w-full">
+            <SubmittalFilters
+              jobs={jobs ?? []}
+              currentJob={jobFilter}
+              currentStatus={statusFilter}
+            />
           </div>
-        ) : (
-          <div className="space-y-2">
-            {rows.map((r) => (
-              <Link
-                key={r.id}
-                href={`/submittals/${r.id}`}
-                className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {r.submittal_number ? `${r.submittal_number} · ` : ""}
-                      {r.title}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {r.jobs?.name ?? ""}
-                      {r.csi_section ? ` · ${r.csi_section}` : ""}
-                      {` · ${new Date(r.created_at).toLocaleDateString()}`}
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <span
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${statusCls(
-                        r.status
-                      )}`}
-                    >
-                      {r.status}
-                    </span>
-                    <span
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                        r.ball_in_court === "architect"
-                          ? "bg-indigo-100 text-indigo-700"
-                          : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {r.ball_in_court === "architect" ? "Architect" : "Office"}
-                    </span>
-                  </div>
+        }
+      />
+
+      {rows.length === 0 ? (
+        <div className="bg-surface rounded-lg border border-line shadow-sm p-6 text-center">
+          <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-gray-900">No submittals yet</p>
+          <p className="text-xs text-muted mt-1 max-w-xs mx-auto">
+            Track submittals to architects, owners, and reviewers.
+          </p>
+        </div>
+      ) : view === "table" ? (
+        <DataTable columns={columns} rows={rows} rowHref={(r) => `/submittals/${r.id}`} />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <Link
+              key={r.id}
+              href={`/submittals/${r.id}`}
+              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
+            >
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-gray-900 truncate">
+                    {r.submittalNumber ? `${r.submittalNumber} · ` : ""}
+                    {r.title}
+                  </p>
+                  <p className="text-xs text-muted truncate">
+                    {r.jobName}
+                    {r.csiSection ? ` · ${r.csiSection}` : ""}
+                    {` · ${new Date(r.createdAt).toLocaleDateString()}`}
+                  </p>
                 </div>
-              </Link>
-            ))}
-          </div>
-        )}
-        {rows.length > 0 && (
-          <Link
-            href={exportHref}
-            className="block bg-white border border-gray-300 text-gray-800 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-2"
-          >
-            <Download className="w-4 h-4" /> Export Excel
-          </Link>
-        )}
-      </main>
-    </div>
+                <div className="flex flex-col items-end gap-1">
+                  <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
+                  <StatusBadge tone={r.ballInCourt === "architect" ? "brand" : "neutral"}>
+                    {courtLabel(r.ballInCourt)}
+                  </StatusBadge>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <Link
+          href={exportHref}
+          className="flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-800 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50"
+        >
+          <Download className="w-4 h-4" /> Export Excel
+        </Link>
+      )}
+    </PageContainer>
   );
 }

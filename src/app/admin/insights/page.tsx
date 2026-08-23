@@ -7,7 +7,7 @@ import { getMe, type MyTenant } from "@/lib/tenant";
 import { getOrgBilling } from "@/lib/billing";
 import { formatMoney } from "@/lib/money";
 import { startOfWeek, addDays, toISODate, hoursFromMs } from "@/lib/weekUtils";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import KpiTile from "@/components/charts/KpiTile";
 import BarChart, { type BarDatum } from "@/components/charts/BarChart";
 import {
@@ -145,21 +145,18 @@ export default async function ConstructionInsightsPage() {
   // (an empty `.in()` filter is undefined behavior in PostgREST).
   if (jobIds.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-        <TopBar title="Insights" subtitle="Construction command center" />
-        <main className="max-w-md lg:max-w-6xl mx-auto p-4 space-y-4">
-          <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-blue-700 font-semibold">
-            <ArrowLeft className="w-4 h-4" /> Back to Dashboard
-          </Link>
-          <div className="bg-white rounded-lg p-8 shadow-sm text-center">
-            <Briefcase className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-700">No construction jobs yet.</p>
-            <p className="text-xs text-gray-400 mt-1">
-              Insights appear once you have jobs with estimates, invoices, or crew time.
-            </p>
-          </div>
-        </main>
-      </div>
+    <PageContainer title="Insights" subtitle="Construction command center" maxWidth="wide">
+        <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-blue-700 font-semibold">
+          <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+        </Link>
+        <div className="bg-white rounded-lg p-8 shadow-sm text-center">
+          <Briefcase className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-gray-700">No construction jobs yet.</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Insights appear once you have jobs with estimates, invoices, or crew time.
+          </p>
+        </div>
+    </PageContainer>
     );
   }
 
@@ -337,202 +334,199 @@ export default async function ConstructionInsightsPage() {
   const moneyAxis = (n: number) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Insights" subtitle="Construction command center" />
-      <main className="max-w-md lg:max-w-6xl mx-auto p-4 space-y-4">
-        <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-blue-700 font-semibold">
-          <ArrowLeft className="w-4 h-4" /> Back to Dashboard
-        </Link>
+    <PageContainer title="Insights" subtitle="Construction command center" maxWidth="wide">
+      <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-blue-700 font-semibold">
+        <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+      </Link>
 
-        {/* Plan banner */}
-        <div className="bg-white rounded-lg p-4 shadow-sm flex items-center gap-3">
-          <span className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-blue-700" />
-          </span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-gray-900">
-              {planLabel}
-              {planStatusLabel ? (
-                <span className="ml-2 text-[11px] uppercase tracking-wide text-gray-400 font-medium">{planStatusLabel}</span>
-              ) : null}
-            </p>
-            <p className="text-xs text-gray-500">
-              Monthly plan {formatMoney(mrr)} · {activeJobs} active job{activeJobs === 1 ? "" : "s"} · {jobs.length} total
+      {/* Plan banner */}
+      <div className="bg-white rounded-lg p-4 shadow-sm flex items-center gap-3">
+        <span className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+          <Sparkles className="w-5 h-5 text-blue-700" />
+        </span>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-gray-900">
+            {planLabel}
+            {planStatusLabel ? (
+              <span className="ml-2 text-[11px] uppercase tracking-wide text-gray-400 font-medium">{planStatusLabel}</span>
+            ) : null}
+          </p>
+          <p className="text-xs text-gray-500">
+            Monthly plan {formatMoney(mrr)} · {activeJobs} active job{activeJobs === 1 ? "" : "s"} · {jobs.length} total
+          </p>
+        </div>
+      </div>
+
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+        <KpiTile label="Outstanding A/R" value={formatMoney(outstandingAR)} icon={Receipt} />
+        <KpiTile label="Overdue A/R" value={formatMoney(overdueAR)} icon={AlertTriangle} tone={overdueAR > 0 ? "red" : "default"} />
+        <KpiTile label="Collected (mo)" value={formatMoney(collected)} icon={DollarSign} tone="green" />
+        <KpiTile label="Pipeline value" value={formatMoney(pipeline.value)} icon={FileText} sub={`${pipeline.count} active`} />
+        <KpiTile label="Active jobs" value={String(activeJobs)} icon={Briefcase} tone="blue" />
+        <KpiTile label="Crew hrs (wk)" value={crewHoursThisWeek.toFixed(1)} icon={Clock} />
+        <KpiTile label="Open change orders" value={String(openCOs.length)} icon={GitBranch} sub={formatMoney(openCOValue)} />
+        <KpiTile
+          label="Projected gross margin"
+          value={`${projectedGrossMarginPct.toFixed(1)}%`}
+          icon={TrendingUp}
+          tone={projectedGrossMarginPct > 0 ? "green" : projectedGrossMarginPct < 0 ? "red" : "default"}
+          sub={formatMoney(totalProjectedMargin)}
+        />
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <ChartCard title="Revenue collected per month" subtitle="Last 12 months (paid invoices)">
+          <BarChart data={revenueByMonth} formatValue={moneyAxis} showTotals emptyText="No paid invoices yet" />
+        </ChartCard>
+
+        <ChartCard title="A/R aging" subtitle="Open invoice balances by days past due">
+          <BarChart data={agingBars} formatValue={moneyAxis} showTotals emptyText="No open invoices" />
+        </ChartCard>
+
+        <ChartCard title="Invoices by status" subtitle="Construction invoices (last 13 mo)">
+          <BarChart data={invoicesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
+        </ChartCard>
+
+        <ChartCard title="Estimates by status" subtitle="All construction estimates">
+          <BarChart data={estimatesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
+        </ChartCard>
+
+        <ChartCard title="Crew hours per crew" subtitle="All construction jobs, top 6">
+          <BarChart data={crewBars} formatValue={(n) => `${Math.round(n)}h`} showTotals emptyText="No time clocked yet" />
+        </ChartCard>
+
+        <ChartCard title="Top jobs by projected margin" subtitle="Estimate contract − estimated cost">
+          <BarChart data={topJobsBars} formatValue={moneyAxis} showTotals emptyText="No estimates yet" />
+        </ChartCard>
+      </div>
+
+      {/* Per-job profitability table — the headline */}
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+        <div className="p-4 pb-2">
+          <p className="text-sm font-semibold text-gray-900">Job profitability</p>
+          <p className="text-[11px] text-gray-400">
+            Contract = latest estimate + approved change orders · Est cost = internal cost (or sell price fallback) ·
+            Actual = closed crew hours × labor rate + receipts
+          </p>
+        </div>
+        {profitRows.length === 0 ? (
+          <div className="p-6 text-center">
+            <p className="text-sm text-gray-500">No jobs with estimates yet.</p>
+            <p className="text-xs text-gray-400 mt-1">
+              Create an estimate for a job to see projected margin here.
             </p>
           </div>
-        </div>
-
-        {/* KPI tiles */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-          <KpiTile label="Outstanding A/R" value={formatMoney(outstandingAR)} icon={Receipt} />
-          <KpiTile label="Overdue A/R" value={formatMoney(overdueAR)} icon={AlertTriangle} tone={overdueAR > 0 ? "red" : "default"} />
-          <KpiTile label="Collected (mo)" value={formatMoney(collected)} icon={DollarSign} tone="green" />
-          <KpiTile label="Pipeline value" value={formatMoney(pipeline.value)} icon={FileText} sub={`${pipeline.count} active`} />
-          <KpiTile label="Active jobs" value={String(activeJobs)} icon={Briefcase} tone="blue" />
-          <KpiTile label="Crew hrs (wk)" value={crewHoursThisWeek.toFixed(1)} icon={Clock} />
-          <KpiTile label="Open change orders" value={String(openCOs.length)} icon={GitBranch} sub={formatMoney(openCOValue)} />
-          <KpiTile
-            label="Projected gross margin"
-            value={`${projectedGrossMarginPct.toFixed(1)}%`}
-            icon={TrendingUp}
-            tone={projectedGrossMarginPct > 0 ? "green" : projectedGrossMarginPct < 0 ? "red" : "default"}
-            sub={formatMoney(totalProjectedMargin)}
-          />
-        </div>
-
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <ChartCard title="Revenue collected per month" subtitle="Last 12 months (paid invoices)">
-            <BarChart data={revenueByMonth} formatValue={moneyAxis} showTotals emptyText="No paid invoices yet" />
-          </ChartCard>
-
-          <ChartCard title="A/R aging" subtitle="Open invoice balances by days past due">
-            <BarChart data={agingBars} formatValue={moneyAxis} showTotals emptyText="No open invoices" />
-          </ChartCard>
-
-          <ChartCard title="Invoices by status" subtitle="Construction invoices (last 13 mo)">
-            <BarChart data={invoicesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
-          </ChartCard>
-
-          <ChartCard title="Estimates by status" subtitle="All construction estimates">
-            <BarChart data={estimatesByStatus} formatValue={(n) => String(Math.round(n))} showTotals />
-          </ChartCard>
-
-          <ChartCard title="Crew hours per crew" subtitle="All construction jobs, top 6">
-            <BarChart data={crewBars} formatValue={(n) => `${Math.round(n)}h`} showTotals emptyText="No time clocked yet" />
-          </ChartCard>
-
-          <ChartCard title="Top jobs by projected margin" subtitle="Estimate contract − estimated cost">
-            <BarChart data={topJobsBars} formatValue={moneyAxis} showTotals emptyText="No estimates yet" />
-          </ChartCard>
-        </div>
-
-        {/* Per-job profitability table — the headline */}
-        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-          <div className="p-4 pb-2">
-            <p className="text-sm font-semibold text-gray-900">Job profitability</p>
-            <p className="text-[11px] text-gray-400">
-              Contract = latest estimate + approved change orders · Est cost = internal cost (or sell price fallback) ·
-              Actual = closed crew hours × labor rate + receipts
-            </p>
-          </div>
-          {profitRows.length === 0 ? (
-            <div className="p-6 text-center">
-              <p className="text-sm text-gray-500">No jobs with estimates yet.</p>
-              <p className="text-xs text-gray-400 mt-1">
-                Create an estimate for a job to see projected margin here.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-gray-50 text-gray-500">
-                  <tr>
-                    <th className="text-left font-semibold px-3 py-2">Job</th>
-                    <th className="text-right font-semibold px-3 py-2">Contract</th>
-                    <th className="text-right font-semibold px-3 py-2">Est cost</th>
-                    <th className="text-right font-semibold px-3 py-2">Actual labor</th>
-                    <th className="text-right font-semibold px-3 py-2">Material</th>
-                    <th className="text-right font-semibold px-3 py-2">Proj. margin</th>
-                    <th className="text-right font-semibold px-3 py-2">Margin %</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {profitRows.slice(0, 12).map(({ job, p }) => {
-                    const neg = p.projectedMargin < -0.005;
-                    const pos = p.projectedMargin > 0.005;
-                    return (
-                      <tr key={job.id}>
-                        <td className="px-3 py-2">
-                          <Link href={`/jobs/${job.id}`} className="font-medium text-gray-900 hover:underline">
-                            {job.name || "Untitled"}
-                          </Link>
-                          <div className="text-[10px] text-gray-400 truncate max-w-[12rem]">
-                            {job.customers?.name ?? "—"}
-                          </div>
-                          <div className="flex gap-1 mt-0.5">
-                            {p.laborRateMissing && p.actualLaborHours > 0 && (
-                              <span className="text-[9px] uppercase tracking-wide bg-amber-100 text-amber-700 rounded px-1">
-                                Rate not set
-                              </span>
-                            )}
-                            {!p.hasInternalCost && (
-                              <span className="text-[9px] uppercase tracking-wide bg-gray-100 text-gray-500 rounded px-1">
-                                No internal cost
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="text-right px-3 py-2 tabular-nums">{formatMoney(p.contractValue)}</td>
-                        <td className="text-right px-3 py-2 tabular-nums">{formatMoney(p.estimatedCost)}</td>
-                        <td className="text-right px-3 py-2 tabular-nums">
-                          {p.laborRateMissing
-                            ? p.actualLaborHours > 0
-                              ? `${p.actualLaborHours.toFixed(1)}h`
-                              : "—"
-                            : formatMoney(p.actualLaborCost)}
-                        </td>
-                        <td className="text-right px-3 py-2 tabular-nums">{formatMoney(p.actualMaterialCost)}</td>
-                        <td
-                          className={`text-right px-3 py-2 tabular-nums font-semibold ${
-                            neg ? "text-red-600" : pos ? "text-green-600" : "text-gray-400"
-                          }`}
-                        >
-                          {formatMoney(p.projectedMargin)}
-                        </td>
-                        <td
-                          className={`text-right px-3 py-2 tabular-nums font-semibold ${
-                            neg ? "text-red-600" : pos ? "text-green-600" : "text-gray-400"
-                          }`}
-                        >
-                          {p.contractValue > 0 ? `${p.projectedMarginPct.toFixed(1)}%` : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                {profitRows.length > 0 && (
-                  <tfoot className="bg-gray-50 font-semibold text-gray-900">
-                    <tr>
-                      <td className="px-3 py-2">Total ({profitRows.length})</td>
-                      <td className="text-right px-3 py-2 tabular-nums">{formatMoney(totalContractValue)}</td>
-                      <td className="text-right px-3 py-2 tabular-nums">
-                        {formatMoney(profitRows.reduce((s, r) => s + r.p.estimatedCost, 0))}
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="text-left font-semibold px-3 py-2">Job</th>
+                  <th className="text-right font-semibold px-3 py-2">Contract</th>
+                  <th className="text-right font-semibold px-3 py-2">Est cost</th>
+                  <th className="text-right font-semibold px-3 py-2">Actual labor</th>
+                  <th className="text-right font-semibold px-3 py-2">Material</th>
+                  <th className="text-right font-semibold px-3 py-2">Proj. margin</th>
+                  <th className="text-right font-semibold px-3 py-2">Margin %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {profitRows.slice(0, 12).map(({ job, p }) => {
+                  const neg = p.projectedMargin < -0.005;
+                  const pos = p.projectedMargin > 0.005;
+                  return (
+                    <tr key={job.id}>
+                      <td className="px-3 py-2">
+                        <Link href={`/jobs/${job.id}`} className="font-medium text-gray-900 hover:underline">
+                          {job.name || "Untitled"}
+                        </Link>
+                        <div className="text-[10px] text-gray-400 truncate max-w-[12rem]">
+                          {job.customers?.name ?? "—"}
+                        </div>
+                        <div className="flex gap-1 mt-0.5">
+                          {p.laborRateMissing && p.actualLaborHours > 0 && (
+                            <span className="text-[9px] uppercase tracking-wide bg-amber-100 text-amber-700 rounded px-1">
+                              Rate not set
+                            </span>
+                          )}
+                          {!p.hasInternalCost && (
+                            <span className="text-[9px] uppercase tracking-wide bg-gray-100 text-gray-500 rounded px-1">
+                              No internal cost
+                            </span>
+                          )}
+                        </div>
                       </td>
+                      <td className="text-right px-3 py-2 tabular-nums">{formatMoney(p.contractValue)}</td>
+                      <td className="text-right px-3 py-2 tabular-nums">{formatMoney(p.estimatedCost)}</td>
                       <td className="text-right px-3 py-2 tabular-nums">
-                        {formatMoney(profitRows.reduce((s, r) => s + r.p.actualLaborCost, 0))}
+                        {p.laborRateMissing
+                          ? p.actualLaborHours > 0
+                            ? `${p.actualLaborHours.toFixed(1)}h`
+                            : "—"
+                          : formatMoney(p.actualLaborCost)}
                       </td>
-                      <td className="text-right px-3 py-2 tabular-nums">
-                        {formatMoney(profitRows.reduce((s, r) => s + r.p.actualMaterialCost, 0))}
-                      </td>
+                      <td className="text-right px-3 py-2 tabular-nums">{formatMoney(p.actualMaterialCost)}</td>
                       <td
-                        className={`text-right px-3 py-2 tabular-nums ${
-                          totalProjectedMargin < -0.005 ? "text-red-600" : totalProjectedMargin > 0.005 ? "text-green-600" : "text-gray-500"
+                        className={`text-right px-3 py-2 tabular-nums font-semibold ${
+                          neg ? "text-red-600" : pos ? "text-green-600" : "text-gray-400"
                         }`}
                       >
-                        {formatMoney(totalProjectedMargin)}
+                        {formatMoney(p.projectedMargin)}
                       </td>
                       <td
-                        className={`text-right px-3 py-2 tabular-nums ${
-                          projectedGrossMarginPct < -0.005 ? "text-red-600" : projectedGrossMarginPct > 0.005 ? "text-green-600" : "text-gray-500"
+                        className={`text-right px-3 py-2 tabular-nums font-semibold ${
+                          neg ? "text-red-600" : pos ? "text-green-600" : "text-gray-400"
                         }`}
                       >
-                        {totalContractValue > 0 ? `${projectedGrossMarginPct.toFixed(1)}%` : "—"}
+                        {p.contractValue > 0 ? `${p.projectedMarginPct.toFixed(1)}%` : "—"}
                       </td>
                     </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-          )}
-        </div>
+                  );
+                })}
+              </tbody>
+              {profitRows.length > 0 && (
+                <tfoot className="bg-gray-50 font-semibold text-gray-900">
+                  <tr>
+                    <td className="px-3 py-2">Total ({profitRows.length})</td>
+                    <td className="text-right px-3 py-2 tabular-nums">{formatMoney(totalContractValue)}</td>
+                    <td className="text-right px-3 py-2 tabular-nums">
+                      {formatMoney(profitRows.reduce((s, r) => s + r.p.estimatedCost, 0))}
+                    </td>
+                    <td className="text-right px-3 py-2 tabular-nums">
+                      {formatMoney(profitRows.reduce((s, r) => s + r.p.actualLaborCost, 0))}
+                    </td>
+                    <td className="text-right px-3 py-2 tabular-nums">
+                      {formatMoney(profitRows.reduce((s, r) => s + r.p.actualMaterialCost, 0))}
+                    </td>
+                    <td
+                      className={`text-right px-3 py-2 tabular-nums ${
+                        totalProjectedMargin < -0.005 ? "text-red-600" : totalProjectedMargin > 0.005 ? "text-green-600" : "text-gray-500"
+                      }`}
+                    >
+                      {formatMoney(totalProjectedMargin)}
+                    </td>
+                    <td
+                      className={`text-right px-3 py-2 tabular-nums ${
+                        projectedGrossMarginPct < -0.005 ? "text-red-600" : projectedGrossMarginPct > 0.005 ? "text-green-600" : "text-gray-500"
+                      }`}
+                    >
+                      {totalContractValue > 0 ? `${projectedGrossMarginPct.toFixed(1)}%` : "—"}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
+      </div>
 
-        <p className="text-[11px] text-gray-400 text-center pt-1">
-          All figures scoped to your organization&rsquo;s construction jobs. Margin is projected (contract − estimated
-          cost), not realized. Labor uses a single blended job rate — per-role costing is coming.
-        </p>
-      </main>
-    </div>
+      <p className="text-[11px] text-gray-400 text-center pt-1">
+        All figures scoped to your organization&rsquo;s construction jobs. Margin is projected (contract − estimated
+        cost), not realized. Labor uses a single blended job rate — per-role costing is coming.
+      </p>
+    </PageContainer>
   );
 }
 

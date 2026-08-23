@@ -1,13 +1,15 @@
 "use client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function PunchFilters({ jobs, currentJob, currentStatus, currentPriority }: { jobs: { id: string; name: string }[]; currentJob: string; currentStatus: string; currentPriority: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   function go(job: string, status: string, priority: string) {
-    const p = new URLSearchParams();
-    if (job) p.set("job", job);
-    if (status) p.set("status", status);
-    if (priority) p.set("priority", priority);
+    // Seed from the current URL so the list's `?view=` (cards/table) survives.
+    const p = new URLSearchParams(searchParams.toString());
+    if (job) p.set("job", job); else p.delete("job");
+    if (status) p.set("status", status); else p.delete("status");
+    if (priority) p.set("priority", priority); else p.delete("priority");
     const qs = p.toString();
     router.push(qs ? `/punch?${qs}` : "/punch");
   }

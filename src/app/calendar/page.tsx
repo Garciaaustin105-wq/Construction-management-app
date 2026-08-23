@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import CalendarFeedCard from "./CalendarFeedCard";
 import MonthGrid from "./MonthGrid";
 import AgendaList from "./AgendaList";
@@ -48,15 +48,12 @@ export default async function CalendarPage({
   // same_org bypass would surface every org). Show a notice instead.
   if (!tenant.orgId) {
     return (
-      <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-        <TopBar title="Calendar" subtitle="Events" />
-        <main className="max-w-md lg:max-w-5xl mx-auto p-4">
-          <div className="bg-white rounded-lg p-4 shadow-sm text-sm text-gray-600">
-            Platform (super admin) accounts don&rsquo;t have an organization
-            calendar. Sign in under an organization to see its events.
-          </div>
-        </main>
-      </div>
+    <PageContainer title="Calendar" subtitle="Events" maxWidth="list">
+        <div className="bg-white rounded-lg p-4 shadow-sm text-sm text-gray-600">
+          Platform (super admin) accounts don&rsquo;t have an organization
+          calendar. Sign in under an organization to see its events.
+        </div>
+    </PageContainer>
     );
   }
 
@@ -81,88 +78,85 @@ export default async function CalendarPage({
   const agendaHref = "/calendar?view=agenda";
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Calendar" subtitle="Events" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {/* View tabs (URL-driven, no client JS) */}
-        <div className="flex gap-2">
-          <Link
-            href={monthHref}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold ${
-              view === "month"
-                ? "bg-brand text-white"
-                : "bg-white text-gray-700 border border-gray-200"
-            }`}
-          >
-            Month
-          </Link>
-          <Link
-            href={agendaHref}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold ${
-              view === "agenda"
-                ? "bg-brand text-white"
-                : "bg-white text-gray-700 border border-gray-200"
-            }`}
-          >
-            Agenda
-          </Link>
-        </div>
+    <PageContainer title="Calendar" subtitle="Events" maxWidth="list">
+      {/* View tabs (URL-driven, no client JS) */}
+      <div className="flex gap-2">
+        <Link
+          href={monthHref}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+            view === "month"
+              ? "bg-brand text-white"
+              : "bg-white text-gray-700 border border-gray-200"
+          }`}
+        >
+          Month
+        </Link>
+        <Link
+          href={agendaHref}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+            view === "agenda"
+              ? "bg-brand text-white"
+              : "bg-white text-gray-700 border border-gray-200"
+          }`}
+        >
+          Agenda
+        </Link>
+      </div>
 
-        {view === "month" ? (
-          <MonthGrid events={events} month={month} />
-        ) : (
-          <AgendaList events={events} />
-        )}
+      {view === "month" ? (
+        <MonthGrid events={events} month={month} />
+      ) : (
+        <AgendaList events={events} />
+      )}
 
-        {/* Sync to your phone — the personal iCal subscribe feed (secondary) */}
-        <section className="space-y-3 pt-2">
-          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
-            Sync to your phone
-          </h2>
-          <CalendarFeedCard
-            initialUrl={initialUrl}
-            role={tenant.role}
-            lastFetchedAt={feed?.last_fetched_at ?? null}
-          />
+      {/* Sync to your phone — the personal iCal subscribe feed (secondary) */}
+      <section className="space-y-3 pt-2">
+        <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+          Sync to your phone
+        </h2>
+        <CalendarFeedCard
+          initialUrl={initialUrl}
+          role={tenant.role}
+          lastFetchedAt={feed?.last_fetched_at ?? null}
+        />
 
-          {/* Provider instructions */}
-          <div className="bg-white rounded-lg p-4 shadow-sm space-y-3 text-sm text-gray-700">
-            <p className="text-xs text-gray-500">
-              Copy the feed URL above, then add it to your calendar once. The
-              feed is read-only — changes made in the app appear on the next
-              sync. (Google + Outlook can&rsquo;t add a URL from their phone
-              apps — add it on the web once and it syncs to your phone
-              automatically.)
-            </p>
-            <div className="space-y-2">
-              <div>
-                <p className="font-medium text-gray-900">Google Calendar</p>
-                <p className="text-xs text-gray-600">
-                  On a web browser, open calendar.google.com → ⚙️ Settings →
-                  Add calendar → From URL → paste → Add. It then appears in the
-                  Google Calendar app on your phone.
-                </p>
-              </div>
-              <div>
-                <p className="font-medium text-gray-900">Outlook</p>
-                <p className="text-xs text-gray-600">
-                  On the web at outlook.live.com → Add calendar → Subscribe
-                  from web → paste → Import. Syncs to the Outlook app.
-                </p>
-              </div>
-              <div>
-                <p className="font-medium text-gray-900">
-                  Apple Calendar (iPhone)
-                </p>
-                <p className="text-xs text-gray-600">
-                  On the phone: Settings → Calendar → Accounts → Add Account →
-                  Other → Add Subscribed Calendar → paste URL → Subscribe.
-                </p>
-              </div>
+        {/* Provider instructions */}
+        <div className="bg-white rounded-lg p-4 shadow-sm space-y-3 text-sm text-gray-700">
+          <p className="text-xs text-gray-500">
+            Copy the feed URL above, then add it to your calendar once. The
+            feed is read-only — changes made in the app appear on the next
+            sync. (Google + Outlook can&rsquo;t add a URL from their phone
+            apps — add it on the web once and it syncs to your phone
+            automatically.)
+          </p>
+          <div className="space-y-2">
+            <div>
+              <p className="font-medium text-gray-900">Google Calendar</p>
+              <p className="text-xs text-gray-600">
+                On a web browser, open calendar.google.com → ⚙️ Settings →
+                Add calendar → From URL → paste → Add. It then appears in the
+                Google Calendar app on your phone.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">Outlook</p>
+              <p className="text-xs text-gray-600">
+                On the web at outlook.live.com → Add calendar → Subscribe
+                from web → paste → Import. Syncs to the Outlook app.
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">
+                Apple Calendar (iPhone)
+              </p>
+              <p className="text-xs text-gray-600">
+                On the phone: Settings → Calendar → Accounts → Add Account →
+                Other → Add Subscribed Calendar → paste URL → Subscribe.
+              </p>
             </div>
           </div>
-        </section>
-      </main>
-    </div>
+        </div>
+      </section>
+    </PageContainer>
   );
 }

@@ -1,6 +1,6 @@
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import CostCodesManager from "@/components/CostCodesManager";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 
@@ -15,11 +15,8 @@ export default async function CostCodesPage() {
   const orgId = me.orgId ?? "";
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Cost Codes" subtitle="The shared job-costing backbone" />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4">
-        <CostCodesManager orgId={orgId} />
-      </main>
-    </div>
+    <PageContainer title="Cost Codes" subtitle="The shared job-costing backbone" maxWidth="list">
+      <CostCodesManager orgId={orgId} />
+    </PageContainer>
   );
 }

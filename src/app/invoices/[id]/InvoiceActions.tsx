@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
 import { formatMoney } from "@/lib/money";
+import { validTransitions, type InvoiceStatus } from "@/lib/lifecycles/invoice";
 
 type Channel = "email" | "sms" | "both";
 
@@ -45,7 +46,7 @@ export default function InvoiceActions({
   accountingExternalId,
 }: {
   invoiceId: string;
-  status: string;
+  status: InvoiceStatus;
   balanceDue: number;
   customerEmail?: string | null;
   customerPhone?: string | null;
@@ -210,7 +211,7 @@ export default function InvoiceActions({
     }
   }
 
-  async function updateStatus(newStatus: string, paidAt: string | null) {
+  async function updateStatus(newStatus: InvoiceStatus, paidAt: string | null) {
     setBusy(true);
     const { error } = await supabase
       .from("invoices")
@@ -241,6 +242,12 @@ export default function InvoiceActions({
   // When SMS is "coming soon", only email can deliver — a phone-only customer
   // can't be sent to until SMS is enabled.
   const canSend = status !== "void" && (hasEmail || (SMS_ENABLED && hasPhone));
+  // Status-only gate from the lifecycle module; intersected with the role
+  // permission the page already applied by mounting this component at all.
+  const nextStatuses = validTransitions(status);
+  const canVoid = nextStatuses.includes("void");
+  const canMarkUnpaid = status === "paid" && nextStatuses.includes("sent");
+  const canRestore = status === "void" && nextStatuses.includes("sent");
   const sendLabel = (() => {
     if (via === "sms") return "Send via Text";
     if (via === "both") return "Send via Email & Text";
@@ -465,7 +472,7 @@ export default function InvoiceActions({
         </div>
       )}
 
-      {status === "sent" && (
+      {canVoid && (
         <button
           onClick={() => updateStatus("void", null)}
           disabled={busy}
@@ -480,7 +487,7 @@ export default function InvoiceActions({
         </button>
       )}
 
-      {status === "paid" && (
+      {canMarkUnpaid && (
         <>
           {hasEmail && (
             <button
@@ -511,7 +518,7 @@ export default function InvoiceActions({
         </>
       )}
 
-      {status === "void" && (
+      {canRestore && (
         <button
           onClick={() => updateStatus("sent", null)}
           disabled={busy}

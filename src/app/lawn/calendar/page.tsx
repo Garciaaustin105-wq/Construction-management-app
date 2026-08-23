@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import TopBar from "@/components/TopBar";
+import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { CalendarDays, ChevronLeft, ChevronRight, Check } from "lucide-react";
@@ -158,151 +158,142 @@ export default async function LawnCalendarPage({
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar
-        title="Lawn Calendar"
-        subtitle="Monthly crew routes"
-        backHref="/lawn"
-        backLabel="Lawn"
-      />
-
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
-        {/* Month nav */}
-        <div className="flex items-center justify-between">
-          <Link
-            href={`/lawn/calendar?month=${shiftMonth(year, month, -1)}`}
-            className="p-2 -ml-2 text-gray-600 active:text-gray-900"
-            aria-label="Previous month"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </Link>
-          <div className="text-center">
-            <p className="text-base font-bold text-gray-900">
-              {MONTH_NAMES[month]} {year}
-            </p>
-            {!isCurrentMonth && (
-              <Link
-                href="/lawn/calendar"
-                className="text-xs text-blue-600 font-medium"
-              >
-                Today
-              </Link>
-            )}
-          </div>
-          <Link
-            href={`/lawn/calendar?month=${shiftMonth(year, month, 1)}`}
-            className="p-2 -mr-2 text-gray-600 active:text-gray-900"
-            aria-label="Next month"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </Link>
+    <PageContainer title="Lawn Calendar" subtitle="Monthly crew routes" backHref="/lawn" backLabel="Lawn" maxWidth="list">
+      {/* Month nav */}
+      <div className="flex items-center justify-between">
+        <Link
+          href={`/lawn/calendar?month=${shiftMonth(year, month, -1)}`}
+          className="p-2 -ml-2 text-gray-600 active:text-gray-900"
+          aria-label="Previous month"
+        >
+          <ChevronLeft className="w-5 h-5" />
+        </Link>
+        <div className="text-center">
+          <p className="text-base font-bold text-gray-900">
+            {MONTH_NAMES[month]} {year}
+          </p>
+          {!isCurrentMonth && (
+            <Link
+              href="/lawn/calendar"
+              className="text-xs text-blue-600 font-medium"
+            >
+              Today
+            </Link>
+          )}
         </div>
+        <Link
+          href={`/lawn/calendar?month=${shiftMonth(year, month, 1)}`}
+          className="p-2 -mr-2 text-gray-600 active:text-gray-900"
+          aria-label="Next month"
+        >
+          <ChevronRight className="w-5 h-5" />
+        </Link>
+      </div>
 
-        {/* Day-name row */}
+      {/* Day-name row */}
+      <div className="grid grid-cols-7 gap-1">
+        {DAY_LABELS.map((d) => (
+          <div key={d} className="text-center text-[10px] font-semibold text-gray-400 uppercase">
+            {d}
+          </div>
+        ))}
+      </div>
+
+      {/* Month grid */}
+      {visits.length === 0 ? (
+        <div className="bg-white rounded-lg">
+          <EmptyState
+            icon={CalendarDays}
+            title="No visits this month"
+            description="Lawn visits scheduled this month will appear here, color-coded by crew."
+          />
+        </div>
+      ) : (
         <div className="grid grid-cols-7 gap-1">
-          {DAY_LABELS.map((d) => (
-            <div key={d} className="text-center text-[10px] font-semibold text-gray-400 uppercase">
-              {d}
-            </div>
-          ))}
-        </div>
-
-        {/* Month grid */}
-        {visits.length === 0 ? (
-          <div className="bg-white rounded-lg">
-            <EmptyState
-              icon={CalendarDays}
-              title="No visits this month"
-              description="Lawn visits scheduled this month will appear here, color-coded by crew."
-            />
-          </div>
-        ) : (
-          <div className="grid grid-cols-7 gap-1">
-            {cells.map((d, i) => {
-              if (d === null) return <div key={`b-${i}`} className="min-h-[64px]" />;
-              const dateStr = `${iso}-${String(d).padStart(2, "0")}`;
-              const dayVisits = visitsByDate.get(dateStr) ?? [];
-              const isToday = dateStr === todayIso;
-              const shown = dayVisits.slice(0, MAX_CHIPS_PER_CELL);
-              const extra = dayVisits.length - shown.length;
-              return (
-                <div
-                  key={dateStr}
-                  className={`min-h-[64px] rounded-lg p-1 flex flex-col gap-1 ${
-                    isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
-                  }`}
+          {cells.map((d, i) => {
+            if (d === null) return <div key={`b-${i}`} className="min-h-[64px]" />;
+            const dateStr = `${iso}-${String(d).padStart(2, "0")}`;
+            const dayVisits = visitsByDate.get(dateStr) ?? [];
+            const isToday = dateStr === todayIso;
+            const shown = dayVisits.slice(0, MAX_CHIPS_PER_CELL);
+            const extra = dayVisits.length - shown.length;
+            return (
+              <div
+                key={dateStr}
+                className={`min-h-[64px] rounded-lg p-1 flex flex-col gap-1 ${
+                  isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
+                }`}
+              >
+                <span
+                  className={`text-[10px] font-semibold ${
+                    isToday ? "text-blue-700" : "text-gray-400"
+                  } self-end leading-none`}
                 >
-                  <span
-                    className={`text-[10px] font-semibold ${
-                      isToday ? "text-blue-700" : "text-gray-400"
-                    } self-end leading-none`}
-                  >
-                    {d}
-                  </span>
-                  {shown.map((v) => {
-                    const c = crewOf(v);
-                    const col = colorFor(c.colorIdx);
-                    return (
-                      <Link
-                        key={v.id}
-                        href={`/lawn/visits/${v.id}`}
-                        className={`block rounded px-1 py-0.5 text-[10px] leading-tight truncate ${col.chip} ${
-                          v.status === "skipped" ? "line-through opacity-60" : ""
-                        }`}
-                      >
-                        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${col.dot}`} />
-                        <span className="font-semibold align-middle">{initials(c.name)}</span>
-                        <span className="align-middle">
-                          {" "}
-                          {v.recurring_schedules?.service_type ?? "Service"}
-                        </span>
-                        {v.status === "done" && (
-                          <Check className="inline w-2.5 h-2.5 ml-0.5 align-middle" />
-                        )}
-                      </Link>
-                    );
-                  })}
-                  {extra > 0 && (
-                    <span className="text-[9px] text-gray-400 px-1">+{extra} more</span>
+                  {d}
+                </span>
+                {shown.map((v) => {
+                  const c = crewOf(v);
+                  const col = colorFor(c.colorIdx);
+                  return (
+                    <Link
+                      key={v.id}
+                      href={`/lawn/visits/${v.id}`}
+                      className={`block rounded px-1 py-0.5 text-[10px] leading-tight truncate ${col.chip} ${
+                        v.status === "skipped" ? "line-through opacity-60" : ""
+                      }`}
+                    >
+                      <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${col.dot}`} />
+                      <span className="font-semibold align-middle">{initials(c.name)}</span>
+                      <span className="align-middle">
+                        {" "}
+                        {v.recurring_schedules?.service_type ?? "Service"}
+                      </span>
+                      {v.status === "done" && (
+                        <Check className="inline w-2.5 h-2.5 ml-0.5 align-middle" />
+                      )}
+                    </Link>
+                  );
+                })}
+                {extra > 0 && (
+                  <span className="text-[9px] text-gray-400 px-1">+{extra} more</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Crew legend — each crew mapped to the jobs they're on this month */}
+      {legendList.length > 0 && (
+        <section className="space-y-2 pt-2">
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+            Crew &amp; Jobs
+          </h2>
+          <div className="space-y-2">
+            {legendList.map((e) => {
+              const col = colorFor(e.colorIdx);
+              return (
+                <div key={e.key} className="bg-white rounded-lg p-3 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-block w-3 h-3 rounded-full ${col.dot}`} />
+                    <span className="font-semibold text-gray-900 text-sm truncate">
+                      {e.name}
+                    </span>
+                    <span className="text-xs text-gray-400 ml-auto whitespace-nowrap">
+                      {e.visitCount} visit{e.visitCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {e.jobNames.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-1 leading-snug">
+                      {e.jobNames.join(" · ")}
+                    </p>
                   )}
                 </div>
               );
             })}
           </div>
-        )}
-
-        {/* Crew legend — each crew mapped to the jobs they're on this month */}
-        {legendList.length > 0 && (
-          <section className="space-y-2 pt-2">
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
-              Crew &amp; Jobs
-            </h2>
-            <div className="space-y-2">
-              {legendList.map((e) => {
-                const col = colorFor(e.colorIdx);
-                return (
-                  <div key={e.key} className="bg-white rounded-lg p-3 shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <span className={`inline-block w-3 h-3 rounded-full ${col.dot}`} />
-                      <span className="font-semibold text-gray-900 text-sm truncate">
-                        {e.name}
-                      </span>
-                      <span className="text-xs text-gray-400 ml-auto whitespace-nowrap">
-                        {e.visitCount} visit{e.visitCount === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    {e.jobNames.length > 0 && (
-                      <p className="text-xs text-gray-500 mt-1 leading-snug">
-                        {e.jobNames.join(" · ")}
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-      </main>
-    </div>
+        </section>
+      )}
+    </PageContainer>
   );
 }
