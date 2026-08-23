@@ -181,12 +181,9 @@ export default function CustomersManager({
           </p>
         )}
         {customers.map((c) => (
-          <div key={c.id} className="bg-white rounded-lg p-3 shadow-sm">
+          <div key={c.id} className="bg-white rounded-lg p-3 shadow-sm relative">
             <div className="flex items-start justify-between gap-2">
-              <Link
-                href={`/admin/customers/${c.id}`}
-                className="min-w-0 flex-1"
-              >
+              <div className="min-w-0 flex-1">
                 <p className="font-semibold text-gray-900 truncate flex items-center gap-1">
                   <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
                   {c.name}
@@ -204,7 +201,7 @@ export default function CustomersManager({
                     <a
                       href={`tel:${c.phone}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="text-xs text-gray-600 inline-flex items-center gap-1"
+                      className="text-xs text-gray-600 inline-flex items-center gap-1 relative z-10"
                     >
                       <Phone className="w-3 h-3" /> {c.phone}
                     </a>
@@ -213,18 +210,28 @@ export default function CustomersManager({
                     <a
                       href={`mailto:${c.contact_email}`}
                       onClick={(e) => e.stopPropagation()}
-                      className="text-xs text-gray-600 inline-flex items-center gap-1 truncate"
+                      className="text-xs text-gray-600 inline-flex items-center gap-1 truncate relative z-10"
                     >
                       <Mail className="w-3 h-3" /> {c.contact_email}
                     </a>
                   )}
                 </div>
-              </Link>
+              </div>
+              {/* Stretched link overlay: makes the whole card navigate to the
+                  detail page. The tel:/mailto: anchors + delete button carry
+                  relative z-10 so they stay independently clickable (HTML
+                  forbids <a> inside <a>, so the card link is an overlay, not a
+                  wrapper). */}
+              <Link
+                href={`/admin/customers/${c.id}`}
+                className="absolute inset-0"
+                aria-label={c.name}
+              />
               {canEdit && (
                 <button
                   onClick={() => remove(c.id)}
                   disabled={busyId === c.id}
-                  className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 flex-shrink-0"
+                  className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 flex-shrink-0 relative z-10"
                   title="Delete"
                 >
                   {busyId === c.id ? (
