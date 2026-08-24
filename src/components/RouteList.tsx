@@ -13,6 +13,7 @@ import Link from "next/link";
 import {
   DndContext,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   closestCenter,
@@ -107,20 +108,17 @@ function StopRow({
       <button
         {...attributes}
         {...listeners}
-        // Full-height grab strip (iOS-style reorder control). The handle was a
-        // 16px icon — on touch a finger would land on the row body (no drag
-        // listeners) and scroll instead of drag. self-stretch + -my-2 make the
-        // strip span the whole row height (into the padding) so the finger
-        // always hits the listener. touch-none stops the browser stealing the
-        // touch for scroll/zoom; select-none + -webkit-touch-callout:none stop
-        // the native long-press "Copy/Look Up" callout (iOS) / text-select menu
-        // (Android) firing during the 150ms press-and-hold. user-select:none on
-        // the handle only; the row body stays selectable so the office can
-        // still copy an address.
-        className="self-stretch flex items-center justify-center px-1.5 -my-2 text-gray-300 hover:text-gray-500 touch-none cursor-grab active:cursor-grabbing select-none [-webkit-touch-callout:none]"
+        // Drag handle — a clean 36px rounded touch target (finger-friendly
+        // without the old-school full-height grab strip). touch-none stops the
+        // browser stealing the touch for scroll/zoom once the TouchSensor
+        // press-and-hold activates; select-none + -webkit-touch-callout:none
+        // suppress the native long-press "Copy/Look Up" (iOS) / text-select
+        // (Android) callout during the hold. user-select:none on the handle
+        // only — the row body stays selectable so the office can copy an address.
+        className="mt-0.5 flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-50 active:bg-gray-100 touch-none cursor-grab active:cursor-grabbing select-none [-webkit-touch-callout:none]"
         aria-label="Drag to reorder"
       >
-        <GripVertical className="w-5 h-5" />
+        <GripVertical className="w-4 h-4" />
       </button>
       <span
         className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${
@@ -231,25 +229,27 @@ export default function RouteList({
   onGeocode,
   onSetOnMap,
 }: Props) {
-  // ONE PointerSensor for both desktop + mobile. Registering PointerSensor +
-  // TouchSensor together double-binds a touch (both pointerdown + touchstart
-  // fire) and the two sensors fight over the gesture — that was the "mobile
-  // drag won't start / won't follow my finger" bug. PointerSensor alone fires
-  // pointerdown for mouse, pen, AND touch, so a single sensor covers all three.
-  // On a coarse pointer (touch) we require a press-and-hold (150ms, ≤8px drift)
-  // before the drag activates, so a quick tap scrolls/selects instead of
-  // grabbing; on a fine pointer (mouse) a 6px slide starts it immediately.
+  // Touch device → TouchSensor; mouse → PointerSensor. Only ONE is active per
+  // device, so they never double-bind the same gesture (the old "register both"
+  // setup let PointerSensor's distance constraint win on the initial touch slide,
+  // routing touch through pointer events — unreliable in the Capacitor WebView,
+  // where the browser steals touchmove for scroll before dnd-kit can track it).
+  // TouchSensor binds native touchstart/touchmove/touchend with NON-passive
+  // listeners and preventDefault()s to actually claim the gesture — the
+  // reliable mobile path. Both useSensor calls run unconditionally (hooks rules);
+  // only the matching one is passed to useSensors. On touch a press-and-hold
+  // (200ms, ≤8px drift) activates the drag so a quick tap still scrolls/selects.
   const isCoarse =
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
     window.matchMedia("(pointer: coarse)").matches;
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: isCoarse
-        ? { delay: 150, tolerance: 8 }
-        : { distance: 6 },
-    })
-  );
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { distance: 6 },
+  });
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 200, tolerance: 8 },
+  });
+  const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
 
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
