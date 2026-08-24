@@ -252,26 +252,31 @@ export default function VisitDetailPage({
     );
   }
 
-  // Start stamps started_at only. RLS allows this for office (the ALL policy)
-  // and for the assigned crew ("Crew update my route lawn visits"), and the
-  // guard_lawn_visit_crew_update trigger only blocks due_date/job_id/
-  // recurring_schedule_id/crew_id/organization_id for non-office — so a direct
-  // session-client write is correct here and needs no server route.
+  // Start stamps started_at only (status stays pending; lifecycle untouched).
+  // Routed through /api/lawn/visits/[id]/start so the timestamp is
+  // server-authoritative (matches completed_at, which /status stamps
+  // server-side) and the "only when pending + not already started" guard is
+  // enforced server-side — a client-stamped value would be tamper-able. The
+  // route admits office/PM + the assigned crew, same as /status.
   async function startVisit() {
     if (!visit || visit.started_at) return;
     setStarting(true);
-    const supabase = createClient();
-    const startedAt = new Date().toISOString();
-    const { error } = await supabase
-      .from("lawn_visits")
-      .update({ started_at: startedAt })
-      .eq("id", visit.id);
-    setStarting(false);
-    if (error) {
-      toast.error(`Failed: ${error.message}`);
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visit.id}/start`, { method: "POST" });
+    } catch {
+      setStarting(false);
+      toast.error("Failed: network error");
       return;
     }
-    setVisit({ ...visit, started_at: startedAt });
+    setStarting(false);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
+    }
+    const data = (await res.json().catch(() => ({}))) as { started_at?: string };
+    setVisit({ ...visit, started_at: data.started_at ?? null });
     toast.success("Started");
   }
 

@@ -13,6 +13,7 @@ import Link from "next/link";
 import {
   DndContext,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   closestCenter,
@@ -197,8 +198,15 @@ export default function RouteList({
   onGeocode,
   onSetOnMap,
 }: Props) {
+  // PointerSensor for desktop mouse; TouchSensor for mobile. On touch a
+  // press-and-hold (delay 200ms, tolerance 8px) activates the drag, so a quick
+  // tap on the row doesn't — and the grip handle's `touch-none` keeps the
+  // browser from stealing the touch for scrolling. PointerSensor alone relied
+  // on a 5px slide, which is flaky on touch (the grip "wouldn't follow the
+  // finger" on mobile).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
   );
 
   function onDragEnd(e: DragEndEvent) {
