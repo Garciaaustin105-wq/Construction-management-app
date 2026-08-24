@@ -5,9 +5,14 @@
 // the Directions API) + a @dnd-kit drag-to-reorder stop list with crew
 // assignment.
 //
-// The save contract is unchanged: per-visit `lawn_visits.update({ crew_id,
-// route_order })` in Promise.all, where route_order is a per-crew 1..n for the
-// day (null = unassigned). The crew "My Route" sorts by (due_date, route_order
+// The save contract is unchanged in SHAPE: per-visit `lawn_visits.update({
+// crew_id, route_order })` in Promise.all, where route_order is a per-crew 1..n
+// for the day (null = unassigned). But persistence is now AUTO — a debounced
+// effect writes crew_id + route_order ~800ms after any change to `ordered` or
+// `crewAssign` (drag, crew select, Optimize, mass-assign, auto-assign); there
+// is no Save button. The initial seed (saved order or nearest-neighbor) is NOT
+// auto-saved (mount-skip) so opening the page never persists an order the
+// office didn't ask for. The crew "My Route" sorts by (due_date, route_order
 // nullsLast) — preserved.
 //
 // Pin setting: "Geocode" geocodes the job's address in-browser via the Google
@@ -18,7 +23,7 @@
 // 1 req/s limit). Real drive minutes/miles come back from the Directions API
 // via onDirectionsResult; the straight-line estimate is the fallback.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -36,7 +41,7 @@ import {
   type RouteStop,
   type CrewInfo,
 } from "@/lib/lawnRouting";
-import { Save, Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles, Users, Navigation } from "lucide-react";
+import { Loader2, Search, MapPin, X, Info, RouteIcon, Sparkles, Users, Navigation } from "lucide-react";
 
 // Google Maps touches window — load the map client-only.
 const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
@@ -130,7 +135,7 @@ export default function RouteMapPlanner({
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [geocoding, setGeocoding] = useState<Record<string, boolean>>({});
-  const [busy, setBusy] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [helpOpen, setHelpOpen] = useState(true);
@@ -139,6 +144,66 @@ export default function RouteMapPlanner({
   // straight-line estimate below).
   const [realMinutes, setRealMinutes] = useState<number | null>(null);
   const [realMiles, setRealMiles] = useState<number | null>(null);
+
+  // Auto-save: debounced persist of crew_id + per-crew route_order whenever the
+  // dispatcher changes the order or a crew assignment (drag, crew <select>,
+  // Optimize, mass-assign, auto-assign). Mount is skipped so the initial seed
+  // (a previously-saved order, or the nearest-neighbor guess) is never written
+  // back as if the office had asked for it. ~800ms coalesces a rapid drag
+  // sequence into one write batch. No router.refresh() — local state is the
+  // source of truth and the DB is now in sync; a refresh would disrupt the
+  // drag. (RLS session client — the office/PM update policy admits crew_id +
+  // route_order; guard_lawn_visit_crew_update blocks crew_id changes for
+  // non-office, but this page is OFFICE_LIKE-gated.)
+  const didMountRef = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaveState("saving");
+    saveTimer.current = setTimeout(() => {
+      void (async () => {
+        const targets = new Map<
+          string,
+          { crew_id: string | null; route_order: number | null }
+        >();
+        const counters = new Map<string, number>();
+        for (const s of ordered) {
+          const crew = crewAssign[s.id] ?? null;
+          if (crew) {
+            counters.set(crew, (counters.get(crew) ?? 0) + 1);
+            targets.set(s.id, {
+              crew_id: crew,
+              route_order: counters.get(crew)!,
+            });
+          } else {
+            targets.set(s.id, { crew_id: null, route_order: null });
+          }
+        }
+        const results = await Promise.all(
+          [...targets].map(([id, t]) =>
+            supabase
+              .from("lawn_visits")
+              .update({ crew_id: t.crew_id, route_order: t.route_order })
+              .eq("id", id)
+          )
+        );
+        if (results.some((r) => r.error)) {
+          setSaveState("error");
+          return;
+        }
+        setSaveState("saved");
+        setTimeout(() => setSaveState("idle"), 2000);
+      })();
+    }, 800);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordered, crewAssign]);
 
   const mappedCount = ordered.filter((s) => s.pos).length;
   const unmapped = ordered.filter((s) => !s.pos);
@@ -219,8 +284,8 @@ export default function RouteMapPlanner({
   // Reorder the MAPPED stops by real DRIVE time (Distance Matrix API), keeping
   // any previously-saved crew assignments (keyed by stop id). Unmapped stops
   // can't be sequenced by distance, so they stay appended in their current
-  // order. Non-destructive: only mutates local `ordered` state — the dispatcher
-  // still has to hit Save to persist. Distance Matrix caps at 25
+  // order. Non-destructive: only mutates local `ordered` state — the auto-save
+  // effect persists it (debounced). Distance Matrix caps at 25
   // origins/destinations per request — above that, fall back to a haversine
   // nearest-neighbor walk + 2-opt refinement (no Google API call, so no cap).
   // It's an estimate rather than live drive time, but still meaningfully
@@ -256,7 +321,7 @@ export default function RouteMapPlanner({
       applyHaversineOptimize(mapped);
       setOptimizing(false);
       toast.success(
-        "Reordered by estimated distance (too many stops for live drive-time) — review and Save."
+        "Reordered by estimated distance (too many stops for live drive-time)."
       );
       bumpRouteOpt();
       return;
@@ -286,7 +351,7 @@ export default function RouteMapPlanner({
         // Server key not configured — degrade gracefully to a haversine
         // estimate (no Google spend, no quota consumed). Not an error.
         applyHaversineOptimize(mapped);
-        toast.success("Reordered by estimated distance — review and Save.");
+        toast.success("Reordered by estimated distance.");
         return;
       }
       if (!r.ok) {
@@ -303,7 +368,7 @@ export default function RouteMapPlanner({
       const optimized = nearestNeighborByMatrix(mapped, matrix);
       const unmapped = ordered.filter((s) => !s.pos);
       setOrdered([...optimized, ...unmapped]);
-      toast.success("Reordered by real drive time — review and Save.");
+      toast.success("Reordered by real drive time.");
       bumpRouteOpt();
     } catch {
       toast.error("Could not optimize the order — please try again.");
@@ -325,48 +390,11 @@ export default function RouteMapPlanner({
     }
   }
 
-  // Accepts an optional assignment-map override so callers that just computed
-  // a new crewAssign (e.g. the mass-assign buttons below) can save it
-  // immediately without waiting on React's async state update — using the
-  // `crewAssign` state var right after setCrewAssign() would read the STALE
-  // value here since state updates aren't synchronous.
-  async function save(assignOverride?: Record<string, string | null>) {
-    setBusy(true);
-    const assign = assignOverride ?? crewAssign;
-    // Per-crew contiguous 1..n from the dragged order; unassigned → null.
-    const targets = new Map<string, { crew_id: string | null; route_order: number | null }>();
-    const counters = new Map<string, number>();
-    for (const s of ordered) {
-      const crew = assign[s.id] ?? null;
-      if (crew) {
-        counters.set(crew, (counters.get(crew) ?? 0) + 1);
-        targets.set(s.id, { crew_id: crew, route_order: counters.get(crew)! });
-      } else {
-        targets.set(s.id, { crew_id: null, route_order: null });
-      }
-    }
-    const results = await Promise.all(
-      [...targets].map(([id, t]) =>
-        supabase
-          .from("lawn_visits")
-          .update({ crew_id: t.crew_id, route_order: t.route_order })
-          .eq("id", id)
-      )
-    );
-    setBusy(false);
-    if (results.some((r) => r.error)) {
-      toast.error("Some saves failed — please retry");
-      return;
-    }
-    toast.success(`Saved ${targets.size} visit${targets.size === 1 ? "" : "s"}`);
-    router.refresh();
-  }
-
   // "Assign to all" / "Assign to unassigned" — sets massAssignCrewId on every
-  // (or every currently-unassigned) stop and saves immediately (no separate
-  // renumber step: save() already computes each crew's contiguous 1..n from
-  // the current `ordered` list position).
-  async function massAssign(target: "all" | "unassigned") {
+  // (or every currently-unassigned) stop. The auto-save effect persists it
+  // (debounced); no separate renumber step — the effect computes each crew's
+  // contiguous 1..n from the current `ordered` list position.
+  function massAssign(target: "all" | "unassigned") {
     if (!massAssignCrewId) {
       toast.warning("Pick a crew first");
       return;
@@ -377,8 +405,13 @@ export default function RouteMapPlanner({
     }
     setCrewAssign(next);
     setMassAssigning(true);
-    await save(next);
-    setMassAssigning(false);
+    // Brief spinner so the click registers; the auto-save effect persists.
+    setTimeout(() => setMassAssigning(false), 500);
+    toast.success(
+      `Assigned ${target === "all" ? "all" : "unassigned"} stops to ${
+        crews.find((c) => c.id === massAssignCrewId)?.name ?? "crew"
+      }.`
+    );
   }
 
   // "Auto-assign crews" — geographic k-means zoning (clusterZones) instead of
@@ -390,10 +423,10 @@ export default function RouteMapPlanner({
   // paired with crews in that order — a simple, deterministic, stable
   // assignment rather than a full optimal matching. Each zone's stops are
   // locally sequenced via nearestNeighborRoute (haversine + 2-opt) so the
-  // reassembled `ordered` list is contiguous per crew — save() then writes a
-  // correct per-crew 1..n route_order straight from list position. Local
-  // state only — does not call save(); the dispatcher can still drag-tweak
-  // before hitting the main Save button.
+  // reassembled `ordered` list is contiguous per crew — the auto-save effect
+  // then writes a correct per-crew 1..n route_order straight from list
+  // position. Local state only; the dispatcher can still drag-tweak before
+  // the debounced save fires.
   function autoAssignCrews() {
     if (mappedCount < 2) {
       toast.info("Pin at least 2 stops first.");
@@ -442,7 +475,7 @@ export default function RouteMapPlanner({
     setCrewAssign(nextAssign);
     setOrdered(reassembled);
     toast.success(
-      `Zoned ${mappedZones.length} area${mappedZones.length === 1 ? "" : "s"} across ${Math.min(crewIds.length, mappedZones.length)} crew${crewIds.length === 1 ? "" : "s"} — review and Save.`
+      `Zoned ${mappedZones.length} area${mappedZones.length === 1 ? "" : "s"} across ${Math.min(crewIds.length, mappedZones.length)} crew${crewIds.length === 1 ? "" : "s"}.`
     );
   }
 
@@ -464,10 +497,11 @@ export default function RouteMapPlanner({
           <div className="flex-1">
             <p className="font-semibold mb-0.5">How to plan a route</p>
             <p>
-              Each numbered pin is a stop. <b>Drag the list</b> to set the order,
-              assign a <b>crew</b> to each stop, then <b>Save</b>. Stops without a
-              pin show <b>Geocode</b> (auto from the address) or <b>On map</b>{" "}
-              (click the map to drop it). Numbers on the pins match the list.
+              Each numbered pin is a stop. <b>Drag the list</b> to set the order
+              and assign a <b>crew</b> to each stop — changes save automatically.
+              Stops without a pin show <b>Geocode</b> (auto from the address) or{" "}
+              <b>On map</b> (click the map to drop it). Numbers on the pins match
+              the list.
             </p>
           </div>
           <button onClick={() => setHelpOpen(false)} className="text-blue-400 hover:text-blue-600">
@@ -477,7 +511,7 @@ export default function RouteMapPlanner({
       )}
 
       {/* Route summary */}
-      <div className="flex items-center justify-between bg-white rounded-lg p-2.5 shadow-sm text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-white rounded-lg p-2.5 shadow-sm text-xs">
         <span className="inline-flex items-center gap-1.5 text-gray-700 font-medium">
           <RouteIcon className="w-4 h-4 text-green-600" />
           {mappedCount}/{ordered.length} pinned
@@ -488,14 +522,21 @@ export default function RouteMapPlanner({
               {realMinutes == null ? " (est.)" : ""}
             </span>
           )}
+          {saveState === "saving" && (
+            <span className="text-amber-600">· Saving…</span>
+          )}
+          {saveState === "saved" && <span className="text-green-600">· Saved ✓</span>}
+          {saveState === "error" && (
+            <span className="text-red-600">· Save failed — will retry</span>
+          )}
         </span>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {nav.url && (
             <a
               href={nav.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-green-700 font-semibold"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-semibold text-green-700 bg-white border border-green-300"
               title={
                 nav.routed < nav.total
                   ? `Google Maps caps a trip — opens the first ${nav.routed} of ${nav.total} pinned stops`
@@ -515,7 +556,7 @@ export default function RouteMapPlanner({
             <button
               onClick={optimizeOrder}
               disabled={optimizing || routeOptBlocked}
-              className="inline-flex items-center gap-1 text-green-700 font-semibold disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-semibold text-white bg-green-600 border border-green-600 disabled:opacity-50"
               title={
                 routeOptCap != null
                   ? routeOptBlocked
@@ -531,7 +572,7 @@ export default function RouteMapPlanner({
               )}
               Optimize order
               {routeOptCap != null && !routeOptBlocked && (
-                <span className="text-gray-400 font-normal">
+                <span className="text-white/80 font-normal">
                   ({routeOptRemaining} left)
                 </span>
               )}
@@ -541,7 +582,7 @@ export default function RouteMapPlanner({
             <button
               onClick={geocodeAll}
               disabled={bulkBusy}
-              className="inline-flex items-center gap-1 text-green-700 font-semibold disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-semibold text-green-700 bg-green-50 border border-green-200 disabled:opacity-50"
             >
               {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
               Geocode all unpinned ({unmapped.length})
@@ -588,10 +629,9 @@ export default function RouteMapPlanner({
       />
 
       {/* Mass crew-assign — pick a crew, then blast it onto every stop or
-          just the unassigned ones. Saves immediately (same per-crew
-          contiguous renumber as the main Save button, from current list
-          order), so this is a shortcut for "everyone today", not a staged
-          edit. */}
+          just the unassigned ones. The auto-save effect persists it (same
+          per-crew contiguous renumber, from current list order), so this is
+          a shortcut for "everyone today", not a staged edit. */}
       {crews.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 bg-white rounded-lg p-2.5 shadow-sm text-xs">
           <select
@@ -657,20 +697,10 @@ export default function RouteMapPlanner({
         onSetOnMap={setDropTargetId}
       />
 
-      {/* Save */}
-      <div className="sticky bottom-20 lg:bottom-4 z-10">
-        <button
-          onClick={() => save()}
-          disabled={busy}
-          className="w-full bg-green-600 text-white py-3.5 rounded-lg font-semibold active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
-        >
-          {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-          Save crews &amp; order
-        </button>
-        <p className="text-[11px] text-gray-400 text-center mt-1">
-          Saves each visit&rsquo;s crew + a per-crew order. Crews see it in My Route.
-        </p>
-      </div>
+      <p className="text-[11px] text-gray-400 text-center">
+        Changes save automatically — drag to reorder, pick a crew, or hit Optimize.
+        Crews see it in My Route.
+      </p>
     </div>
   );
 }
