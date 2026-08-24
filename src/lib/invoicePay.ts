@@ -1,0 +1,409 @@
+// Online invoice payments via Stripe Connect DIRECT charges — server-only,
+// security core. A customer pays the balance due on the public invoice view
+// (/invoices/view/{token}) by clicking Pay; the checkout session is created ON
+// the org's connected account (the Stripe-Account header via forAccount()), so
+// the charge lives on the ORG's balance — the org is merchant of record, the
+// platform is never liable and takes no cut. See connectAccount.ts for the
+// liability argument and the invariants (never transfer_data /
+// application_fee_amount / on_behalf_of).
+//
+// The share_token is the ONLY credential on the public path — the amount is
+// always computed server-side from the invoice's line items; a client can never
+// dictate what to charge. The org must have a connected, charges-enabled
+// Stripe account or no session is created (the public invoice view then shows
+// no Pay button). The Connect webhook records payment idempotently
+// (billing_events.stripe_event_id + an invoice-level already-paid guard) and
+// stamps the Stripe ids for audit.
+//
+// The Pay checkout sets payment_intent_data.setup_future_usage = "off_session"
+// + passes the customer's Stripe Customer (on the connected account), so paying
+// an invoice ALSO saves the card for future off-session auto-charge — the
+// customer is enrolled in auto-pay by paying once. A separate mode="setup"
+// flow (invoiceCharge.ts) saves a card without charging, for customers who want
+// to enroll between invoices.
+//
+// chargeInvoiceOffSession is the cycle-billing auto-charge: it creates an
+// off-session PaymentIntent on the connected account using the customer's saved
+// card, records the payment INLINE (synchronous, so the invoice is marked paid
+// before the delivery email goes out — no race with the webhook), and returns
+// whether it succeeded. The webhook's payment_intent.succeeded is then an
+// idempotent no-op (already-paid guard).
+
+import type Stripe from "stripe";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getStripe } from "@/lib/billing";
+import { computeTotal } from "@/lib/money";
+import {
+  forAccount,
+  requireChargeableAccount,
+} from "@/lib/connectAccount";
+import { ensureStripeCustomer, stampCustomerCard } from "@/lib/invoiceCharge";
+
+// ── Create a Stripe Checkout session for the invoice balance (DIRECT charge) ─
+export async function createInvoiceCheckoutSession(input: {
+  token: string;
+  origin: string;
+}): Promise<{ url: string }> {
+  const admin = createAdminClient();
+
+  // Token is the only credential — look the invoice up by share_token.
+  const { data: invoice } = await admin
+    .from("invoices")
+    .select(
+      "id, status, organization_id, customer_id, amount_paid, jobs(name), customers(name, contact_email, phone)"
+    )
+    .eq("share_token", input.token)
+    .maybeSingle();
+  if (!invoice) throw new Error("Invoice not found");
+
+  if (invoice.status === "paid") throw new Error("This invoice is already paid");
+  if (invoice.status === "void")
+    throw new Error("This invoice has been voided and can't be paid online");
+
+  // Total from line items — never trust a client amount.
+  const { data: lineItems } = await admin
+    .from("invoice_line_items")
+    .select("quantity, unit_price")
+    .eq("invoice_id", invoice.id);
+  const total = computeTotal(
+    (lineItems ?? []).map((i) => ({
+      quantity: Number(i.quantity),
+      unit_price: Number(i.unit_price),
+    }))
+  );
+  const amountPaid = Number(invoice.amount_paid ?? 0) || 0;
+  const balanceDue = Math.max(0, total - amountPaid);
+  if (balanceDue <= 0) throw new Error("This invoice has no balance due");
+
+  // Org must have a charges-enabled connected account. We gate on
+  // charges_enabled ONLY (not payouts_enabled) — see connectAccount.ts header.
+  const account = await requireChargeableAccount(invoice.organization_id);
+
+  const customer = invoice.customers as unknown as
+    | { name: string | null; contact_email: string | null; phone: string | null }
+    | null;
+  const jobName =
+    (invoice.jobs as unknown as { name: string } | null)?.name ?? "your project";
+  const customerEmail = customer?.contact_email?.trim() || null;
+  const amountCents = Math.round(balanceDue * 100);
+
+  // Resolve (creating if needed) the customer's Stripe Customer ON the org's
+  // connected account, so the charge is associated with their record AND the
+  // card is saved to it for future auto-charge.
+  const stripeCustomerId = await ensureStripeCustomer(
+    {
+      id: invoice.customer_id as string,
+      name: customer?.name ?? null,
+      contact_email: customerEmail,
+      phone: customer?.phone ?? null,
+    },
+    account.stripeAccountId
+  );
+
+  const stripe = await getStripe();
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: "payment",
+      customer: stripeCustomerId,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: amountCents,
+            product_data: { name: `Invoice — ${jobName}` },
+          },
+        },
+      ],
+      // DIRECT charge: created on the connected account via the Stripe-Account
+      // header (forAccount). NO transfer_data, NO application_fee_amount — the
+      // org is merchant of record and keeps 100%. setup_future_usage = off_session
+      // saves the card to the customer for future off-session auto-charge.
+      payment_intent_data: {
+        metadata: {
+          invoice_id: invoice.id,
+          organization_id: invoice.organization_id,
+        },
+        setup_future_usage: "off_session",
+      },
+      metadata: {
+        invoice_id: invoice.id,
+        organization_id: invoice.organization_id,
+      },
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
+      success_url: `${input.origin}/invoices/view/${input.token}?paid=1`,
+      cancel_url: `${input.origin}/invoices/view/${input.token}?canceled=1`,
+    },
+    forAccount(account.stripeAccountId)
+  );
+  if (!session.url) throw new Error("Stripe did not return a checkout URL");
+  return { url: session.url };
+}
+
+// ── Record a completed payment on the invoice (shared idempotent core) ──────
+// Called from both the Checkout path (checkout.session.completed) and the
+// off-session auto-charge path (payment_intent.succeeded / inline). Idempotent:
+// the webhook's billing_events.stripe_event_id dedup is the first line; the
+// already-paid guard here is the second. Verifies the invoice's org matches the
+// metadata (defensive — only the server ever sets metadata).
+export async function recordInvoicePayment(input: {
+  invoiceId: string;
+  orgId: string;
+  paidAmountCents: number;
+  paymentIntentId: string | null;
+  checkoutSessionId?: string | null;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const { data: invoice } = await admin
+    .from("invoices")
+    .select("id, status, organization_id, amount_paid, jobs(name), customers(name)")
+    .eq("id", input.invoiceId)
+    .maybeSingle();
+  if (!invoice) return;
+  if (invoice.organization_id !== input.orgId) return; // metadata/org mismatch
+  if (invoice.status === "paid") return; // already applied (idempotent)
+
+  // Recompute the invoice total from its line items to know if it's now paid.
+  const { data: lineItems } = await admin
+    .from("invoice_line_items")
+    .select("quantity, unit_price")
+    .eq("invoice_id", input.invoiceId);
+  const total = computeTotal(
+    (lineItems ?? []).map((i) => ({
+      quantity: Number(i.quantity),
+      unit_price: Number(i.unit_price),
+    }))
+  );
+
+  const paidAmount = input.paidAmountCents / 100;
+  const prevPaid = Number(invoice.amount_paid ?? 0) || 0;
+  const newAmountPaid = Math.min(prevPaid + paidAmount, total);
+
+  const update: Record<string, unknown> = {
+    amount_paid: newAmountPaid,
+    ...(input.checkoutSessionId
+      ? { stripe_checkout_session_id: input.checkoutSessionId }
+      : {}),
+    ...(input.paymentIntentId
+      ? { stripe_payment_intent_id: input.paymentIntentId }
+      : {}),
+  };
+  if (newAmountPaid >= total) {
+    update.status = "paid";
+    update.paid_at = new Date().toISOString();
+  }
+
+  await admin.from("invoices").update(update).eq("id", input.invoiceId);
+
+  // Record an in-app "invoice paid" notification for the office feed ONLY when
+  // the payment fully settled the invoice. Service role (bypasses RLS).
+  // Non-fatal: the invoice is already marked paid by the time this runs, so a
+  // DB hiccup must never throw back up to the webhook. The unique
+  // (type, entity_id) index makes a redelivered webhook a no-op.
+  if (newAmountPaid >= total) {
+    try {
+      const customerName =
+        (invoice.customers as unknown as { name: string | null } | null)?.name ??
+        "";
+      const jobName =
+        (invoice.jobs as unknown as { name: string } | null)?.name ?? "";
+      const body = [customerName, jobName, `$${paidAmount.toFixed(2)}`]
+        .filter(Boolean)
+        .join(" · ");
+      await admin.from("notifications").insert({
+        organization_id: invoice.organization_id,
+        type: "invoice_paid",
+        title: "Invoice paid",
+        body,
+        href: `/invoices/${input.invoiceId}`,
+        entity_id: input.invoiceId,
+      });
+    } catch {
+      // Swallow — feed is best-effort; payment already recorded.
+    }
+  }
+}
+
+// ── checkout.session.completed (mode=payment) ───────────────────────────────
+// Records the payment AND, because the Pay checkout saves the card
+// (setup_future_usage=off_session), stamps the customer's saved card for
+// future auto-charge.
+export async function applyInvoicePayment(
+  session: Stripe.Checkout.Session,
+  stripeAccountId: string
+): Promise<void> {
+  const invoiceId = session.metadata?.invoice_id;
+  const orgId = session.metadata?.organization_id;
+  if (!invoiceId || !orgId) return; // not an invoice-payment session
+
+  await recordInvoicePayment({
+    invoiceId,
+    orgId,
+    paidAmountCents: Number(session.amount_total ?? 0),
+    paymentIntentId:
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id ?? null,
+    checkoutSessionId: session.id,
+  });
+
+  // Stamp the saved card (the Pay checkout enrolled this customer in auto-pay).
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id ?? null;
+  if (paymentIntentId) {
+    try {
+      const stripe = await getStripe();
+      const pi = await stripe.paymentIntents.retrieve(
+        paymentIntentId,
+        undefined,
+        forAccount(stripeAccountId)
+      );
+      if (pi.payment_method) {
+        const admin = createAdminClient();
+        const { data: inv } = await admin
+          .from("invoices")
+          .select("customer_id")
+          .eq("id", invoiceId)
+          .maybeSingle();
+        const customerId = (inv?.customer_id as string | null) ?? null;
+        if (customerId) {
+          await stampCustomerCard(
+            customerId,
+            stripeAccountId,
+            typeof pi.payment_method === "string"
+              ? pi.payment_method
+              : pi.payment_method.id
+          );
+        }
+      }
+    } catch {
+      // Swallow — the payment is already recorded; card-stamping is best-effort.
+    }
+  }
+}
+
+// ── payment_intent.succeeded (off-session auto-charge path) ─────────────────
+export async function applyInvoicePaymentFromPI(
+  pi: Stripe.PaymentIntent
+): Promise<void> {
+  const invoiceId = pi.metadata?.invoice_id;
+  const orgId = pi.metadata?.organization_id;
+  if (!invoiceId || !orgId) return;
+  await recordInvoicePayment({
+    invoiceId,
+    orgId,
+    paidAmountCents: pi.amount,
+    paymentIntentId: pi.id,
+  });
+}
+
+// ── Off-session auto-charge for cycle billing ────────────────────────────────
+// Creates an off-session PaymentIntent on the connected account using the
+// customer's saved card. On success, records the payment INLINE (synchronous —
+// the invoice is marked paid before the delivery email goes out, so there is no
+// race with the webhook; the later payment_intent.succeeded webhook is an
+// idempotent no-op via the already-paid guard). Returns whether it succeeded +
+// a reason when it didn't, so the caller (lawnBilling.ts) can decide whether to
+// still deliver the invoice for manual payment.
+export async function chargeInvoiceOffSession(input: {
+  invoiceId: string;
+}): Promise<{ charged: boolean; reason?: string }> {
+  const admin = createAdminClient();
+
+  const { data: invoice } = await admin
+    .from("invoices")
+    .select("id, status, organization_id, customer_id, amount_paid")
+    .eq("id", input.invoiceId)
+    .maybeSingle();
+  if (!invoice) return { charged: false, reason: "Invoice not found" };
+  if (invoice.status === "paid")
+    return { charged: false, reason: "already paid" };
+  const customerId = (invoice.customer_id as string | null) ?? null;
+  if (!customerId) return { charged: false, reason: "no customer on invoice" };
+
+  // Saved card on file (on the org's connected account).
+  const { data: customer } = await admin
+    .from("customers")
+    .select("stripe_customer_id, stripe_payment_method_id")
+    .eq("id", customerId)
+    .maybeSingle();
+  const stripeCustomerId = (customer?.stripe_customer_id as string | null) ?? null;
+  const paymentMethodId =
+    (customer?.stripe_payment_method_id as string | null) ?? null;
+  if (!stripeCustomerId || !paymentMethodId)
+    return { charged: false, reason: "no saved card" };
+
+  // Chargeable connected account.
+  let account;
+  try {
+    account = await requireChargeableAccount(invoice.organization_id);
+  } catch (err) {
+    return {
+      charged: false,
+      reason: err instanceof Error ? err.message : "online payments not set up",
+    };
+  }
+
+  // Amount = balance due (server-side from line items; never trust a stored copy).
+  const { data: lineItems } = await admin
+    .from("invoice_line_items")
+    .select("quantity, unit_price")
+    .eq("invoice_id", input.invoiceId);
+  const total = computeTotal(
+    (lineItems ?? []).map((i) => ({
+      quantity: Number(i.quantity),
+      unit_price: Number(i.unit_price),
+    }))
+  );
+  const prevPaid = Number(invoice.amount_paid ?? 0) || 0;
+  const balanceDue = Math.max(0, total - prevPaid);
+  if (balanceDue <= 0) return { charged: false, reason: "no balance due" };
+  const amountCents = Math.round(balanceDue * 100);
+
+  const stripe = await getStripe();
+  let pi: Stripe.PaymentIntent;
+  try {
+    pi = await stripe.paymentIntents.create(
+      {
+        amount: amountCents,
+        currency: "usd",
+        customer: stripeCustomerId,
+        payment_method: paymentMethodId,
+        off_session: true,
+        confirm: true,
+        metadata: {
+          invoice_id: input.invoiceId,
+          organization_id: invoice.organization_id,
+        },
+      },
+      forAccount(account.stripeAccountId)
+    );
+  } catch (err) {
+    return {
+      charged: false,
+      reason: err instanceof Error ? err.message : "charge failed",
+    };
+  }
+
+  if (pi.status === "succeeded") {
+    // Record inline so the invoice is paid before delivery. The webhook no-ops.
+    await recordInvoicePayment({
+      invoiceId: input.invoiceId,
+      orgId: invoice.organization_id,
+      paidAmountCents: amountCents,
+      paymentIntentId: pi.id,
+    });
+    return { charged: true };
+  }
+
+  // requires_action = the card needs authentication that off-session can't
+  // provide; requires_payment_method / canceled = declined. Either way the
+  // customer must pay manually via the Pay button.
+  const reason =
+    pi.status === "requires_action"
+      ? "card requires authentication — can't auto-charge"
+      : pi.last_payment_error?.message ?? `charge ${pi.status}`;
+  return { charged: false, reason };
+}

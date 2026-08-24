@@ -83,6 +83,9 @@ const LAWN_BLOCKED_API_PREFIXES = [
   "/api/lawn/geocode", // pin-drop geocoding (route planner, defense-in-depth)
   "/api/lawn/applications", // chemical application log + CSV export (lawn only)
   "/api/mcp", // lawn MCP server (read-only, RLS-scoped) — lawn-only; 404 on construction
+  "/api/billing/connect", // Stripe Connect onboarding (lawn-only v1); the connect
+  // start/status routes also 403 on !isLawn(). Public Pay/Save-card/webhook
+  // routes are NOT blocked — they self-disable when no connected account exists.
 ];
 
 export async function proxy(request: NextRequest) {

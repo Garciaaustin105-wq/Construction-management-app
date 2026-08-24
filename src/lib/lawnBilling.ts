@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deliverInvoice, publicBaseUrl } from "@/lib/invoiceSend";
+import { chargeInvoiceOffSession } from "@/lib/invoicePay";
 
 // Monthly lawn cycle billing. Shared by the on-demand office route (user
 // session, RLS-enforced) and the nightly cron (service role, RLS bypassed) —
@@ -159,6 +160,21 @@ export async function runCycleBilling(
         .eq("invoice_id", invoiceId);
       await supabase.from("invoices").update({ status: "void" }).eq("id", invoiceId);
       continue;
+    }
+
+    // Auto-charge: if the customer has a saved card on file, charge the
+    // balance off-session on the org's connected Stripe account (DIRECT charge
+    // — org is merchant of record, platform never liable / takes no cut). Best-
+    // effort + non-fatal: a failed/declined charge (no saved card, card needs
+    // authentication, decline) leaves the invoice "sent" and falls through to
+    // normal delivery so the customer can pay via the Pay button. On success
+    // the invoice is marked paid INLINE (synchronously, so the delivery email
+    // below is a paid receipt, not a balance-due notice); the later
+    // payment_intent.succeeded webhook is then an idempotent no-op.
+    try {
+      await chargeInvoiceOffSession({ invoiceId });
+    } catch {
+      // Swallow — auto-charge must never roll back a successfully billed invoice.
     }
 
     // Auto-deliver the cycle invoice to the customer (whichever channel is on
