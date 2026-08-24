@@ -360,6 +360,8 @@ export default function MyRoutePage() {
         dueDate: v.due_date,
         pos: { lat: Number(lj.map_lat), lng: Number(lj.map_lng) },
         routeOrder: v.route_order,
+        // Crew map only needs pins + the nav link — no ETA walk here.
+        serviceDurationMin: null,
       };
     })
     .filter((s): s is RouteStop => s !== null);

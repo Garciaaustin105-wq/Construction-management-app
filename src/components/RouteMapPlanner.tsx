@@ -37,6 +37,7 @@ import {
   clusterZones,
   routeMiles,
   estDriveMinutes,
+  haversineMiles,
   buildGoogleMapsDirUrl,
   type RouteStop,
   type CrewInfo,
@@ -50,6 +51,21 @@ const GoogleRouteMap = dynamic(() => import("@/components/GoogleRouteMap"), {
     <div className="w-full h-[320px] lg:h-[560px] rounded-lg bg-gray-100 animate-pulse" />
   ),
 });
+
+// Assumed crew start time for the per-stop arrival-ETA walk (8:00 AM, local).
+// The ETA is dispatcher planning advice, not a customer-facing promise — the
+// office can tweak this once a per-org "day start" setting exists. Seconds
+// since midnight.
+const ROUTE_START_SEC = 8 * 3600;
+
+/** Format seconds-since-midnight as a 12-hour clock "h:mm AM/PM". */
+function formatClock(sec: number): string {
+  const h24 = Math.floor(sec / 3600) % 24;
+  const m = Math.floor((sec % 3600) / 60);
+  const ampm = h24 < 12 ? "AM" : "PM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
+}
 
 export default function RouteMapPlanner({
   date,
@@ -144,6 +160,18 @@ export default function RouteMapPlanner({
   // straight-line estimate below).
   const [realMinutes, setRealMinutes] = useState<number | null>(null);
   const [realMiles, setRealMiles] = useState<number | null>(null);
+  // Real per-leg DRIVE matrix (seconds) from /api/lawn/route-optimize, keyed by
+  // stop id so it stays valid as the dispatcher drags/reorders after Optimize.
+  // `travel[srcId][dstId]` = drive seconds (off-diagonal; only finite cells
+  // stored — null/unreachable legs are omitted so the ETA walk falls back to a
+  // haversine estimate for that leg). `service[id]` = on-site seconds (the
+  // matrix diagonal the server wrote from the serviceDurations we sent). null
+  // until the first successful Optimize (or a 503 haversine fallback, which
+  // skips the matrix entirely) — before that, ETAs use the haversine estimate.
+  const [routeMatrix, setRouteMatrix] = useState<{
+    travel: Map<string, Map<string, number>>;
+    service: Map<string, number>;
+  } | null>(null);
 
   // Auto-save: debounced persist of crew_id + per-crew route_order whenever the
   // dispatcher changes the order or a crew assignment (drag, crew <select>,
@@ -212,6 +240,64 @@ export default function RouteMapPlanner({
   // as the dispatcher drags/reorders, so the button always matches the plan on
   // screen. Capped at MAX_NAV_STOPS; `routed < total` warns when stops are cut.
   const nav = useMemo(() => buildGoogleMapsDirUrl(ordered), [ordered]);
+
+  // Per-stop arrival ETAs + day-end. Walk `ordered` from ROUTE_START_SEC:
+  // arrival[i] = prevDeparture + travel(prev→cur); departure = arrival +
+  // service(cur). Travel legs use the real matrix when available (post-Optimize,
+  // keyed by id so a drag re-walks with the same real drive times), else a
+  // haversine estimate. Service time = the matrix diagonal (sent as
+  // serviceDurations) when available, else the stop's resolved serviceDurationMin.
+  // An unmapped stop (no pos) breaks the chain — it and everything after it get
+  // null (we can't time a leg to/from an unknown location). Returns etaByStop as
+  // a plain record for the list + dayEndSec (last departure) for the summary.
+  const { etaByStop, dayEndSec } = useMemo(() => {
+    const eta: Record<string, number | null> = {};
+    let prevDeparture: number | null = null;
+    let prevStop: RouteStop | null = null;
+    let dayEnd: number | null = null;
+    for (const s of ordered) {
+      let arrival: number | null;
+      if (prevStop === null) {
+        // First stop — crew starts there at ROUTE_START_SEC.
+        arrival = ROUTE_START_SEC;
+      } else if (
+        prevDeparture !== null &&
+        prevStop.pos !== null &&
+        s.pos !== null
+      ) {
+        const real = routeMatrix?.travel.get(prevStop.id)?.get(s.id);
+        const travel =
+          typeof real === "number"
+            ? real
+            : estDriveMinutes(haversineMiles(prevStop.pos, s.pos)) * 60;
+        arrival = prevDeparture + travel;
+      } else {
+        // Previous leg uncomputable (unmapped gap, or chain already broken).
+        arrival = null;
+      }
+      eta[s.id] = arrival;
+      if (arrival !== null) {
+        const svc = routeMatrix?.service.get(s.id) ?? null;
+        const serviceSec =
+          svc !== null
+            ? svc
+            : s.serviceDurationMin != null
+              ? s.serviceDurationMin * 60
+              : 0;
+        // Annotated `number` to break the inference cycle: departure feeds
+        // prevDeparture, which feeds the next iteration's arrival, which feeds
+        // departure — without an explicit type TS sees departure's type as
+        // depending on itself (TS7022).
+        const departure: number = arrival + serviceSec;
+        prevDeparture = departure;
+        dayEnd = departure;
+      } else {
+        prevDeparture = null;
+      }
+      prevStop = s;
+    }
+    return { etaByStop: eta, dayEndSec: dayEnd };
+  }, [ordered, routeMatrix]);
 
   function setStopPos(visitId: string, pos: { lat: number; lng: number } | null) {
     setOrdered((prev) =>
@@ -333,10 +419,24 @@ export default function RouteMapPlanner({
       // pre-check to avoid a wasted round trip). Returns an N×N duration matrix
       // in seconds; null pairs are unreachable.
       const positions = mapped.map((s) => ({ lat: s.pos!.lat, lng: s.pos!.lng }));
+      // On-site service seconds per stop (null = no duration on file → server
+      // writes 0 on that diagonal). The server puts these on the matrix DIAGONAL
+      // (durations[i][i]); off-diagonal stays pure travel time. Ordering ignores
+      // the diagonal (service time is a constant added to every tour → can't
+      // improve the optimum), so this does NOT change the order — its payoff is
+      // the client building a per-stop arrival-ETA walk from the returned matrix
+      // (real drive legs + service times) instead of the straight-line estimate.
+      const serviceDurations = mapped.map((s) =>
+        s.serviceDurationMin != null ? s.serviceDurationMin * 60 : null
+      );
       const r = await fetch("/api/lawn/route-optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ origins: positions, destinations: positions }),
+        body: JSON.stringify({
+          origins: positions,
+          destinations: positions,
+          serviceDurations,
+        }),
       });
       if (r.status === 429) {
         // Server quota hit (raced past the client pre-check, or caps changed
@@ -365,6 +465,29 @@ export default function RouteMapPlanner({
       const matrix: number[][] = durations.map((row) =>
         row.map((d) => (typeof d === "number" ? d : Infinity))
       );
+      // Build the id-keyed route matrix for the ETA walk. Off-diagonal finite
+      // cells → travel[src][dst]; the diagonal → service[id] (the serviceDurations
+      // we sent, written by the server). Null/unreachable off-diagonal cells are
+      // omitted so the walk falls back to a haversine estimate for that leg.
+      // Keyed by id (not index) so a drag after Optimize re-walks with the same
+      // real drive times for the new sequence.
+      const travel = new Map<string, Map<string, number>>();
+      const service = new Map<string, number>();
+      for (let i = 0; i < mapped.length; i++) {
+        const row = durations[i] ?? [];
+        // Assign to a local so `typeof cell === "number"` narrows it — TS won't
+        // narrow an indexed access like `row[i]` directly.
+        const diag = row[i];
+        service.set(mapped[i].id, typeof diag === "number" ? diag : 0);
+        const inner = new Map<string, number>();
+        for (let j = 0; j < mapped.length; j++) {
+          if (i === j) continue;
+          const d = row[j];
+          if (typeof d === "number" && Number.isFinite(d)) inner.set(mapped[j].id, d);
+        }
+        travel.set(mapped[i].id, inner);
+      }
+      setRouteMatrix({ travel, service });
       const optimized = nearestNeighborByMatrix(mapped, matrix);
       const unmapped = ordered.filter((s) => !s.pos);
       setOrdered([...optimized, ...unmapped]);
@@ -520,6 +643,12 @@ export default function RouteMapPlanner({
               · ~{(realMiles ?? miles).toFixed(1)} mi · ~
               {Math.round(realMinutes ?? estDriveMinutes(miles))} min
               {realMinutes == null ? " (est.)" : ""}
+            </span>
+          )}
+          {dayEndSec !== null && (
+            <span className="text-gray-400">
+              · ends ≈ {formatClock(dayEndSec)}
+              {routeMatrix == null ? " (est.)" : ""}
             </span>
           )}
           {saveState === "saving" && (
@@ -687,6 +816,7 @@ export default function RouteMapPlanner({
         highlightId={highlightId}
         geocoding={geocoding}
         dropTargetId={dropTargetId}
+        etaByStop={etaByStop}
         onReorder={setOrdered}
         onAssign={(id, crew) => setCrewAssign((p) => ({ ...p, [id]: crew }))}
         onHighlight={setHighlightId}

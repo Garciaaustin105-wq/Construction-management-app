@@ -25,6 +25,13 @@ export type RouteStop = {
   // The map planner seeds its list order from this (falls back to nearest-neighbor),
   // so a saved plan isn't lost on reload.
   routeOrder: number | null;
+  // Resolved on-site service duration in MINUTES for this stop (the route-optimize
+  // payoff: sent to /api/lawn/route-optimize as the matrix diagonal so the client
+  // can compute per-stop arrival ETAs). Resolved the same way as the visit page:
+  // recurring_schedules.estimated_duration_minutes (schedule override) ?? the
+  // matching lawn_services.default_duration_minutes (by service_type == name) ?? null.
+  // Null = no duration on file; the ETA math treats a null service time as 0.
+  serviceDurationMin: number | null;
 };
 
 export type CrewInfo = { id: string; name: string };

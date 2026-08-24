@@ -28,6 +28,15 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, MapPin, Loader2, Search } from "lucide-react";
 import type { RouteStop, CrewInfo } from "@/lib/lawnRouting";
 
+/** Format seconds-since-midnight as a 12-hour clock "h:mm AM/PM". */
+function formatClock(sec: number): string {
+  const h24 = Math.floor(sec / 3600) % 24;
+  const m = Math.floor((sec % 3600) / 60);
+  const ampm = h24 < 12 ? "AM" : "PM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
+}
+
 type Props = {
   stops: RouteStop[];
   crews: CrewInfo[];
@@ -35,6 +44,10 @@ type Props = {
   highlightId: string | null;
   geocoding: Record<string, boolean>;
   dropTargetId: string | null;
+  // Per-stop arrival ETA (seconds since midnight) from the planner's ETA walk,
+  // or null when it can't be timed (unmapped stop / broken chain). null/absent
+  // map → no ETA chip rendered (e.g. before any optimization data exists).
+  etaByStop?: Record<string, number | null> | null;
   onReorder: (next: RouteStop[]) => void;
   onAssign: (visitId: string, crewId: string | null) => void;
   onHighlight: (id: string | null) => void;
@@ -50,6 +63,7 @@ function StopRow({
   highlighted,
   isGeocoding,
   isDropTarget,
+  arrivalEta,
   onAssign,
   onHighlight,
   onGeocode,
@@ -62,6 +76,7 @@ function StopRow({
   highlighted: boolean;
   isGeocoding: boolean;
   isDropTarget: boolean;
+  arrivalEta: number | null;
   onAssign: (crewId: string | null) => void;
   onHighlight: () => void;
   onGeocode: () => void;
@@ -126,6 +141,14 @@ function StopRow({
           {stop.address ?? "no address"}
         </p>
         <div className="flex items-center gap-2 mt-1 flex-wrap">
+          {arrivalEta !== null && (
+            <span
+              className="text-[10px] font-medium text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded"
+              title="Estimated arrival (8 AM start + drive + service time)"
+            >
+              ≈ {formatClock(arrivalEta)}
+            </span>
+          )}
           {stop.serviceType && (
             <span className="text-[10px] text-gray-500">{stop.serviceType}</span>
           )}
@@ -201,6 +224,7 @@ export default function RouteList({
   highlightId,
   geocoding,
   dropTargetId,
+  etaByStop,
   onReorder,
   onAssign,
   onHighlight,
@@ -257,6 +281,7 @@ export default function RouteList({
               highlighted={highlightId === s.id}
               isGeocoding={!!geocoding[s.id]}
               isDropTarget={dropTargetId === s.id}
+              arrivalEta={etaByStop ? etaByStop[s.id] ?? null : null}
               onAssign={(crew) => onAssign(s.id, crew)}
               onHighlight={() => onHighlight(highlightId === s.id ? null : s.id)}
               onGeocode={() => onGeocode(s.id)}

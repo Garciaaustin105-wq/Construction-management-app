@@ -30,9 +30,13 @@ type VisitRow = {
     customers: { name: string | null } | null;
     lawn_jobs: { map_lat: number | null; map_lng: number | null } | null;
   } | null;
-  recurring_schedules: { service_type: string | null } | null;
+  recurring_schedules: {
+    service_type: string | null;
+    estimated_duration_minutes: number | null;
+  } | null;
 };
 type CrewRow = { id: string; name: string };
+type ServiceRow = { name: string; default_duration_minutes: number | null };
 
 function shiftDate(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00.000Z`);
@@ -56,37 +60,62 @@ export default async function LawnRoutesPage({
   const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
-  const [{ data: visitRows }, { data: crewRows }] = await Promise.all([
-    supabase
-      .from("lawn_visits")
-      .select(
-        "id, job_id, due_date, status, crew_id, route_order, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng)), recurring_schedules(service_type)"
-      )
-      .eq("due_date", date)
-      // Pending first, then by any saved route order (nulls last) so the planner
-      // list opens in the order the office last saved.
-      .order("status", { ascending: true })
-      .order("route_order", { ascending: true, nullsFirst: false }),
-    supabase
-      .from("crew_members")
-      .select("id, name")
-      .order("name", { ascending: true }),
-  ]);
+  const [{ data: visitRows }, { data: crewRows }, { data: serviceRows }] =
+    await Promise.all([
+      supabase
+        .from("lawn_visits")
+        .select(
+          "id, job_id, due_date, status, crew_id, route_order, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng)), recurring_schedules(service_type, estimated_duration_minutes)"
+        )
+        .eq("due_date", date)
+        // Pending first, then by any saved route order (nulls last) so the planner
+        // list opens in the order the office last saved.
+        .order("status", { ascending: true })
+        .order("route_order", { ascending: true, nullsFirst: false }),
+      supabase
+        .from("crew_members")
+        .select("id, name")
+        .order("name", { ascending: true }),
+      // Service catalog for the duration fallback. A visit's on-site time is
+      // recurring_schedules.estimated_duration_minutes (schedule override) ?? the
+      // matching lawn_services.default_duration_minutes (by service_type == name).
+      // Same resolution as the visit page (visits/[id]/page.tsx).
+      supabase
+        .from("lawn_services")
+        .select("name, default_duration_minutes")
+        .order("name", { ascending: true }),
+    ]);
+
+  // name → default_duration_minutes lookup for the service-catalog fallback.
+  const serviceDuration = new Map<string, number | null>();
+  for (const s of (serviceRows as unknown as ServiceRow[]) ?? []) {
+    serviceDuration.set(s.name, s.default_duration_minutes);
+  }
 
   const stops: RouteStop[] = ((visitRows as unknown as VisitRow[]) ?? []).map(
     (v) => {
       const lj = v.jobs?.lawn_jobs ?? null;
+      const sched = v.recurring_schedules ?? null;
+      // Schedule override ?? service-catalog default (matched by service_type ==
+      // lawn_services.name) ?? null. Mirrors visits/[id]/page.tsx.
+      const serviceDefault =
+        sched?.service_type != null
+          ? (serviceDuration.get(sched.service_type) ?? null)
+          : null;
+      const serviceDurationMin =
+        sched?.estimated_duration_minutes ?? serviceDefault;
       return {
         id: v.id,
         jobId: v.job_id,
         jobName: v.jobs?.name ?? "—",
         address: v.jobs?.address ?? null,
         customerName: v.jobs?.customers?.name ?? null,
-        serviceType: v.recurring_schedules?.service_type ?? null,
+        serviceType: sched?.service_type ?? null,
         crewId: v.crew_id,
         status: v.status,
         dueDate: v.due_date,
         routeOrder: v.route_order,
+        serviceDurationMin,
         pos:
           lj && lj.map_lat != null && lj.map_lng != null
             ? { lat: Number(lj.map_lat), lng: Number(lj.map_lng) }
