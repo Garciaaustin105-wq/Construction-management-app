@@ -10,6 +10,17 @@ import EstimateLineItemEditor, {
   type CostCodeOption,
 } from "@/components/EstimateLineItemEditor";
 import EstimateDocument from "@/components/EstimateDocument";
+import EstimateConvertPanel from "@/components/EstimateConvertPanel";
+import StatusBadge from "@/components/ui/StatusBadge";
+// Labels + tones come from the estimate lifecycle module — the single
+// source shared with the list page (this page had its own label map and a
+// hard-coded gray pill that ignored status entirely).
+import {
+  ESTIMATE_STATUS_LABEL,
+  ESTIMATE_STATUS_TONE,
+  type EstimateStatus,
+} from "@/lib/lifecycles/estimate";
+import { summarizeLineSchedule, type ScheduleFrequency } from "@/lib/lawnEstimate";
 import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
 import ProposalOfficePanel from "./ProposalOfficePanel";
@@ -78,14 +89,16 @@ type LineRow = {
   unit_price: number;
   internal_cost: number | null;
   section: string | null;
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  draft: "Draft",
-  sent: "Sent",
-  approved: "Approved",
-  converted: "Converted",
-  rejected: "Rejected",
+  // Lawn cadence (Track 3). Present on the office select + (minus
+  // recurring_schedule_id) the customer select. Optional so the customer
+  // shape (which omits some) still type-checks.
+  schedule_frequency?: string | null;
+  schedule_interval_weeks?: number;
+  schedule_days_of_week?: number[];
+  schedule_day_of_month?: number | null;
+  schedule_start_date?: string | null;
+  schedule_end_date?: string | null;
+  recurring_schedule_id?: string | null;
 };
 
 export default function EstimateDetailPage({
@@ -192,8 +205,8 @@ export default function EstimateDetailPage({
       // after the estimate loads) because it only depends on isOffice, so the
       // estimate + line-item fetches are independent and can run together.
       const lineSelect = isOffice
-        ? "id, cost_code_id, description, quantity, unit, unit_price, internal_cost, section"
-        : "id, description, quantity, unit_price, section";
+        ? "id, cost_code_id, description, quantity, unit, unit_price, internal_cost, section, schedule_frequency, schedule_interval_weeks, schedule_days_of_week, schedule_day_of_month, schedule_start_date, schedule_end_date, recurring_schedule_id"
+        : "id, description, quantity, unit_price, section, schedule_frequency, schedule_days_of_week, schedule_day_of_month, schedule_start_date, schedule_end_date";
       const [{ data: est }, { data: lineRows }] = await Promise.all([
         supabase.from("estimates").select(estSelect).eq("id", paramId).single(),
         supabase
@@ -239,6 +252,15 @@ export default function EstimateDetailPage({
           section: row.section ?? "",
           internal_cost:
             row.internal_cost != null ? Number(row.internal_cost) : null,
+          // Lawn cadence (Track 3). Round-trips the schedule_* columns; the
+          // customer select omits recurring_schedule_id so it defaults null.
+          schedule_frequency: row.schedule_frequency ?? null,
+          schedule_interval_weeks: row.schedule_interval_weeks ?? 1,
+          schedule_days_of_week: row.schedule_days_of_week ?? [],
+          schedule_day_of_month: row.schedule_day_of_month ?? null,
+          schedule_start_date: row.schedule_start_date ?? null,
+          schedule_end_date: row.schedule_end_date ?? null,
+          recurring_schedule_id: row.recurring_schedule_id ?? null,
         }))
       );
 
@@ -400,6 +422,17 @@ export default function EstimateDetailPage({
               quantity: i.quantity,
               unitPrice: i.unit_price,
               section: i.section,
+              // Lawn cadence chip. summarizeLineSchedule returns "" for a line
+              // with no recurrence, so construction lines pass through empty
+              // and the chip never renders.
+              scheduleSummary: summarizeLineSchedule({
+                schedule_frequency: i.schedule_frequency as ScheduleFrequency | null,
+                schedule_interval_weeks: i.schedule_interval_weeks,
+                schedule_days_of_week: i.schedule_days_of_week,
+                schedule_day_of_month: i.schedule_day_of_month,
+                schedule_start_date: i.schedule_start_date,
+                schedule_end_date: i.schedule_end_date,
+              }),
             }))}
           />
 
@@ -456,6 +489,17 @@ export default function EstimateDetailPage({
               quantity: i.quantity,
               unitPrice: i.unit_price,
               section: i.section,
+              // Lawn cadence chip. summarizeLineSchedule returns "" for a line
+              // with no recurrence, so construction lines pass through empty
+              // and the chip never renders.
+              scheduleSummary: summarizeLineSchedule({
+                schedule_frequency: i.schedule_frequency as ScheduleFrequency | null,
+                schedule_interval_weeks: i.schedule_interval_weeks,
+                schedule_days_of_week: i.schedule_days_of_week,
+                schedule_day_of_month: i.schedule_day_of_month,
+                schedule_start_date: i.schedule_start_date,
+                schedule_end_date: i.schedule_end_date,
+              }),
             }))}
           />
         </main>
@@ -514,6 +558,13 @@ export default function EstimateDetailPage({
   // chain a follow-up action and its own refresh without a double toast.
   async function saveEstimate(opts?: { silent?: boolean }): Promise<boolean> {
     if (!id) return false;
+    // A converted estimate is locked — the line→schedule stamp
+    // (recurring_schedule_id) would be wiped by the delete+reinsert below.
+    // Cadence edits happen on the schedule (RecurringScheduleEditor), not here.
+    if (estimate?.status === "converted") {
+      toast.warning("This estimate is converted. Edit the schedules directly.");
+      return false;
+    }
     const validItems = items.filter(
       (i) => i.description.trim() || i.cost_code_id
     );
@@ -569,6 +620,9 @@ export default function EstimateDetailPage({
     }
 
     // Replace all line items (delete + reinsert with fresh positions).
+    // NOTE: this wipes recurring_schedule_id, so saveEstimate refuses to run
+    // once the estimate is converted (the stamp is the line→schedule link).
+    // Pre-conversion the stamp is null anyway, so cadence round-trips safely.
     await supabase.from("estimate_line_items").delete().eq("estimate_id", id);
     const lineInserts = validItems.map((item, idx) => ({
       estimate_id: id,
@@ -580,6 +634,14 @@ export default function EstimateDetailPage({
       section: item.section || null,
       internal_cost: item.internal_cost ?? null,
       position: idx,
+      // Lawn cadence (Track 3). recurring_schedule_id is intentionally NOT
+      // re-inserted here — it is route-stamped only. Construction → null.
+      schedule_frequency: item.schedule_frequency || null,
+      schedule_interval_weeks: item.schedule_interval_weeks ?? 1,
+      schedule_days_of_week: item.schedule_days_of_week ?? [],
+      schedule_day_of_month: item.schedule_day_of_month ?? null,
+      schedule_start_date: item.schedule_start_date || null,
+      schedule_end_date: item.schedule_end_date || null,
     }));
     const { error: linesError } = await supabase
       .from("estimate_line_items")
@@ -685,8 +747,14 @@ export default function EstimateDetailPage({
                     {customerName}
                   </span>
                 )}
-                <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-700 flex-shrink-0">
-                  {STATUS_LABEL[estimate.status] ?? estimate.status}
+                <span className="flex-shrink-0">
+                  <StatusBadge
+                    tone={ESTIMATE_STATUS_TONE[estimate.status as EstimateStatus] ?? "neutral"}
+                    size="md"
+                  >
+                    {ESTIMATE_STATUS_LABEL[estimate.status as EstimateStatus] ??
+                      estimate.status}
+                  </StatusBadge>
                 </span>
               </div>
               <p className="text-xs text-gray-400">
@@ -741,6 +809,17 @@ export default function EstimateDetailPage({
                 />
               </div>
             </div>
+
+            {/* Lawn only, and self-gating: the panel returns null on
+                construction, when the estimate isn't approved, and when no line
+                carries a cadence. Sits directly under the line items because
+                that's what it acts on. */}
+            <EstimateConvertPanel
+              estimateId={estimate.id}
+              status={estimate.status}
+              items={items}
+              jobName={estimate.jobs?.name ?? null}
+            />
 
             <label className="block">
               <span className="text-sm font-medium text-gray-700">
@@ -1116,6 +1195,17 @@ export default function EstimateDetailPage({
                 quantity: i.quantity,
                 unitPrice: i.unit_price,
                 section: i.section,
+                // Lawn cadence chip — matches what the customer sees on /q/[token]
+                // and the in-app customer view, so the office preview reflects the
+                // proposal the customer will receive. "" for unscheduled lines.
+                scheduleSummary: summarizeLineSchedule({
+                  schedule_frequency: i.schedule_frequency as ScheduleFrequency | null,
+                  schedule_interval_weeks: i.schedule_interval_weeks,
+                  schedule_days_of_week: i.schedule_days_of_week,
+                  schedule_day_of_month: i.schedule_day_of_month,
+                  schedule_start_date: i.schedule_start_date,
+                  schedule_end_date: i.schedule_end_date,
+                }),
               }))}
               preview={estimate.status === "draft"}
             />

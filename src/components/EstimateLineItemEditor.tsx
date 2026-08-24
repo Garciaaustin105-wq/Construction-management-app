@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Save, Trash2 } from "lucide-react";
 import { formatMoney, computeInternalCost } from "@/lib/money";
 import type { PriorItem } from "@/lib/estimateHistory";
+import { EMPTY_SCHEDULE } from "@/lib/lawnEstimate";
 import NumberInput from "@/components/NumberInput";
+import CadencePicker from "@/components/CadencePicker";
+import { isLawn } from "@/lib/variant";
 
 export type EstimateLine = {
   cost_code_id: string | null;
@@ -14,6 +17,16 @@ export type EstimateLine = {
   unit_price: number;
   section: string;
   internal_cost: number | null;
+  // Lawn cadence (Track 3). Null/empty on construction — the cadence UI is
+  // hidden via isLawn() at the call sites. recurring_schedule_id is stamped by
+  // the convert route, never edited here. See src/lib/lawnEstimate.ts.
+  schedule_frequency: string | null;
+  schedule_interval_weeks: number;
+  schedule_days_of_week: number[];
+  schedule_day_of_month: number | null;
+  schedule_start_date: string | null;
+  schedule_end_date: string | null;
+  recurring_schedule_id: string | null;
 };
 
 export type CostCodeOption = {
@@ -150,6 +163,7 @@ export default function EstimateLineItemEditor({
         unit_price: 0,
         section: "",
         internal_cost: null,
+        ...EMPTY_SCHEDULE,
       },
     ]);
   }
@@ -167,6 +181,7 @@ export default function EstimateLineItemEditor({
         unit_price: svc.default_price,
         section: "",
         internal_cost: null,
+        ...EMPTY_SCHEDULE,
       },
     ]);
   }
@@ -199,6 +214,7 @@ export default function EstimateLineItemEditor({
         unit_price: Number(it.unit_price) || 0,
         section: it.section ?? "",
         internal_cost: it.internal_cost != null ? Number(it.internal_cost) : null,
+        ...EMPTY_SCHEDULE,
       }));
     onChange([...items, ...carried]);
   }
@@ -532,6 +548,39 @@ export default function EstimateLineItemEditor({
                 </div>
               </div>
             </div>
+
+            {/* Lawn cadence (Track 3). isLawn() is a BUILD-TIME constant, so on
+                the construction deploy this whole subtree is dead code the
+                bundler drops — construction line rows are byte-identical to
+                before. CadencePicker is fully controlled and owns all the
+                cadence UI; the editor's only job is to feed it this line's
+                schedule_* fields and route its patch back through update().
+                The patch keys match EstimateLine 1:1, so no mapping is needed —
+                and deliberately so: a translation layer here would be a second
+                place for the field names to drift from the DB columns. */}
+            {isLawn() && (
+              /* `disabled` is propagated with a native <fieldset disabled>
+                 rather than a prop: CadencePicker's contract has no `disabled`
+                 and is off-limits to edit, but a fieldset natively disables
+                 every descendant form control. Without this a locked estimate
+                 would still accept cadence edits that saveEstimate then
+                 silently refuses to persist. */
+              <fieldset
+                disabled={disabled}
+                className="mt-3 pt-3 border-t border-gray-100 disabled:opacity-60"
+              >
+                <CadencePicker
+                  frequency={item.schedule_frequency}
+                  intervalWeeks={item.schedule_interval_weeks}
+                  daysOfWeek={item.schedule_days_of_week}
+                  dayOfMonth={item.schedule_day_of_month}
+                  startDate={item.schedule_start_date}
+                  endDate={item.schedule_end_date}
+                  recurringScheduleId={item.recurring_schedule_id}
+                  onChange={(patch) => update(idx, patch)}
+                />
+              </fieldset>
+            )}
           </div>
         );
       })}

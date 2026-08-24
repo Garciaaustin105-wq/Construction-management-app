@@ -15,6 +15,7 @@
 // rendered by the caller (interactive/client), not by this component.
 
 import Image from "next/image";
+import { isLawn } from "@/lib/variant";
 import { computeEstimateTotals, formatMoney, type EstimatePricing } from "@/lib/money";
 
 export type EstimateDocumentItem = {
@@ -23,6 +24,13 @@ export type EstimateDocumentItem = {
   quantity: number;
   unitPrice: number;
   section?: string | null;
+  /**
+   * Lawn only: a human summary of the line's recurrence, e.g.
+   * "Weekly · Mon, Thu · Mar 1 – Oct 31". Built by
+   * summarizeLineSchedule() at the call site so this component stays free of
+   * lawn imports and construction callers simply omit it.
+   */
+  scheduleSummary?: string | null;
 };
 
 export type EstimateDocumentProps = {
@@ -258,9 +266,22 @@ export default function EstimateDocument({
                       return (
                         <div key={item.id} className="p-3">
                           <div className="flex justify-between items-start gap-2">
-                            <p className="text-sm text-gray-900 flex-1 min-w-0">
-                              {item.description}
-                            </p>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-gray-900">
+                                {item.description}
+                              </p>
+                              {/* Cadence chip. The proposal should read
+                                  "Weekly mowing, Mar 1 – Oct 31" rather than
+                                  leaving the customer to guess how often
+                                  someone shows up. Only rendered when the
+                                  caller supplied a summary — construction
+                                  never does. */}
+                              {isLawn() && item.scheduleSummary && (
+                                <span className="mt-1 inline-block rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-800">
+                                  {item.scheduleSummary}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-sm font-semibold text-gray-900">
                               {formatMoney(lineTotal)}
                             </p>

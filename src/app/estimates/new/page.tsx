@@ -11,6 +11,7 @@ import EstimateLineItemEditor, {
 import { type ServiceOption } from "@/components/LineItemEditor";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
 import { PIPELINE } from "@/lib/roles";
+import { EMPTY_SCHEDULE } from "@/lib/lawnEstimate";
 
 function NewEstimateForm() {
   const router = useRouter();
@@ -59,6 +60,7 @@ function NewEstimateForm() {
       unit_price: 0,
       section: "",
       internal_cost: null,
+      ...EMPTY_SCHEDULE,
     },
   ]);
   const [loading, setLoading] = useState(false);
@@ -277,6 +279,14 @@ function NewEstimateForm() {
       section: item.section || null,
       internal_cost: item.internal_cost ?? null,
       position: idx,
+      // Lawn cadence (Track 3). Construction never sets these → null. The
+      // convert route is the only writer of recurring_schedule_id.
+      schedule_frequency: item.schedule_frequency || null,
+      schedule_interval_weeks: item.schedule_interval_weeks ?? 1,
+      schedule_days_of_week: item.schedule_days_of_week ?? [],
+      schedule_day_of_month: item.schedule_day_of_month ?? null,
+      schedule_start_date: item.schedule_start_date || null,
+      schedule_end_date: item.schedule_end_date || null,
     }));
 
     const { error: linesError } = await supabase

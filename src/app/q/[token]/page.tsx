@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { EstimatePricing } from "@/lib/money";
 import EstimateDocument from "@/components/EstimateDocument";
 import EstimateDecisionButtons from "./EstimateDecisionButtons";
+import { summarizeLineSchedule, type ScheduleFrequency } from "@/lib/lawnEstimate";
 
 export const dynamic = "force-dynamic";
 
@@ -51,10 +52,17 @@ export default async function PublicEstimatePage({
       .is("viewed_at", null);
   }
 
-  // Customer-safe columns only — no cost_code_id, no internal_cost.
+  // Customer-safe columns only — no cost_code_id, no internal_cost. The cadence
+  // columns are customer-safe (the proposal is supposed to say "weekly mowing,
+  // Mar–Oct"); recurring_schedule_id is an internal stamp and is NOT selected.
+  // summarizeLineSchedule reads only frequency/days/day-of-month/start/end, so
+  // interval_weeks is omitted too. Construction lines have null cadence → the
+  // chip returns "" and never renders; EstimateDocument also gates on isLawn().
   const { data: lineItems } = await admin
     .from("estimate_line_items")
-    .select("id, description, quantity, unit_price, position, section")
+    .select(
+      "id, description, quantity, unit_price, position, section, schedule_frequency, schedule_days_of_week, schedule_day_of_month, schedule_start_date, schedule_end_date"
+    )
     .eq("estimate_id", estimate.id)
     .order("position");
 
@@ -98,6 +106,15 @@ export default async function PublicEstimatePage({
     quantity: Number(i.quantity),
     unitPrice: Number(i.unit_price),
     section: i.section ?? null,
+    // Lawn cadence chip. "" for construction / unscheduled lines → no chip.
+    scheduleSummary: summarizeLineSchedule({
+      schedule_frequency: i.schedule_frequency as ScheduleFrequency | null,
+      schedule_interval_weeks: 0,
+      schedule_days_of_week: i.schedule_days_of_week ?? [],
+      schedule_day_of_month: i.schedule_day_of_month ?? null,
+      schedule_start_date: i.schedule_start_date ?? null,
+      schedule_end_date: i.schedule_end_date ?? null,
+    }),
   }));
 
   const pricing: EstimatePricing = {
