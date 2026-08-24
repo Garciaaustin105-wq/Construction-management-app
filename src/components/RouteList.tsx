@@ -93,7 +93,13 @@ function StopRow({
       <button
         {...attributes}
         {...listeners}
-        className="mt-0.5 text-gray-300 hover:text-gray-500 touch-none cursor-grab active:cursor-grabbing"
+        // touch-none stops the browser stealing the touch for scroll/zoom;
+        // select-none + -webkit-touch-callout:none stop the native long-press
+        // "Copy/Look Up" callout (iOS) / text-select menu (Android) from firing
+        // during the 200ms TouchSensor press-and-hold — that was the "copy items
+        // pops up when I hold" symptom. user-select:none on the handle only; the
+        // row body stays selectable so the office can still copy an address.
+        className="mt-0.5 text-gray-300 hover:text-gray-500 touch-none cursor-grab active:cursor-grabbing select-none [-webkit-touch-callout:none]"
         aria-label="Drag to reorder"
       >
         <GripVertical className="w-4 h-4" />

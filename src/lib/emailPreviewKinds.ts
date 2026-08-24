@@ -47,15 +47,21 @@ export type NotificationEventId =
   | "review_request";
 
 // Token set the templated events support (mirrors SendCustomerEmailInput in
-// customerNotifications.ts). Shown as copy-paste hints in the editor.
+// customerNotifications.ts). Shown as copy-paste hints in the editor. Note
+// {{service_date}} already embeds the arrival window when one is set (the remind
+// route builds "Aug 23, 2026 between 9:00 AM - 11:00 AM"), so {{arrival_window}}
+// is only needed if you want the window separate from the date. {{reason}} is
+// service_skipped-only (defaults to "N/A" when no reason was recorded).
 export const TEMPLATE_TOKENS = [
   "customer_name",
   "job_name",
   "address",
   "service_date",
+  "arrival_window",
   "org_name",
   "photo_link",
   "review_link",
+  "reason",
 ];
 
 // Human label for a templated event when no saved subject exists.

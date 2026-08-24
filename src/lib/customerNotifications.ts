@@ -44,7 +44,18 @@ export function renderTemplate(
   body: string,
   vars: Record<string, string>
 ): string {
-  return body.replace(TOKEN_RE, (_, key: string) => vars[key] ?? "");
+  // The seeded templates (customer_notifications.sql) wrote '\n' inside plain
+  // single-quoted SQL strings. Supabase runs standard_conforming_strings = on,
+  // so '\n' stored the LITERAL two characters backslash + n — not a newline.
+  // The email envelope (renderCustomerEmailHtml) and SMS both split/format on
+  // REAL newlines, so a literal-\n body rendered as one paragraph with visible
+  // "\n\n" text in the customer message. Normalize literal \n → real newline
+  // here (the shared seam for both email + SMS templated paths) so every
+  // template renders correctly regardless of how its newlines were stored.
+  // Real newlines pass through untouched; office-edited templates (which store
+  // real newlines from the textarea) are unaffected.
+  const normalized = body.replace(/\\n/g, "\n");
+  return normalized.replace(TOKEN_RE, (_, key: string) => vars[key] ?? "");
 }
 
 // Active template for an event×channel, or null when inactive/missing. The
