@@ -251,7 +251,33 @@ export default function RouteList({
   });
   const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
 
+  // Lock body scroll for the duration of a TOUCH drag. In the Capacitor WebView
+  // the browser steals touchmove to scroll the page mid-drag, which cancels the
+  // gesture (dnd-kit fires onDragCancel → the item snaps back to its origin —
+  // the "wants to move but reverts to the same spot" symptom). With the page
+  // non-scrollable, the touch goes to dnd-kit and the item follows the finger.
+  // Touch-only (isCoarse): desktop drag works without it, and locking would
+  // reflow the page by the scrollbar width there. Mobile has no scrollbar, so
+  // overflow:hidden doesn't reflow. The hold is stationary, so no scroll has
+  // started by the time onDragStart fires (after the 200ms press) — we lock
+  // before the movement phase.
+  function lockBodyScroll() {
+    if (isCoarse && typeof document !== "undefined") {
+      // Lock both <html> (the standards-mode scroller) and <body> for safety.
+      // Chrome's WebView preserves scrollTop under overflow:hidden, so no jump.
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+    }
+  }
+  function unlockBodyScroll() {
+    if (isCoarse && typeof document !== "undefined") {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+    }
+  }
+
   function onDragEnd(e: DragEndEvent) {
+    unlockBodyScroll();
     const { active, over } = e;
     if (!over || active.id === over.id) return;
     const oldIndex = stops.findIndex((s) => s.id === active.id);
@@ -265,7 +291,9 @@ export default function RouteList({
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
+        onDragStart={lockBodyScroll}
         onDragEnd={onDragEnd}
+        onDragCancel={unlockBodyScroll}
       >
         <SortableContext
           items={stops.map((s) => s.id)}
