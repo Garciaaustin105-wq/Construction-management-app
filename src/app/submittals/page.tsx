@@ -43,7 +43,10 @@ type SubmittalView = {
   createdAt: string;
 };
 
-const MODES: ViewMode[] = ["cards", "table"];
+// Cards only — the Cards/Table switcher was a no-op (table just rendered the
+// same rows as plain line items). Single-element MODES hides the ListToolbar
+// switcher and forces `view` to always be "cards".
+const MODES: ViewMode[] = ["cards"];
 
 // The ball-in-court pill was indigo-on-architect / gray otherwise. `brand` is
 // the closest tone in the shared palette; office stays neutral.

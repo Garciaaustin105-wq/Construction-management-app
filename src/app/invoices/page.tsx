@@ -38,7 +38,13 @@ const STATUS_LABEL: { [key: string]: string } = {
   draft: "Draft",
 };
 
-const MODES: ViewMode[] = ["cards", "table"];
+// Cards only — the Cards/Table switcher was a no-op (table just rendered the
+// same rows as plain line items, no reorganization), so the choice is removed
+// and every list stays in the polished card view. A single-element MODES also
+// hides the ListToolbar switcher (it only renders when modes.length > 1) and
+// forces `view` to always resolve to "cards" (MODES.includes("table") is false),
+// so even a bookmarked ?view=table URL renders cards.
+const MODES: ViewMode[] = ["cards"];
 
 export default async function InvoicesPage({ searchParams }: { searchParams: Promise<{ status?: string; view?: string }> }) {
   const sp = await searchParams;

@@ -26,7 +26,10 @@ const PLAN_STATUS_TONE: Record<string, BadgeTone> = {
   past_due: "warning",
 };
 
-const MODES: ViewMode[] = ["cards", "table"];
+// Cards only — the Cards/Table switcher was a no-op (table just rendered the
+// same rows as plain line items). Single-element MODES hides the ListToolbar
+// switcher and forces `view` to always be "cards".
+const MODES: ViewMode[] = ["cards"];
 
 // Platform view — super_admin only. Lists every organization with a member
 // count and a link to edit that org's business info. Any non-super_admin is

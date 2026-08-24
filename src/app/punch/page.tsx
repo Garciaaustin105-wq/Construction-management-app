@@ -48,7 +48,10 @@ type PunchView = {
   dueDate: string | null;
 };
 
-const MODES: ViewMode[] = ["cards", "table"];
+// Cards only — the Cards/Table switcher was a no-op (table just rendered the
+// same rows as plain line items). Single-element MODES hides the ListToolbar
+// switcher and forces `view` to always be "cards".
+const MODES: ViewMode[] = ["cards"];
 
 export default async function PunchPage({
   searchParams,
