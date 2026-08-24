@@ -196,6 +196,10 @@ export type SendCustomerNotificationInput = {
   jobName?: string | null;
   address?: string | null;
   serviceDate?: string | null;
+  /** Optional arrival window, already formatted for display ("9:00 AM - 11:00
+   *  AM"). Renders as {{arrival_window}}. Callers that have no window omit it
+   *  and the token renders empty, exactly like every other optional var. */
+  arrivalWindow?: string | null;
   orgName?: string | null;
   // service_complete links the customer to the before/after photo portal.
   photoLink?: string | null;
@@ -254,6 +258,7 @@ export async function sendCustomerNotification(
     job_name: input.jobName ?? "",
     address: input.address ?? "",
     service_date: input.serviceDate ?? "",
+    arrival_window: input.arrivalWindow ?? "",
     org_name: input.orgName ?? "",
     photo_link: input.photoLink ?? "",
     review_link: reviewLink ?? "",

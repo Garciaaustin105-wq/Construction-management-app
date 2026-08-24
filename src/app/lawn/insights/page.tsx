@@ -62,13 +62,24 @@ type EstimateRow = {
   estimate_line_items: { quantity: number; unit_price: number }[];
 };
 type RecurringRow = {
+  estimated_duration_minutes?: number | null;
+  service_type?: string | null;
   id: string;
   active: boolean;
   frequency: string;
   interval_weeks: number | null;
   price_per_visit: number | null;
 };
-type VisitRow = { id: string; status: string; due_date: string; completed_at: string | null };
+type VisitRow = {
+  id: string;
+  status: string;
+  due_date: string;
+  completed_at: string | null;
+  // Time model (2026-08-23): started_at is stamped by the visit-detail Start
+  // action. Both ends present = a measurable on-site duration.
+  started_at: string | null;
+  recurring_schedule_id: string | null;
+};
 type TimeRow = {
   id: string;
   clock_in_at: string;
@@ -166,6 +177,7 @@ export default async function LawnInsightsPage() {
     visitsRes,
     timeRes,
     billing,
+    servicesRes,
   ] = await Promise.all([
     supabase
       .from("invoices")
@@ -180,11 +192,11 @@ export default async function LawnInsightsPage() {
       ),
     supabase
       .from("recurring_schedules")
-      .select("id, active, frequency, interval_weeks, price_per_visit"),
+      .select("id, active, frequency, interval_weeks, price_per_visit, estimated_duration_minutes, service_type"),
     supabase.from("customers").select("id", { count: "exact", head: true }),
     supabase
       .from("lawn_visits")
-      .select("id, status, due_date, completed_at")
+      .select("id, status, due_date, completed_at, started_at, recurring_schedule_id")
       .gte("due_date", twelveWeeksAgoISO),
     supabase
       .from("time_entries")
@@ -192,6 +204,9 @@ export default async function LawnInsightsPage() {
       .not("clock_out_at", "is", null)
       .gte("clock_out_at", eightWeeksAgoISO),
     getOrgBilling(supabase, tenant.orgId!),
+    // Catalog durations, so a visit whose schedule has no override still
+    // resolves an estimate. Cheap: one small org-scoped table.
+    supabase.from("lawn_services").select("name, default_duration_minutes"),
   ]);
 
   const invoices = (invoicesRes.data as unknown as InvoiceRow[]) ?? [];
@@ -200,6 +215,11 @@ export default async function LawnInsightsPage() {
   const activeCustomers = customersRes.count ?? 0;
   const visits = (visitsRes.data as unknown as VisitRow[]) ?? [];
   const times = (timeRes.data as unknown as TimeRow[]) ?? [];
+  const serviceDurations =
+    (servicesRes.data as unknown as {
+      name: string;
+      default_duration_minutes: number | null;
+    }[]) ?? [];
 
   // ---- KPI tiles -----------------------------------------------------------
   const outstandingAR = invoices
@@ -231,6 +251,43 @@ export default async function LawnInsightsPage() {
       new Date(v.completed_at) >= thisWeekStart &&
       new Date(v.completed_at) < addDays(thisWeekStart, 7)
   ).length;
+
+  // ---- Actual vs estimated on-site time -----------------------------------
+  // Only visits with BOTH started_at and completed_at can be measured. The
+  // estimate resolves the same way everywhere else: schedule override ->
+  // service catalog default -> unknown (excluded from the estimate average).
+  const scheduleById = new Map(recurring.map((r) => [r.id, r]));
+  const serviceDefaultByName = new Map(
+    serviceDurations.map((sv) => [sv.name, sv.default_duration_minutes])
+  );
+
+  const timedVisits = visits.filter((v) => v.started_at && v.completed_at);
+  const actualMinutes = timedVisits.map((v) =>
+    Math.max(
+      0,
+      (new Date(v.completed_at!).getTime() - new Date(v.started_at!).getTime()) / 60000
+    )
+  );
+  const avgActualMinutes =
+    actualMinutes.length > 0
+      ? actualMinutes.reduce((a, b) => a + b, 0) / actualMinutes.length
+      : null;
+
+  const estimatedMinutes = timedVisits
+    .map((v) => {
+      const sched = v.recurring_schedule_id
+        ? scheduleById.get(v.recurring_schedule_id)
+        : undefined;
+      const override = sched?.estimated_duration_minutes ?? null;
+      if (override !== null) return override;
+      const svcName = sched?.service_type ?? null;
+      return svcName ? serviceDefaultByName.get(svcName) ?? null : null;
+    })
+    .filter((m): m is number => m !== null);
+  const avgEstimatedMinutes =
+    estimatedMinutes.length > 0
+      ? estimatedMinutes.reduce((a, b) => a + b, 0) / estimatedMinutes.length
+      : null;
 
   const crewHoursThisWeek = times
     .filter((t) => {
@@ -369,6 +426,25 @@ export default async function LawnInsightsPage() {
         <KpiTile label="Visits done (wk)" value={String(visitsDoneThisWeek)} icon={Sprout} tone="green" />
         <KpiTile label="Crew hrs (wk)" value={crewHoursThisWeek.toFixed(1)} icon={Clock} />
         <KpiTile label="Estimate pipeline" value={formatMoney(pipelineValue)} icon={FileText} />
+        {/* Hidden until at least one visit has been Started — otherwise this
+            renders an empty tile on every org from day one. */}
+        {avgActualMinutes !== null && (
+          <KpiTile
+            label="Avg on site"
+            value={`${Math.round(avgActualMinutes)} min`}
+            sub={
+              avgEstimatedMinutes === null
+                ? `${timedVisits.length} timed visit${timedVisits.length === 1 ? "" : "s"}`
+                : `est ${Math.round(avgEstimatedMinutes)} min \u00b7 ${timedVisits.length} timed`
+            }
+            icon={Clock}
+            tone={
+              avgEstimatedMinutes !== null && avgActualMinutes > avgEstimatedMinutes * 1.2
+                ? "amber"
+                : "default"
+            }
+          />
+        )}
       </div>
 
       {/* Charts */}

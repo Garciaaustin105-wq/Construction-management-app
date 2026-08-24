@@ -21,8 +21,16 @@ interface RecurringScheduleEditorProps {
     service_type: string | null;
     price_per_visit: number;
     notes: string | null;
+    /** Per-schedule override of the service's default duration. Null = inherit
+     *  the service default (see effectiveDuration below). */
+    estimated_duration_minutes: number | null;
   };
-  lawnServices: { id: string; name: string; default_price: number }[];
+  lawnServices: {
+    id: string;
+    name: string;
+    default_price: number;
+    default_duration_minutes: number | null;
+  }[];
   canEdit: boolean;
   onSaved?: (patch: {
     frequency: string;
@@ -34,6 +42,7 @@ interface RecurringScheduleEditorProps {
     service_type: string | null;
     price_per_visit: number;
     notes: string | null;
+    estimated_duration_minutes: number | null;
   }) => void;
 }
 
@@ -64,6 +73,13 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
     String(initial.price_per_visit ?? 0)
   );
   const [notes, setNotes] = useState<string>(initial.notes ?? "");
+  // Blank = inherit the service default. Never coerce to 0 — "0 minutes"
+  // and "unset" mean very different things to the route planner.
+  const [estDuration, setEstDuration] = useState<string>(
+    initial.estimated_duration_minutes === null
+      ? ""
+      : String(initial.estimated_duration_minutes)
+  );
   const [editing, setEditing] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
 
@@ -112,8 +128,21 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
     if (isNaN(price) || price < 0) {
       return "Price per visit must be 0 or more";
     }
+    const d = estDuration.trim();
+    if (d !== "" && (!Number.isInteger(Number(d)) || Number(d) < 1)) {
+      return "Duration must be a whole number of minutes (1 or more), or blank";
+    }
     return null;
   };
+
+  // Effective per-stop service time, resolved the same way the route planner
+  // and visit detail resolve it: schedule override, else the catalog default
+  // for the picked service, else null (no service time known).
+  const serviceDefaultDuration =
+    lawnServices.find((svc) => svc.name === resolvedServiceType())
+      ?.default_duration_minutes ?? null;
+  const effectiveDuration =
+    estDuration.trim() !== "" ? Number(estDuration) : serviceDefaultDuration;
 
   const save = async () => {
     const vErr = validate();
@@ -132,6 +161,8 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
       service_type: resolvedServiceType(),
       price_per_visit: parseFloat(pricePerVisit) || 0,
       notes: notes.trim() || null,
+      estimated_duration_minutes:
+        estDuration.trim() === "" ? null : Number(estDuration),
     };
     const supabase = createClient();
     const { error } = await supabase
@@ -199,6 +230,15 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
               </dd>
             </div>
             <div>
+              <dt className="text-sm font-medium text-gray-700">Visit length</dt>
+              <dd className="text-sm text-gray-900">
+                {effectiveDuration === null
+                  ? "Not set"
+                  : `${effectiveDuration} min${
+                      estDuration.trim() === "" ? " (service default)" : ""
+                    }`}
+              </dd>
+
               <dt className="text-sm font-medium text-gray-700">Notes</dt>
               <dd className="text-base text-gray-900">
                 {notes || "-"}
@@ -340,6 +380,29 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
                 onChange={(e) => setPricePerVisit(e.target.value)}
                 className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
               />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">
+                Visit length (minutes)
+              </span>
+              <input
+                type="number"
+                min={1}
+                step="1"
+                value={estDuration}
+                onChange={(e) => setEstDuration(e.target.value)}
+                placeholder={
+                  serviceDefaultDuration === null
+                    ? "Optional — no service default set"
+                    : `Optional — defaults to ${serviceDefaultDuration} min`
+                }
+                className="mt-1 block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+              />
+              <span className="mt-1 block text-xs text-gray-500">
+                Overrides the service default. Feeds route planning — leave blank
+                to inherit.
+              </span>
             </label>
 
             <label className="block">

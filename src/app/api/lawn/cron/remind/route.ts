@@ -22,6 +22,25 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// "09:00:00" -> "9:00 AM". Wall-clock only (the date is due_date), so no tz
+// conversion — the window is whatever the office typed for that property.
+function fmtTime(t: string | null): string | null {
+  if (!t) return null;
+  const [h, m] = t.split(":");
+  const hour = Number(h);
+  if (!Number.isFinite(hour)) return null;
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h12}:${m} ${suffix}`;
+}
+
+// Both ends required — a half-open window can't be phrased as "between X and Y".
+function arrivalWindow(start: string | null, end: string | null): string | null {
+  const a = fmtTime(start);
+  const b = fmtTime(end);
+  return a && b ? `${a} - ${b}` : null;
+}
+
 export async function POST(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -65,7 +84,7 @@ export async function POST(request: Request) {
   // reminder fires needs no reminder.)
   const { data: visits } = await admin
     .from("lawn_visits")
-    .select("id, job_id, organization_id, due_date")
+    .select("id, job_id, organization_id, due_date, scheduled_window_start, scheduled_window_end")
     .eq("due_date", today)
     .eq("status", "pending");
   const visitRows = (visits as unknown as
@@ -74,6 +93,8 @@ export async function POST(request: Request) {
         job_id: string;
         organization_id: string;
         due_date: string;
+        scheduled_window_start: string | null;
+        scheduled_window_end: string | null;
       }>
     | null) ?? [];
 
@@ -116,6 +137,17 @@ export async function POST(request: Request) {
       const pin = j?.lawn_jobs;
       const mapImageUrl = buildStaticMapUrl(pin?.map_lat ?? null, pin?.map_lng ?? null);
 
+      // Window copy. Passed BOTH as its own {{arrival_window}} token (for
+      // templates that want to place it) AND appended to {{service_date}} — the
+      // seeded templates in every existing org only render {{service_date}},
+      // so appending is what actually makes "between 9 and 11" show up without
+      // a template migration. No window -> service_date is unchanged, which is
+      // the current "today" copy.
+      const windowText = arrivalWindow(
+        v.scheduled_window_start,
+        v.scheduled_window_end
+      );
+
       const results = await sendCustomerNotification({
         supabase: admin,
         event: "visit_reminder",
@@ -125,7 +157,8 @@ export async function POST(request: Request) {
         customerName: null, // resolved inside the helper
         jobName: j?.name ?? null,
         address: j?.address ?? null,
-        serviceDate: v.due_date,
+        serviceDate: windowText ? `${v.due_date} between ${windowText}` : v.due_date,
+        arrivalWindow: windowText,
         orgName,
         mapImageUrl,
       });

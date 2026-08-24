@@ -45,6 +45,7 @@ type Schedule = {
   paused_from: string | null;
   paused_until: string | null;
   notes: string | null;
+  estimated_duration_minutes: number | null;
   // customers is reached through jobs (recurring_schedules has job_id, no
   // customer_id) — embed jobs(name, address, description, customers(name)).
   // address/description live on the jobs row (same as construction) so the
@@ -88,7 +89,12 @@ export default function ScheduleDetailPage({
   const [visits, setVisits] = useState<Visit[]>([]);
   const [property, setProperty] = useState<LawnJob | null>(null);
   const [lawnServices, setLawnServices] = useState<
-    { id: string; name: string; default_price: number }[]
+    {
+      id: string;
+      name: string;
+      default_price: number;
+      default_duration_minutes: number | null;
+    }[]
   >([]);
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -127,7 +133,7 @@ export default function ScheduleDetailPage({
       const { data: sched } = await supabase
         .from("recurring_schedules")
         .select(
-          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, jobs(name, address, description, customer_id, assigned_crew, customers(name))"
+          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, estimated_duration_minutes, jobs(name, address, description, customer_id, assigned_crew, customers(name))"
         )
         .eq("id", id)
         .maybeSingle();
@@ -152,15 +158,19 @@ export default function ScheduleDetailPage({
           .maybeSingle(),
         supabase
           .from("lawn_services")
-          .select("id, name, default_price")
+          .select("id, name, default_price, default_duration_minutes")
           .eq("active", true)
           .order("name"),
       ]);
       setVisits((visitRows as unknown as Visit[]) ?? []);
       setProperty((lawnJob as unknown as LawnJob | null) ?? null);
       setLawnServices(
-        (services as { id: string; name: string; default_price: number }[]) ??
-          []
+        (services as {
+          id: string;
+          name: string;
+          default_price: number;
+          default_duration_minutes: number | null;
+        }[]) ?? []
       );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,6 +225,7 @@ export default function ScheduleDetailPage({
     service_type: string | null;
     price_per_visit: number;
     notes: string | null;
+    estimated_duration_minutes: number | null;
   }) {
     setSchedule((prev) => (prev ? { ...prev, ...patch } : prev));
   }
@@ -580,6 +591,7 @@ export default function ScheduleDetailPage({
           service_type: schedule.service_type,
           price_per_visit: Number(schedule.price_per_visit) || 0,
           notes: schedule.notes,
+          estimated_duration_minutes: schedule.estimated_duration_minutes,
         }}
         lawnServices={lawnServices}
         canEdit={authorized}

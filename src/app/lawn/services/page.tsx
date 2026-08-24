@@ -12,6 +12,9 @@ type Service = {
   name: string;
   default_price: number;
   active: boolean;
+  /** Default visit length for this service, in minutes. Null = not set, which
+   *  means a stop using it contributes no service time to route planning. */
+  default_duration_minutes: number | null;
 };
 
 export default function LawnServicesPage() {
@@ -23,10 +26,14 @@ export default function LawnServicesPage() {
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [price, setPrice] = useState("0");
+  // Blank = "no default duration" (null), not zero — a service with no
+  // recorded length must not tell the router the stop takes 0 minutes.
+  const [duration, setDuration] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editPrice, setEditPrice] = useState("");
+  const [editDuration, setEditDuration] = useState("");
   const [saving, setSaving] = useState(false);
   const [orgId, setOrgId] = useState<string>("");
 
@@ -34,7 +41,7 @@ export default function LawnServicesPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from("lawn_services")
-      .select("id, name, default_price, active")
+      .select("id, name, default_price, active, default_duration_minutes")
       .order("name");
     setServices((data as Service[]) ?? []);
   }
@@ -66,6 +73,19 @@ export default function LawnServicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // "" -> null (unset). Otherwise a whole number of minutes >= 1.
+  // Returns undefined to signal "invalid, already toasted".
+  function parseDuration(raw: string): number | null | undefined {
+    const t = raw.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    if (!Number.isInteger(n) || n < 1) {
+      toast.warning("Duration must be a whole number of minutes (1 or more), or blank");
+      return undefined;
+    }
+    return n;
+  }
+
   async function addService() {
     if (!name.trim()) {
       toast.warning("Service name is required");
@@ -76,6 +96,8 @@ export default function LawnServicesPage() {
       toast.warning("Price must be 0 or more");
       return;
     }
+    const dur = parseDuration(duration);
+    if (dur === undefined) return;
     setAdding(true);
     const supabase = createClient();
     if (!orgId) {
@@ -89,9 +111,10 @@ export default function LawnServicesPage() {
         name: name.trim(),
         default_price: p,
         active: true,
+        default_duration_minutes: dur,
         organization_id: orgId,
       })
-      .select("id, name, default_price, active")
+      .select("id, name, default_price, active, default_duration_minutes")
       .single();
     setAdding(false);
     if (error || !data) {
@@ -103,6 +126,7 @@ export default function LawnServicesPage() {
     );
     setName("");
     setPrice("0");
+    setDuration("");
     toast.success("Service added");
   }
 
@@ -141,12 +165,16 @@ export default function LawnServicesPage() {
     setEditingId(svc.id);
     setEditName(svc.name);
     setEditPrice(String(svc.default_price));
+    setEditDuration(
+      svc.default_duration_minutes === null ? "" : String(svc.default_duration_minutes)
+    );
   }
 
   function cancelEdit() {
     setEditingId(null);
     setEditName("");
     setEditPrice("0");
+    setEditDuration("");
   }
 
   async function saveEdit() {
@@ -160,13 +188,19 @@ export default function LawnServicesPage() {
       toast.warning("Price must be 0 or more");
       return;
     }
+    const dur = parseDuration(editDuration);
+    if (dur === undefined) return;
     setSaving(true);
     const supabase = createClient();
     const { data, error } = await supabase
       .from("lawn_services")
-      .update({ name: editName.trim(), default_price: p })
+      .update({
+        name: editName.trim(),
+        default_price: p,
+        default_duration_minutes: dur,
+      })
       .eq("id", editingId)
-      .select("id, name, default_price, active")
+      .select("id, name, default_price, active, default_duration_minutes")
       .single();
     setSaving(false);
     if (error || !data) {
@@ -179,6 +213,7 @@ export default function LawnServicesPage() {
     setEditingId(null);
     setEditName("");
     setEditPrice("0");
+    setEditDuration("");
     toast.success("Service updated");
   }
 
@@ -212,6 +247,15 @@ export default function LawnServicesPage() {
           placeholder="Default price per visit"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
+          className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+        />
+        <input
+          type="number"
+          min={1}
+          step="1"
+          placeholder="Default duration in minutes (optional)"
+          value={duration}
+          onChange={(e) => setDuration(e.target.value)}
           className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
         />
         <button
@@ -260,6 +304,15 @@ export default function LawnServicesPage() {
                         onChange={(e) => setEditPrice(e.target.value)}
                         className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
                       />
+                      <input
+                        type="number"
+                        min={1}
+                        step="1"
+                        placeholder="Duration (min)"
+                        value={editDuration}
+                        onChange={(e) => setEditDuration(e.target.value)}
+                        className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+                      />
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -291,6 +344,8 @@ export default function LawnServicesPage() {
                           currency: "USD",
                         }).format(Number(s.default_price) || 0)}
                         /visit
+                        {s.default_duration_minutes !== null &&
+                          ` \u00b7 ${s.default_duration_minutes} min`}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

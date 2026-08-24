@@ -25,6 +25,7 @@ import { normalizeImage } from "@/lib/normalizeImage";
 import {
   Loader2,
   Check,
+  Play,
   X,
   Camera,
   Images,
@@ -53,9 +54,22 @@ type Visit = {
   status: string;
   crew_id: string | null;
   completed_at: string | null;
+  /** Stamped by the Start action. Deliberately does NOT move `status` — the
+   *  pending -> [done, skipped] lifecycle in src/lib/lifecycles/lawn-visit.ts
+   *  is untouched. On-site time is completed_at - started_at. */
+  started_at: string | null;
+  /** Optional appointment window ("between 9 and 11"). `time` columns, so
+   *  these arrive as "HH:MM:SS"; NULL = any time that day. */
+  scheduled_window_start: string | null;
+  scheduled_window_end: string | null;
   notes: string | null;
   skip_reason: string | null;
   recurring_schedule_id: string;
+  /** Embedded so the visit can resolve its estimated service time. */
+  recurring_schedules: {
+    estimated_duration_minutes: number | null;
+    service_type: string | null;
+  } | null;
   // customers is reached through jobs (lawn_visits has job_id, no customer_id)
   // — embed jobs(name, address, customers(name, contact_email, phone)).
   // contact_email/phone feed the "Send to customer" channel picker.
@@ -93,6 +107,14 @@ export default function VisitDetailPage({
   const [crew, setCrew] = useState<{ id: string; name: string; user_id: string | null }[]>([]);
   const [authorized, setAuthorized] = useState(false);
   const [isOffice, setIsOffice] = useState(false);
+  const [serviceDurations, setServiceDurations] = useState<
+    { name: string; default_duration_minutes: number | null }[]
+  >([]);
+  const [starting, setStarting] = useState(false);
+  const [editingWindow, setEditingWindow] = useState(false);
+  const [windowStart, setWindowStart] = useState("");
+  const [windowEnd, setWindowEnd] = useState("");
+  const [savingWindow, setSavingWindow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveDate, setMoveDate] = useState("");
@@ -106,14 +128,15 @@ export default function VisitDetailPage({
     const { data: v } = await supabase
       .from("lawn_visits")
       .select(
-        "id, job_id, due_date, status, crew_id, completed_at, notes, skip_reason, recurring_schedule_id, jobs(name, address, customers(name, contact_email, phone))"
+        "id, job_id, due_date, status, crew_id, completed_at, started_at, scheduled_window_start, scheduled_window_end, notes, skip_reason, recurring_schedule_id, recurring_schedules(estimated_duration_minutes, service_type), jobs(name, address, customers(name, contact_email, phone))"
       )
       .eq("id", id)
       .maybeSingle();
     if (!v) return;
     setVisit(v as unknown as Visit);
 
-    const [{ data: photoRows }, { data: crewRows }, { data: lawnJob }] = await Promise.all([
+    const [{ data: photoRows }, { data: crewRows }, { data: lawnJob }, { data: svcRows }] =
+      await Promise.all([
       supabase
         .from("photos")
         .select("id, storage_path, caption")
@@ -128,10 +151,16 @@ export default function VisitDetailPage({
         .select("*")
         .eq("id", (v as unknown as Visit).job_id)
         .maybeSingle(),
+      // Catalog defaults, so a visit whose schedule has no override can still
+      // show the service's default length.
+      supabase.from("lawn_services").select("name, default_duration_minutes"),
     ]);
     setPhotos((photoRows as unknown as Photo[]) ?? []);
     setCrew((crewRows as { id: string; name: string; user_id: string | null }[]) ?? []);
     setProperty((lawnJob as unknown as LawnJob | null) ?? null);
+    setServiceDurations(
+      (svcRows as { name: string; default_duration_minutes: number | null }[]) ?? []
+    );
   }
 
   useEffect(() => {
@@ -221,6 +250,66 @@ export default function VisitDetailPage({
         ? "Visit skipped"
         : "Reopened"
     );
+  }
+
+  // Start stamps started_at only. RLS allows this for office (the ALL policy)
+  // and for the assigned crew ("Crew update my route lawn visits"), and the
+  // guard_lawn_visit_crew_update trigger only blocks due_date/job_id/
+  // recurring_schedule_id/crew_id/organization_id for non-office — so a direct
+  // session-client write is correct here and needs no server route.
+  async function startVisit() {
+    if (!visit || visit.started_at) return;
+    setStarting(true);
+    const supabase = createClient();
+    const startedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from("lawn_visits")
+      .update({ started_at: startedAt })
+      .eq("id", visit.id);
+    setStarting(false);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setVisit({ ...visit, started_at: startedAt });
+    toast.success("Started");
+  }
+
+  function openWindowEditor() {
+    setWindowStart((visit?.scheduled_window_start ?? "").slice(0, 5));
+    setWindowEnd((visit?.scheduled_window_end ?? "").slice(0, 5));
+    setEditingWindow(true);
+  }
+
+  async function saveWindow() {
+    if (!visit) return;
+    // Both or neither — a half-open window can't be rendered as "between X and Y".
+    if ((windowStart && !windowEnd) || (!windowStart && windowEnd)) {
+      toast.warning("Set both a start and an end time, or clear both");
+      return;
+    }
+    if (windowStart && windowEnd && windowStart >= windowEnd) {
+      toast.warning("The window start must be before the end");
+      return;
+    }
+    setSavingWindow(true);
+    const supabase = createClient();
+    const patch = {
+      scheduled_window_start: windowStart || null,
+      scheduled_window_end: windowEnd || null,
+    };
+    const { error } = await supabase
+      .from("lawn_visits")
+      .update(patch)
+      .eq("id", visit.id);
+    setSavingWindow(false);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setVisit({ ...visit, ...patch });
+    setEditingWindow(false);
+    toast.success(windowStart ? "Window saved" : "Window cleared");
   }
 
   async function confirmMove() {
@@ -394,6 +483,46 @@ export default function VisitDetailPage({
   // Which action renders = status-valid (lifecycle) x role-allowed. The role
   // split is unchanged: crew and office can both mark done; Skip and Reopen
   // stay office-only.
+  // Effective service time: schedule override -> service catalog default ->
+  // null. Same resolution the route planner uses, so the number the office
+  // sees here is the number that feeds routing.
+  const scheduleDuration = visit.recurring_schedules?.estimated_duration_minutes ?? null;
+  const serviceDefaultDuration =
+    serviceDurations.find((sv) => sv.name === visit.recurring_schedules?.service_type)
+      ?.default_duration_minutes ?? null;
+  const effectiveDuration = scheduleDuration ?? serviceDefaultDuration;
+
+  // "HH:MM:SS" -> "9:00 AM". Wall-clock only; the date is due_date.
+  function fmtTime(t: string | null): string | null {
+    if (!t) return null;
+    const [h, m] = t.split(":");
+    const hour = Number(h);
+    if (!Number.isFinite(hour)) return null;
+    const suffix = hour >= 12 ? "PM" : "AM";
+    const h12 = hour % 12 === 0 ? 12 : hour % 12;
+    return `${h12}:${m} ${suffix}`;
+  }
+  const windowLabel =
+    visit.scheduled_window_start && visit.scheduled_window_end
+      ? `${fmtTime(visit.scheduled_window_start)} – ${fmtTime(visit.scheduled_window_end)}`
+      : null;
+
+  // On-site time, once both ends exist.
+  const onSiteMinutes =
+    visit.started_at && visit.completed_at
+      ? Math.max(
+          0,
+          Math.round(
+            (new Date(visit.completed_at).getTime() -
+              new Date(visit.started_at).getTime()) /
+              60000
+          )
+        )
+      : null;
+
+  // Start is a one-way stamp and only makes sense on work not yet finished.
+  const canStart = !visit.started_at && status === "pending";
+
   const canMarkDone = nextStatuses.includes("done");
   const canSkip = isOffice && nextStatuses.includes("skipped");
   const canReopen = isOffice && nextStatuses.includes("pending");
@@ -409,13 +538,23 @@ export default function VisitDetailPage({
         }}
         accent={LAWN_VISIT_STATUS_TONE[status] ?? "brand"}
         fields={[
-          { label: "Due", value: visit.due_date },
+          {
+            label: "Due",
+            value: windowLabel ? `${visit.due_date} · ${windowLabel}` : visit.due_date,
+          },
           { label: "Address", value: jobAddress ?? "—" },
           {
-            label: "Completed",
-            value: visit.completed_at
-              ? new Date(visit.completed_at).toLocaleDateString()
-              : "—",
+            label: "Est. time",
+            value: effectiveDuration === null ? "—" : `${effectiveDuration} min`,
+          },
+          {
+            label: onSiteMinutes !== null ? "On site" : "Completed",
+            value:
+              onSiteMinutes !== null
+                ? `${onSiteMinutes} min`
+                : visit.completed_at
+                ? new Date(visit.completed_at).toLocaleDateString()
+                : "—",
           },
         ]}
       />
@@ -436,6 +575,16 @@ export default function VisitDetailPage({
           />
         ) : (
           <div className="grid grid-cols-2 gap-2 pt-1">
+            {canStart && (
+              <Button type="button" onClick={startVisit} disabled={starting || busy}>
+                {starting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4" />
+                )}
+                Start
+              </Button>
+            )}
             {canMarkDone && (
               <Button type="button" onClick={() => updateStatus("done")} disabled={busy}>
                 <Check className="w-4 h-4" />
@@ -466,6 +615,65 @@ export default function VisitDetailPage({
             )}
           </div>
         )}
+
+        {visit.started_at && (
+          <p className="text-xs text-gray-500">
+            Started {new Date(visit.started_at).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+            {onSiteMinutes !== null && ` · ${onSiteMinutes} min on site`}
+          </p>
+        )}
+
+        {/* Appointment window — office/PM only (a window is a scheduling
+            decision, same audience as Skip/Reopen/Move above). NOTE: the
+            window columns live on lawn_visits, so this is per-visit; there is
+            no schedule-level window column to inherit from. */}
+        {isOffice &&
+          (editingWindow ? (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <input
+                type="time"
+                value={windowStart}
+                onChange={(e) => setWindowStart(e.target.value)}
+                className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+              />
+              <span className="text-xs text-gray-400">to</span>
+              <input
+                type="time"
+                value={windowEnd}
+                onChange={(e) => setWindowEnd(e.target.value)}
+                className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={saveWindow}
+                disabled={savingWindow}
+              >
+                {savingWindow && <Loader2 className="w-4 h-4 animate-spin" />}
+                Save
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => setEditingWindow(false)}
+                disabled={savingWindow}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={openWindowEditor}
+              className="text-xs text-blue-600 font-medium"
+            >
+              {windowLabel ? `Window: ${windowLabel} — edit` : "Set arrival window"}
+            </button>
+          ))}
 
         {/* Move date + on-my-way — office only */}
         {isOffice && (moving ? (

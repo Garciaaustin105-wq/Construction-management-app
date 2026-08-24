@@ -16,6 +16,22 @@ import { OFFICE_LIKE } from "@/lib/roles";
 // Without it the route returns 503 so the client falls back to a haversine
 // estimate (no outage). Quota RPCs are SECURITY DEFINER service-role-only
 // (revoke execute from public/anon/authenticated in route_opt_quota.sql).
+//
+// SERVICE TIME (lawn time model, 2026-08-23): the caller MAY send an optional
+// `serviceDurations` array — seconds of on-site work per stop, same length and
+// order as `origins`. It is written onto the matrix DIAGONAL (durations[i][i]),
+// which Google always returns as 0 for self->self and which no ordering
+// algorithm reads. That keeps the off-diagonal cells pure TRAVEL time while
+// giving the client the per-stop service time it needs to compute real arrival
+// ETAs and whether the day fits in working hours.
+//
+// Deliberately NOT folded into the off-diagonal cells: every stop is visited
+// exactly once, so adding service(j) to each edge into j adds the same constant
+// to every possible tour — it cannot improve the optimum, and it actively
+// degrades the greedy nearest-neighbour walk by biasing it toward short-service
+// stops. Keeping travel and service separable is both more correct and more
+// useful. Omitting `serviceDurations` leaves the diagonal at Google's 0, so
+// existing callers are unaffected.
 export const dynamic = "force-dynamic";
 
 type LatLng = { lat: number; lng: number };
@@ -46,13 +62,25 @@ function validPoints(ps: unknown): ps is LatLng[] {
   );
 }
 
+// Optional per-stop on-site seconds. Same length as origins; each entry a
+// finite number >= 0, or null for "unknown" (treated as 0).
+function validServiceDurations(v: unknown, n: number): v is (number | null)[] {
+  return (
+    Array.isArray(v) &&
+    v.length === n &&
+    v.every(
+      (d) => d === null || (typeof d === "number" && Number.isFinite(d) && d >= 0)
+    )
+  );
+}
+
 export async function POST(request: Request) {
   const authed = await requireOffice();
   if (!authed.ok)
     return NextResponse.json({ error: "Unauthorized" }, { status: authed.status });
   const me = authed.me!;
 
-  let body: { origins?: unknown; destinations?: unknown };
+  let body: { origins?: unknown; destinations?: unknown; serviceDurations?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -71,6 +99,22 @@ export async function POST(request: Request) {
       { error: "destinations must match origins length (2-25 points)" },
       { status: 400 }
     );
+
+  // Optional — absent means "no service time known", the pre-existing behaviour.
+  const originCount = (body.origins as LatLng[]).length;
+  let serviceDurations: (number | null)[] | null = null;
+  if (body.serviceDurations !== undefined) {
+    if (!validServiceDurations(body.serviceDurations, originCount)) {
+      return NextResponse.json(
+        {
+          error:
+            "serviceDurations must be an array of origins.length finite seconds >= 0 (or null)",
+        },
+        { status: 400 }
+      );
+    }
+    serviceDurations = body.serviceDurations;
+  }
 
   const orgId = me.orgId;
   if (!orgId)
@@ -137,6 +181,17 @@ export async function POST(request: Request) {
       return null;
     })
   );
+
+  // Service time onto the diagonal (see the header note). Google returns 0 for
+  // self->self, so this cell is otherwise unused — the off-diagonal travel
+  // times are left exactly as Google returned them.
+  if (serviceDurations) {
+    for (let i = 0; i < durations.length; i++) {
+      if (Array.isArray(durations[i]) && i < durations[i].length) {
+        durations[i][i] = serviceDurations[i] ?? 0;
+      }
+    }
+  }
 
   // Record the optimization (best-effort). The quota was already checked, so a
   // record failure (e.g. a TOCTOU race where two requests passed check together)
