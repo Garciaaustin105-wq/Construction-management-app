@@ -9,7 +9,6 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
-import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -45,7 +44,7 @@ const MODES: ViewMode[] = ["cards"];
 export default async function DailyLogsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string; status?: string; from?: string; to?: string; view?: string }>;
+  searchParams: Promise<{ job?: string; status?: string; from?: string; to?: string }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -61,8 +60,6 @@ export default async function DailyLogsPage({
   const statusFilter = sp.status ?? "";
   const fromFilter = sp.from ?? "";
   const toFilter = sp.to ?? "";
-  const rawView = sp.view as ViewMode | undefined;
-  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: jobs } = await supabase
     .from("jobs")
@@ -100,28 +97,6 @@ export default async function DailyLogsPage({
   if (toFilter) exportParams.set("to", toFilter);
   const exportHref = `/api/reports/daily-logs?${exportParams.toString()}`;
 
-  const columns: Column<DailyLogView>[] = [
-    {
-      key: "date",
-      header: "Date",
-      cell: (r) => (
-        <span className="font-medium text-gray-900">
-          {new Date(r.logDate).toLocaleDateString()}
-        </span>
-      ),
-    },
-    { key: "job", header: "Job", cell: (r) => r.jobName || "—" },
-    { key: "author", header: "Author", hideOnMobile: true, cell: (r) => r.authorName || "—" },
-    { key: "weather", header: "Weather", hideOnMobile: true, cell: (r) => r.weather || "—" },
-    {
-      key: "status",
-      header: "Status",
-      cell: (r) => (
-        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
-      ),
-    },
-  ];
-
   return (
     <PageContainer title="Daily Logs" subtitle="Jobsite daily reports" maxWidth="list">
       <ListToolbar
@@ -157,8 +132,6 @@ export default async function DailyLogsPage({
             Record daily activities, weather, and crew notes from the field.
           </p>
         </div>
-      ) : view === "table" ? (
-        <DataTable columns={columns} rows={rows} rowHref={(r) => `/daily-logs/${r.id}`} />
       ) : (
         <div className="space-y-2">
           {rows.map((r) => (

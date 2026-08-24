@@ -9,20 +9,8 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
-import DataTable, { type Column } from "@/components/ui/DataTable";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
-
-type InvoiceView = {
-  id: string;
-  status: string;
-  paidAt: string;
-  createdAt: string;
-  jobName: string;
-  customerName: string;
-  total: number;
-  depositApplied: boolean;
-};
 
 const STATUS_TONE: { [key: string]: BadgeTone } = {
   sent: "brand",
@@ -46,10 +34,8 @@ const STATUS_LABEL: { [key: string]: string } = {
 // so even a bookmarked ?view=table URL renders cards.
 const MODES: ViewMode[] = ["cards"];
 
-export default async function InvoicesPage({ searchParams }: { searchParams: Promise<{ status?: string; view?: string }> }) {
+export default async function InvoicesPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;
-  const rawView = sp.view as ViewMode | undefined;
-  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
   const supabase = await createClient();
   const me = await getMe();
   if (!me) redirect("/login");
@@ -79,13 +65,6 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
     { value: "paid", label: "Paid" },
     { value: "void", label: "Void" },
   ];
-  const columns: Column<InvoiceView>[] = [
-    { key: "customerName", header: "Customer", cell: (row) => row.customerName },
-    { key: "jobName", header: "Job", cell: (row) => row.jobName },
-    { key: "status", header: "Status", cell: (row) => <StatusBadge tone={STATUS_TONE[row.status] ?? "neutral"}>{STATUS_LABEL[row.status] ?? row.status}</StatusBadge> },
-    { key: "total", header: "Total", cell: (row) => formatMoney(row.total), align: "right", hideOnMobile: true },
-    { key: "createdAt", header: "Sent/Paid", hideOnMobile: true, cell: (row) => row.paidAt ? `Paid ${new Date(row.paidAt).toLocaleDateString()}` : `Sent ${new Date(row.createdAt).toLocaleDateString()}` },
-  ];
   return (
     <PageContainer title="Invoices" subtitle={`${rows.length} total`} maxWidth="list">
       <ListToolbar
@@ -96,7 +75,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
         filters={filterOptions.map((opt) => (
           <Link
             key={opt.value}
-            href={view === "cards" ? `/invoices?status=${opt.value}` : `/invoices?status=${opt.value}&view=${view}`}
+            href={`/invoices?status=${opt.value}`}
             className={`px-3 py-1 rounded-full ${opt.value === statusFilter ? "bg-blue-600 text-white" : "bg-white text-gray-700 border border-gray-200"}`}
           >
             {opt.label}
@@ -112,8 +91,6 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
               description="Invoices are created when a customer approves an estimate."
             />
           </div>
-        ) : view === "table" ? (
-          <DataTable columns={columns} rows={rows} rowHref={(r) => `/invoices/${r.id}`} />
         ) : (
           <div className="space-y-2">
             {rows.map((inv) => (

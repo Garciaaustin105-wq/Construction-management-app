@@ -9,7 +9,6 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
-import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -57,7 +56,7 @@ function courtLabel(v: string): string {
 export default async function SubmittalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string; status?: string; view?: string }>;
+  searchParams: Promise<{ job?: string; status?: string }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -71,8 +70,6 @@ export default async function SubmittalsPage({
   const sp = await searchParams;
   const jobFilter = sp.job ?? "";
   const statusFilter = sp.status ?? "";
-  const rawView = sp.view as ViewMode | undefined;
-  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: jobs } = await supabase
     .from("jobs")
@@ -102,44 +99,6 @@ export default async function SubmittalsPage({
   const exportHref = `/api/reports/submittals?${jobFilter ? `job=${jobFilter}` : ""}${
     statusFilter ? `&status=${statusFilter}` : ""
   }`.replace(/^\/api\/reports\/submittals\?&/, "/api/reports/submittals?");
-
-  const columns: Column<SubmittalView>[] = [
-    {
-      key: "title",
-      header: "Submittal",
-      cell: (r) => (
-        <span className="font-medium text-gray-900">
-          {r.submittalNumber ? `${r.submittalNumber} · ` : ""}
-          {r.title}
-        </span>
-      ),
-    },
-    { key: "job", header: "Job", cell: (r) => r.jobName || "—" },
-    { key: "csi", header: "CSI", hideOnMobile: true, cell: (r) => r.csiSection || "—" },
-    {
-      key: "status",
-      header: "Status",
-      cell: (r) => (
-        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
-      ),
-    },
-    {
-      key: "court",
-      header: "Ball in court",
-      hideOnMobile: true,
-      cell: (r) => (
-        <StatusBadge tone={r.ballInCourt === "architect" ? "brand" : "neutral"}>
-          {courtLabel(r.ballInCourt)}
-        </StatusBadge>
-      ),
-    },
-    {
-      key: "date",
-      header: "Created",
-      hideOnMobile: true,
-      cell: (r) => new Date(r.createdAt).toLocaleDateString(),
-    },
-  ];
 
   return (
     <PageContainer title="Submittals" subtitle="Submittal log & review" maxWidth="list">
@@ -174,8 +133,6 @@ export default async function SubmittalsPage({
             Track submittals to architects, owners, and reviewers.
           </p>
         </div>
-      ) : view === "table" ? (
-        <DataTable columns={columns} rows={rows} rowHref={(r) => `/submittals/${r.id}`} />
       ) : (
         <div className="space-y-2">
           {rows.map((r) => (

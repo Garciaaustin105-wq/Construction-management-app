@@ -10,7 +10,6 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
-import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -56,7 +55,7 @@ const MODES: ViewMode[] = ["cards"];
 export default async function PunchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string; status?: string; priority?: string; view?: string }>;
+  searchParams: Promise<{ job?: string; status?: string; priority?: string }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -71,8 +70,6 @@ export default async function PunchPage({
   const jobFilter = sp.job ?? "";
   const statusFilter = sp.status ?? "";
   const priorityFilter = sp.priority ?? "";
-  const rawView = sp.view as ViewMode | undefined;
-  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: jobs } = await supabase
     .from("jobs")
@@ -110,41 +107,6 @@ export default async function PunchPage({
     due: r.dueDate ? new Date(r.dueDate).toLocaleDateString() : "",
   }));
 
-  const columns: Column<PunchView>[] = [
-    {
-      key: "title",
-      header: "Item",
-      cell: (r) => <span className="font-medium text-gray-900">{r.title}</span>,
-    },
-    { key: "job", header: "Job", cell: (r) => r.jobName || "—" },
-    { key: "location", header: "Location", hideOnMobile: true, cell: (r) => r.location || "—" },
-    { key: "assignee", header: "Assignee", hideOnMobile: true, cell: (r) => r.assigneeName || "—" },
-    {
-      key: "status",
-      header: "Status",
-      cell: (r) => (
-        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
-          {r.status.replace("_", " ")}
-        </StatusBadge>
-      ),
-    },
-    {
-      key: "priority",
-      header: "Priority",
-      hideOnMobile: true,
-      cell: (r) => (
-        <StatusBadge tone={PRIORITY_TONE[r.priority] ?? "neutral"}>{r.priority}</StatusBadge>
-      ),
-    },
-    {
-      key: "due",
-      header: "Due",
-      align: "right",
-      hideOnMobile: true,
-      cell: (r) => (r.dueDate ? new Date(r.dueDate).toLocaleDateString() : "—"),
-    },
-  ];
-
   return (
     <PageContainer title="Punch List" subtitle="Closeout items & deficiencies" maxWidth="list">
       <ListToolbar
@@ -179,8 +141,6 @@ export default async function PunchPage({
             Track closeout items, deficiencies, and incomplete work.
           </p>
         </div>
-      ) : view === "table" ? (
-        <DataTable columns={columns} rows={rows} rowHref={(r) => `/punch/${r.id}`} />
       ) : (
         <div className="space-y-2">
           {rows.map((r) => (

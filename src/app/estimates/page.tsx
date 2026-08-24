@@ -9,7 +9,6 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
-import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type EstimateRow = {
   id: string;
@@ -60,11 +59,7 @@ type EstimateView = {
 // switcher and forces `view` to always be "cards".
 const MODES: ViewMode[] = ["cards"];
 
-export default async function EstimatesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string }>;
-}) {
+export default async function EstimatesPage() {
   const supabase = await createClient();
   const me = await getMe();
   if (!me) redirect("/login");
@@ -110,44 +105,6 @@ export default async function EstimatesPage({
     };
   });
 
-  const sp = await searchParams;
-  const rawView = sp.view as ViewMode | undefined;
-  const view: ViewMode = rawView && (MODES as string[]).includes(rawView) ? rawView : "cards";
-
-  const columns: Column<EstimateView>[] = [
-    {
-      key: "title",
-      header: "Estimate",
-      cell: (r) => (
-        <span className="font-medium text-gray-900">{r.title || r.jobName}</span>
-      ),
-    },
-    { key: "number", header: "Number", cell: (r) => r.estimateNumber ?? "—" },
-    { key: "job", header: "Job", cell: (r) => r.jobName },
-    {
-      key: "status",
-      header: "Status",
-      cell: (r) => (
-        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
-          {STATUS_LABEL[r.status] ?? r.status}
-        </StatusBadge>
-      ),
-    },
-    {
-      key: "total",
-      header: "Total",
-      align: "right",
-      hideOnMobile: true,
-      cell: (r) => <span className="font-semibold text-gray-900">{formatMoney(r.total)}</span>,
-    },
-    {
-      key: "date",
-      header: "Created",
-      hideOnMobile: true,
-      cell: (r) => new Date(r.createdAt).toLocaleDateString(),
-    },
-  ];
-
   return (
     <PageContainer title="Estimates" subtitle="Cost-coded job pricing" maxWidth="list">
       <ListToolbar
@@ -173,8 +130,6 @@ export default async function EstimatesPage({
             the customer for approval.
           </p>
         </div>
-      ) : view === "table" ? (
-        <DataTable columns={columns} rows={rows} rowHref={(r) => `/estimates/${r.id}`} />
       ) : (
         <div className="space-y-2">
           {rows.map((r) => (

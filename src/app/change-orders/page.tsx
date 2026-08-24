@@ -10,7 +10,6 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
-import DataTable, { type Column } from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -52,7 +51,7 @@ const MODES: ViewMode[] = ["cards"];
 export default async function ChangeOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string; status?: string; view?: string }>;
+  searchParams: Promise<{ job?: string; status?: string }>;
 }) {
   const supabase = await createClient();
   const me = await getMe();
@@ -66,8 +65,6 @@ export default async function ChangeOrdersPage({
   const sp = await searchParams;
   const jobFilter = sp.job ?? "";
   const statusFilter = sp.status ?? "";
-  const rawView = sp.view as ViewMode | undefined;
-  const view: ViewMode = rawView && MODES.includes(rawView) ? rawView : "cards";
 
   const { data: jobs } = await supabase
     .from("jobs")
@@ -96,44 +93,6 @@ export default async function ChangeOrdersPage({
   const exportHref = `/api/reports/change-orders?${jobFilter ? `job=${jobFilter}` : ""}${
     statusFilter ? `&status=${statusFilter}` : ""
   }`.replace(/^\/api\/reports\/change-orders\?&/, "/api/reports/change-orders?");
-
-  const columns: Column<ChangeOrderView>[] = [
-    {
-      key: "title",
-      header: "Change Order",
-      cell: (r) => (
-        <span className="font-medium text-gray-900">
-          {r.coNumber ? `${r.coNumber} · ` : ""}
-          {r.title}
-        </span>
-      ),
-    },
-    { key: "job", header: "Job", cell: (r) => r.jobName || "—" },
-    {
-      key: "status",
-      header: "Status",
-      cell: (r) => (
-        <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
-          {r.status.replace("_", " ")}
-        </StatusBadge>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      align: "right",
-      hideOnMobile: true,
-      cell: (r) => (
-        <span className="font-semibold text-gray-900">{formatMoney(r.signedAmount)}</span>
-      ),
-    },
-    {
-      key: "date",
-      header: "Created",
-      hideOnMobile: true,
-      cell: (r) => new Date(r.createdAt).toLocaleDateString(),
-    },
-  ];
 
   return (
     <PageContainer title="Change Orders" subtitle="Scope & price changes" maxWidth="list">
@@ -168,8 +127,6 @@ export default async function ChangeOrdersPage({
             Manage and track changes to your project scope and price.
           </p>
         </div>
-      ) : view === "table" ? (
-        <DataTable columns={columns} rows={rows} rowHref={(r) => `/change-orders/${r.id}`} />
       ) : (
         <div className="space-y-2">
           {rows.map((r) => (
