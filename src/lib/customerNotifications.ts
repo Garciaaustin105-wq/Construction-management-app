@@ -58,6 +58,17 @@ export function renderTemplate(
   return normalized.replace(TOKEN_RE, (_, key: string) => vars[key] ?? "");
 }
 
+// Per-invocation cache for settings + templates, so a batch sender (the morning
+// remind cron) doesn't re-fetch the same org's settings/templates row on every
+// visit. MUST stay scoped to one invocation (the caller creates it and passes it
+// in) — never a module-level cache, which would leak one org's settings into
+// another's request. Omitting `cache` (the status / on-my-way routes do this)
+// fetches every time, exactly the pre-existing behavior.
+export type NotificationCache = {
+  settings: Map<string, { enabled: boolean; google_review_url: string | null } | null>;
+  templates: Map<string, { subject: string | null; body: string } | null>;
+};
+
 // Active template for an event×channel, or null when inactive/missing. The
 // seeded defaults ARE the fallback — there is no hard-coded body here, so the
 // office fully owns wording. A null return means "skip this channel".
@@ -65,8 +76,13 @@ export async function getTemplate(
   supabase: SupabaseClient,
   organizationId: string,
   event: NotificationEvent,
-  channel: NotificationChannel
+  channel: NotificationChannel,
+  cache?: NotificationCache
 ): Promise<{ subject: string | null; body: string } | null> {
+  const key = `${organizationId}:${event}:${channel}`;
+  if (cache?.templates.has(key)) {
+    return cache.templates.get(key) ?? null;
+  }
   const { data } = await supabase
     .from("notification_templates")
     .select("subject, body, active")
@@ -77,24 +93,31 @@ export async function getTemplate(
   const t = data as
     | { subject: string | null; body: string; active: boolean }
     | null;
-  if (!t || !t.active) return null;
-  return { subject: t.subject ?? null, body: t.body };
+  const result = !t || !t.active ? null : { subject: t.subject ?? null, body: t.body };
+  cache?.templates.set(key, result);
+  return result;
 }
 
 // Per-org notification_settings row (or null when none yet — treated as
 // disabled, since enabled defaults false).
 async function getSettings(
   supabase: SupabaseClient,
-  organizationId: string
+  organizationId: string,
+  cache?: NotificationCache
 ): Promise<{ enabled: boolean; google_review_url: string | null } | null> {
+  if (cache?.settings.has(organizationId)) {
+    return cache.settings.get(organizationId) ?? null;
+  }
   const { data } = await supabase
     .from("notification_settings")
     .select("enabled, google_review_url")
     .eq("organization_id", organizationId)
     .maybeSingle();
-  return (data as
+  const result = (data as
     | { enabled: boolean; google_review_url: string | null }
     | null) ?? null;
+  cache?.settings.set(organizationId, result);
+  return result;
 }
 
 export type ResolvedContact = {
@@ -157,9 +180,10 @@ export function buildPhotoLink(shareToken: string | null): string {
 // when none is set (the template's {{review_link}} token then renders empty).
 export async function buildReviewLink(
   supabase: SupabaseClient,
-  organizationId: string
+  organizationId: string,
+  cache?: NotificationCache
 ): Promise<string | null> {
-  const settings = await getSettings(supabase, organizationId);
+  const settings = await getSettings(supabase, organizationId, cache);
   return settings?.google_review_url?.trim() || null;
 }
 
@@ -224,6 +248,10 @@ export type SendCustomerNotificationInput = {
   // "preset" or "preset: note"). Renders as {{reason}}, defaulting to "N/A"
   // when omitted so older/unreasoned skips don't render an empty placeholder.
   reason?: string | null;
+  // Optional per-invocation settings/template cache for batch senders (the
+  // remind cron). Omit for single-send routes (status / on-my-way) — they
+  // fetch once and don't benefit.
+  cache?: NotificationCache;
 };
 
 // Send one event to the visit's customer across both channels, gated + logged.
@@ -234,7 +262,7 @@ export async function sendCustomerNotification(
   const { supabase, event, organizationId, visitId, customerId } = input;
   const results: ChannelResult[] = [];
 
-  const settings = await getSettings(supabase, organizationId);
+  const settings = await getSettings(supabase, organizationId, input.cache);
   if (!settings || !settings.enabled) {
     // Globally disabled — log both channels as skipped so the office sees the
     // event was considered. (Only fires on real triggers: done / on-my-way /
@@ -262,7 +290,7 @@ export async function sendCustomerNotification(
   const reviewLink =
     input.reviewLink !== undefined
       ? input.reviewLink
-      : await buildReviewLink(supabase, organizationId);
+      : await buildReviewLink(supabase, organizationId, input.cache);
 
   const vars: Record<string, string> = {
     customer_name: input.customerName ?? contact.name ?? "",
@@ -310,7 +338,7 @@ export async function sendCustomerNotification(
       continue;
     }
 
-    const template = await getTemplate(supabase, organizationId, event, channel);
+    const template = await getTemplate(supabase, organizationId, event, channel, input.cache);
     if (!template) {
       await logAttempt(
         supabase,

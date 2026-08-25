@@ -9,6 +9,10 @@ import { isLawn } from "@/lib/variant";
 // configured (cron no-ops safely until then).
 
 export const dynamic = "force-dynamic";
+// Cycle billing iterates every active schedule platform-wide; the default 10s
+// Hobby timeout is too short. Bump to the Hobby ceiling (60s) for headroom.
+// Raise to 300 if moved to Pro.
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const secret = process.env.CRON_SECRET;
