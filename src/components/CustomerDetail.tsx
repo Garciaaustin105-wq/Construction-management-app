@@ -238,7 +238,7 @@ export default function CustomerDetail({
             jobs.map((j) => (
               <Link
                 key={j.id}
-                href={`/jobs/${j.id}`}
+                href={isLawn() ? `/lawn/schedules/${j.id}` : `/jobs/${j.id}`}
                 className="block bg-white rounded-lg p-3 shadow-sm active:bg-gray-50"
               >
                 <p className="font-medium text-gray-900 truncate">{j.name}</p>
