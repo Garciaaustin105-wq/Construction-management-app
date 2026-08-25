@@ -323,12 +323,19 @@ export async function chargeInvoiceOffSession(input: {
   const customerId = (invoice.customer_id as string | null) ?? null;
   if (!customerId) return { charged: false, reason: "no customer on invoice" };
 
-  // Saved card on file (on the org's connected account).
+  // Customer row: consent flag + saved card (on the org's connected account).
+  // autopay_enabled is the Phase-2 consent gate — it MUST be checked before any
+  // card is charged. Without it, exposing save-card would auto-charge every
+  // customer forever with no opt-out (the sequencing hazard in
+  // docs/handoff-lawn-autopay-phase2.md). A falsy result leaves the invoice
+  // `sent` (the try/catch in lawnBilling.ts), so normal delivery still runs.
   const { data: customer } = await admin
     .from("customers")
-    .select("stripe_customer_id, stripe_payment_method_id")
+    .select("stripe_customer_id, stripe_payment_method_id, autopay_enabled")
     .eq("id", customerId)
     .maybeSingle();
+  if (!customer?.autopay_enabled)
+    return { charged: false, reason: "autopay not enabled" };
   const stripeCustomerId = (customer?.stripe_customer_id as string | null) ?? null;
   const paymentMethodId =
     (customer?.stripe_payment_method_id as string | null) ?? null;

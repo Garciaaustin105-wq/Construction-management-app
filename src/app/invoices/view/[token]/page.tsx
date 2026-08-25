@@ -2,7 +2,9 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { notFound } from "next/navigation";
 import InvoiceDocument from "@/components/InvoiceDocument";
 import InvoiceStatusBanner from "./InvoiceStatusBanner";
+import InvoicePayActions from "./InvoicePayActions";
 import { computeTotal, formatMoney } from "@/lib/money";
+import { isLawn } from "@/lib/variant";
 
 export const dynamic = "force-dynamic";
 
@@ -42,10 +44,13 @@ export default async function PublicInvoicePage({
   let orgPhone: string | null = null;
   let orgEmail: string | null = null;
   let orgLogoUrl: string | null = null;
+  let paymentsEnabled = false;
   if (invoice.organization_id) {
     const { data: o } = await admin
       .from("organizations")
-      .select("name, address, phone, email, logo_path")
+      .select(
+        "name, address, phone, email, logo_path, connect_charges_enabled, connect_losses_owner"
+      )
       .eq("id", invoice.organization_id)
       .maybeSingle();
     if (o) {
@@ -58,6 +63,15 @@ export default async function PublicInvoicePage({
           .from("org-logos")
           .getPublicUrl(o.logo_path).data.publicUrl;
       }
+      // Phase 3 gate — ALL THREE conditions. platformLiable fails closed
+      // (matches isPlatformLiable in connectAccount.ts): any losses_owner that
+      // isn't "stripe" means the platform is on the hook, so we refuse to
+      // expose payment even if Stripe says charges_enabled. An account can be
+      // fully chargeable at Stripe and still be one we refuse to use.
+      const lossesOwner = (o.connect_losses_owner as string | null) ?? null;
+      const platformLiable = lossesOwner !== "stripe";
+      paymentsEnabled =
+        isLawn() && !!o.connect_charges_enabled && !platformLiable;
     }
   }
 
@@ -105,7 +119,11 @@ export default async function PublicInvoicePage({
           paid={isPaid}
           balanceDueStr={formatMoney(balanceDue)}
           isVoid={isVoid}
+          paymentsEnabled={paymentsEnabled}
         />
+        {paymentsEnabled && !isPaid && !isVoid && (
+          <InvoicePayActions token={token} />
+        )}
       </div>
     </div>
   );

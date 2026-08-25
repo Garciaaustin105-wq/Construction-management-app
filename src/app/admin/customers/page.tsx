@@ -29,7 +29,9 @@ export default async function CustomersPage() {
 
   const { data } = await supabase
     .from("customers")
-    .select("id, name, contact_name, contact_email, phone, address, notes")
+    .select(
+      "id, name, contact_name, contact_email, phone, address, notes, autopay_enabled, stripe_card_brand, stripe_card_last4, stripe_card_exp_month, stripe_card_exp_year"
+    )
     .order("name");
 
   return (

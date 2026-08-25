@@ -1,14 +1,16 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { BookOpen } from "lucide-react";
+import { BookOpen, CreditCard, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { getMe } from "@/lib/tenant";
 import { getEffectiveBilling } from "@/lib/billing";
 import { isOfficeLike } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
 import { PLAN_TIERS, PAID_TIERS, type PlanTier } from "@/lib/plans";
 import { listProviderOptions, getProvider } from "@/lib/accounting/provider";
 import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import BillingForm from "./BillingForm";
 import AccountingConnectButton from "./AccountingConnectButton";
+import ConnectOnboardingButton from "./ConnectOnboardingButton";
 
 export const dynamic = "force-dynamic";
 
@@ -127,6 +129,89 @@ export default async function BillingPage() {
     </div>
   );
 
+  // ── Customer online payments (lawn only) ───────────────────────────────────
+  // The payments pivot is reversed for lawn, so a lawn org can accept direct-
+  // charge invoice payments + autopay via Stripe Connect. This section tells
+  // the office the connection state plainly — Phase 1's carried-over orphan:
+  // there was nowhere to show WHY payments are off, because nothing consumed
+  // the connect status. Construction never offers customer online payments
+  // (the pivot holds), so the section is lawn-only.
+  //
+  // The connect columns are stamped by the account.updated webhook
+  // (refreshConnectAccount) and read here directly (RLS session client) rather
+  // than calling /api/billing/connect/status — no extra round trip, and the
+  // cached values are fresh enough for a settings page. platformLiable fails
+  // closed (matches isPlatformLiable): any losses_owner that isn't "stripe" is
+  // an account we refuse to use even if Stripe says charges_enabled.
+  let customerPaymentsSection: React.ReactNode = null;
+  if (isLawn()) {
+    const { data: org } = await supabase
+      .from("organizations")
+      .select(
+        "stripe_connect_account_id, connect_charges_enabled, connect_losses_owner, connect_details_submitted"
+      )
+      .eq("id", tenant.orgId)
+      .maybeSingle();
+    const connected = !!org?.stripe_connect_account_id;
+    const chargesEnabled = !!org?.connect_charges_enabled;
+    const platformLiable =
+      ((org?.connect_losses_owner as string | null) ?? null) !== "stripe";
+
+    let card: React.ReactNode;
+    if (platformLiable) {
+      // The live case the doc names (Peanutz L&L: charges_enabled but
+      // losses_owner=application). Payments are OFF and the office must see why
+      // — not a silently missing button — and be able to reconnect.
+      card = (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+          <div className="flex items-center gap-2 text-amber-800">
+            <AlertTriangle className="h-5 w-5" />
+            <h2 className="text-base font-semibold">Online payments are off</h2>
+          </div>
+          <p className="mt-1 text-sm text-amber-800">
+            This account was connected under our previous setup, which would
+            place chargeback liability on the platform. Online invoice payments
+            and autopay are turned off for your customers. Reconnect Stripe to
+            enable them.
+          </p>
+          <div className="mt-3">
+            <ConnectOnboardingButton label="Reconnect Stripe" />
+          </div>
+        </div>
+      );
+    } else if (!connected || !chargesEnabled) {
+      card = (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center gap-2 text-slate-700">
+            <CreditCard className="h-5 w-5" />
+            <h2 className="text-base font-semibold">Accept online payments</h2>
+          </div>
+          <p className="mt-1 text-sm text-slate-600">
+            Connect Stripe so customers can pay invoices online and save a card
+            for automatic payment of future invoices.
+          </p>
+          <div className="mt-3">
+            <ConnectOnboardingButton label="Connect Stripe" />
+          </div>
+        </div>
+      );
+    } else {
+      card = (
+        <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+          <div className="flex items-center gap-2 text-green-800">
+            <CheckCircle2 className="h-5 w-5" />
+            <h2 className="text-base font-semibold">Online payments are on</h2>
+          </div>
+          <p className="mt-1 text-sm text-green-800">
+            Customers can pay invoices online and save a card for automatic
+            payment of future invoices.
+          </p>
+        </div>
+      );
+    }
+    customerPaymentsSection = <div className="space-y-4">{card}</div>;
+  }
+
   return (
     <BillingForm
       currentPlan={billing.plan}
@@ -136,6 +221,7 @@ export default async function BillingPage() {
       hasSubscription={!!billing.stripeSubscriptionId}
       tiers={tiers}
       accountingSection={accountingSection}
+      customerPaymentsSection={customerPaymentsSection}
     />
   );
 }

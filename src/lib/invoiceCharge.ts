@@ -138,14 +138,23 @@ export async function createSaveCardCheckoutSession(input: {
       // SetupIntentData type, hence the cast — it ships to Stripe verbatim.)
       setup_intent_data: {
         usage: "off_session",
+        // enroll_autopay marks THIS setup as the customer's explicit consent to
+        // automatic charging (Phase 2c). The setup_intent.succeeded webhook sets
+        // customers.autopay_enabled = true ONLY when this flag is present — so a
+        // plain card-save (or a future non-consent path) never silently opts a
+        // customer into autopay. Paying an invoice (mode=payment) saves the card
+        // via setup_future_usage but fires payment_intent.succeeded, not
+        // setup_intent.succeeded, so it never sets this flag either.
         metadata: {
           customer_id: customerId,
           organization_id: invoice.organization_id,
+          enroll_autopay: "true",
         },
       } as Stripe.Checkout.SessionCreateParams.SetupIntentData,
       metadata: {
         customer_id: customerId,
         organization_id: invoice.organization_id,
+        enroll_autopay: "true",
       },
       success_url: `${input.origin}/invoices/view/${input.token}?card=1`,
       cancel_url: `${input.origin}/invoices/view/${input.token}?canceled=1`,
@@ -165,9 +174,22 @@ export async function saveCardForCustomer(
   if (!customerId) return;
   const paymentMethodId = setupIntent.payment_method;
   if (!paymentMethodId) return;
+  const admin = createAdminClient();
   await stampCustomerCard(
     customerId,
     stripeAccountId,
     typeof paymentMethodId === "string" ? paymentMethodId : paymentMethodId.id
   );
+
+  // Phase 2c: the customer's explicit consent (the "Save card for autopay"
+  // Checkout flow, which is the only path that sets enroll_autopay metadata)
+  // enables autopay here. NOT a silent side effect of every card save — paying
+  // an invoice saves the card via a PaymentIntent (no enroll_autopay metadata)
+  // and leaves autopay off; the customer turns it on explicitly.
+  if (setupIntent.metadata?.enroll_autopay === "true") {
+    await admin
+      .from("customers")
+      .update({ autopay_enabled: true })
+      .eq("id", customerId);
+  }
 }

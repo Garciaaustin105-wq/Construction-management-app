@@ -5,7 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import AddressInput from "@/components/AddressInput";
 import { useToast } from "@/components/Toast";
-import { Plus, Trash2, Loader2, Phone, Mail, Building2 } from "lucide-react";
+import { Plus, Trash2, Loader2, Phone, Mail, Building2, CreditCard } from "lucide-react";
 
 export type Customer = {
   id: string;
@@ -15,6 +15,11 @@ export type Customer = {
   phone: string | null;
   address: string | null;
   notes: string | null;
+  autopay_enabled: boolean;
+  stripe_card_brand: string | null;
+  stripe_card_last4: string | null;
+  stripe_card_exp_month: number | null;
+  stripe_card_exp_year: number | null;
 };
 
 // Customer contact directory — mirrors SubcontractorsManager: an add form plus
@@ -36,6 +41,7 @@ export default function CustomersManager({
   const [customers, setCustomers] = useState<Customer[]>(initial);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [contactName, setContactName] = useState("");
@@ -47,7 +53,7 @@ export default function CustomersManager({
     const { data } = await supabase
       .from("customers")
       .select(
-        "id, name, contact_name, contact_email, phone, address, notes"
+        "id, name, contact_name, contact_email, phone, address, notes, autopay_enabled, stripe_card_brand, stripe_card_last4, stripe_card_exp_month, stripe_card_exp_year"
       )
       .order("name");
     setCustomers((data as Customer[]) ?? []);
@@ -109,6 +115,35 @@ export default function CustomersManager({
     }
     toast.success("Deleted");
     await refresh();
+  }
+
+  // Phase 2b — office autopay control. Consent gate is enforced server-side too
+  // (chargeInvoiceOffSession refuses when autopay_enabled is false), so this
+  // toggle is a convenience, not a security boundary. Turning ON requires a
+  // card on file (meaningless otherwise); turning OFF is always allowed, even
+  // for a platform-liable org — revoking consent is never gated.
+  async function toggleAutopay(c: Customer) {
+    const next = !c.autopay_enabled;
+    if (next && (!c.stripe_card_brand || !c.stripe_card_last4)) {
+      toast.warning("Save a card first to enable autopay");
+      return;
+    }
+    setTogglingId(c.id);
+    const { error } = await supabase
+      .from("customers")
+      .update({ autopay_enabled: next })
+      .eq("id", c.id);
+    setTogglingId(null);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setCustomers((prev) =>
+      prev.map((customer) =>
+        customer.id === c.id ? { ...customer, autopay_enabled: next } : customer
+      )
+    );
+    toast.success(next ? "Autopay on" : "Autopay off");
   }
 
   return (
@@ -216,6 +251,56 @@ export default function CustomersManager({
                     </a>
                   )}
                 </div>
+                {/* Card on file (read-only for everyone). exp columns are nullable
+                    in principle, so guard them — Stripe always populates them at
+                    save time, but never trust a column the schema permits null on. */}
+                {c.stripe_card_brand && c.stripe_card_last4 && (
+                  <p className="text-xs text-gray-500 truncate inline-flex items-center gap-1">
+                    <CreditCard className="w-3 h-3" />
+                    {c.stripe_card_brand.charAt(0).toUpperCase() +
+                      c.stripe_card_brand.slice(1)}{" "}
+                    ····{c.stripe_card_last4}
+                    {c.stripe_card_exp_month != null &&
+                      c.stripe_card_exp_year != null &&
+                      ` · ${String(c.stripe_card_exp_month).padStart(2, "0")}/${String(
+                        c.stripe_card_exp_year
+                      ).slice(-2)}`}
+                  </p>
+                )}
+                {/* Autopay toggle — office/admin only (canEdit). ON requires a
+                    card on file; OFF always allowed. relative z-10 keeps it
+                    clickable above the stretched-link card overlay. */}
+                {canEdit && (
+                  <div className="inline-flex items-center gap-2 relative z-10 mt-1">
+                    <span className="text-xs text-gray-600">Autopay</span>
+                    {togglingId === c.id ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-gray-500" />
+                    ) : (
+                      <button
+                        onClick={() => toggleAutopay(c)}
+                        disabled={
+                          (!c.stripe_card_brand || !c.stripe_card_last4) &&
+                          !c.autopay_enabled
+                        }
+                        className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          c.autopay_enabled
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-200 text-gray-700"
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        title={
+                          (!c.stripe_card_brand || !c.stripe_card_last4) &&
+                          !c.autopay_enabled
+                            ? "Save a card first to enable autopay"
+                            : c.autopay_enabled
+                              ? "Turn off autopay"
+                              : "Turn on autopay"
+                        }
+                      >
+                        {c.autopay_enabled ? "ON" : "OFF"}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
               {/* Stretched link overlay: makes the whole card navigate to the
                   detail page. The tel:/mailto: anchors + delete button carry

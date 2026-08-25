@@ -47,6 +47,7 @@ export default function BillingForm({
   hasSubscription,
   tiers,
   accountingSection,
+  customerPaymentsSection,
 }: {
   currentPlan: string;
   planStatus: string;
@@ -55,6 +56,7 @@ export default function BillingForm({
   hasSubscription: boolean;
   tiers: Tier[];
   accountingSection?: ReactNode;
+  customerPaymentsSection?: ReactNode;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -288,6 +290,11 @@ export default function BillingForm({
             )}
           </button>
         )}
+
+        {/* Customer online payments (lawn only — the payments pivot is reversed
+            for lawn, so lawn orgs can accept direct-charge invoice payments +
+            autopay). Server-rendered notice + a client reconnect button. */}
+        {customerPaymentsSection}
 
         {/* Bookkeeping integration (payments pivot). The org connects its own
             provider (QuickBooks first); the platform never touches customer
