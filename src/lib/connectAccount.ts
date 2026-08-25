@@ -72,10 +72,33 @@ export type ConnectAccount = {
   stripeAccountId: string;
   chargesEnabled: boolean;
   detailsSubmitted: boolean;
+  /** Raw `controller.losses.payments` from Stripe: "stripe" | "application" |
+   *  null when never refreshed. Stored raw rather than pre-interpreted so an
+   *  audit can see exactly what Stripe reported. */
+  lossesOwner: string | null;
+  /** True when THIS PLATFORM absorbs the org's chargebacks. Derived — always
+   *  read this rather than comparing lossesOwner by hand. */
+  platformLiable: boolean;
 };
 
+/**
+ * Who absorbs an unrecoverable loss (chargeback, refund past balance, fraud) on
+ * a connected account, decided by `controller.losses.payments` at account
+ * CREATION and immutable thereafter.
+ *
+ * createConnectedAccount() sets losses.payments = "stripe", so accounts minted
+ * by current code are safe. Accounts created under the older Express
+ * integration carry "application" — the platform is on the hook for those.
+ *
+ * FAILS CLOSED: null (never refreshed) counts as liable. An org whose status we
+ * have not confirmed must not be able to take money on our risk.
+ */
+export function isPlatformLiable(lossesOwner: string | null): boolean {
+  return lossesOwner !== "stripe";
+}
+
 const CONNECT_COLS =
-  "id, stripe_connect_account_id, connect_charges_enabled, connect_details_submitted";
+  "id, stripe_connect_account_id, connect_charges_enabled, connect_details_submitted, connect_losses_owner";
 
 /**
  * Read the org's connected-account flags (service role → bypasses RLS).
@@ -97,6 +120,10 @@ export async function getConnectAccount(
     stripeAccountId: id,
     chargesEnabled: !!data?.connect_charges_enabled,
     detailsSubmitted: !!data?.connect_details_submitted,
+    lossesOwner: (data?.connect_losses_owner as string | null) ?? null,
+    platformLiable: isPlatformLiable(
+      (data?.connect_losses_owner as string | null) ?? null
+    ),
   };
 }
 
@@ -238,6 +265,9 @@ export async function refreshConnectAccount(
 
   const chargesEnabled = !!account.charges_enabled;
   const detailsSubmitted = !!account.details_submitted;
+  // Already on the object we just retrieved — costs no extra API call. Cached
+  // so the charge guard and the office UI can decide without hitting Stripe.
+  const lossesOwner = account.controller?.losses?.payments ?? null;
 
   const admin = createAdminClient();
   const { error } = await admin
@@ -245,6 +275,7 @@ export async function refreshConnectAccount(
     .update({
       connect_charges_enabled: chargesEnabled,
       connect_details_submitted: detailsSubmitted,
+      connect_losses_owner: lossesOwner,
     })
     .eq("id", organizationId);
   if (error) throw error;
@@ -254,6 +285,8 @@ export async function refreshConnectAccount(
     stripeAccountId: row.stripeAccountId,
     chargesEnabled,
     detailsSubmitted,
+    lossesOwner,
+    platformLiable: isPlatformLiable(lossesOwner),
   };
 }
 
@@ -276,6 +309,23 @@ export async function requireChargeableAccount(
   if (!row.chargesEnabled) {
     throw new Error(
       "This business hasn't finished verifying its account for online payments yet"
+    );
+  }
+  // LIABILITY GATE. An account whose losses fall on the platform must never be
+  // charged on — accepting money there means accepting its chargebacks onto our
+  // balance. Enforced HERE rather than at each call site because all three
+  // money paths (invoice checkout, save-card setup, off-session auto-charge)
+  // already funnel through this function, so there is exactly one place to get
+  // it right and no way to bypass it by adding a fourth path later.
+  //
+  // Not repairable in place: controller.losses.payments is immutable after
+  // account creation, so the fix is re-onboarding under current code, which
+  // mints losses.payments = "stripe".
+  if (row.platformLiable) {
+    throw new Error(
+      "Online payments are disabled for this business. Its Stripe account was " +
+        "connected under our previous setup and would place chargeback " +
+        "liability on the platform. Reconnect the account to enable payments."
     );
   }
   return row;

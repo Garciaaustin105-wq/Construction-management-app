@@ -41,6 +41,7 @@ export async function POST() {
       connected: false,
       chargesEnabled: false,
       detailsSubmitted: false,
+      platformLiable: false,
     });
   }
 
@@ -50,6 +51,9 @@ export async function POST() {
       connected: true,
       chargesEnabled: fresh?.chargesEnabled ?? cached.chargesEnabled,
       detailsSubmitted: fresh?.detailsSubmitted ?? cached.detailsSubmitted,
+      // Payment UI must gate on this as well as chargesEnabled: an account can
+      // be fully chargeable at Stripe and still be one we refuse to use.
+      platformLiable: fresh?.platformLiable ?? cached.platformLiable,
     });
   } catch (err) {
     // A transient Stripe API failure shouldn't 500 the page — fall back to the
@@ -58,6 +62,7 @@ export async function POST() {
       connected: true,
       chargesEnabled: cached.chargesEnabled,
       detailsSubmitted: cached.detailsSubmitted,
+      platformLiable: cached.platformLiable,
       error: err instanceof Error ? err.message : "Could not reach Stripe",
     });
   }
