@@ -5,12 +5,29 @@ import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import { Loader2, Plus, Trash2, Users, Pencil, Check, X } from "lucide-react";
 
+// Expiry state for the licence badge. An expired applicator certification is
+// a compliance problem, not a cosmetic one, so it reads red; 60 days out reads
+// amber so the office can renew before it lapses.
+function licenseState(expires: string): "expired" | "soon" | "ok" {
+  const today = new Date().toISOString().slice(0, 10);
+  if (expires < today) return "expired";
+  const soon = new Date();
+  soon.setDate(soon.getDate() + 60);
+  return expires <= soon.toISOString().slice(0, 10) ? "soon" : "ok";
+}
+
 type CrewMember = {
   id: string;
   name: string;
   phone: string | null;
   trade: string | null;
   user_id: string | null; // null = scheduling-only (no app login)
+  // Pesticide applicator certification. Null for crew who do no chemical work
+  // (a mower never needs one), so both fields stay optional. chemical_
+  // applications.applicator_id points here — this is what lets a state
+  // inspection evidence WHO applied a product and whether they were certified.
+  applicator_license_number: string | null;
+  applicator_license_expires: string | null; // date, "YYYY-MM-DD"
 };
 
 export default function CrewMembersManager({ orgId }: { orgId: string }) {
@@ -23,6 +40,8 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [trade, setTrade] = useState("");
+  const [licenseNo, setLicenseNo] = useState("");
+  const [licenseExp, setLicenseExp] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Inline edit (scheduling-only rows only)
@@ -30,11 +49,13 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editTrade, setEditTrade] = useState("");
+  const [editLicenseNo, setEditLicenseNo] = useState("");
+  const [editLicenseExp, setEditLicenseExp] = useState("");
 
   async function load() {
     const { data } = await supabase
       .from("crew_members")
-      .select("id, name, phone, trade, user_id")
+      .select("id, name, phone, trade, user_id, applicator_license_number, applicator_license_expires")
       .order("name");
     setMembers((data as CrewMember[]) ?? []);
     setLoading(false);
@@ -61,9 +82,11 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
         name: n,
         phone: phone.trim() || null,
         trade: trade.trim() || null,
+        applicator_license_number: licenseNo.trim() || null,
+        applicator_license_expires: licenseExp || null,
         organization_id: orgId,
       })
-      .select("id, name, phone, trade, user_id")
+      .select("id, name, phone, trade, user_id, applicator_license_number, applicator_license_expires")
       .single();
     if (error) {
       toast.error(error.message);
@@ -72,6 +95,8 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
       setName("");
       setPhone("");
       setTrade("");
+      setLicenseNo("");
+      setLicenseExp("");
       await load();
     }
     setSaving(false);
@@ -82,6 +107,8 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
     setEditName(m.name);
     setEditPhone(m.phone ?? "");
     setEditTrade(m.trade ?? "");
+    setEditLicenseNo(m.applicator_license_number ?? "");
+    setEditLicenseExp(m.applicator_license_expires ?? "");
   }
 
   async function saveEdit(id: string) {
@@ -96,6 +123,8 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
         name: n,
         phone: editPhone.trim() || null,
         trade: editTrade.trim() || null,
+        applicator_license_number: editLicenseNo.trim() || null,
+        applicator_license_expires: editLicenseExp || null,
       })
       .eq("id", id);
     if (error) {
@@ -164,6 +193,24 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
             Add
           </button>
         </div>
+        {/* Pesticide applicator certification — optional. Only crew who apply
+            chemicals need one; a mower leaves both blank. */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Applicator license # (optional)"
+            value={licenseNo}
+            onChange={(e) => setLicenseNo(e.target.value)}
+            className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+          <input
+            type="date"
+            title="License expiry"
+            value={licenseExp}
+            onChange={(e) => setLicenseExp(e.target.value)}
+            className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+        </div>
       </form>
 
       {/* Roster */}
@@ -211,6 +258,22 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
                           className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
                         />
                       </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Applicator license #"
+                          value={editLicenseNo}
+                          onChange={(e) => setEditLicenseNo(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="date"
+                          title="License expiry"
+                          value={editLicenseExp}
+                          onChange={(e) => setEditLicenseExp(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -222,6 +285,27 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
                         {m.trade ? ` · ${m.trade}` : ""}
                         {m.phone ? ` · ${m.phone}` : ""}
                       </p>
+                      {m.applicator_license_number && (
+                        <p className="text-xs text-gray-500 truncate">
+                          License {m.applicator_license_number}
+                          {m.applicator_license_expires && (
+                            <span
+                              className={
+                                licenseState(m.applicator_license_expires) === "expired"
+                                  ? "text-red-600 font-medium"
+                                  : licenseState(m.applicator_license_expires) === "soon"
+                                  ? "text-amber-700 font-medium"
+                                  : ""
+                              }
+                            >
+                              {" · "}
+                              {licenseState(m.applicator_license_expires) === "expired"
+                                ? `expired ${m.applicator_license_expires}`
+                                : `expires ${m.applicator_license_expires}`}
+                            </span>
+                          )}
+                        </p>
+                      )}
                     </>
                   )}
                 </div>
