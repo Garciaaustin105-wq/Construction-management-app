@@ -62,7 +62,18 @@ therefore **required** for any re-onboard to work — not cosmetic.
 
 ---
 
-## PHASE 1 — the liability gate (do this FIRST, it gates everything else)
+## PHASE 1 — the liability gate — ✅ SHIPPED 2026-08-23 (`52037b8`)
+
+> Built and on main. The gate lives inside `requireChargeableAccount()` — the
+> chokepoint all three money paths already funnel through — rather than at each
+> call site as originally specced below. `isPlatformLiable()` fails closed.
+> `connect/status` returns `platformLiable`. Terra Vista's stale account id was
+> cleared and Peanutz's loss owner backfilled.
+>
+> **Phases 2 + 3 are now specced in `docs/handoff-lawn-autopay-phase2.md`** —
+> start there. The section below is kept for the reasoning only.
+
+## PHASE 1 (original spec — for reference)
 
 No payment surface may be exposed for a connected account whose losses fall on
 the platform. Build the gate before the UI that needs it.
