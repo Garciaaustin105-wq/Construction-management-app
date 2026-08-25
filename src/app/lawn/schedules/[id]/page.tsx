@@ -490,7 +490,7 @@ export default function ScheduleDetailPage({
   });
 
   return (
-    <PageContainer title={jobName} backHref="/lawn" backLabel="Lawn" maxWidth="list">
+    <PageContainer title={jobName} backHref="/lawn/jobs" backLabel="Jobs" maxWidth="list">
       <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
         <div className="flex justify-between items-start">
           <div className="min-w-0">

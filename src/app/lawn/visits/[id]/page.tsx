@@ -817,10 +817,10 @@ export default function VisitDetailPage({
 
       {isOffice && (
         <Link
-          href={`/jobs/${visit.job_id}`}
+          href={`/lawn/schedules/${visit.recurring_schedule_id}`}
           className="block text-center text-sm text-blue-600 font-medium py-2"
         >
-          Open job →
+          Open schedule →
         </Link>
       )}
     </PageContainer>
