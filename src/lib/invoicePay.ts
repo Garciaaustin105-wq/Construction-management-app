@@ -33,6 +33,11 @@ import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/billing";
 import { computeTotal } from "@/lib/money";
+
+// Local cents-rounding (money.ts keeps its own copy module-private; the manual
+// payments route and estimateInvoice each do the same). Guards against
+// float drift when summing two 2-decimal values, e.g. 999.99 + 0.01.
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 import {
   forAccount,
   requireChargeableAccount,
@@ -205,11 +210,18 @@ export async function recordInvoicePayment(input: {
     const priorAmountPaidRaw = (fresh as { amount_paid: number | string })
       .amount_paid;
     const prevPaid = Number(priorAmountPaidRaw ?? 0) || 0;
-    // NOTE: capped at `total`, so a customer overpayment is silently truncated
-    // here. That is a known, separately-tracked gap (billing handoff Finding 3)
-    // and needs a product decision (record-and-notify vs. credit balance) —
-    // deliberately NOT changed in this pass.
-    newAmountPaid = Math.min(prevPaid + paidAmount, total);
+    // Record the FULL amount received. This was Math.min(prevPaid + paidAmount,
+    // total), which silently discarded any overpayment: Stripe took the money
+    // and the app's record simply lost it — no credit, no flag, no notification
+    // (billing handoff Finding 3).
+    //
+    // Uncapped matches what the MANUAL office path
+    // (api/invoices/[id]/payments) has always done, so the two payment paths
+    // now agree instead of disagreeing. amount_paid > total is a state the app
+    // already handles: every consumer clamps the derived balance with
+    // Math.max(0, total - amountPaid) — see invoicePay (x2), emailLoaders and
+    // insights.overdueBalance.
+    newAmountPaid = round2(prevPaid + paidAmount);
 
     const update: Record<string, unknown> = {
       amount_paid: newAmountPaid,
@@ -274,6 +286,35 @@ export async function recordInvoicePayment(input: {
       });
     } catch {
       // Swallow — feed is best-effort; payment already recorded.
+    }
+  }
+
+  // OVERPAYMENT. The customer paid more than the invoice total. amount_paid now
+  // carries the true figure (see the uncapped sum above), but the office would
+  // otherwise have no idea — they'd only find it by reconciling against Stripe
+  // by hand. Surface it so a refund or credit can be issued deliberately.
+  //
+  // This does NOT create a credit balance; that is a bigger product change.
+  // Best-effort + non-fatal like the paid notification, and deduped by the
+  // unique (type, entity_id) index so a redelivered webhook is a no-op.
+  const overpaid = total > 0 ? round2(newAmountPaid - total) : 0;
+  if (overpaid > 0) {
+    try {
+      const customerName =
+        (invoice.customers as unknown as { name: string | null } | null)?.name ??
+        "";
+      await admin.from("notifications").insert({
+        organization_id: invoice.organization_id,
+        type: "invoice_overpaid",
+        title: "Invoice overpaid",
+        body: [customerName, `overpaid by $${overpaid.toFixed(2)}`]
+          .filter(Boolean)
+          .join(" · "),
+        href: `/invoices/${input.invoiceId}`,
+        entity_id: input.invoiceId,
+      });
+    } catch {
+      // Swallow — feed is best-effort; the payment + true amount_paid are saved.
     }
   }
 }
