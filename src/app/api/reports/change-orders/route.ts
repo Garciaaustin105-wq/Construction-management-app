@@ -27,8 +27,31 @@ export async function GET(request: Request) {
 
   const rows = await fetchChangeOrdersReport(supabase, filters);
   const aoa: (string | number)[][] = [
-    ["CO Number", "Title", "Amount", "Credit", "Status", "Created", "Job"],
+    [
+      "CO Number",
+      "Title",
+      "Amount",
+      "Credit",
+      "Status",
+      "Created",
+      "Job",
+      "Approved By",
+      "Approval Method",
+      "Approved At",
+    ],
   ];
+
+  // Issue 5: visible attribution in the export. method is null on historical
+  // rows (rendered "legacy") — the whole point is to discourage casual approvals
+  // by naming who clicked approve and how.
+  const methodLabel = (m: string | null): string =>
+    m === "manual_office"
+      ? "Manual (office)"
+      : m === "customer_portal"
+        ? "Customer portal"
+        : m === "email"
+          ? "Email"
+          : "legacy";
 
   for (const r of rows) {
     aoa.push([
@@ -39,6 +62,9 @@ export async function GET(request: Request) {
       r.status,
       new Date(r.created_at).toLocaleDateString(),
       r.job_name ?? "-",
+      r.approver_name ?? "-",
+      methodLabel(r.approval_method),
+      r.approved_at ? new Date(r.approved_at).toLocaleString() : "-",
     ]);
   }
 

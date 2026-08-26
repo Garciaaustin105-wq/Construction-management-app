@@ -149,6 +149,13 @@ export type ChangeOrderReportRow = {
   status: string;
   created_at: string;
   job_name: string | null;
+  // Issue 5 attribution. approver_name is resolved from approved_by via a
+  // separate batched profiles read (not an embed — change_orders has two FKs
+  // to profiles: created_by and approved_by, so the embed is ambiguous).
+  approved_by: string | null;
+  approved_at: string | null;
+  approval_method: string | null;
+  approver_name: string | null;
 };
 
 export async function fetchChangeOrdersReport(
@@ -157,7 +164,9 @@ export async function fetchChangeOrdersReport(
 ): Promise<ChangeOrderReportRow[]> {
   let q = supabase
     .from("change_orders")
-    .select("id, co_number, title, amount, is_credit, status, created_at, job:jobs(name)");
+    .select(
+      "id, co_number, title, amount, is_credit, status, created_at, approved_by, approved_at, approval_method, job:jobs(name)"
+    );
 
   if (filters.jobId) q = q.eq("job_id", filters.jobId);
   if (filters.status) q = q.eq("status", filters.status);
@@ -167,10 +176,12 @@ export async function fetchChangeOrdersReport(
   const { data, error } = await q;
   if (error) return [];
 
-  return (data ?? []).map((r) => {
+  const rows = (data ?? []).map((r) => {
     const row = r as unknown as {
       id: string; co_number: string | null; title: string; amount: number | string;
-      is_credit: boolean; status: string; created_at: string; job: { name: string | null } | null;
+      is_credit: boolean; status: string; created_at: string;
+      approved_by: string | null; approved_at: string | null; approval_method: string | null;
+      job: { name: string | null } | null;
     };
     return {
       id: row.id,
@@ -181,8 +192,33 @@ export async function fetchChangeOrdersReport(
       status: row.status,
       created_at: row.created_at,
       job_name: row.job?.name ?? null,
+      approved_by: row.approved_by ?? null,
+      approved_at: row.approved_at ?? null,
+      approval_method: row.approval_method ?? null,
+      approver_name: null as string | null,
     };
   });
+
+  // Batch-resolve approver display names: one profiles read for every distinct
+  // approved_by in the page (no N+1, no ambiguous embed).
+  const approverIds = Array.from(
+    new Set(rows.map((r) => r.approved_by).filter((v): v is string => !!v))
+  );
+  const nameById = new Map<string, string>();
+  if (approverIds.length > 0) {
+    const { data: approvers } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", approverIds);
+    for (const a of (approvers ?? []) as { id: string; full_name: string | null }[]) {
+      if (a.full_name) nameById.set(a.id, a.full_name);
+    }
+  }
+  for (const r of rows) {
+    if (r.approved_by) r.approver_name = nameById.get(r.approved_by) ?? null;
+  }
+
+  return rows;
 }
 
 // 4) Submittal Report

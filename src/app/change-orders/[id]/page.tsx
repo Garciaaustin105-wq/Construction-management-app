@@ -18,6 +18,7 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 import NumberInput from "@/components/NumberInput";
 import { formatMoney } from "@/lib/money";
 import { OFFICE_OR_PM } from "@/lib/roles";
+import OfficeManualApprove from "@/components/OfficeManualApprove";
 
 type CO = {
   id: string;
@@ -32,6 +33,17 @@ type CO = {
   status: string;
   created_at: string;
   jobs: { name: string } | null;
+  // Approval attribution (Issue 5). approved_by is a profiles(id) FK; we
+  // resolve the display name separately (approver_name) to avoid the
+  // PostgREST embed ambiguity (change_orders has two FKs to profiles:
+  // created_by and approved_by). approval_method is null on historical rows
+  // → rendered "legacy"; 'customer_portal' for new customer e-signs;
+  // 'manual_office' for office approval-on-behalf.
+  approved_by: string | null;
+  approved_at: string | null;
+  approval_method: string | null;
+  approval_note: string | null;
+  approver_name: string | null;
 };
 
 type Line = {
@@ -83,7 +95,7 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
         supabase
           .from("change_orders")
           .select(
-            "id, job_id, co_number, title, description, reason, amount, is_credit, source_ref, status, created_at, jobs(name)"
+            "id, job_id, co_number, title, description, reason, amount, is_credit, source_ref, status, created_at, approved_by, approved_at, approval_method, approval_note, jobs(name)"
           )
           .eq("id", paramId)
           .single(),
@@ -100,7 +112,22 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
         router.push("/change-orders");
         return;
       }
-      setCo(coRow as unknown as CO);
+      const coData = coRow as unknown as CO;
+      // Resolve the approver's display name separately. change_orders has two
+      // FKs to profiles (created_by and approved_by), so a PostgREST embed
+      // (`profiles!approved_by(...)`) is ambiguous and 400s — a separate read
+      // is the robust path. One extra round trip, only when approved_by is set.
+      let approverName: string | null = null;
+      if (coData.approved_by) {
+        const { data: approver } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", coData.approved_by)
+          .single();
+        approverName =
+          (approver as { full_name: string | null } | null)?.full_name ?? null;
+      }
+      setCo({ ...coData, approver_name: approverName });
       const loaded = ((lineRows ?? []) as unknown as {
         id: string;
         cost_code_id: string | null;
@@ -454,17 +481,47 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
         )}
 
         {co.status === "sent" && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-            <p className="text-sm font-medium text-blue-800">Awaiting customer decision</p>
-            <p className="text-xs text-blue-600 mt-1">
-              The owner received a secure portal link. You will be notified when they decide.
-            </p>
-          </div>
+          <>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+              <p className="text-sm font-medium text-blue-800">Awaiting customer decision</p>
+              <p className="text-xs text-blue-600 mt-1">
+                The owner received a secure portal link. You will be notified when they decide.
+              </p>
+            </div>
+            <OfficeManualApprove coId={co.id} />
+          </>
         )}
 
         {co.status === "approved" && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-            <p className="text-sm font-medium text-green-800">Approved by customer</p>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-1">
+            {co.approval_method === "manual_office" ? (
+              <>
+                <p className="text-sm font-medium text-green-800">
+                  Approved manually by {co.approver_name ?? "office"}
+                  {co.approved_at
+                    ? ` on ${new Date(co.approved_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                    : ""}
+                </p>
+                {co.approval_note && (
+                  <p className="text-xs text-green-700">Note: {co.approval_note}</p>
+                )}
+              </>
+            ) : co.approval_method === "customer_portal" ? (
+              <p className="text-sm font-medium text-green-800">
+                Approved by customer via portal
+                {co.approved_at
+                  ? ` on ${new Date(co.approved_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                  : ""}
+              </p>
+            ) : (
+              <p className="text-sm font-medium text-green-800">
+                Approved
+                {co.approved_at
+                  ? ` on ${new Date(co.approved_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                  : ""}{" "}
+                (legacy — no attribution on record)
+              </p>
+            )}
             <p className="text-xs text-green-600 mt-1">
               Approved CO lines raise the budget on the job Budget tab.
             </p>
