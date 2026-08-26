@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { applyApprovedChangeOrderToInvoice } from "@/lib/changeOrderInvoice";
 
 export const dynamic = "force-dynamic";
 
@@ -124,6 +125,17 @@ export async function POST(
     decision === "approve" ? "change_order_approved" : "change_order_rejected",
     decision === "approve" ? "Change order approved" : "Change order rejected"
   );
+
+  // Issue 4: pull the approved CO onto the original estimate's invoice as a line
+  // item (non-fatal — the approval already succeeded). No-op for rejects,
+  // deposit-only jobs, paid invoices, or COs already added.
+  if (decision === "approve") {
+    try {
+      await applyApprovedChangeOrderToInvoice(admin, co.id);
+    } catch {
+      // best-effort; never fail the decision over the invoice line
+    }
+  }
 
   return NextResponse.json({ ok: true, status: nextStatus });
 }

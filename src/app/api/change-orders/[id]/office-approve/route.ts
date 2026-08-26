@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { applyApprovedChangeOrderToInvoice } from "@/lib/changeOrderInvoice";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +66,20 @@ export async function POST(
       return NextResponse.json({ error: msg }, { status: 403 });
     }
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  // Issue 4: pull the approved CO onto the original estimate's invoice as a line
+  // item (non-fatal — the RPC approval already succeeded). No-op for deposit-only
+  // jobs, paid invoices, or COs already added.
+  try {
+    const admin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    await applyApprovedChangeOrderToInvoice(admin, id);
+  } catch {
+    // best-effort; never fail the approval over the invoice line
   }
 
   return NextResponse.json({ ok: true });
