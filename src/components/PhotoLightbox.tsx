@@ -5,10 +5,12 @@ import { createClient } from "@/lib/supabase/client";
 import { signedThumbnail, signedFull } from "@/lib/storage";
 import { useRouter } from "next/navigation";
 import { X, ChevronLeft, ChevronRight, Trash2, User, Clock, MapPin, Loader2 } from "lucide-react";
+import PhotoDownloadButton from "@/components/PhotoDownloadButton";
 
 export default function PhotoLightbox({
   photos,
   canDelete = false,
+  thumbUrls,
 }: {
   photos: {
     id: string;
@@ -20,6 +22,14 @@ export default function PhotoLightbox({
     lng?: number | null;
   }[];
   canDelete?: boolean;
+  // Optional pre-minted thumbnail URLs keyed by photo id. When provided (e.g.
+  // by a server component that minted them during SSR), the lightbox uses them
+  // directly and skips the client-side signed-URL waterfall — the fix for the
+  // "slow photos" symptom where N photos each fired a signedThumbnail request
+  // in a client useEffect before any thumbnail could render. When omitted,
+  // the lightbox mints them client-side exactly as before (existing callers
+  // are unchanged). Full-res is still minted on demand either way.
+  thumbUrls?: Record<string, string>;
 }) {
   const router = useRouter();
   const supabase = createClient();
@@ -51,6 +61,22 @@ export default function PhotoLightbox({
   }, [photos]);
 
   useEffect(() => {
+    // Server-minted thumbnails passed in (e.g. from the dashboard server
+    // component) — use them directly and skip the client-side signed-URL
+    // waterfall. This is the fix for the "slow photos" symptom: without it, N
+    // photos each fired a signedThumbnail request in this effect before any
+    // thumbnail could render. Filtering deletedIds keeps a post-delete
+    // re-seed from resurrecting a deleted row's (now-404) URL.
+    if (thumbUrls) {
+      const map: Record<string, string> = {};
+      for (const p of photos) {
+        if (deletedIds.current.has(p.id)) continue;
+        const u = thumbUrls[p.id];
+        if (u) map[p.id] = u;
+      }
+      setUrls(map);
+      return;
+    }
     let cancelled = false;
     async function mint() {
       const live = photos.filter((p) => !deletedIds.current.has(p.id));
@@ -79,7 +105,7 @@ export default function PhotoLightbox({
     return () => {
       cancelled = true;
     };
-  }, [photos, supabase]);
+  }, [photos, supabase, thumbUrls]);
 
   // Mint the full-res URL only for the photo the lightbox is actually showing
   // — one request on open/swipe, not N up front. The thumbnail (urls[id]) shows
@@ -213,20 +239,24 @@ export default function PhotoLightbox({
             <span className="text-sm">
               {index + 1} / {photos_.length}
             </span>
-            {canDelete ? (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDelete();
-                }}
-                className="text-red-400 p-2"
-                title="Delete"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
-            ) : (
-              <div className="w-8" />
-            )}
+            <div className="flex items-center gap-1">
+              <PhotoDownloadButton
+                storagePath={current.storage_path}
+                className="text-white/90 hover:text-white text-xs px-2 py-1 rounded disabled:opacity-50"
+              />
+              {canDelete ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete();
+                  }}
+                  className="text-red-400 p-2"
+                  title="Delete"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div
