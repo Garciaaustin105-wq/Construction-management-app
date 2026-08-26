@@ -17,6 +17,11 @@ import { isLawn } from "@/lib/variant";
 // stamped from job_id by set_org_from_job exactly as in the app's create path.
 
 export const dynamic = "force-dynamic";
+// Vercel default function timeout (10s Hobby) is too short for a platform-wide
+// visit-generation sweep. Bump to the Hobby plan ceiling (60s). The N+1 loop
+// below is batched so this is headroom, not a substitute — but it stops a large
+// org base from silently timing out mid-sweep. Raise to 300 if moved to Pro.
+export const maxDuration = 60;
 
 const HORIZON_DAYS = 90;
 
@@ -100,30 +105,61 @@ export async function POST(request: Request) {
     .select(
       "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date"
     )
-    .eq("active", true);
+    .eq("active", true)
+    .order("id", { ascending: true });
   const schedules = (rows as unknown as Sched[] | null) ?? [];
 
   const today = todayISO();
   const horizon = addDaysISO(today, HORIZON_DAYS);
 
+  // One aggregate replaces the per-schedule "last visit" query (the old loop did
+  // one lawn_visits query per schedule). We only need the last due_date per
+  // schedule, and only when it's >= today: a last visit before today doesn't move
+  // the `from` anchor (it stays `today`), so filter due_date >= today to skip the
+  // bulk of historical visits and reduce to the max per schedule in JS. Chunked
+  // .in() — PostgREST degrades on very large IN lists. Covered by the
+  // uniq_lawn_visits_schedule_due (recurring_schedule_id, due_date) index.
+  const scheduleIds = schedules.map((s) => s.id);
+  const lastDueBySchedule = new Map<string, string>();
+  const IN_CHUNK = 1000;
+  for (let i = 0; i < scheduleIds.length; i += IN_CHUNK) {
+    const chunk = scheduleIds.slice(i, i + IN_CHUNK);
+    const { data: futureVisits } = await admin
+      .from("lawn_visits")
+      .select("recurring_schedule_id, due_date")
+      .in("recurring_schedule_id", chunk)
+      .gte("due_date", today);
+    for (const v of (futureVisits ?? []) as {
+      recurring_schedule_id: string;
+      due_date: string;
+    }[]) {
+      const cur = lastDueBySchedule.get(v.recurring_schedule_id);
+      if (!cur || v.due_date > cur) {
+        lastDueBySchedule.set(v.recurring_schedule_id, v.due_date);
+      }
+    }
+  }
+
+  // Compute every schedule's due dates in one pure-JS pass — no DB inside the
+  // loop. Schedules that error (bad cadence config) are recorded per-schedule;
+  // the rest accumulate inserts for a batched upsert below.
   let processed = 0;
   let generated = 0;
   const errors: { schedule_id: string; error: string }[] = [];
+  const allInserts: {
+    recurring_schedule_id: string;
+    job_id: string;
+    due_date: string;
+    status: "pending";
+  }[] = [];
 
   for (const s of schedules) {
     processed += 1;
     try {
-      // Last existing visit for this schedule (if any) — start the day after it
-      // to avoid a 23505 duplicate, but never backfill before today.
-      const { data: last } = await admin
-        .from("lawn_visits")
-        .select("due_date")
-        .eq("recurring_schedule_id", s.id)
-        .order("due_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const lastDue = (last as unknown as { due_date: string } | null)?.due_date ?? null;
+      const lastDue = lastDueBySchedule.get(s.id) ?? null;
 
+      // Start the day after the last existing visit to avoid a duplicate, but
+      // never backfill before today.
       let from = today;
       if (lastDue && lastDue >= today) from = addDaysISO(lastDue, 1);
 
@@ -145,24 +181,50 @@ export async function POST(request: Request) {
       );
       if (dates.length === 0) continue;
 
-      const inserts = dates.map((due_date) => ({
-        recurring_schedule_id: s.id,
-        job_id: s.job_id,
-        due_date,
-        status: "pending" as const,
-      }));
-      const { error } = await admin.from("lawn_visits").insert(inserts);
-      if (error && error.code !== "23505") {
-        // 23505 = a date already exists (race / manual add) — expected, skip.
-        errors.push({ schedule_id: s.id, error: error.message });
-      } else {
-        generated += dates.length;
+      for (const due_date of dates) {
+        allInserts.push({
+          recurring_schedule_id: s.id,
+          job_id: s.job_id,
+          due_date,
+          status: "pending",
+        });
       }
     } catch (e) {
       errors.push({
         schedule_id: s.id,
         error: e instanceof Error ? e.message : "unknown",
       });
+    }
+  }
+
+  // Batch the inserts across schedules. upsert with onConflict + ignoreDuplicates
+  // makes the whole sweep idempotent — the resume mechanism: a re-run (after a
+  // timeout, or a double-fire if the cron gate ever broke) silently skips dates
+  // that already exist instead of 23505-ing, so nothing is silently dropped and
+  // nothing is duplicated. Chunked to keep payloads bounded and isolate any
+  // failure to a slice. .select() returns only the rows actually inserted
+  // (conflicts are ignored, not returned) → an accurate generated count.
+  const UPSERT_CHUNK = 500;
+  for (let i = 0; i < allInserts.length; i += UPSERT_CHUNK) {
+    const slice = allInserts.slice(i, i + UPSERT_CHUNK);
+    const { data: inserted, error } = await admin
+      .from("lawn_visits")
+      .upsert(slice, {
+        onConflict: "recurring_schedule_id,due_date",
+        ignoreDuplicates: true,
+      })
+      .select("due_date");
+    if (error) {
+      // Rare — upsert handles conflicts. Surface against the schedules in this
+      // slice rather than silently lose the count.
+      const sliceSchedIds = [
+        ...new Set(slice.map((r) => r.recurring_schedule_id)),
+      ];
+      for (const sid of sliceSchedIds) {
+        errors.push({ schedule_id: sid, error: error.message });
+      }
+    } else {
+      generated += (inserted ?? []).length;
     }
   }
 

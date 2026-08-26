@@ -17,6 +17,9 @@ import { isLawn } from "@/lib/variant";
 // Prospect drip sequences (the paid differentiator) are deferred.
 
 export const dynamic = "force-dynamic";
+// Stale-lead nudge iterates every `new` lead older than 24h platform-wide. Bump
+// to the Hobby ceiling (60s) for headroom over the default 10s. Raise to 300 on Pro.
+export const maxDuration = 60;
 
 const STALE_AFTER_HOURS = 24;
 
