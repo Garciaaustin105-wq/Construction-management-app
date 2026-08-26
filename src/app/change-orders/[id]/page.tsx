@@ -20,6 +20,7 @@ import { formatMoney } from "@/lib/money";
 import { OFFICE_OR_PM } from "@/lib/roles";
 import OfficeManualApprove from "@/components/OfficeManualApprove";
 import ChangeOrderSendHistory from "@/components/ChangeOrderSendHistory";
+import EmailPreviewModal from "@/components/EmailPreviewModal";
 
 type CO = {
   id: string;
@@ -67,6 +68,7 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sendNote, setSendNote] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -212,8 +214,10 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
     toast.success("Submitted for review");
   }
 
-  async function sendToOwner() {
-    if (!co) return;
+  // Returns true on success (the EmailPreviewModal closes on true), false on
+  // failure (the modal stays open; the toast below already explained it).
+  async function sendToOwner(): Promise<boolean> {
+    if (!co) return false;
     setBusy(true);
     try {
       const res = await fetch(`/api/change-orders/${co.id}/send`, {
@@ -224,11 +228,12 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
       const j = await res.json();
       if (!res.ok) {
         toast.error(j.error ?? "Send failed");
-        return;
+        return false;
       }
       toast.success("Sent to owner");
       setCo({ ...co, status: "sent" });
       router.refresh();
+      return true;
     } finally {
       setBusy(false);
     }
@@ -498,7 +503,7 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
               className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
             <button
-              onClick={sendToOwner}
+              onClick={() => setPreviewOpen(true)}
               disabled={busy}
               className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -506,6 +511,18 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
               Send to owner
             </button>
           </div>
+        )}
+
+        {(co.status === "submitted" || co.status === "draft") && (
+          <EmailPreviewModal
+            open={previewOpen}
+            onClose={() => setPreviewOpen(false)}
+            kind="change_order"
+            recordId={co.id}
+            message={sendNote.trim() || null}
+            sendLabel="Send to owner"
+            onConfirm={sendToOwner}
+          />
         )}
 
         {co.status === "sent" && (

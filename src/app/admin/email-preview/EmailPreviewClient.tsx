@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EMAIL_KIND_META, TEMPLATE_TOKENS } from "@/lib/emailPreviewKinds";
 import type { EmailKindMeta } from "@/lib/emailPreviewKinds";
 import { APP_VARIANT } from "@/lib/variant";
+import { withMobileStyle } from "@/lib/emailPreviewStyle";
 import { useToast } from "@/components/Toast";
 import {
   Loader2,
@@ -44,22 +45,6 @@ const PLACEHOLDER_HINTS = [
 function isPlaceholderHref(href: string): boolean {
   if (!href) return true;
   return PLACEHOLDER_HINTS.some((h) => href.includes(h));
-}
-
-// Mobile email clients (Gmail, Apple Mail, Samsung) override fixed-width tables
-// with width:100% so a 560px email reflows onto a 375px phone. The platform's
-// emails wrap content in a fixed width="560" card, so naively squeezing the
-// iframe to 375px just crops the right edge ("cuts off the letter"). Injecting
-// the same override the real clients apply makes the mobile preview actually
-// reflow instead of clipping. Injected before </head> (every render fn emits a
-// full <html><head>…</head> document).
-const MOBILE_STYLE =
-  '<style>table[width="560"]{width:100%!important;max-width:100%!important;}img{max-width:100%!important;height:auto!important;}</style>';
-
-function withMobileStyle(html: string): string {
-  if (!html) return html;
-  if (html.includes("</head>")) return html.replace("</head>", `${MOBILE_STYLE}</head>`);
-  return MOBILE_STYLE + html;
 }
 
 export default function EmailPreviewClient({

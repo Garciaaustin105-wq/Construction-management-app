@@ -19,6 +19,7 @@ import {
 import { SMS_ENABLED } from "@/lib/smsFeature";
 import { formatMoney } from "@/lib/money";
 import { validTransitions, type InvoiceStatus } from "@/lib/lifecycles/invoice";
+import EmailPreviewModal from "@/components/EmailPreviewModal";
 
 type Channel = "email" | "sms" | "both";
 
@@ -58,6 +59,7 @@ export default function InvoiceActions({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [sendingReceipt, setSendingReceipt] = useState(false);
   const [syncing, setSyncing] = useState<string | null>(null);
   // Record offline (cash/check/other) payment form. amount defaults to the
@@ -106,7 +108,9 @@ export default function InvoiceActions({
     hasEmail ? "email" : SMS_ENABLED && hasPhone ? "sms" : "email"
   );
 
-  async function sendToCustomer() {
+  // Returns true on success (the EmailPreviewModal closes on true), false on
+  // failure (the modal stays open; the toast below already explained it).
+  async function sendToCustomer(): Promise<boolean> {
     setSending(true);
     try {
       const res = await fetch(`/api/invoices/${invoiceId}/send`, {
@@ -117,6 +121,7 @@ export default function InvoiceActions({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data?.error ?? `Send failed (${res.status})`);
+        return false;
       } else if (data.delivered) {
         const channels = (data.sentVia as string[] | undefined)?.join(" + ") ?? "customer";
         const dest =
@@ -128,6 +133,7 @@ export default function InvoiceActions({
           }
         }
         router.refresh();
+        return true;
       } else {
         // Nothing delivered (e.g. Resend/Twilio not configured yet).
         if (Array.isArray(data.warnings) && data.warnings.length > 0) {
@@ -137,9 +143,11 @@ export default function InvoiceActions({
         } else {
           toast.warning("Invoice not sent — no email or phone on file.");
         }
+        return false;
       }
     } catch {
       toast.error("Send failed — please try again.");
+      return false;
     } finally {
       setSending(false);
     }
@@ -253,6 +261,19 @@ export default function InvoiceActions({
     if (via === "both") return "Send via Email & Text";
     return "Send via Email";
   })();
+  const toLabel = hasEmail && hasPhone
+    ? `To ${customerEmail} and ${customerPhone}`
+    : hasEmail
+    ? `To ${customerEmail}`
+    : hasPhone
+    ? `To ${customerPhone}`
+    : "No email or phone on file";
+  const channelNote =
+    via === "sms"
+      ? "Sending via Text"
+      : via === "both"
+      ? "Sending via Email + Text"
+      : "Sending via Email";
 
   return (
     <div className="space-y-2">
@@ -349,7 +370,7 @@ export default function InvoiceActions({
           </div>
 
           <button
-            onClick={sendToCustomer}
+            onClick={() => setPreviewOpen(true)}
             disabled={sending || busy}
             className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
           >
@@ -547,6 +568,20 @@ export default function InvoiceActions({
           Delete Invoice
         </button>
       </div>
+
+      {canSend && (
+        <EmailPreviewModal
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          kind="invoice"
+          recordId={invoiceId}
+          message={null}
+          toLabel={toLabel}
+          channelNote={channelNote}
+          sendLabel={sendLabel}
+          onConfirm={sendToCustomer}
+        />
+      )}
     </div>
   );
 }
