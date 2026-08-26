@@ -248,6 +248,14 @@ export type SendCustomerNotificationInput = {
   // "preset" or "preset: note"). Renders as {{reason}}, defaulting to "N/A"
   // when omitted so older/unreasoned skips don't render an empty placeholder.
   reason?: string | null;
+  // service_complete only — a pre-formatted re-entry advisory sentence for a
+  // visit whose chemical applications carry a re-entry interval (audit §4.2).
+  // e.g. "Please keep people and pets off the lawn until Mar 5, 4:00 PM." Empty
+  // string when the visit had no re-entry-restricted application, so the
+  // template's {{re_entry_notice}} line renders away. The caller builds the
+  // full sentence (the template engine has no conditionals), so a missing
+  // interval never leaves a dangling "until ." fragment.
+  reEntryNotice?: string | null;
   // Optional per-invocation settings/template cache for batch senders (the
   // remind cron). Omit for single-send routes (status / on-my-way) — they
   // fetch once and don't benefit.
@@ -302,6 +310,7 @@ export async function sendCustomerNotification(
     photo_link: input.photoLink ?? "",
     review_link: reviewLink ?? "",
     reason: input.reason?.trim() || "N/A",
+    re_entry_notice: input.reEntryNotice ?? "",
   };
 
   for (const channel of CHANNELS) {

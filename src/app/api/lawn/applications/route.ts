@@ -6,6 +6,7 @@ import {
   computeReEntryUntil,
   type ChemicalApplicationInput,
 } from "@/lib/chemicals";
+import { checkApplicatorEligibility } from "@/lib/lawnApplicator";
 
 export const dynamic = "force-dynamic";
 
@@ -141,6 +142,40 @@ export async function POST(request: Request) {
 
   // 3) applicator_id: forced to the caller for crew; office may assign anyone.
   const applicatorId = crewLike ? userId : (body.applicator_id?.trim() || null);
+
+  // 3b) Applicator license enforcement (audit §4.1). A regulated application
+  //     is the artifact a state regulator reads, so it must not be logged under
+  //     an applicator with no license or an expired one. Crew IS the applicator
+  //     (forced above), so a crew member with an expired/no license is blocked
+  //     from logging — the office reassigns the application to a licensed
+  //     applicator instead. crew_members SELECT is same_org-scoped (not
+  //     self-only), so the session client reads any applicator's license.
+  //     An unassigned applicator (office left applicator_id blank) is allowed
+  //     for now — it's a separate "named but unlicensed" vs "no applicator"
+  //     distinction; the dashboard widget surfaces license coverage separately.
+  if (applicatorId) {
+    const { data: applicator } = await supabase
+      .from("crew_members")
+      .select("applicator_license_number, applicator_license_expires")
+      .eq("id", applicatorId)
+      .maybeSingle();
+    const a = applicator as
+      | {
+          applicator_license_number: string | null;
+          applicator_license_expires: string | null;
+        }
+      | null;
+    const eligibility = checkApplicatorEligibility({
+      licenseNumber: a?.applicator_license_number ?? null,
+      licenseExpires: a?.applicator_license_expires ?? null,
+    });
+    if (eligibility.severity === "block") {
+      return NextResponse.json(
+        { error: `Cannot log application: ${eligibility.reason}` },
+        { status: 400 }
+      );
+    }
+  }
 
   // 4) applied_at + re_entry_until.
   const appliedAt =

@@ -24,7 +24,7 @@ create table if not exists public.notification_templates (
   event           text not null,   -- visit_reminder | on_my_way | service_complete | review_request
   channel         text not null,   -- email | sms
   subject         text,            -- email only (null for sms)
-  body            text not null,   -- {{customer_name}} {{job_name}} {{address}} {{service_date}} {{org_name}} {{photo_link}} {{review_link}}
+  body            text not null,   -- {{customer_name}} {{job_name}} {{address}} {{service_date}} {{org_name}} {{photo_link}} {{review_link}} {{re_entry_notice}}
   active          boolean not null default true,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
@@ -120,9 +120,9 @@ begin
      '{{org_name}}: Your lawn crew is on the way to {{job_name}}.'),
     ('service_complete','email',
      'Lawn service complete — {{job_name}}',
-     'Hi {{customer_name}},\n\nYour lawn service for {{job_name}} is complete. View before/after photos:\n{{photo_link}}\n\nThank you,\n{{org_name}}'),
+     'Hi {{customer_name}},\n\nYour lawn service for {{job_name}} is complete. View before/after photos:\n{{photo_link}}\n\n{{re_entry_notice}}\n\nThank you,\n{{org_name}}'),
     ('service_complete','sms', null,
-     '{{org_name}}: Lawn service for {{job_name}} is complete. Photos: {{photo_link}}'),
+     '{{org_name}}: Lawn service for {{job_name}} is complete. Photos: {{photo_link}}\n{{re_entry_notice}}'),
     ('review_request','email',
      'How was your lawn service? — {{org_name}}',
      'Hi {{customer_name}},\n\nThanks for choosing {{org_name}}. If you were happy with your lawn service for {{job_name}}, we would love a review:\n{{review_link}}\n\nThank you,'),
@@ -156,9 +156,9 @@ begin
      '{{org_name}}: Your lawn crew is on the way to {{job_name}}.'),
     ('service_complete','email',
      'Lawn service complete — {{job_name}}',
-     'Hi {{customer_name}},\n\nYour lawn service for {{job_name}} is complete. View before/after photos:\n{{photo_link}}\n\nThank you,\n{{org_name}}'),
+     'Hi {{customer_name}},\n\nYour lawn service for {{job_name}} is complete. View before/after photos:\n{{photo_link}}\n\n{{re_entry_notice}}\n\nThank you,\n{{org_name}}'),
     ('service_complete','sms', null,
-     '{{org_name}}: Lawn service for {{job_name}} is complete. Photos: {{photo_link}}'),
+     '{{org_name}}: Lawn service for {{job_name}} is complete. Photos: {{photo_link}}\n{{re_entry_notice}}'),
     ('review_request','email',
      'How was your lawn service? — {{org_name}}',
      'Hi {{customer_name}},\n\nThanks for choosing {{org_name}}. If you were happy with your lawn service for {{job_name}}, we would love a review:\n{{review_link}}\n\nThank you,'),

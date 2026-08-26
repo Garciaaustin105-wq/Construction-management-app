@@ -215,6 +215,35 @@ export async function POST(
         const pin = jobRow?.lawn_jobs;
         const mapImageUrl = buildStaticMapUrl(pin?.map_lat ?? null, pin?.map_lng ?? null);
 
+        // Re-entry advisory (audit §4.2): if any application logged on this
+        // visit carries a re-entry interval still in the future, tell the
+        // customer to keep off the lawn until the latest one expires. Empty
+        // when none (no restricted application, or the interval already lapsed)
+        // — the {{re_entry_notice}} token renders away. The caller builds the
+        // full sentence because the template engine has no conditionals.
+        let reEntryNotice = "";
+        {
+          const { data: apps } = await admin
+            .from("chemical_applications")
+            .select("re_entry_until")
+            .eq("visit_id", id)
+            .not("re_entry_until", "is", null);
+          const untils = (
+            (apps as { re_entry_until: string | null }[] | null) ?? []
+          )
+            .map((a) => new Date(a.re_entry_until as string).getTime())
+            .filter((t) => Number.isFinite(t));
+          if (untils.length) {
+            const max = new Date(Math.max(...untils));
+            if (max.getTime() > Date.now()) {
+              reEntryNotice = `Please keep people and pets off the lawn until ${max.toLocaleString(
+                undefined,
+                { dateStyle: "medium", timeStyle: "short" }
+              )}.`;
+            }
+          }
+        }
+
         // service_complete (templated email + sms, opt-in gated, logged).
         const completeResults = await sendCustomerNotification({
           supabase: admin,
@@ -228,6 +257,7 @@ export async function POST(
           orgName,
           photoLink,
           mapImageUrl,
+          reEntryNotice,
         });
 
         // review_request follows only if a review_request template is active
