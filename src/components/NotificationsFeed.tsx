@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CheckCircle2, XCircle, DollarSign, Bell, ClipboardList, FileCheck, AlertTriangle } from "lucide-react";
+import { CheckCircle2, XCircle, DollarSign, Bell, ClipboardList, FileCheck, AlertTriangle, Star, UserPlus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export type NotificationItem = {
@@ -47,6 +47,16 @@ function iconFor(type: string): { Icon: LucideIcon; color: string } {
       return { Icon: XCircle, color: "text-red-600" };
     case "submittal_returned":
       return { Icon: FileCheck, color: "text-indigo-600" };
+    // Lawn CRM + billing events. invoice_payment_failed is red, NOT the gray
+    // fallback bell — a failed payment needs action and must not read as FYI.
+    case "review_feedback":
+      return { Icon: Star, color: "text-amber-500" };
+    case "new_lead":
+      return { Icon: UserPlus, color: "text-blue-600" };
+    case "lead_stale":
+      return { Icon: AlertTriangle, color: "text-amber-600" };
+    case "invoice_payment_failed":
+      return { Icon: XCircle, color: "text-red-600" };
     default:
       return { Icon: Bell, color: "text-gray-400" };
   }
