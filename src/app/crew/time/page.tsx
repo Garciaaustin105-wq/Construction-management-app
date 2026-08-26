@@ -217,6 +217,12 @@ export default function CrewTimePage() {
   }
 
   async function removeEntry(entry: TimeEntry) {
+    // Defense in depth — the button is also hidden for approved rows below.
+    // RLS enforces this server-side; this just gives a clear message.
+    if (entry.status === "approved") {
+      toast.warning("Approved entries can't be deleted — ask the office to correct it.");
+      return;
+    }
     if (!confirm("Delete this time entry? This can't be undone.")) return;
     const { error } = await supabase.from("time_entries").delete().eq("id", entry.id);
     if (error) {
@@ -417,19 +423,23 @@ export default function CrewTimePage() {
                   {e.status && e.status !== "pending" && (
                     <StatusBadge tone={TIME_STATUS_TONE[e.status] ?? "neutral"}>{e.status.replace("_", " ")}</StatusBadge>
                   )}
-                  <TimeEntryEditModal
-                    entry={e}
-                    jobs={jobs}
-                    costCodes={costCodes}
-                    variant={isLawn() ? "lawn" : "construction"}
-                  />
-                  <button
-                    onClick={() => removeEntry(e)}
-                    className="text-red-600 p-1.5 rounded hover:bg-red-50 flex-shrink-0"
-                    title="Delete entry"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {e.status !== "approved" && (
+                    <>
+                      <TimeEntryEditModal
+                        entry={e}
+                        jobs={jobs}
+                        costCodes={costCodes}
+                        variant={isLawn() ? "lawn" : "construction"}
+                      />
+                      <button
+                        onClick={() => removeEntry(e)}
+                        className="text-red-600 p-1.5 rounded hover:bg-red-50 flex-shrink-0"
+                        title="Delete entry"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                 </div>
               );
             })}
