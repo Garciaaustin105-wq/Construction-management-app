@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { sendCustomerNotification, type NotificationCache } from "@/lib/customerNotifications";
 import { buildStaticMapUrl } from "@/lib/staticMap";
 import { isLawn } from "@/lib/variant";
+import { captureException } from "@/lib/sentry";
 
 // Morning-of customer reminders for today's lawn visits. Fires ~8 AM local
 // (vercel.json "8 13 * * *" = 13:08 UTC ≈ 08:00 CDT/07:00 CST). For every visit
@@ -253,10 +254,34 @@ export async function POST(request: Request) {
     });
   }
 
-  return NextResponse.json({
-    ok: true,
-    visits: processed,
-    notified: sent,
-    errors,
-  });
+  // FAILURE VISIBILITY — see the matching block in cron/generate. This used to
+  // return `ok: true` + HTTP 200 regardless of how many reminders failed, so a
+  // run where most customers were never notified looked exactly like a clean
+  // one to both Vercel Cron and Sentry.
+  if (errors.length > 0) {
+    captureException(
+      new Error(
+        `lawn/cron/remind: ${errors.length}/${processed} visit reminders failed`
+      ),
+      {
+        extra: {
+          processed,
+          notified: sent,
+          failed: errors.length,
+          sample: errors.slice(0, 10),
+        },
+      }
+    );
+  }
+
+  const allFailed = processed > 0 && errors.length === processed;
+  return NextResponse.json(
+    {
+      ok: errors.length === 0,
+      visits: processed,
+      notified: sent,
+      errors,
+    },
+    { status: allFailed ? 500 : 200 }
+  );
 }

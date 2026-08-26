@@ -23,9 +23,22 @@ const REDACTED = "[REDACTED]";
 
 // Public portal routes whose NEXT path segment is a bearer token granting
 // access to customer data (estimates / invoices / change-orders / submittals /
-// visit photos). The token segment must never reach Sentry via request.url or
-// breadcrumb URLs. Keep in sync with isPublicRoute in navItems.ts.
-const PORTAL_TOKEN_PREFIXES = ["/q/", "/invoices/view/", "/co/", "/s/", "/v/"];
+// visit photos / lead capture / review gate). The token segment must never
+// reach Sentry via request.url or breadcrumb URLs.
+//
+// MUST match the token-bearing prefixes in isPublicRoute() (src/lib/navItems.ts).
+// This list had drifted: /lead/ and /r/ were added there as token routes but
+// never here, so an unhandled error on either page shipped the raw token to
+// Sentry. When you add a /<something>/[token] route, add it in BOTH places.
+const PORTAL_TOKEN_PREFIXES = [
+  "/q/", // customer estimate portal
+  "/invoices/view/", // customer invoice portal
+  "/co/", // customer change-order portal
+  "/s/", // reviewer submittal portal
+  "/v/", // customer lawn visit photo portal
+  "/lead/", // public lead capture form
+  "/r/", // public review-rating gate
+];
 
 // Breadcrumb/data keys that commonly hold URLs (navigation breadcrumbs).
 const URL_KEYS = new Set(["url", "from", "to", "href", "referrer", "referer"]);
