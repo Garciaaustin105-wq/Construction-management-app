@@ -19,6 +19,7 @@ import NumberInput from "@/components/NumberInput";
 import { formatMoney } from "@/lib/money";
 import { OFFICE_OR_PM } from "@/lib/roles";
 import OfficeManualApprove from "@/components/OfficeManualApprove";
+import ChangeOrderSendHistory from "@/components/ChangeOrderSendHistory";
 
 type CO = {
   id: string;
@@ -233,9 +234,36 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
     }
   }
 
-  function reopen() {
+  // Revise (Issue 3): return a sent/rejected CO to draft so the office can
+  // edit + resend. Fixes the old `reopen()` which only set local state and
+  // never persisted (so a reload showed it still rejected). The server nulls
+  // the share_token (old /co/{token} 404s) + clears the Issue 5 attribution
+  // stamps; the change_order_sends snapshot stays as the liability record.
+  async function revise() {
     if (!co) return;
-    setCo({ ...co, status: "draft" });
+    if (
+      !confirm(
+        "Revise this change order? The customer's current link will stop working and it will return to draft for editing."
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/change-orders/${co.id}/revise`, {
+        method: "POST",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(j.error ?? `Revise failed (${res.status})`);
+        return;
+      }
+      toast.success("Returned to draft — make your changes and resend.");
+      router.refresh();
+    } catch {
+      toast.error("Revise failed — please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!authorized)
@@ -489,6 +517,14 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
               </p>
             </div>
             <OfficeManualApprove coId={co.id} />
+            <button
+              onClick={revise}
+              disabled={busy}
+              className="w-full bg-white border border-amber-300 text-amber-800 py-3 rounded-lg font-semibold text-sm active:bg-amber-50 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+              Revise (revoke & return to draft)
+            </button>
           </>
         )}
 
@@ -535,13 +571,19 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
               Revise the details and resend, or void this change order.
             </p>
             <button
-              onClick={reopen}
-              className="text-sm text-red-700 underline"
+              onClick={revise}
+              disabled={busy}
+              className="text-sm text-red-700 underline disabled:opacity-50"
             >
-              Reopen as draft
+              Revise &amp; return to draft
             </button>
           </div>
         )}
+
+        {/* Send history (Issue 3): every archived send of this change order,
+            newest first. Office-only; each row links to the immutable snapshot
+            of exactly what was sent. */}
+        <ChangeOrderSendHistory changeOrderId={co.id} />
       </main>
     </div>
   );

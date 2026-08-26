@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { sendEstimateEmail } from "@/lib/email";
 import { sendEstimateSms, normalizePhoneToE164 } from "@/lib/sms";
 import { loadEstimateForEmail } from "@/lib/emailLoaders";
+import { buildEstimateSnapshot } from "@/lib/sends";
 
 export const dynamic = "force-dynamic";
 
@@ -185,13 +186,50 @@ export async function POST(
     );
   }
 
-  // At least one channel delivered → mark sent + persist the token (service
-  // role so it always applies, regardless of RLS).
+  // At least one channel delivered. Archive a send-time snapshot BEFORE the
+  // status flip (snapshot-first): the `estimate_sends` row is the liability
+  // record of exactly what the customer received. If the archive insert
+  // fails, the estimate stays draft + the minted token is never persisted →
+  // the emailed /q/{token} link 404s and the office gets a 500 to retry. A
+  // sent-but-unarchived estimate is exactly the gap this feature closes, so
+  // we refuse to mark sent without an archive. Service role bypasses RLS.
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
+  const snapshot = await buildEstimateSnapshot(admin, id);
+  if (!snapshot) {
+    return NextResponse.json(
+      { error: "Delivered, but failed to read the estimate for the send archive. Not marked sent — retry." },
+      { status: 500 }
+    );
+  }
+  const recipient =
+    [
+      sentVia.includes("email") ? loaded.to : null,
+      sentVia.includes("sms") ? loaded.customerPhone : null,
+    ]
+      .filter(Boolean)
+      .join(" / ") || null;
+  const { error: snapErr } = await admin.from("estimate_sends").insert({
+    estimate_id: id,
+    organization_id: loaded.organizationId,
+    share_token: token,
+    sent_by: me.user.id,
+    sent_via: sentVia.length === 2 ? "both" : sentVia[0],
+    recipient,
+    snapshot,
+  });
+  if (snapErr) {
+    return NextResponse.json(
+      { error: `Delivered, but failed to archive the send: ${snapErr.message}. Not marked sent — retry.` },
+      { status: 500 }
+    );
+  }
+
+  // Archive written → mark sent + persist the token (service role so it always
+  // applies, regardless of RLS).
   const { error: updateError } = await admin
     .from("estimates")
     .update({

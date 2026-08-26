@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { sendChangeOrderEmail } from "@/lib/email";
 import { loadChangeOrderForEmail } from "@/lib/emailLoaders";
 import { OFFICE_OR_PM } from "@/lib/roles";
+import { buildChangeOrderSnapshot } from "@/lib/sends";
 
 export const dynamic = "force-dynamic";
 
@@ -106,13 +107,43 @@ export async function POST(
     );
   }
 
-  // Delivered → mark sent + persist the token (service role so it always
-  // applies, regardless of RLS).
+  // Delivered. Archive a send-time snapshot BEFORE the status flip
+  // (snapshot-first): the `change_order_sends` row is the liability record of
+  // exactly what the customer received. If the archive insert fails, the CO
+  // stays draft/submitted + the minted token is never persisted → the emailed
+  // /co/{token} link 404s and the office gets a 500 to retry. A sent-but-
+  // unarchived CO is exactly the gap this closes, so refuse to mark sent
+  // without an archive. Service role bypasses RLS.
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
+  const snapshot = await buildChangeOrderSnapshot(admin, id);
+  if (!snapshot) {
+    return NextResponse.json(
+      { error: "Email delivered, but failed to read the change order for the send archive. Not marked sent — retry." },
+      { status: 500 }
+    );
+  }
+  const { error: snapErr } = await admin.from("change_order_sends").insert({
+    change_order_id: id,
+    organization_id: loaded.organizationId,
+    share_token: token,
+    sent_by: me.user.id,
+    sent_via: "email", // CO send is email-only in v1.
+    recipient: customerEmail,
+    snapshot,
+  });
+  if (snapErr) {
+    return NextResponse.json(
+      { error: `Email delivered, but failed to archive the send: ${snapErr.message}. Not marked sent — retry.` },
+      { status: 500 }
+    );
+  }
+
+  // Archive written → mark sent + persist the token (service role so it always
+  // applies, regardless of RLS).
   const { error: updateError } = await admin
     .from("change_orders")
     .update({

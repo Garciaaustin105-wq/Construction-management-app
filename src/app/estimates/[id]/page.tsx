@@ -25,6 +25,7 @@ import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
 import ProposalOfficePanel from "./ProposalOfficePanel";
 import CustomerEstimateActions from "./CustomerEstimateActions";
+import EstimateSendHistory from "@/components/EstimateSendHistory";
 import { fetchPriorLineItems, type PriorItem } from "@/lib/estimateHistory";
 import {
   computeTotal,
@@ -328,7 +329,11 @@ export default function EstimateDetailPage({
 
   const isOffice = role === "office" || role === "admin";
   const isCustomer = role === "customer";
-  const editable = estimate.status === "draft" || estimate.status === "sent";
+  // Sent/approved estimates are view-only (Issue 3 liability fix): the office
+  // can't change what a customer is reviewing. To edit a sent/rejected
+  // estimate, the office uses the Revise action (→ draft, old /q/{token} link
+  // 404s). Approved → locked (use a change order to modify scope).
+  const editable = estimate.status === "draft";
   const backHref = backJobId
     ? `/jobs/${backJobId}`
     : isCustomer
@@ -565,6 +570,14 @@ export default function EstimateDetailPage({
       toast.warning("This estimate is converted. Edit the schedules directly.");
       return false;
     }
+    // Defense-in-depth: the Save button only renders when editable (draft),
+    // but a stale tab or a direct call must never mutate a non-draft estimate.
+    if (estimate?.status !== "draft") {
+      toast.warning(
+        "Only draft estimates can be edited. Use Revise to edit a sent or rejected estimate."
+      );
+      return false;
+    }
     const validItems = items.filter(
       (i) => i.description.trim() || i.cost_code_id
     );
@@ -683,6 +696,37 @@ export default function EstimateDetailPage({
       router.refresh();
     } catch {
       toast.error("Send failed — please try again.");
+    }
+  }
+
+  // Revise (Issue 3): return a sent/rejected estimate to draft so the office
+  // can edit + re-send. The server nulls the share_token so the customer's
+  // current /q/{token} link stops working (404) — they can't view a half-edited
+  // estimate. The send snapshot is preserved server-side (liability record).
+  async function reviseEstimate() {
+    if (!estimate) return;
+    if (
+      !confirm(
+        "Revise this estimate? The customer's current link will stop working and the estimate will return to draft for editing."
+      )
+    )
+      return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/estimates/${estimate.id}/revise`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data?.error ?? `Revise failed (${res.status})`);
+        return;
+      }
+      toast.success("Returned to draft — make your changes and Send.");
+      router.refresh();
+    } catch {
+      toast.error("Revise failed — please try again.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -1155,14 +1199,36 @@ export default function EstimateDetailPage({
             )}
 
             {!editable && (
-              <p className="text-xs text-gray-500 text-center">
-                {estimate.status === "approved"
-                  ? "Approved estimates are read-only."
-                  : estimate.status === "rejected"
-                  ? "Rejected estimates are read-only."
-                  : "This estimate is read-only."}
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500 text-center">
+                  {estimate.status === "approved"
+                    ? "Approved estimates are read-only. Use a change order to modify scope."
+                    : estimate.status === "rejected"
+                    ? "Rejected estimates are read-only — revise to edit and resend."
+                    : "This estimate is read-only — revise to edit and resend."}
+                </p>
+                {(estimate.status === "sent" ||
+                  estimate.status === "rejected") && (
+                  <button
+                    onClick={reviseEstimate}
+                    disabled={saving}
+                    className="w-full bg-white border border-amber-300 text-amber-800 py-3 rounded-lg font-semibold text-sm active:bg-amber-50 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {saving ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Pencil className="w-4 h-4" />
+                    )}
+                    {saving ? "Revising..." : "Revise (return to draft)"}
+                  </button>
+                )}
+              </div>
             )}
+
+            {/* Send history (Issue 3): every archived send of this estimate,
+                newest first. Office-only; each row links to the immutable
+                snapshot of exactly what was sent. */}
+            <EstimateSendHistory estimateId={estimate.id} />
           </>
         ) : (
           <>
