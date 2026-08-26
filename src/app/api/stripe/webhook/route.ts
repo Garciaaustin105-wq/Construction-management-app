@@ -34,46 +34,61 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  // Idempotency: if we've already processed this event id, stop here.
+  // Idempotency: CLAIM the event before doing any work. This used to be a
+  // SELECT-check, process, then INSERT — which only deduped the log row, not
+  // the work: Stripe retries, two concurrent deliveries both passed the SELECT
+  // (neither had inserted yet), both processed, and the losing INSERT was
+  // silently swallowed. claim_billing_event() makes the unique index a real
+  // mutex. See the billing_events_claim migration.
   const admin = createAdminClient();
-  const { data: existing } = await admin
-    .from("billing_events")
-    .select("id")
-    .eq("stripe_event_id", event.id)
-    .maybeSingle();
-  if (existing) {
+  const { data: claim, error: claimError } = await admin.rpc(
+    "claim_billing_event",
+    { p_event_id: event.id, p_event_type: event.type }
+  );
+
+  if (claimError) {
+    // Couldn't reach the claim table — do NOT process (we can't guarantee
+    // exactly-once). 500 so Stripe retries.
+    console.error("billing claim failed:", claimError);
+    return NextResponse.json({ error: "Claim failed" }, { status: 500 });
+  }
+  if (claim === "duplicate") {
     return NextResponse.json({ received: true, duplicate: true });
   }
-
-  // Route every event through the SaaS subscription sync. (Stripe Connect
-  // invoice payments were removed in the payments pivot — the platform no
-  // longer touches customer money.) If it throws, return 500 WITHOUT
-  // recording the event so Stripe retries (the sync is idempotent —
-  // re-applying is safe).
-  try {
-    await syncSubscriptionFromEvent(event);
-  } catch (err) {
-    console.error("billing sync failed:", err);
-    return NextResponse.json({ error: "Sync failed" }, { status: 500 });
+  if (claim === "in_progress") {
+    // Another worker holds a fresh claim. Returning 200 stops Stripe retrying
+    // an event that is actively being handled.
+    return NextResponse.json({ received: true, inProgress: true });
   }
 
-  // Record the event for audit. Ignore a unique-violation race (two concurrent
-  // deliveries of the same event) — the sync already happened.
+  // claim === "claimed" — this invocation owns the event.
   let payload: unknown = null;
   try {
     payload = JSON.parse(JSON.stringify(event.data.object));
   } catch {
     payload = null;
   }
+
   try {
-    await admin.from("billing_events").insert({
-      stripe_event_id: event.id,
-      event_type: event.type,
-      payload,
-    });
-  } catch {
-    // Duplicate insert from a race — safe to ignore.
+    await syncSubscriptionFromEvent(event);
+  } catch (err) {
+    console.error("billing sync failed:", err);
+    // Release the claim so Stripe's retry can re-claim and re-run. Without
+    // this the event would be permanently stuck as 'processing' and never
+    // applied. (A stale 'processing' row is also reclaimable after the
+    // staleness window, so this is belt-and-braces.)
+    await admin
+      .from("billing_events")
+      .update({ status: "failed" })
+      .eq("stripe_event_id", event.id);
+    return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }
+
+  // Completed — mark done and record the payload for audit.
+  await admin
+    .from("billing_events")
+    .update({ status: "done", payload })
+    .eq("stripe_event_id", event.id);
 
   return NextResponse.json({ received: true });
 }

@@ -176,24 +176,78 @@ export async function recordInvoicePayment(input: {
   );
 
   const paidAmount = input.paidAmountCents / 100;
-  const prevPaid = Number(invoice.amount_paid ?? 0) || 0;
-  const newAmountPaid = Math.min(prevPaid + paidAmount, total);
 
-  const update: Record<string, unknown> = {
-    amount_paid: newAmountPaid,
-    ...(input.checkoutSessionId
-      ? { stripe_checkout_session_id: input.checkoutSessionId }
-      : {}),
-    ...(input.paymentIntentId
-      ? { stripe_payment_intent_id: input.paymentIntentId }
-      : {}),
-  };
-  if (newAmountPaid >= total) {
-    update.status = "paid";
-    update.paid_at = new Date().toISOString();
+  // OPTIMISTIC CONCURRENCY. This previously did a plain read-then-write, which
+  // lost money under concurrency: a card payment and an office-recorded check
+  // could both read amount_paid=0, and whichever wrote last overwrote the
+  // other. The manual path (api/invoices/[id]/payments) already guarded this;
+  // the Stripe path — which actually runs concurrently from webhook retries —
+  // did not. Same pattern as applyPaymentToInvoice() there: write with
+  // .eq("amount_paid", <value just read>) so the update only lands if nothing
+  // changed underneath, and on a 0-row match re-read and re-accumulate onto
+  // the FRESH value. (invoices.amount_paid is numeric(12,2) not null default 0,
+  // so a plain .eq comparison is safe.)
+  const MAX_ATTEMPTS = 5;
+  let newAmountPaid = 0;
+  let settled = false;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const { data: fresh } = await admin
+      .from("invoices")
+      .select("amount_paid, status")
+      .eq("id", input.invoiceId)
+      .maybeSingle();
+    if (!fresh) return;
+    // Re-check inside the loop: a concurrent delivery may have settled it
+    // between our first read and this attempt.
+    if ((fresh as { status: string }).status === "paid") return;
+
+    const priorAmountPaidRaw = (fresh as { amount_paid: number | string })
+      .amount_paid;
+    const prevPaid = Number(priorAmountPaidRaw ?? 0) || 0;
+    // NOTE: capped at `total`, so a customer overpayment is silently truncated
+    // here. That is a known, separately-tracked gap (billing handoff Finding 3)
+    // and needs a product decision (record-and-notify vs. credit balance) —
+    // deliberately NOT changed in this pass.
+    newAmountPaid = Math.min(prevPaid + paidAmount, total);
+
+    const update: Record<string, unknown> = {
+      amount_paid: newAmountPaid,
+      ...(input.checkoutSessionId
+        ? { stripe_checkout_session_id: input.checkoutSessionId }
+        : {}),
+      ...(input.paymentIntentId
+        ? { stripe_payment_intent_id: input.paymentIntentId }
+        : {}),
+    };
+    if (newAmountPaid >= total) {
+      update.status = "paid";
+      update.paid_at = new Date().toISOString();
+    }
+
+    const { data: updated, error: updErr } = await admin
+      .from("invoices")
+      .update(update)
+      .eq("id", input.invoiceId)
+      .eq("amount_paid", priorAmountPaidRaw)
+      .select("id")
+      .maybeSingle();
+
+    if (updErr) return; // surfaced by the webhook's catch; Stripe will retry
+    if (updated) {
+      settled = true;
+      break;
+    }
+    // else: amount_paid moved under us — loop and retry against the fresh value.
   }
 
-  await admin.from("invoices").update(update).eq("id", input.invoiceId);
+  if (!settled) {
+    // Exhausted retries under heavy concurrency. Throw so the webhook marks the
+    // claim failed and Stripe retries — better than silently dropping a payment.
+    throw new Error(
+      `Could not apply payment to invoice ${input.invoiceId} after ${MAX_ATTEMPTS} attempts (concurrent updates).`
+    );
+  }
 
   // Record an in-app "invoice paid" notification for the office feed ONLY when
   // the payment fully settled the invoice. Service role (bypasses RLS).
