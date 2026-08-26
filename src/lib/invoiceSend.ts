@@ -41,6 +41,11 @@ export type DeliverInvoiceOptions = {
   // Force a channel; when omitted, "whichever on file" (email if email, SMS if
   // phone, both if both) — the auto-send behavior for approval + cycle billing.
   via?: InvoiceChannel;
+  // Skip overwriting invoices.sent_at. The overdue-reminder cron sets this so
+  // a re-send preserves the FIRST delivery date (the aging clock must not
+  // reset on every nudge). A first send of an invoice that was never delivered
+  // passes false, so sent_at gets stamped as normal.
+  skipSentAtStamp?: boolean;
 };
 
 export type DeliverInvoiceResult = {
@@ -176,14 +181,21 @@ export async function deliverInvoice(
   // token even if it was newly minted but nothing delivered? No — only stamp
   // when delivered, so a not-yet-configured send doesn't burn a token. The
   // token is minted fresh again on the next successful send.
+  //
+  // skipSentAtStamp (overdue reminders): preserve the original sent_at instead
+  // of moving it to the reminder date, so aging/overdue math stays anchored to
+  // the first send. The share_token is still persisted if newly minted.
   if (sentVia.length > 0) {
-    const update: { sent_at: string; share_token?: string } = {
-      sent_at: new Date().toISOString(),
-    };
+    const update: { sent_at?: string; share_token?: string } = {};
+    if (!options.skipSentAtStamp) {
+      update.sent_at = new Date().toISOString();
+    }
     if (!loaded.shareToken) {
       update.share_token = token;
     }
-    await admin.from("invoices").update(update).eq("id", invoiceId);
+    if (update.sent_at || update.share_token) {
+      await admin.from("invoices").update(update).eq("id", invoiceId);
+    }
   }
 
   return {
