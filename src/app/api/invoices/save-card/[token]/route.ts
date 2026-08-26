@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createSaveCardCheckoutSession } from "@/lib/invoiceCharge";
+import {
+  checkRateLimits,
+  clientIp,
+  rateLimitResponse,
+} from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +36,19 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Same abuse surface as the Pay route (public + hits Stripe on the org's
+  // connected account), so the same dual token+IP throttle. Saving a card is a
+  // once-per-customer action, so the token cap is tighter than Pay's.
+  const limited = await checkRateLimits([
+    { key: `invoice-savecard:token:${token}`, max: 5, windowSeconds: 3600 },
+    {
+      key: `invoice-savecard:ip:${clientIp(request)}`,
+      max: 20,
+      windowSeconds: 3600,
+    },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   try {
     const { url } = await createSaveCardCheckoutSession({

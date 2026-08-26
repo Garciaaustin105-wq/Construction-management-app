@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { applyApprovedChangeOrderToInvoice } from "@/lib/changeOrderInvoice";
+import { checkRateLimits, clientIp, rateLimitResponse } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,14 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Public token endpoint — throttle so a leaked link can't be used to spam
+  // decisions. Keyed on token AND IP. Generous: a customer decides once.
+  const limited = await checkRateLimits([
+    { key: `co-decide:token:${token}`, max: 10, windowSeconds: 3600 },
+    { key: `co-decide:ip:${clientIp(request)}`, max: 40, windowSeconds: 3600 },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   let body: { decision?: string } = {};
   try {

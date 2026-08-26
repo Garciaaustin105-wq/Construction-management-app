@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { checkRateLimits, clientIp, rateLimitResponse } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,18 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Public token endpoint — throttle so a leaked link can't be used to spam
+  // submittal returns. Keyed on token AND IP.
+  const limited = await checkRateLimits([
+    { key: `submittal-return:token:${token}`, max: 15, windowSeconds: 3600 },
+    {
+      key: `submittal-return:ip:${clientIp(request)}`,
+      max: 40,
+      windowSeconds: 3600,
+    },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   let body: { disposition?: string; note?: string } = {};
   try {

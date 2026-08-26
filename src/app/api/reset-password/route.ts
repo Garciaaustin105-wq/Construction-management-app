@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
+import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,21 @@ function sha256Hex(s: string): string {
 }
 
 export async function POST(request: Request) {
+  // Consistency with /api/forgot-password, which is rate limited. The reset
+  // token itself is 256-bit (randomBytes(32)) so brute force is not the
+  // concern — this is defense in depth against submission spam.
+  const limited = await checkRateLimit(
+    `reset-password:ip:${clientIp(request)}`,
+    20,
+    60 * 60
+  );
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts from this network. Try again later." },
+      { status: 429 }
+    );
+  }
+
   let body: { token?: string; password?: string };
   try {
     body = await request.json();

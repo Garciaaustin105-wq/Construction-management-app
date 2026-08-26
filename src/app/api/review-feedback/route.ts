@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,20 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Server not configured" },
       { status: 500 }
+    );
+  }
+
+  // Public unauthenticated POST — throttle to bound junk rows. The honeypot
+  // below catches naive bots; this bounds everything else.
+  const limited = await checkRateLimit(
+    `review-feedback:ip:${clientIp(request)}`,
+    20,
+    60 * 60
+  );
+  if (!limited.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      { status: 429 }
     );
   }
 

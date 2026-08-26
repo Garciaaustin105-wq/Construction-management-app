@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createInvoiceCheckoutSession } from "@/lib/invoicePay";
+import {
+  checkRateLimits,
+  clientIp,
+  rateLimitResponse,
+} from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +38,19 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Rate limit: this route is PUBLIC and hits Stripe, so an unthrottled caller
+  // holding one valid share token could use it for card testing. Because these
+  // are DIRECT charges (the org is merchant of record), that abuse would land
+  // on the ORG's Stripe account and their decline rate — not the platform's.
+  // Keyed on BOTH the token and the IP so rotating IPs can't hammer one
+  // invoice, and one IP can't spray many invoices. A real customer pays once,
+  // occasionally retrying a declined card, so these caps are generous.
+  const limited = await checkRateLimits([
+    { key: `invoice-pay:token:${token}`, max: 8, windowSeconds: 3600 },
+    { key: `invoice-pay:ip:${clientIp(request)}`, max: 30, windowSeconds: 3600 },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   try {
     const { url } = await createInvoiceCheckoutSession({

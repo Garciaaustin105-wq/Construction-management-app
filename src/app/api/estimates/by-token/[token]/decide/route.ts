@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { deliverInvoice } from "@/lib/invoiceSend";
 import { sendEstimateDecisionEmail } from "@/lib/email";
 import { createInvoiceFromEstimate } from "@/lib/estimateInvoice";
+import { checkRateLimits, clientIp, rateLimitResponse } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,18 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Public token endpoint — throttle so a leaked link can't be used to spam
+  // decisions. Keyed on token AND IP. Generous: a customer decides once.
+  const limited = await checkRateLimits([
+    { key: `estimate-decide:token:${token}`, max: 10, windowSeconds: 3600 },
+    {
+      key: `estimate-decide:ip:${clientIp(request)}`,
+      max: 40,
+      windowSeconds: 3600,
+    },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   let body: { decision?: string } = {};
   try {
