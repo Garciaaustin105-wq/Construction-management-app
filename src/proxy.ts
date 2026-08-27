@@ -12,9 +12,10 @@ import { captureException } from "@sentry/nextjs";
 //                                          404 construction APIs.
 //        construction deploy (isConstruction()) → redirect lawn PAGES to
 //                                          /dashboard, 404 lawn APIs.
-//   2. Refresh the Supabase auth session cookie on every allowed request — the
-//      standard Supabase SSR pattern that keeps signed-in users' sessions alive.
-//      (This was the proxy's original and only job before the Terra Verde split.)
+//   2. Refresh the Supabase auth session cookie on every allowed PAGE request —
+//      the standard Supabase SSR pattern that keeps signed-in users' sessions
+//      alive. (This was the proxy's original and only job before the Terra Verde
+//      split.) API routes deliberately skip it; see the note at the return.
 //
 // The gate runs BEFORE updateSession: a blocked page redirects without doing
 // session work (the browser then loads the allowed landing, which refreshes the
@@ -122,7 +123,26 @@ export async function proxy(request: NextRequest) {
       }
     }
 
-    // Allowed route: refresh the Supabase session.
+    // API routes stop here. The variant gate above is a pure string-prefix test
+    // that needs no session, and updateSession() costs a full network round trip
+    // to Supabase Auth (/auth/v1/user) — paid by EVERY client fetch, serialized
+    // ahead of the handler's own work. 43 client components fetch /api/*, so on
+    // a page that makes several calls this was the dominant cost, and it scaled
+    // with GoTrue latency rather than with anything we control.
+    //
+    // Safe to skip because nothing here depended on it:
+    //   • This proxy does not authorize (see the header note) — it gates on the
+    //     build variant only, and that check has already run above.
+    //   • Route handlers resolve identity themselves via getMeIdentity(), and
+    //     the DB is RLS-enforced regardless.
+    //   • Session CONTINUITY is unaffected: page navigations still refresh below,
+    //     the singleton browser client auto-refreshes on its own, and a route
+    //     handler CAN write refreshed cookies (unlike a server component — see
+    //     the setAll comment in lib/supabase/server.ts), so an expiring token
+    //     still gets refreshed on the API path itself.
+    if (isApi) return NextResponse.next({ request });
+
+    // Page navigation: refresh the Supabase session cookie.
     return updateSession(request);
   } catch (err) {
     // Edge runtime — sentry.edge.config is loaded by instrumentation. Capture
