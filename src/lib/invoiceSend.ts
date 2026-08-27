@@ -185,15 +185,28 @@ export async function deliverInvoice(
   // skipSentAtStamp (overdue reminders): preserve the original sent_at instead
   // of moving it to the reminder date, so aging/overdue math stays anchored to
   // the first send. The share_token is still persisted if newly minted.
+  //
+  // draft → sent on the first real send: new invoices are created 'draft' (see
+  // invoices_draft_status.sql + the 3 insert sites) and the office "Send" action
+  // + the auto-deliver paths (estimate approve, lawn cycle billing) all flow
+  // through here. We flip the status only when this is a genuine first send
+  // (!skipSentAtStamp) AND the invoice is still a draft — so a reminder re-send
+  // of an already-sent invoice (skipSentAtStamp=true, or status already 'sent')
+  // never re-stamps the status, and a paid invoice (auto-charged before
+  // delivery, e.g. lawn cycle billing with a saved card) is NEVER downgraded
+  // back to 'sent'. paid/void are left untouched.
   if (sentVia.length > 0) {
-    const update: { sent_at?: string; share_token?: string } = {};
+    const update: { status?: string; sent_at?: string; share_token?: string } = {};
     if (!options.skipSentAtStamp) {
       update.sent_at = new Date().toISOString();
+      if (loaded.status === "draft") {
+        update.status = "sent";
+      }
     }
     if (!loaded.shareToken) {
       update.share_token = token;
     }
-    if (update.sent_at || update.share_token) {
+    if (update.status || update.sent_at || update.share_token) {
       await admin.from("invoices").update(update).eq("id", invoiceId);
     }
   }

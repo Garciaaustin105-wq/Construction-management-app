@@ -86,9 +86,13 @@ export async function POST(request: Request) {
   const today = todayISO();
 
   // Overdue (due_date < today), still-open (`sent`) invoices with their line
-  // items. status='sent' covers both truly-sent and created-but-never-emailed
-  // (audit §1.2: there is no draft status) — the sent_at check below decides
-  // first-send vs reminder.
+  // items. Only 'sent' invoices are overdue — a 'draft' (see
+  // invoices_draft_status.sql) has not been issued to the customer yet, so it
+  // is intentionally excluded: the office owns sending a draft (the §1.2 draft
+  // gate), and a draft that failed delivery is a config issue the office
+  // resolves by sending, not something a reminder cron auto-sends. The sent_at
+  // check below decides first-send vs reminder for the 'sent' rows that are
+  // here.
   const { data: rows, error: qErr } = await admin
     .from("invoices")
     .select(

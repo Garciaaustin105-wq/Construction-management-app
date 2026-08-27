@@ -131,7 +131,7 @@ export default function NewInvoiceForm({
         estimate_id: null,
         job_id: jobId,
         customer_id: customerId || null,
-        status: "sent",
+        status: "draft",
         due_date: dueDate || null,
       })
       .select("id")
@@ -161,7 +161,7 @@ export default function NewInvoiceForm({
       return;
     }
 
-    toast.success("Invoice created");
+    toast.success("Draft invoice created — review and Send when ready");
     // Carry ?job= forward so the new invoice's back button returns to the job
     // we created from (matches the back-to-job behavior on the other new pages).
     const invoiceHref = preselectedJobId
