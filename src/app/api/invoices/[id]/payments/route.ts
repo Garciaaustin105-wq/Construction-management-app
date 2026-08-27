@@ -278,7 +278,11 @@ export async function GET(
   const { data, error } = await supabase
     .from("payments")
     .select(
-      "id, amount, method, reference, paid_at, recorded_by, created_at, reversed_at, reversal_reason, profiles(full_name)"
+      // FK hint required: §1.5 added a second profiles FK (reversed_by), so a
+      // bare `profiles(...)` embed is ambiguous (PGRST200) — resolve the
+      // recorder explicitly. The reverse route surfaces reverser attribution
+      // in-app rather than here, so this embed stays recorder-only.
+      "id, amount, method, reference, paid_at, recorded_by, created_at, reversed_at, reversal_reason, profiles!payments_recorded_by_fkey(full_name)"
     )
     .eq("invoice_id", id)
     .order("paid_at", { ascending: false })

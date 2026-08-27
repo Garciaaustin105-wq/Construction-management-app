@@ -18,6 +18,9 @@
 --
 -- Applied live 2026-08-26 (create + anon/public revoke, then authenticated
 -- revoke). Verified: anon=false, authenticated=false, service_role=true.
+-- FIXED 2026-08-26 e2e: unqualified `invoice_id` in the DELETE collided with
+-- the RETURNS TABLE out-param (ambiguity error at runtime) -> qualified with
+-- the `li` alias. Migration fix_replace_draft_line_items_ambiguity LIVE.
 
 create or replace function public.replace_draft_invoice_line_items(
   p_invoice_id uuid,
@@ -51,7 +54,7 @@ begin
 
   -- Atomic swap: wipe the existing lines, insert the new set. Array order is
   -- the source of truth -> positions are re-indexed 0-based server-side.
-  delete from public.invoice_line_items where invoice_id = p_invoice_id;
+  delete from public.invoice_line_items li where li.invoice_id = p_invoice_id;
 
   if coalesce(jsonb_array_length(p_items), 0) > 0 then
     insert into public.invoice_line_items (invoice_id, description, quantity, unit_price, "position")
