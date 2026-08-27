@@ -34,6 +34,7 @@ gets built against a contract by Opus / local AI.
 | 1.1 | Overdue invoice reminder cron | `a40d9f4` | route + `deliverInvoice.skipSentAtStamp` + `vercel.json` cron; tsc 0; live filter query clean (0 overdue, pre-launch) |
 | 6 | Notification feed icon cases | `5319891` (with §2.2) | added review_feedback/new_lead/lead_stale/invoice_payment_failed; tsc 0 |
 | 2.2 | Exclude rejected time from JobBudget | `5319891` | `.in("status",["approved","pending"])`; tsc 0 |
+| 4 | Pesticide compliance (license gate + re-entry notice) | `5d883c4` | contract `lawnApplicator.ts` + route 400 on block + `ApplicatorLicenseBadge` (gpt-oss, zero fix-up) + `customerNotifications.reEntryNotice` + status-route re-entry query + seed for new orgs; tsc 0 |
 
 All on `feat/feature-completeness`. Not merged to `main`, not deployed.
 

@@ -81,7 +81,7 @@ export default function SeasonalActions({
         toast.error(data?.error ?? "Failed to reopen");
         return;
       }
-      toast.success(`Reopened ${customerName}: ${data.reopened_schedules} schedule(s) and generated ${data.generated_visits} visit(s)`);
+      toast.success(`Reopened ${customerName}: ${data.reopened_schedules} schedule(s), resumed ${data.resumed_visits ?? 0} paused visit(s), generated ${data.generated_visits} visit(s)`);
       router.refresh();
     } catch {
       toast.error("Network error");

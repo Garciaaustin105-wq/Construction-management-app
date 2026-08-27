@@ -6,17 +6,21 @@ import { generateDueDates } from "@/lib/lawnRecurrence";
 
 // POST /api/lawn/schedules/bulk-resume — reopen a customer's seasonal pause.
 // Reverses bulk-pause: flips the customer's INACTIVE recurring schedules back
-// to active and regenerates pending visits from `resume_from` through
-// min(end_date, today+90d). Beats Jobber's spring reopen where owners
-// "manually close/reopen hundreds of jobs each spring" — one tap regenerates
-// the whole account.
+// to active, resumes this customer's paused visits with due_date >= resume_from
+// back to pending (audit §5.1: they used to be left as-is and stayed on the
+// calendar forever as un-actionable clutter), and regenerates any still-missing
+// pending visits from `resume_from` through min(end_date, today+90d). Beats
+// Jobber's spring reopen where owners "manually close/reopen hundreds of jobs
+// each spring" — one tap regenerates the whole account.
 //
 // Body: { customer_id, resume_from } (ISO YYYY-MM-DD).
 //
-// Paused winter visits (status='paused') are LEFT as-is — the record of
-// skipped service over the off-season is preserved. Only fresh visits from
-// resume_forward materialize. Existing future visits already in the table
-// are skipped via the unique(recurring_schedule_id, due_date) index (23505).
+// Paused visits with due_date < resume_from (the off-season already passed)
+// are LEFT paused — that is the historical record of skipped winter service.
+// Only visits from resume_from forward reopen, matching "resume from <date>"
+// semantics. Resumed rows occupy their (recurring_schedule_id, due_date) slot,
+// so the generateDueDates insert below 23505-collides with them (expected,
+// ignored) and no duplicates are created.
 //
 // Gate: OFFICE_OR_PM. RLS session client scopes to the caller's org.
 export const dynamic = "force-dynamic";
@@ -112,6 +116,27 @@ export async function POST(req: Request) {
       { status: 500 }
     );
 
+  // Resume this customer's paused visits from resume_from forward (audit §5.1).
+  // Past paused visits (due_date < resume_from) stay paused as the historical
+  // record of skipped winter service. Resumed rows reclaim their (schedule,
+  // due_date) slot so the regenerate step below 23505-collides with them instead
+  // of duplicating. route_order is left null (bulk-pause already nulled it) so
+  // the dispatcher re-plans them alongside any freshly generated visits.
+  const { data: resumedRows, error: resumeErr } = await supabase
+    .from("lawn_visits")
+    .update({ status: "pending" })
+    .in("job_id", jobIds)
+    .eq("status", "paused")
+    .gte("due_date", resume_from)
+    .select("id");
+  if (resumeErr)
+    return NextResponse.json(
+      { error: `Failed to resume paused visits: ${resumeErr.message}` },
+      { status: 500 }
+    );
+  const resumedVisits =
+    ((resumedRows as unknown as { id: string }[] | null) ?? []).length;
+
   const horizon = addDaysISO(todayISO(), HORIZON_DAYS);
   let generated = 0;
 
@@ -158,6 +183,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     reopened_schedules: schedules.length,
+    resumed_visits: resumedVisits,
     generated_visits: generated,
   });
 }
