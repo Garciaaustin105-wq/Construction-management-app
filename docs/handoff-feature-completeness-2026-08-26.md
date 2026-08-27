@@ -38,6 +38,7 @@ gets built against a contract by Opus / local AI.
 | 5.3 | Lead → estimate link + auto won/lost sync | `2f930cb` | `leads.estimate_id` + DB trigger `trg_sync_lead_from_estimate` (path-agnostic covers authed RPCs + public /decide) LIVE; `leads.ts linkEstimateToLead`; `LinkEstimateToLead.tsx` (gpt-oss, zero fix-up) wired into LeadDetailDrawer; tsc 0 |
 | 1.3 | Estimate expiry enforcement | `3d2102d` | `estimates_status_check`+`expired` LIVE; cron `/api/estimates/cron/expire` (13:37, construction-owned gate) + `/decide` 410 race-defense + `/q/[token]` expired banner; DEFERRED re-issue-at-current-pricing; tsc 0 |
 | 5.1 | Paused-visit un-pause | `a607d6a` | lifecycle `paused→pending` (existing Reopen button + /status route cover it, no notify on resume) + `bulk-resume` resumes paused visits with due_date≥resume_from (past stays as record) + `resumed_visits` count toasted + `lawn_visits_status_check` CHECK LIVE; tsc 0 |
+| 7 | Small gaps (FK + rate-limit purge cron) | `b9ea9bb` | `estimate_template_items.organization_id` FK→organizations ON DELETE CASCADE LIVE (0 rows, nullable); `/api/cron/purge-rate-limits` daily 04:12 construction-owned gate calls `purge_rate_limits(24)`; vercel.json entry. Defers §7 delete-paths per-table call. tsc 0 |
 
 All on `feat/feature-completeness`. Not merged to `main`, not deployed.
 
