@@ -67,13 +67,22 @@ export async function POST(
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  const { data: co } = await admin
+  // change_orders has NO customers FK (job-scoped) — a bare `customers(name)`
+  // embed throws PGRST200 and data came back null (error was ignored), so EVERY
+  // public decision 404'd. Resolve the customer through the job instead.
+  const { data: co, error: coErr } = await admin
     .from("change_orders")
     .select(
-      "id, status, organization_id, job_id, co_number, title, amount, is_credit, jobs(name), customers(name)"
+      "id, status, organization_id, job_id, co_number, title, amount, is_credit, jobs(name, customers(name))"
     )
     .eq("share_token", token)
     .maybeSingle();
+  if (coErr) {
+    return NextResponse.json(
+      { error: `Change order lookup failed: ${coErr.message}` },
+      { status: 500 }
+    );
+  }
 
   if (!co) {
     return NextResponse.json({ error: "Change order not found" }, { status: 404 });
@@ -90,7 +99,13 @@ export async function POST(
     (co.title as string | null) ??
     "your project";
   const customerName =
-    (co.customers as unknown as { name: string | null } | null)?.name ?? "";
+    (
+      (
+        co.jobs as unknown as {
+          customers: { name: string | null } | null;
+        } | null
+      )?.customers
+    )?.name ?? "";
   const coNumber = (co.co_number as string | null) ?? null;
 
   // Record an in-app notification for the office feed on the dashboard. Service
@@ -117,7 +132,14 @@ export async function POST(
 
   const now = new Date().toISOString();
   const nextStatus = decision === "approve" ? "approved" : "rejected";
-  const stamp = decision === "approve" ? { approved_at: now } : { rejected_at: now };
+  // Issue 5 attribution: a portal-token approval is a customer_portal decision
+  // (matches decide_change_order's approve branch) — without this stamp the
+  // attribution UI rendered email-token approvals as "legacy". Rejects don't
+  // stamp (no approval happened).
+  const stamp =
+    decision === "approve"
+      ? { approved_at: now, approval_method: "customer_portal" }
+      : { rejected_at: now };
 
   const { error } = await admin
     .from("change_orders")
