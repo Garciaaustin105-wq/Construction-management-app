@@ -105,6 +105,20 @@ export async function POST(
     return NextResponse.json({ error: "Not your visit" }, { status: 403 });
   }
 
+  // §5.1 lifecycle enforcement (route-side half of LAWN_VISIT_TRANSITIONS —
+  // the page only renders valid buttons, but this API must not trust that):
+  // a paused visit clears ONLY to pending — bulk-resume or a per-visit Reopen.
+  // Jumping paused -> done/skipped would mark skipped winter service as worked
+  // (done also fires the customer completion email, lying about a visit that
+  // never happened). The UI enforces this via canTransition; repeat it here so
+  // an API caller / stale tab can't bypass it.
+  if (cur.status === "paused" && body.status && body.status !== "pending") {
+    return NextResponse.json(
+      { error: "This visit is paused — resume it to pending first." },
+      { status: 400 }
+    );
+  }
+
   const patch: Record<string, unknown> = {};
   if (body.status) patch.status = body.status;
   if (body.status === "done") patch.completed_at = new Date().toISOString();
