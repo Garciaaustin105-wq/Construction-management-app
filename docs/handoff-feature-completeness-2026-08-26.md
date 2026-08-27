@@ -35,6 +35,9 @@ gets built against a contract by Opus / local AI.
 | 6 | Notification feed icon cases | `5319891` (with §2.2) | added review_feedback/new_lead/lead_stale/invoice_payment_failed; tsc 0 |
 | 2.2 | Exclude rejected time from JobBudget | `5319891` | `.in("status",["approved","pending"])`; tsc 0 |
 | 4 | Pesticide compliance (license gate + re-entry notice) | `5d883c4` | contract `lawnApplicator.ts` + route 400 on block + `ApplicatorLicenseBadge` (gpt-oss, zero fix-up) + `customerNotifications.reEntryNotice` + status-route re-entry query + seed for new orgs; tsc 0 |
+| 5.3 | Lead → estimate link + auto won/lost sync | `2f930cb` | `leads.estimate_id` + DB trigger `trg_sync_lead_from_estimate` (path-agnostic covers authed RPCs + public /decide) LIVE; `leads.ts linkEstimateToLead`; `LinkEstimateToLead.tsx` (gpt-oss, zero fix-up) wired into LeadDetailDrawer; tsc 0 |
+| 1.3 | Estimate expiry enforcement | `3d2102d` | `estimates_status_check`+`expired` LIVE; cron `/api/estimates/cron/expire` (13:37, construction-owned gate) + `/decide` 410 race-defense + `/q/[token]` expired banner; DEFERRED re-issue-at-current-pricing; tsc 0 |
+| 5.1 | Paused-visit un-pause | `a607d6a` | lifecycle `paused→pending` (existing Reopen button + /status route cover it, no notify on resume) + `bulk-resume` resumes paused visits with due_date≥resume_from (past stays as record) + `resumed_visits` count toasted + `lawn_visits_status_check` CHECK LIVE; tsc 0 |
 
 All on `feat/feature-completeness`. Not merged to `main`, not deployed.
 
@@ -272,8 +275,10 @@ invoice detail UI, SQL migration, accounting sync hook.
 
 ## State
 
-- Branch `feat/feature-completeness` has 3 commits beyond `feat/feature-integration-fixes`.
-- Nothing merged to `main`; nothing deployed. Vercel cron entry for
-  `/api/invoices/cron/remind` only activates after merge to `main` + deploy.
-- RLS migration `time_approved_guard` is **live** on the DB (applied via
-  Supabase); the repo SQL file is the record of it.
+- Branch `feat/feature-completeness` has 7 commits beyond `feat/feature-integration-fixes`.
+- Nothing merged to `main`; nothing deployed. Vercel cron entries for
+  `/api/invoices/cron/remind` + `/api/estimates/cron/expire` only activate after
+  merge to `main` + deploy.
+- RLS migration `time_approved_guard`, `leads_estimate_link`, `estimates_expired_status`,
+  and `lawn_visits_status_check` are **live** on the DB (applied via Supabase);
+  the repo SQL files are the record of them.
