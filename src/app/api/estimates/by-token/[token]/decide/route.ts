@@ -83,7 +83,7 @@ export async function POST(
   const { data: estimate } = await admin
     .from("estimates")
     .select(
-      "id, status, organization_id, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, estimate_number, title, jobs(name, type), customers(name)"
+      "id, status, organization_id, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, estimate_number, title, valid_until, jobs(name, type), customers(name)"
     )
     .eq("share_token", token)
     .maybeSingle();
@@ -95,6 +95,19 @@ export async function POST(
     return NextResponse.json(
       { error: "This estimate is not awaiting action." },
       { status: 400 }
+    );
+  }
+
+  // §1.3 expiry race defense: the daily /api/estimates/cron/expire cron flips
+  // sent→expired once valid_until passes, but between expiry-day and the cron
+  // run the row is still 'sent'. Refuse here too (410 Gone) so a customer
+  // clicking an expired estimate's Approve button can't lock in a stale price.
+  // valid_until is a date (YYYY-MM-DD); compare date-only to today.
+  const validUntil = (estimate as { valid_until?: string | null }).valid_until;
+  if (validUntil && validUntil < new Date().toISOString().slice(0, 10)) {
+    return NextResponse.json(
+      { error: "This estimate has expired and can no longer be accepted." },
+      { status: 410 }
     );
   }
 

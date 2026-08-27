@@ -125,6 +125,16 @@ export default async function PublicEstimatePage({
     depositAmount: Number(estimate.deposit_amount) || 0,
   };
 
+  // §1.3: an estimate past valid_until is no longer acceptable. The daily
+  // /api/estimates/cron/expire cron flips status→expired, but on expiry day
+  // (before the cron runs) status is still 'sent' — show the expired banner
+  // regardless of status so the customer sees it BEFORE clicking Approve. The
+  // decide route also rejects (410) as defense-in-depth. valid_until is a date
+  // (YYYY-MM-DD); null means no expiry → never expired.
+  const validUntil = (estimate as { valid_until?: string | null }).valid_until;
+  const expired =
+    !!validUntil && validUntil < new Date().toISOString().slice(0, 10);
+
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       <EstimateDocument
@@ -151,12 +161,25 @@ export default async function PublicEstimatePage({
         items={items}
       />
 
-      {/* Decision buttons only while awaiting the customer */}
-      {estimate.status === "sent" && (
+      {/* §1.3: expired banner when past valid_until (covers the race before the
+          cron flips status). Otherwise decision buttons only while awaiting the
+          customer. */}
+      {expired ? (
+        <div className="max-w-md mx-auto px-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-center">
+            <p className="text-sm font-semibold text-amber-900">
+              This estimate has expired.
+            </p>
+            <p className="text-xs text-amber-800 mt-1">
+              Please contact us for a current quote.
+            </p>
+          </div>
+        </div>
+      ) : estimate.status === "sent" ? (
         <div className="max-w-md mx-auto px-4">
           <EstimateDecisionButtons token={token} />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
