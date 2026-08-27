@@ -3,6 +3,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendLeadWelcomeEmail } from "@/lib/email";
 import { effectiveStatus, type OrgBilling } from "@/lib/billing";
 import { LEAD_SOURCE_VALUES, type LeadSource } from "@/lib/leads";
+import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -20,33 +21,13 @@ export const dynamic = "force-dynamic";
 // get a token generated (leads.sql backfill + /api/signup); construction orgs
 // have none → 404. The route must build clean on both deploys.
 
-// Per-IP rate limit (in-memory, mirrors /api/signup). Cheap spam defense for a
-// public unauthenticated endpoint; swap for Upstash Ratelimit if shared/
-// persistent limits are needed. Module-level so it survives across requests
-// within a single serverless instance lifetime.
-const leadHits = new Map<string, number[]>();
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+// Per-IP rate limit (mirrors /api/signup). Cheap spam defense for a public
+// unauthenticated endpoint. SHARED across serverless instances via the
+// Postgres-backed limiter in src/lib/rateLimit.ts — this was previously an
+// in-memory Map, which on Vercel is per-instance and ephemeral and therefore
+// barely limited anything.
 const RATE_LIMIT_MAX = 20;
-
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const hits = (leadHits.get(ip) ?? []).filter(
-    (t) => now - t < RATE_LIMIT_WINDOW_MS
-  );
-  if (hits.length >= RATE_LIMIT_MAX) {
-    leadHits.set(ip, hits);
-    return true;
-  }
-  hits.push(now);
-  leadHits.set(ip, hits);
-  return false;
-}
-
-function clientIp(request: Request): string {
-  const xfwd = request.headers.get("x-forwarded-for");
-  if (xfwd) return xfwd.split(",")[0].trim();
-  return "unknown";
-}
+const RATE_LIMIT_WINDOW_SECONDS = 60 * 60; // 1 hour
 
 // Free orgs get at most this many auto-reply emails per calendar month (bounds
 // Resend cost on the free tier). Paid orgs auto-reply to every lead. Hardcoded
@@ -73,8 +54,12 @@ export async function POST(request: Request) {
     );
   }
 
-  const ip = clientIp(request);
-  if (rateLimited(ip)) {
+  const limited = await checkRateLimit(
+    `leads:ip:${clientIp(request)}`,
+    RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW_SECONDS
+  );
+  if (!limited.allowed) {
     return NextResponse.json(
       { error: "Too many requests. Please try again later." },
       { status: 429 }

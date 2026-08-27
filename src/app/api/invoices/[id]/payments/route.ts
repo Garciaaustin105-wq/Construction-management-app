@@ -278,7 +278,7 @@ export async function GET(
   const { data, error } = await supabase
     .from("payments")
     .select(
-      "id, amount, method, reference, paid_at, recorded_by, created_at, profiles(full_name)"
+      "id, amount, method, reference, paid_at, recorded_by, created_at, reversed_at, reversal_reason, profiles(full_name)"
     )
     .eq("invoice_id", id)
     .order("paid_at", { ascending: false })
@@ -298,6 +298,8 @@ export async function GET(
     paid_at: string;
     recorded_by: string | null;
     created_at: string;
+    reversed_at: string | null;
+    reversal_reason: string | null;
     profiles: { full_name: string | null } | null;
   }> | null) ?? []).map((r) => ({
     id: r.id,
@@ -307,6 +309,8 @@ export async function GET(
     paid_at: r.paid_at,
     recorded_by_name: r.profiles?.full_name ?? null,
     created_at: r.created_at,
+    reversed_at: r.reversed_at,
+    reversal_reason: r.reversal_reason,
   }));
 
   return NextResponse.json({ payments: rows });

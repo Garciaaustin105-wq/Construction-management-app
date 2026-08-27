@@ -93,6 +93,14 @@ export type RenderCtx = {
   // existing shareToken, or a "(link generates on send)" placeholder when none.
   // If the loader returns null (deleted/missing record), falls back to SAMPLE.
   recordId?: string;
+  // The office's live personal note for the fixed-copy kinds (estimate, invoice,
+  // change_order, submittal) — what the send-flow EmailPreviewModal passes so the
+  // preview shows the EXACT note the customer will receive. undefined = the admin
+  // console (no note in hand) → render PLACEHOLDER_MESSAGE so the office can see
+  // where the note will appear; null/"" = no note line (matches a send with no
+  // note); a string = that note. This is the drift-proof seam: the same render
+  // fn the send route uses renders the preview, so the two stay byte-identical.
+  message?: string | null;
 };
 
 export type SendResult = {
@@ -234,7 +242,8 @@ const PLACEHOLDER_SIGN_IN_LINK = `${publicBaseUrl()}/auth/callback?flow=client&t
 // the render fn sees the same contract either way.
 
 function realEstimateInput(
-  loaded: LoadedEstimate
+  loaded: LoadedEstimate,
+  message: string | null | undefined
 ): SendEstimateEmailInput {
   return {
     to: "",
@@ -245,11 +254,14 @@ function realEstimateInput(
     total: loaded.total,
     validUntil: loaded.validUntil,
     estimateUrl: previewUrlForKind("estimate", loaded.shareToken),
-    message: PLACEHOLDER_MESSAGE,
+    message: message === undefined ? PLACEHOLDER_MESSAGE : message,
   };
 }
 
-function realInvoiceInput(loaded: LoadedInvoice): SendInvoiceEmailInput {
+function realInvoiceInput(
+  loaded: LoadedInvoice,
+  message: string | null | undefined
+): SendInvoiceEmailInput {
   return {
     to: "",
     customerName: loaded.customerName || SAMPLE.customerName,
@@ -259,7 +271,7 @@ function realInvoiceInput(loaded: LoadedInvoice): SendInvoiceEmailInput {
     balanceDue: loaded.balanceDue,
     dueDate: loaded.dueDate,
     invoiceUrl: previewUrlForKind("invoice", loaded.shareToken),
-    message: PLACEHOLDER_MESSAGE,
+    message: message === undefined ? PLACEHOLDER_MESSAGE : message,
   };
 }
 
@@ -279,7 +291,8 @@ function realInvoiceReceiptInput(
 }
 
 function realChangeOrderInput(
-  loaded: LoadedChangeOrder
+  loaded: LoadedChangeOrder,
+  message: string | null | undefined
 ): SendChangeOrderEmailInput {
   return {
     to: "",
@@ -291,11 +304,14 @@ function realChangeOrderInput(
     amount: loaded.amount,
     isCredit: loaded.isCredit,
     changeOrderUrl: previewUrlForKind("change_order", loaded.shareToken),
-    message: PLACEHOLDER_MESSAGE,
+    message: message === undefined ? PLACEHOLDER_MESSAGE : message,
   };
 }
 
-function realSubmittalInput(loaded: LoadedSubmittal): SendSubmittalEmailInput {
+function realSubmittalInput(
+  loaded: LoadedSubmittal,
+  message: string | null | undefined
+): SendSubmittalEmailInput {
   return {
     to: "",
     orgName: loaded.orgName,
@@ -304,7 +320,7 @@ function realSubmittalInput(loaded: LoadedSubmittal): SendSubmittalEmailInput {
     title: loaded.title,
     csiSection: loaded.csiSection ?? null,
     submittalUrl: previewUrlForKind("submittal", loaded.shareToken),
-    message: PLACEHOLDER_MESSAGE,
+    message: message === undefined ? PLACEHOLDER_MESSAGE : message,
   };
 }
 
@@ -570,14 +586,14 @@ async function maybeRealEstimateInput(
 ): Promise<SendEstimateEmailInput | null> {
   if (!ctx.recordId) return null;
   const loaded = await loadEstimateForEmail(ctx.supabase, ctx.recordId);
-  return loaded ? realEstimateInput(loaded) : null;
+  return loaded ? realEstimateInput(loaded, ctx.message) : null;
 }
 async function maybeRealInvoiceInput(
   ctx: RenderCtx
 ): Promise<SendInvoiceEmailInput | null> {
   if (!ctx.recordId) return null;
   const loaded = await loadInvoiceForEmail(ctx.supabase, ctx.recordId);
-  return loaded ? realInvoiceInput(loaded) : null;
+  return loaded ? realInvoiceInput(loaded, ctx.message) : null;
 }
 async function maybeRealInvoiceReceiptInput(
   ctx: RenderCtx
@@ -591,14 +607,14 @@ async function maybeRealChangeOrderInput(
 ): Promise<SendChangeOrderEmailInput | null> {
   if (!ctx.recordId) return null;
   const loaded = await loadChangeOrderForEmail(ctx.supabase, ctx.recordId);
-  return loaded ? realChangeOrderInput(loaded) : null;
+  return loaded ? realChangeOrderInput(loaded, ctx.message) : null;
 }
 async function maybeRealSubmittalInput(
   ctx: RenderCtx
 ): Promise<SendSubmittalEmailInput | null> {
   if (!ctx.recordId) return null;
   const loaded = await loadSubmittalForEmail(ctx.supabase, ctx.recordId);
-  return loaded ? realSubmittalInput(loaded) : null;
+  return loaded ? realSubmittalInput(loaded, ctx.message) : null;
 }
 async function maybeRealClientPortalMagicLinkInput(
   ctx: RenderCtx

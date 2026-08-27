@@ -9,7 +9,7 @@ import { chargeInvoiceOffSession } from "@/lib/invoicePay";
 // Flow per customer (claim-then-line, race-safe):
 //   1. Fetch done visits with invoice_id IS NULL (jobs + recurring_schedules).
 //   2. Group by customer_id (visits without a customer are skipped — can't bill).
-//   3. For each group: create one invoice (status 'sent', due +30d), then
+//   3. For each group: create one invoice (status 'draft', due +30d), then
 //      UPDATE lawn_visits SET invoice_id = X WHERE id IN (...) AND invoice_id IS
 //      NULL — the .select() returns exactly the rows THIS run claimed (a
 //      concurrent run that already claimed them gets them excluded). Lines are
@@ -96,14 +96,19 @@ export async function runCycleBilling(
     const multiJob = distinctJobs.size > 1;
     const visitIds = group.map((v) => v.id);
 
-    // 1. Create the invoice.
+    // 1. Create the invoice. Starts 'draft' (see invoices_draft_status.sql):
+    // the auto-charge step below flips it to 'paid' inline when the saved card
+    // succeeds, and the auto-deliver step (deliverInvoice) flips draft→sent
+    // when no charge happened — so the customer still receives a 'sent' (or
+    // 'paid') invoice exactly as before. The empty-claim + line-failure paths
+    // void it (draft→void is allowed by the CHECK).
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .insert({
         estimate_id: null,
         job_id: invoiceJobId,
         customer_id: customerId,
-        status: "sent",
+        status: "draft",
         due_date: dueDate,
       })
       .select("id")
@@ -166,11 +171,12 @@ export async function runCycleBilling(
     // balance off-session on the org's connected Stripe account (DIRECT charge
     // — org is merchant of record, platform never liable / takes no cut). Best-
     // effort + non-fatal: a failed/declined charge (no saved card, card needs
-    // authentication, decline) leaves the invoice "sent" and falls through to
-    // normal delivery so the customer can pay via the Pay button. On success
-    // the invoice is marked paid INLINE (synchronously, so the delivery email
-    // below is a paid receipt, not a balance-due notice); the later
-    // payment_intent.succeeded webhook is then an idempotent no-op.
+    // authentication, decline) leaves the invoice "draft" and falls through to
+    // normal delivery (deliverInvoice below flips draft→sent) so the customer
+    // can pay via the Pay button. On success the invoice is marked paid INLINE
+    // (synchronously, so the delivery email below is a paid receipt, not a
+    // balance-due notice); the later payment_intent.succeeded webhook is then
+    // an idempotent no-op.
     try {
       await chargeInvoiceOffSession({ invoiceId });
     } catch {

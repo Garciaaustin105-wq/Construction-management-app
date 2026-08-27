@@ -24,6 +24,7 @@ type PreviewBody = {
   editedSubject?: string;
   editedBody?: string;
   recordId?: string;
+  message?: string | null;
 };
 
 export async function POST(request: Request) {
@@ -74,6 +75,7 @@ export async function POST(request: Request) {
     editedSubject: body.editedSubject,
     editedBody: body.editedBody,
     recordId: body.recordId,
+    message: body.message,
   };
 
   try {

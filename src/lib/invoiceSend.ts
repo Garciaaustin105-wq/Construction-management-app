@@ -41,6 +41,11 @@ export type DeliverInvoiceOptions = {
   // Force a channel; when omitted, "whichever on file" (email if email, SMS if
   // phone, both if both) — the auto-send behavior for approval + cycle billing.
   via?: InvoiceChannel;
+  // Skip overwriting invoices.sent_at. The overdue-reminder cron sets this so
+  // a re-send preserves the FIRST delivery date (the aging clock must not
+  // reset on every nudge). A first send of an invoice that was never delivered
+  // passes false, so sent_at gets stamped as normal.
+  skipSentAtStamp?: boolean;
 };
 
 export type DeliverInvoiceResult = {
@@ -176,14 +181,34 @@ export async function deliverInvoice(
   // token even if it was newly minted but nothing delivered? No — only stamp
   // when delivered, so a not-yet-configured send doesn't burn a token. The
   // token is minted fresh again on the next successful send.
+  //
+  // skipSentAtStamp (overdue reminders): preserve the original sent_at instead
+  // of moving it to the reminder date, so aging/overdue math stays anchored to
+  // the first send. The share_token is still persisted if newly minted.
+  //
+  // draft → sent on the first real send: new invoices are created 'draft' (see
+  // invoices_draft_status.sql + the 3 insert sites) and the office "Send" action
+  // + the auto-deliver paths (estimate approve, lawn cycle billing) all flow
+  // through here. We flip the status only when this is a genuine first send
+  // (!skipSentAtStamp) AND the invoice is still a draft — so a reminder re-send
+  // of an already-sent invoice (skipSentAtStamp=true, or status already 'sent')
+  // never re-stamps the status, and a paid invoice (auto-charged before
+  // delivery, e.g. lawn cycle billing with a saved card) is NEVER downgraded
+  // back to 'sent'. paid/void are left untouched.
   if (sentVia.length > 0) {
-    const update: { sent_at: string; share_token?: string } = {
-      sent_at: new Date().toISOString(),
-    };
+    const update: { status?: string; sent_at?: string; share_token?: string } = {};
+    if (!options.skipSentAtStamp) {
+      update.sent_at = new Date().toISOString();
+      if (loaded.status === "draft") {
+        update.status = "sent";
+      }
+    }
     if (!loaded.shareToken) {
       update.share_token = token;
     }
-    await admin.from("invoices").update(update).eq("id", invoiceId);
+    if (update.status || update.sent_at || update.share_token) {
+      await admin.from("invoices").update(update).eq("id", invoiceId);
+    }
   }
 
   return {

@@ -20,6 +20,8 @@ import { listProviderOptions } from "@/lib/accounting/provider";
 import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import InvoiceActions from "./InvoiceActions";
 import InvoiceDueDate from "./InvoiceDueDate";
+import DraftLineItems from "./DraftLineItems";
+import InvoicePayments from "./InvoicePayments";
 import Link from "next/link";
 
 export default async function InvoiceDetailPage({
@@ -58,11 +60,13 @@ export default async function InvoiceDetailPage({
       .order("position"),
     // Recorded offline payments (cash / check / other). RLS scopes reads to
     // office / customer (their invoice) / accountant. profiles(full_name)
-    // gives the recorder name via the recorded_by FK.
+    // gives the recorder name via the recorded_by FK. reversed_at +
+    // reversal_reason (§1.5) flag reversed rows so the list can render them
+    // struck-through + offer a Reverse action (office only).
     supabase
       .from("payments")
       .select(
-        "id, amount, method, reference, paid_at, created_at, profiles(full_name)"
+        "id, amount, method, reference, paid_at, created_at, reversed_at, reversal_reason, profiles(full_name)"
       )
       .eq("invoice_id", id)
       .order("paid_at", { ascending: false })
@@ -91,6 +95,8 @@ export default async function InvoiceDetailPage({
       reference: string | null;
       paid_at: string;
       created_at: string;
+      reversed_at: string | null;
+      reversal_reason: string | null;
       profiles: { full_name: string | null } | null;
     }> | null) ?? []
   ).map((p) => ({
@@ -100,6 +106,8 @@ export default async function InvoiceDetailPage({
     reference: p.reference,
     paid_at: p.paid_at,
     recorded_by_name: p.profiles?.full_name ?? null,
+    reversed_at: p.reversed_at,
+    reversal_reason: p.reversal_reason,
   }));
   const jobName = (invoice.jobs as unknown as { name: string } | null)?.name ?? "—";
   const customerRow = invoice.customers as unknown as
@@ -212,7 +220,23 @@ export default async function InvoiceDetailPage({
 
       <section>
         <SectionHeader className="mb-2">Line items ({items.length})</SectionHeader>
-        {items.length === 0 ? (
+        {status === "draft" && isOffice ? (
+          // §1.2: a draft invoice is editable in place — the office fixes a
+          // typo / adds / removes a line WITHOUT void+recreate. The editor does
+          // a full-replace PUT (array order = display order); the draft gate +
+          // race guard live in the replace_draft_invoice_line_items RPC. Once
+          // sent (or paid/void) the read-only branch below renders instead.
+          <DraftLineItems
+            invoiceId={invoice.id}
+            initialItems={items.map((i) => ({
+              id: i.id,
+              description: i.description ?? "",
+              quantity: Number(i.quantity) || 0,
+              unit_price: Number(i.unit_price) || 0,
+              position: Number(i.position) || 0,
+            }))}
+          />
+        ) : items.length === 0 ? (
           <div className="bg-white rounded-lg">
             <EmptyState
               icon={EmptyIcons.FileText}
@@ -252,58 +276,18 @@ export default async function InvoiceDetailPage({
       </section>
 
       {/* Recorded offline payments (cash / check / other). The office can
-          record more via the Record payment button in InvoiceActions. */}
+          record more via the Record payment button in InvoiceActions. §1.5:
+          the list is interactive (reverse a mistaken payment, office only);
+          reversed rows render struck-through with the reason. */}
       <section>
         <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
           Payments ({payments.length})
         </h2>
-        {payments.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm p-3 text-sm text-gray-500">
-            No payments recorded yet
-          </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm divide-y">
-            {payments.map((p) => {
-              const chip =
-                p.method === "cash"
-                  ? "bg-green-100 text-green-700"
-                  : p.method === "check"
-                    ? "bg-blue-100 text-blue-700"
-                    : "bg-gray-100 text-gray-600";
-              return (
-                <div key={p.id} className="p-3 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase ${chip}`}
-                      >
-                        {p.method}
-                      </span>
-                      <span className="text-sm font-semibold text-gray-900 tabular-nums">
-                        {formatMoney(p.amount)}
-                      </span>
-                    </div>
-                    {p.reference && (
-                      <p className="text-xs text-gray-500 mt-0.5 truncate">
-                        Ref: {p.reference}
-                      </p>
-                    )}
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {new Date(p.paid_at).toLocaleDateString()}
-                      {p.recorded_by_name ? ` · by ${p.recorded_by_name}` : ""}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-            <div className="p-3 bg-gray-50 flex justify-between items-center rounded-b-lg">
-              <span className="text-sm font-semibold text-gray-900">Paid so far</span>
-              <span className="text-base font-bold text-gray-900 tabular-nums">
-                {formatMoney(amountPaid)}
-              </span>
-            </div>
-          </div>
-        )}
+        <InvoicePayments
+          payments={payments}
+          amountPaid={amountPaid}
+          isOffice={isOffice}
+        />
       </section>
 
       {(role === "office" || role === "admin" || role === "project_manager") && (

@@ -15,6 +15,18 @@
     {
       "path": "/api/leads/cron/follow-up",
       "schedule": "45 13 * * *"
+    },
+    {
+      "path": "/api/invoices/cron/remind",
+      "schedule": "30 14 * * *"
+    },
+    {
+      "path": "/api/estimates/cron/expire",
+      "schedule": "37 13 * * *"
+    },
+    {
+      "path": "/api/cron/purge-rate-limits",
+      "schedule": "12 4 * * *"
     }
   ]
 }

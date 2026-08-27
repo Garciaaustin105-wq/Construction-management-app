@@ -1,5 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { applyApprovedChangeOrderToInvoice } from "@/lib/changeOrderInvoice";
+import { checkRateLimits, clientIp, rateLimitResponse } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +38,14 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
+
+  // Public token endpoint — throttle so a leaked link can't be used to spam
+  // decisions. Keyed on token AND IP. Generous: a customer decides once.
+  const limited = await checkRateLimits([
+    { key: `co-decide:token:${token}`, max: 10, windowSeconds: 3600 },
+    { key: `co-decide:ip:${clientIp(request)}`, max: 40, windowSeconds: 3600 },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   let body: { decision?: string } = {};
   try {
@@ -124,6 +134,17 @@ export async function POST(
     decision === "approve" ? "change_order_approved" : "change_order_rejected",
     decision === "approve" ? "Change order approved" : "Change order rejected"
   );
+
+  // Issue 4: pull the approved CO onto the original estimate's invoice as a line
+  // item (non-fatal — the approval already succeeded). No-op for rejects,
+  // deposit-only jobs, paid invoices, or COs already added.
+  if (decision === "approve") {
+    try {
+      await applyApprovedChangeOrderToInvoice(admin, co.id);
+    } catch {
+      // best-effort; never fail the decision over the invoice line
+    }
+  }
 
   return NextResponse.json({ ok: true, status: nextStatus });
 }

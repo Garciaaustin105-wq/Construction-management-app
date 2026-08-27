@@ -13,6 +13,7 @@ import {
   type LeadSource,
   type LeadStatus,
 } from "@/lib/leads";
+import LinkEstimateToLead from "@/components/LinkEstimateToLead";
 
 // Edit / assign / notes / convert / delete for one lead.
 //
@@ -462,6 +463,14 @@ export default function LeadDetailDrawer({
               )}
             </section>
           )}
+
+          {/* ── Link estimate (§5.3) ─────────────────────────────────── */}
+          <LinkEstimateToLead
+            lead={lead}
+            onLinked={(estimateId) =>
+              onSaved({ estimate_id: estimateId, status: "quoted" })
+            }
+          />
 
           <button
             onClick={remove}

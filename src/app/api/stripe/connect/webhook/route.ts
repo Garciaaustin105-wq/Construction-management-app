@@ -44,16 +44,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  // Idempotency: if we've already processed this event id, stop here.
+  // Idempotency: CLAIM the event before doing any work. This used to be a
+  // SELECT-check, process, then INSERT — which only deduped the log row, not
+  // the work: Stripe retries, two concurrent deliveries both passed the SELECT
+  // (neither had inserted yet), BOTH applied the payment, and the losing INSERT
+  // was silently swallowed. That is a real double-apply on customer money.
+  // claim_billing_event() makes the unique index a true mutex. See the
+  // billing_events_claim migration.
   const admin = createAdminClient();
-  const { data: existing } = await admin
-    .from("billing_events")
-    .select("id")
-    .eq("stripe_event_id", event.id)
-    .maybeSingle();
-  if (existing) {
+  const { data: claim, error: claimError } = await admin.rpc(
+    "claim_billing_event",
+    { p_event_id: event.id, p_event_type: event.type }
+  );
+
+  if (claimError) {
+    // Couldn't reach the claim table — do NOT process (exactly-once can't be
+    // guaranteed). 500 so Stripe retries.
+    console.error("connect webhook claim failed:", claimError);
+    return NextResponse.json({ error: "Claim failed" }, { status: 500 });
+  }
+  if (claim === "duplicate") {
     return NextResponse.json({ received: true, duplicate: true });
   }
+  if (claim === "in_progress") {
+    // Another worker holds a fresh claim; don't double-apply.
+    return NextResponse.json({ received: true, inProgress: true });
+  }
+  // claim === "claimed" — this invocation owns the event.
 
   // The connected account this event belongs to (direct-charge events carry it).
   const stripeAccountId = event.account ?? null;
@@ -127,26 +144,29 @@ export async function POST(request: Request) {
     }
   } catch (err) {
     console.error("connect webhook handler failed:", err);
+    // Release the claim so Stripe's retry can re-claim and re-run. Without this
+    // the event would sit permanently as 'processing' and never be applied —
+    // a silently dropped payment. (Stale 'processing' rows are also reclaimable
+    // after the staleness window; this is the fast path.)
+    await admin
+      .from("billing_events")
+      .update({ status: "failed" })
+      .eq("stripe_event_id", event.id);
     return NextResponse.json({ error: "Handler failed" }, { status: 500 });
   }
 
-  // Record the event for audit. Ignore a unique-violation race (two concurrent
-  // deliveries of the same event) — the handler already ran.
+  // Completed — mark the claim done and record the payload for audit. Later
+  // deliveries of this event now resolve as 'duplicate'.
   let payload: unknown = null;
   try {
     payload = JSON.parse(JSON.stringify(event.data.object));
   } catch {
     payload = null;
   }
-  try {
-    await admin.from("billing_events").insert({
-      stripe_event_id: event.id,
-      event_type: event.type,
-      payload,
-    });
-  } catch {
-    // Duplicate insert from a race — safe to ignore.
-  }
+  await admin
+    .from("billing_events")
+    .update({ status: "done", payload })
+    .eq("stripe_event_id", event.id);
 
   return NextResponse.json({ received: true });
 }

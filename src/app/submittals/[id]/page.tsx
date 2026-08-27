@@ -14,6 +14,7 @@ import {
   type SubmittalStatus,
 } from "@/lib/lifecycles/submittal";
 import { OFFICE_OR_PM } from "@/lib/roles";
+import EmailPreviewModal from "@/components/EmailPreviewModal";
 
 type Submittal = {
   id: string;
@@ -52,6 +53,12 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
   const [userId, setUserId] = useState("");
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Send-to-reviewer form (replaces the old window.prompt). The reviewer's
+  // email is office-typed (there is no architect entity); the optional note is
+  // threaded into the email (and the preview) via the route's `message` field.
+  const [reviewerEmail, setReviewerEmail] = useState("");
+  const [note, setNote] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -147,25 +154,31 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
     router.refresh();
   }
 
-  async function sendToArchitect() {
-    if (!sub) return;
-    const email = window.prompt("Reviewer email for this submittal");
-    if (!email?.trim()) return;
+  // Returns true on success (the EmailPreviewModal closes on true), false on
+  // failure (the modal stays open; the toast below already explained it).
+  async function sendToArchitect(): Promise<boolean> {
+    if (!sub) return false;
+    const to = reviewerEmail.trim();
+    if (!to) {
+      toast.error("Enter the reviewer's email");
+      return false;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/submittals/${sub.id}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: email.trim() }),
+        body: JSON.stringify({ to, message: note.trim() || null }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(j.error ?? "Send failed");
-        return;
+        return false;
       }
       toast.success("Sent to reviewer");
       setSub({ ...sub, status: "submitted", ball_in_court: "architect" });
       router.refresh();
+      return true;
     } finally {
       setBusy(false);
     }
@@ -300,12 +313,6 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
           ]}
           actions={
             <>
-              {canSend && (
-                <Button type="button" onClick={sendToArchitect} disabled={busy} size="sm">
-                  {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Send to Reviewer
-                </Button>
-              )}
               {canClose && (
                 <Button
                   type="button"
@@ -445,6 +452,58 @@ function SubmittalForm({ params }: { params: Promise<{ id: string }> }) {
             {busy && <Loader2 className="w-4 h-4 animate-spin" />}
             {busy ? "Saving..." : "Save changes"}
           </button>
+        )}
+
+        {canSend && (
+          <div className="bg-white rounded-lg shadow-sm p-4 space-y-2">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase">Send to reviewer</h2>
+            <label className="block">
+              <span className="block mb-1 text-xs font-medium text-gray-600">
+                Reviewer email
+              </span>
+              <input
+                type="email"
+                value={reviewerEmail}
+                onChange={(e) => setReviewerEmail(e.target.value)}
+                placeholder="architect@example.com"
+                className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+            </label>
+            <label className="block">
+              <span className="block mb-1 text-xs font-medium text-gray-600">
+                Personal note (optional)
+              </span>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="Added to the top of the email..."
+                className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              />
+            </label>
+            <button
+              onClick={() => setPreviewOpen(true)}
+              disabled={busy}
+              className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+              Send to Reviewer
+            </button>
+          </div>
+        )}
+
+        {canSend && (
+          <EmailPreviewModal
+            open={previewOpen}
+            onClose={() => setPreviewOpen(false)}
+            kind="submittal"
+            recordId={sub.id}
+            message={note.trim() || null}
+            toLabel={reviewerEmail.trim() ? `To: ${reviewerEmail.trim()}` : undefined}
+            sendLabel="Send to Reviewer"
+            canSend={!!reviewerEmail.trim()}
+            onConfirm={sendToArchitect}
+          />
         )}
 
       </main>

@@ -33,6 +33,11 @@ import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/billing";
 import { computeTotal } from "@/lib/money";
+
+// Local cents-rounding (money.ts keeps its own copy module-private; the manual
+// payments route and estimateInvoice each do the same). Guards against
+// float drift when summing two 2-decimal values, e.g. 999.99 + 0.01.
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 import {
   forAccount,
   requireChargeableAccount,
@@ -176,24 +181,85 @@ export async function recordInvoicePayment(input: {
   );
 
   const paidAmount = input.paidAmountCents / 100;
-  const prevPaid = Number(invoice.amount_paid ?? 0) || 0;
-  const newAmountPaid = Math.min(prevPaid + paidAmount, total);
 
-  const update: Record<string, unknown> = {
-    amount_paid: newAmountPaid,
-    ...(input.checkoutSessionId
-      ? { stripe_checkout_session_id: input.checkoutSessionId }
-      : {}),
-    ...(input.paymentIntentId
-      ? { stripe_payment_intent_id: input.paymentIntentId }
-      : {}),
-  };
-  if (newAmountPaid >= total) {
-    update.status = "paid";
-    update.paid_at = new Date().toISOString();
+  // OPTIMISTIC CONCURRENCY. This previously did a plain read-then-write, which
+  // lost money under concurrency: a card payment and an office-recorded check
+  // could both read amount_paid=0, and whichever wrote last overwrote the
+  // other. The manual path (api/invoices/[id]/payments) already guarded this;
+  // the Stripe path — which actually runs concurrently from webhook retries —
+  // did not. Same pattern as applyPaymentToInvoice() there: write with
+  // .eq("amount_paid", <value just read>) so the update only lands if nothing
+  // changed underneath, and on a 0-row match re-read and re-accumulate onto
+  // the FRESH value. (invoices.amount_paid is numeric(12,2) not null default 0,
+  // so a plain .eq comparison is safe.)
+  const MAX_ATTEMPTS = 5;
+  let newAmountPaid = 0;
+  let settled = false;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const { data: fresh } = await admin
+      .from("invoices")
+      .select("amount_paid, status")
+      .eq("id", input.invoiceId)
+      .maybeSingle();
+    if (!fresh) return;
+    // Re-check inside the loop: a concurrent delivery may have settled it
+    // between our first read and this attempt.
+    if ((fresh as { status: string }).status === "paid") return;
+
+    const priorAmountPaidRaw = (fresh as { amount_paid: number | string })
+      .amount_paid;
+    const prevPaid = Number(priorAmountPaidRaw ?? 0) || 0;
+    // Record the FULL amount received. This was Math.min(prevPaid + paidAmount,
+    // total), which silently discarded any overpayment: Stripe took the money
+    // and the app's record simply lost it — no credit, no flag, no notification
+    // (billing handoff Finding 3).
+    //
+    // Uncapped matches what the MANUAL office path
+    // (api/invoices/[id]/payments) has always done, so the two payment paths
+    // now agree instead of disagreeing. amount_paid > total is a state the app
+    // already handles: every consumer clamps the derived balance with
+    // Math.max(0, total - amountPaid) — see invoicePay (x2), emailLoaders and
+    // insights.overdueBalance.
+    newAmountPaid = round2(prevPaid + paidAmount);
+
+    const update: Record<string, unknown> = {
+      amount_paid: newAmountPaid,
+      ...(input.checkoutSessionId
+        ? { stripe_checkout_session_id: input.checkoutSessionId }
+        : {}),
+      ...(input.paymentIntentId
+        ? { stripe_payment_intent_id: input.paymentIntentId }
+        : {}),
+    };
+    if (newAmountPaid >= total) {
+      update.status = "paid";
+      update.paid_at = new Date().toISOString();
+    }
+
+    const { data: updated, error: updErr } = await admin
+      .from("invoices")
+      .update(update)
+      .eq("id", input.invoiceId)
+      .eq("amount_paid", priorAmountPaidRaw)
+      .select("id")
+      .maybeSingle();
+
+    if (updErr) return; // surfaced by the webhook's catch; Stripe will retry
+    if (updated) {
+      settled = true;
+      break;
+    }
+    // else: amount_paid moved under us — loop and retry against the fresh value.
   }
 
-  await admin.from("invoices").update(update).eq("id", input.invoiceId);
+  if (!settled) {
+    // Exhausted retries under heavy concurrency. Throw so the webhook marks the
+    // claim failed and Stripe retries — better than silently dropping a payment.
+    throw new Error(
+      `Could not apply payment to invoice ${input.invoiceId} after ${MAX_ATTEMPTS} attempts (concurrent updates).`
+    );
+  }
 
   // Record an in-app "invoice paid" notification for the office feed ONLY when
   // the payment fully settled the invoice. Service role (bypasses RLS).
@@ -220,6 +286,35 @@ export async function recordInvoicePayment(input: {
       });
     } catch {
       // Swallow — feed is best-effort; payment already recorded.
+    }
+  }
+
+  // OVERPAYMENT. The customer paid more than the invoice total. amount_paid now
+  // carries the true figure (see the uncapped sum above), but the office would
+  // otherwise have no idea — they'd only find it by reconciling against Stripe
+  // by hand. Surface it so a refund or credit can be issued deliberately.
+  //
+  // This does NOT create a credit balance; that is a bigger product change.
+  // Best-effort + non-fatal like the paid notification, and deduped by the
+  // unique (type, entity_id) index so a redelivered webhook is a no-op.
+  const overpaid = total > 0 ? round2(newAmountPaid - total) : 0;
+  if (overpaid > 0) {
+    try {
+      const customerName =
+        (invoice.customers as unknown as { name: string | null } | null)?.name ??
+        "";
+      await admin.from("notifications").insert({
+        organization_id: invoice.organization_id,
+        type: "invoice_overpaid",
+        title: "Invoice overpaid",
+        body: [customerName, `overpaid by $${overpaid.toFixed(2)}`]
+          .filter(Boolean)
+          .join(" · "),
+        href: `/invoices/${input.invoiceId}`,
+        entity_id: input.invoiceId,
+      });
+    } catch {
+      // Swallow — feed is best-effort; the payment + true amount_paid are saved.
     }
   }
 }

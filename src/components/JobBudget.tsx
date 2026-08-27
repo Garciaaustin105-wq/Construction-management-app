@@ -68,7 +68,10 @@ export default async function JobBudget({ jobId }: { jobId: string }) {
     supabase
       .from("time_entries")
       .select("cost_code_id, clock_in_at, clock_out_at")
-      .eq("job_id", jobId),
+      .eq("job_id", jobId)
+      // Exclude rejected entries — they're not real cost. Approved + pending
+      // both count (pending is real labor awaiting approval). Audit §2.2.
+      .in("status", ["approved", "pending"]),
     supabase
       .from("receipts")
       .select("cost_code_id, amount")

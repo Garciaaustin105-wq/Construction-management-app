@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
+import EmailPreviewModal from "@/components/EmailPreviewModal";
 import { Send, Trash2, Loader2, Receipt, X, Mail, MessageSquare } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
 
@@ -37,6 +38,7 @@ export default function EstimateOfficeActions({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const jobQuery = jobId ? `?job=${jobId}` : "";
 
   const hasEmail = !!customerEmail?.trim();
@@ -48,7 +50,9 @@ export default function EstimateOfficeActions({
     hasEmail ? "email" : SMS_ENABLED && hasPhone ? "sms" : "email"
   );
 
-  async function sendToCustomer() {
+  // Returns true on success (the EmailPreviewModal closes on true), false on
+  // failure (the modal stays open; the toast below already explained it).
+  async function sendToCustomer(): Promise<boolean> {
     setBusy(true);
     try {
       const res = await fetch(`/api/estimates/${estimateId}/send`, {
@@ -59,21 +63,23 @@ export default function EstimateOfficeActions({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data?.error ?? `Send failed (${res.status})`);
-      } else {
-        const channels = (data.sentVia as string[] | undefined)?.join(" + ") ?? "customer";
-        const dest = [data.sentTo?.email, data.sentTo?.phone].filter(Boolean).join(" / ") || "customer";
-        toast.success(`Sent via ${channels} to ${dest}`);
-        // Surface partial failures (e.g. email failed because Resend isn't
-        // verified yet, while the text went out) without erasing the success.
-        if (Array.isArray(data.warnings) && data.warnings.length > 0) {
-          for (const w of data.warnings) {
-            toast.warning(`${w.channel} failed: ${w.message}`);
-          }
-        }
-        router.refresh();
+        return false;
       }
+      const channels = (data.sentVia as string[] | undefined)?.join(" + ") ?? "customer";
+      const dest = [data.sentTo?.email, data.sentTo?.phone].filter(Boolean).join(" / ") || "customer";
+      toast.success(`Sent via ${channels} to ${dest}`);
+      // Surface partial failures (e.g. email failed because Resend isn't
+      // verified yet, while the text went out) without erasing the success.
+      if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+        for (const w of data.warnings) {
+          toast.warning(`${w.channel} failed: ${w.message}`);
+        }
+      }
+      router.refresh();
+      return true;
     } catch {
       toast.error("Send failed — please try again.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -122,6 +128,20 @@ export default function EstimateOfficeActions({
     if (via === "both") return `${prefix} via Email & Text`;
     return `${prefix} via Email`;
   })();
+
+  const toLabel = hasEmail && hasPhone
+    ? `To ${customerEmail} and ${customerPhone}`
+    : hasEmail
+    ? `To ${customerEmail}`
+    : hasPhone
+    ? `To ${customerPhone}`
+    : "No email or phone on file";
+  const channelNote =
+    via === "sms"
+      ? "Sending via Text"
+      : via === "both"
+      ? "Sending via Email + Text"
+      : "Sending via Email";
 
   return (
     <div className="space-y-3">
@@ -201,7 +221,7 @@ export default function EstimateOfficeActions({
 
       {canSend && (
         <button
-          onClick={sendToCustomer}
+          onClick={() => setPreviewOpen(true)}
           disabled={busy || !canSendAny}
           className="w-full bg-blue-600 text-white py-4 rounded-lg font-semibold text-base active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
         >
@@ -248,6 +268,20 @@ export default function EstimateOfficeActions({
           <Receipt className="w-5 h-5" />
           View Invoice
         </button>
+      )}
+
+      {canSend && (
+        <EmailPreviewModal
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          kind="estimate"
+          recordId={estimateId}
+          message={message.trim() || null}
+          toLabel={toLabel}
+          channelNote={channelNote}
+          sendLabel={sendLabel}
+          onConfirm={sendToCustomer}
+        />
       )}
     </div>
   );

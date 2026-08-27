@@ -10,7 +10,8 @@ import Card, { CardHeader } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import KpiTile from "@/components/charts/KpiTile";
 import { formatMoney, computeTotal } from "@/lib/money";
-import SignedPhotoGrid from "@/components/SignedPhotoGrid";
+import PhotoLightbox from "@/components/PhotoLightbox";
+import { signedThumbnail } from "@/lib/storage";
 import Link from "next/link";
 import { Plus, Receipt, Clock, Tag, Calculator, Images, Briefcase, Building2, FileSpreadsheet, Users, Building, Calendar, TrendingUp, ClipboardList, CheckSquare, FileDiff, FileText, Terminal } from "lucide-react";
 import { MANAGEMENT, isSuperAdmin } from "@/lib/roles";
@@ -209,6 +210,23 @@ export default async function DashboardPage() {
   const jobs = jobsRes.data;
   const photos = photosRes.data;
   const rfis = rfisRes.data;
+  // Mint thumbnail signed URLs SERVER-SIDE (during this request) and pass them
+  // down to the lightbox via `thumbUrls`, so the Recent Photos grid renders
+  // without a client-side waterfall of N signedThumbnail requests on mount (the
+  // "slow photos" symptom — N round trips before any thumbnail appeared). The
+  // lightbox still mints full-res on demand when opened. job-photos is a private
+  // bucket, so every URL is a 1h signed transform-URL (240px, q70).
+  const photoRows = (photos ?? []) as { id: string; storage_path: string }[];
+  const photoThumbUrls: Record<string, string> = {};
+  if (photoRows.length > 0) {
+    const thumbEntries = await Promise.all(
+      photoRows.map(async (p) => {
+        const url = await signedThumbnail(supabase, "job-photos", p.storage_path, 240);
+        return [p.id, url] as const;
+      })
+    );
+    for (const [id, url] of thumbEntries) if (url) photoThumbUrls[id] = url;
+  }
   const unpaidInvoices = invoicesRes.data;
   const estimatesCount = estimatesCountRes.count ?? 0;
   const unpaidCount = unpaidCountRes.count ?? 0;
@@ -693,12 +711,14 @@ export default async function DashboardPage() {
                     }
                   />
                   {photos && photos.length > 0 ? (
-                    <SignedPhotoGrid
+                    <PhotoLightbox
                       photos={photos.map((p) => ({
                         id: p.id,
                         storage_path: p.storage_path,
                         caption: p.caption,
+                        created_at: p.created_at,
                       }))}
+                      thumbUrls={photoThumbUrls}
                     />
                   ) : (
                     <EmptyState

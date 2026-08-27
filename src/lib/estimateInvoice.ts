@@ -75,14 +75,19 @@ export async function createInvoiceFromEstimate(
       : 0;
 
   // Construction → deposit-only (or full-total when no deposit split) invoice,
-  // amount_paid 0 (the deposit is now owed, not pre-paid).
+  // amount_paid 0 (the deposit is now owed, not pre-paid). Created 'draft': the
+  // caller auto-delivers via deliverInvoice, which flips draft→sent on the first
+  // send (see invoiceSend.ts). Letting it start as draft means the office could,
+  // in principle, edit the just-created invoice before the (non-fatal) delivery
+  // lands — but delivery is synchronous in the decide/sign routes, so in
+  // practice the customer receives a 'sent' invoice just as before.
   const { data: invoice, error: invError } = await admin
     .from("invoices")
     .insert({
       estimate_id: estimateId,
       job_id: jobId,
       customer_id: customerId,
-      status: "sent",
+      status: "draft",
       amount_paid: 0,
     })
     .select("id")

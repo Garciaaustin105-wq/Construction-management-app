@@ -104,7 +104,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                     <p className="font-semibold text-gray-900 truncate">{inv.customerName}</p>
                     <p className="text-sm text-gray-500 truncate">{inv.jobName}</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      {inv.paidAt
+                      {inv.status === "draft"
+                        ? `Created ${new Date(inv.createdAt).toLocaleDateString()}`
+                        : inv.paidAt
                         ? `Paid ${new Date(inv.paidAt).toLocaleDateString()}`
                         : `Sent ${new Date(inv.createdAt).toLocaleDateString()}`}
                     </p>

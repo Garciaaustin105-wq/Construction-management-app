@@ -14,9 +14,33 @@ const BulkScheduleEditModal = dynamic(
   { ssr: false }
 );
 
+// Shape of the recurring_schedules select below (with the nested jobs/customers
+// join). Replaces `any[]`, which lost all type safety on the sort + render.
+type ScheduleRow = {
+  id: string;
+  job_id: string | null;
+  active: boolean | null;
+  service_type: string | null;
+  price_per_visit: number | string | null;
+  frequency: string | null;
+  interval_weeks: number | null;
+  days_of_week: number[] | null;
+  day_of_month: number | null;
+  paused_from: string | null;
+  paused_until: string | null;
+  created_at: string | null;
+  jobs: {
+    name: string | null;
+    address: string | null;
+    customer_id: string | null;
+    assigned_crew: string[] | null;
+    customers: { name: string | null } | null;
+  } | null;
+};
+
 export default function LawnJobsPage() {
   const router = useRouter();
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [crewMap, setCrewMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState(false);
@@ -47,7 +71,7 @@ export default function LawnJobsPage() {
     for (const c of (crewRes.data ?? [])) map[c.id] = c.name;
     setCrewMap(map);
 
-    let list = (schedRes.data ?? []) as any[];
+    let list = (schedRes.data ?? []) as unknown as ScheduleRow[];
     list = [...list].sort((x, y) => {
       if ((x.active ? 1 : 0) !== (y.active ? 1 : 0)) return (x.active ? 1 : 0) ? -1 : 1;
       const an = x.jobs?.name ?? "";

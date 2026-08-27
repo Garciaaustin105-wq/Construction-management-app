@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendVerificationEmail } from "@/lib/email";
 import { ensureStripeCustomer, TRIAL_DAYS } from "@/lib/billing";
+import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -14,36 +15,13 @@ export const dynamic = "force-dynamic";
 //
 // Abuse protection: a hidden honeypot field ("company_website") + a per-IP
 // rate limit (max 5 signups/hour). There is no captcha and no email verification
-// beyond Supabase Auth's built-in limits. The rate limit is in-memory, so it
-// resets on cold start and is not shared across serverless instances — fine for
-// a solo launch; swap in Upstash Ratelimit (@upstash/ratelimit + redis) when
-// shared, persistent limits are needed.
+// beyond Supabase Auth's built-in limits. The rate limit is SHARED across
+// serverless instances (Postgres-backed — see src/lib/rateLimit.ts); it was
+// previously an in-memory Map, which on Vercel is per-instance and ephemeral
+// and so barely limited anything.
 
-// Per-IP signup timestamps (ms) within the rolling 1h window. Module-level so
-// it survives across requests within a single instance lifetime.
-const signupHits = new Map<string, number[]>();
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const RATE_LIMIT_MAX = 5;
-
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const hits = (signupHits.get(ip) ?? []).filter(
-    (t) => now - t < RATE_LIMIT_WINDOW_MS
-  );
-  if (hits.length >= RATE_LIMIT_MAX) {
-    signupHits.set(ip, hits);
-    return true;
-  }
-  hits.push(now);
-  signupHits.set(ip, hits);
-  return false;
-}
-
-function clientIp(request: Request): string {
-  const xfwd = request.headers.get("x-forwarded-for");
-  if (xfwd) return xfwd.split(",")[0].trim();
-  return "unknown";
-}
+const RATE_LIMIT_WINDOW_SECONDS = 60 * 60; // 1 hour
 
 export async function POST(request: Request) {
   if (process.env.SAAS_OPEN !== "true") {
@@ -53,8 +31,12 @@ export async function POST(request: Request) {
     );
   }
 
-  const ip = clientIp(request);
-  if (rateLimited(ip)) {
+  const limited = await checkRateLimit(
+    `signup:ip:${clientIp(request)}`,
+    RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW_SECONDS
+  );
+  if (!limited.allowed) {
     return NextResponse.json(
       { error: "Too many signups from this network. Try again later." },
       { status: 429 }

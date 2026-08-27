@@ -59,6 +59,11 @@ export interface Lead {
   converted_at: string | null;
   created_at: string;
   created_by: string | null;
+  // §5.3: the estimate this lead became. Null until the office links one
+  // (linkEstimateToLead). Once linked, the DB trigger
+  // sync_lead_from_estimate_decision moves this lead to won/lost when the
+  // estimate is approved/rejected — so the board self-maintains.
+  estimate_id: string | null;
 }
 
 /** Public lead-form URL. The token is the only credential a logged-out
@@ -132,4 +137,27 @@ export async function convertLeadToCustomer(
   }
 
   return { customerId: inserted.id, error: null };
+}
+
+/** Link a lead to an estimate and move it to 'quoted' (audit §5.3). The office
+ * calls this after creating an estimate for the lead's customer (or the lead
+ * itself, once converted). Idempotent: re-linking the same estimate just
+ * re-stamps. Only acts on a non-terminal lead (new/contacted/quoted) — a lead
+ * already won/lost is left alone, so you can't reopen a closed deal by
+ * accidentally linking. The won/lost transition itself is owned by the DB
+ * trigger `sync_lead_from_estimate_decision` (fires on the estimate's
+ * approve/reject), NOT here — this function only owns the pre-quote → quoted
+ * step + the link.
+ *
+ * @returns null error on success, or a PostgREST message on failure. */
+export async function linkEstimateToLead(
+  client: SupabaseClient,
+  params: { leadId: string; estimateId: string },
+): Promise<{ error: string | null }> {
+  const { error } = await client
+    .from("leads")
+    .update({ estimate_id: params.estimateId, status: "quoted" })
+    .eq("id", params.leadId)
+    .in("status", ["new", "contacted", "quoted"]);
+  return { error: error?.message ?? null };
 }

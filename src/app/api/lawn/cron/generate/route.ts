@@ -2,6 +2,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { generateDueDates } from "@/lib/lawnRecurrence";
 import { isLawn } from "@/lib/variant";
+import { captureException } from "@/lib/sentry";
 
 // Nightly lawn-visit auto-generation. For every ACTIVE recurring schedule,
 // extend lawn_visits from the day after the last existing visit (or today) through
@@ -228,10 +229,42 @@ export async function POST(request: Request) {
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    schedules: processed,
-    generated,
-    errors,
-  });
+  // FAILURE VISIBILITY. This used to return `ok: true` + HTTP 200 no matter how
+  // many schedules failed: Vercel Cron logged a success, nothing threw so Sentry
+  // saw nothing, and a run where most schedules errored looked identical to a
+  // clean one. Since this cron is what generates visits, a silent half-failure
+  // means customers stop getting service and the first signal is a complaint.
+  //
+  // Now: any per-schedule error is reported to Sentry (the actual alerting
+  // channel) and `ok` reflects reality. HTTP stays 200 for a PARTIAL failure —
+  // most schedules did generate, and a non-2xx would misreport a mostly-good run
+  // — but a run where EVERY schedule failed returns 500 so the scheduler shows
+  // red.
+  if (errors.length > 0) {
+    captureException(
+      new Error(
+        `lawn/cron/generate: ${errors.length}/${processed} schedules failed`
+      ),
+      {
+        extra: {
+          processed,
+          generated,
+          failed: errors.length,
+          // Bounded sample — the full list can be large and adds no triage value.
+          sample: errors.slice(0, 10),
+        },
+      }
+    );
+  }
+
+  const allFailed = processed > 0 && errors.length === processed;
+  return NextResponse.json(
+    {
+      ok: errors.length === 0,
+      schedules: processed,
+      generated,
+      errors,
+    },
+    { status: allFailed ? 500 : 200 }
+  );
 }

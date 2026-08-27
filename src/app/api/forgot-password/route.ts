@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { randomBytes, createHash } from "node:crypto";
 import { sendPasswordResetEmail } from "@/lib/email";
+import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 // redeploy trigger 2
@@ -21,41 +22,26 @@ export const dynamic = "force-dynamic";
 // (A timing gap exists — the found path does an insert + email send — but it's
 // low-severity for this app; the rate limit is the main abuse control.)
 //
-// Rate limit: in-memory per-IP, 5/hour (same shape as /api/signup). Resets on
-// cold start and isn't shared across serverless instances — fine for now; swap
-// in Upstash Ratelimit when shared limits are needed.
+// Rate limit: per-IP, 5/hour, via the SHARED Postgres-backed limiter
+// (src/lib/rateLimit.ts). This used to be a module-level in-memory Map, which
+// on Vercel is per-serverless-instance and ephemeral — concurrent requests hit
+// different instances and instances recycle, so the real cap was roughly
+// `5 x instance count` and reset unpredictably. The shared counter fixes that.
 
-const resetHits = new Map<string, number[]>();
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const RATE_LIMIT_MAX = 5;
-
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const hits = (resetHits.get(ip) ?? []).filter(
-    (t) => now - t < RATE_LIMIT_WINDOW_MS
-  );
-  if (hits.length >= RATE_LIMIT_MAX) {
-    resetHits.set(ip, hits);
-    return true;
-  }
-  hits.push(now);
-  resetHits.set(ip, hits);
-  return false;
-}
-
-function clientIp(request: Request): string {
-  const xfwd = request.headers.get("x-forwarded-for");
-  if (xfwd) return xfwd.split(",")[0].trim();
-  return "unknown";
-}
+const RATE_LIMIT_WINDOW_SECONDS = 60 * 60; // 1 hour
 
 function sha256Hex(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
 export async function POST(request: Request) {
-  const ip = clientIp(request);
-  if (rateLimited(ip)) {
+  const limited = await checkRateLimit(
+    `forgot-password:ip:${clientIp(request)}`,
+    RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW_SECONDS
+  );
+  if (!limited.allowed) {
     return NextResponse.json(
       { error: "Too many reset requests from this network. Try again later." },
       { status: 429 }

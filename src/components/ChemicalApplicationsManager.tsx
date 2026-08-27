@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import NumberInput from "@/components/NumberInput";
+import ApplicatorLicenseBadge from "@/components/ApplicatorLicenseBadge";
 import { Download, Loader2, Plus, Search, ShieldAlert, X } from "lucide-react";
 import {
   QUANTITY_UNITS,
@@ -33,6 +34,16 @@ const SELECT_COLUMNS =
   "id, organization_id, job_id, visit_id, product_id, product_name, epa_reg_number, active_ingredient, applicator_id, quantity_used, quantity_unit, rate, area_treated_sqft, target_pest, wind_mph, temp_f, applied_at, re_entry_hours, re_entry_until, notes, created_by, created_at, jobs(name, customers(name)), crew_members(name)";
 
 type Option = { id: string; label: string };
+// Crew picker carries the license fields so the applicator select can show a
+// license-status badge (audit §4.1) alongside the name — surfaces an expired /
+// missing / expiring license BEFORE the office submits, matching the server
+// gate in /api/lawn/applications/route.ts (which blocks on severity === "block").
+type CrewOption = {
+  id: string;
+  label: string;
+  licenseNumber: string | null;
+  licenseExpires: string | null;
+};
 
 function fmtDateTime(s: string | null): string {
   if (!s) return "—";
@@ -93,7 +104,7 @@ export default function ChemicalApplicationsManager({
   const [jobs, setJobs] = useState<Option[]>([]);
   const [visits, setVisits] = useState<Option[]>([]);
   const [productOpts, setProductOpts] = useState<Option[]>([]);
-  const [crew, setCrew] = useState<Option[]>([]);
+  const [crew, setCrew] = useState<CrewOption[]>([]);
 
   const [form, setForm] = useState({
     job_id: "",
@@ -174,7 +185,10 @@ export default function ChemicalApplicationsManager({
         .select("id, name")
         .eq("active", true)
         .order("name"),
-      supabase.from("crew_members").select("id, name").order("name"),
+      supabase
+        .from("crew_members")
+        .select("id, name, applicator_license_number, applicator_license_expires")
+        .order("name"),
     ]);
     setJobs(
       ((j.data as { id: string; name: string | null }[]) ?? []).map((x) => ({
@@ -189,9 +203,18 @@ export default function ChemicalApplicationsManager({
       }))
     );
     setCrew(
-      ((c.data as { id: string; name: string | null }[]) ?? []).map((x) => ({
+      (
+        (c.data as {
+          id: string;
+          name: string | null;
+          applicator_license_number: string | null;
+          applicator_license_expires: string | null;
+        }[]) ?? []
+      ).map((x) => ({
         id: x.id,
         label: x.name ?? "Unnamed",
+        licenseNumber: x.applicator_license_number,
+        licenseExpires: x.applicator_license_expires,
       }))
     );
     setPickersLoaded(true);
@@ -681,6 +704,18 @@ export default function ChemicalApplicationsManager({
                     </option>
                   ))}
                 </select>
+                {form.applicator_id &&
+                  (() => {
+                    const c = crew.find((m) => m.id === form.applicator_id);
+                    return c ? (
+                      <div className="mt-1">
+                        <ApplicatorLicenseBadge
+                          licenseNumber={c.licenseNumber}
+                          licenseExpires={c.licenseExpires}
+                        />
+                      </div>
+                    ) : null;
+                  })()}
               </label>
 
               <div className="grid grid-cols-2 gap-2">

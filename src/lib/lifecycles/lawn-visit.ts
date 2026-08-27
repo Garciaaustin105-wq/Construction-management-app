@@ -13,9 +13,10 @@
 //      done -> pending (reopen); skipped -> pending (reopen). completed_at set
 //      on done, cleared otherwise; skip_reason set on skipped, cleared on pending.
 //  - /api/lawn/schedules/bulk-pause -> sets status='paused' (schedule-level
-//      bulk action, NOT a per-visit transition). bulk-resume LEAVES paused
-//      visits as-is (keeps the pause record) -> 'paused' is terminal from the
-//      per-visit-status-route perspective.
+//      bulk action, NOT a per-visit transition). bulk-resume flips paused visits
+//      with due_date >= resume_from back to pending (audit §5.1: they used to
+//      be left as-is and cluttered the calendar forever). A single paused visit
+//      can also be reopened per-visit via the /status route (paused -> pending).
 //
 // Tones mirror the previous hand-rolled map (visits/[id]/page.tsx:66 + lawn
 // page.tsx:56): pending amber, done green, skipped gray, paused blue.
@@ -33,14 +34,19 @@ export const LAWN_VISIT_STATUSES: LawnVisitStatus[] = [
 
 // Valid status transitions. Status-only — role + variant gating stays in the
 // page (the visit-status route already role-gates OFFICE_OR_PM vs crew;
-// the page intersects status-valid × role-allowed). `paused` is set/cleared by
-// the schedule bulk-pause/resume mechanism, not a per-visit action, so it has
-// no transitions here (terminal from this table's perspective).
+// the page intersects status-valid × role-allowed). `paused` is set by the
+// schedule bulk-pause mechanism; it can be cleared two ways: bulk-resume (for
+// a whole customer — flips paused visits with due_date >= resume_from back to
+// pending) OR a per-visit "Reopen" on this detail page (audit §5.1: an office
+// that wants to service one property mid-pause needs a way to reopen its visit
+// without un-pausing the whole account). paused -> pending reuses the existing
+// Reopen action + the /status route (which clears completed_at/skip_reason and
+// fires no notification — only done/skipped notify).
 export const LAWN_VISIT_TRANSITIONS: Record<LawnVisitStatus, LawnVisitStatus[]> = {
   pending: ["done", "skipped"],
   done: ["pending"],
   skipped: ["pending"],
-  paused: [],
+  paused: ["pending"],
 };
 
 export const LAWN_VISIT_STATUS_LABEL: Record<LawnVisitStatus, string> = {

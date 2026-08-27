@@ -18,6 +18,9 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 import NumberInput from "@/components/NumberInput";
 import { formatMoney } from "@/lib/money";
 import { OFFICE_OR_PM } from "@/lib/roles";
+import OfficeManualApprove from "@/components/OfficeManualApprove";
+import ChangeOrderSendHistory from "@/components/ChangeOrderSendHistory";
+import EmailPreviewModal from "@/components/EmailPreviewModal";
 
 type CO = {
   id: string;
@@ -32,6 +35,17 @@ type CO = {
   status: string;
   created_at: string;
   jobs: { name: string } | null;
+  // Approval attribution (Issue 5). approved_by is a profiles(id) FK; we
+  // resolve the display name separately (approver_name) to avoid the
+  // PostgREST embed ambiguity (change_orders has two FKs to profiles:
+  // created_by and approved_by). approval_method is null on historical rows
+  // → rendered "legacy"; 'customer_portal' for new customer e-signs;
+  // 'manual_office' for office approval-on-behalf.
+  approved_by: string | null;
+  approved_at: string | null;
+  approval_method: string | null;
+  approval_note: string | null;
+  approver_name: string | null;
 };
 
 type Line = {
@@ -54,6 +68,7 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sendNote, setSendNote] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -83,7 +98,7 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
         supabase
           .from("change_orders")
           .select(
-            "id, job_id, co_number, title, description, reason, amount, is_credit, source_ref, status, created_at, jobs(name)"
+            "id, job_id, co_number, title, description, reason, amount, is_credit, source_ref, status, created_at, approved_by, approved_at, approval_method, approval_note, jobs(name)"
           )
           .eq("id", paramId)
           .single(),
@@ -100,7 +115,22 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
         router.push("/change-orders");
         return;
       }
-      setCo(coRow as unknown as CO);
+      const coData = coRow as unknown as CO;
+      // Resolve the approver's display name separately. change_orders has two
+      // FKs to profiles (created_by and approved_by), so a PostgREST embed
+      // (`profiles!approved_by(...)`) is ambiguous and 400s — a separate read
+      // is the robust path. One extra round trip, only when approved_by is set.
+      let approverName: string | null = null;
+      if (coData.approved_by) {
+        const { data: approver } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", coData.approved_by)
+          .single();
+        approverName =
+          (approver as { full_name: string | null } | null)?.full_name ?? null;
+      }
+      setCo({ ...coData, approver_name: approverName });
       const loaded = ((lineRows ?? []) as unknown as {
         id: string;
         cost_code_id: string | null;
@@ -184,8 +214,10 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
     toast.success("Submitted for review");
   }
 
-  async function sendToOwner() {
-    if (!co) return;
+  // Returns true on success (the EmailPreviewModal closes on true), false on
+  // failure (the modal stays open; the toast below already explained it).
+  async function sendToOwner(): Promise<boolean> {
+    if (!co) return false;
     setBusy(true);
     try {
       const res = await fetch(`/api/change-orders/${co.id}/send`, {
@@ -196,19 +228,47 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
       const j = await res.json();
       if (!res.ok) {
         toast.error(j.error ?? "Send failed");
-        return;
+        return false;
       }
       toast.success("Sent to owner");
       setCo({ ...co, status: "sent" });
       router.refresh();
+      return true;
     } finally {
       setBusy(false);
     }
   }
 
-  function reopen() {
+  // Revise (Issue 3): return a sent/rejected CO to draft so the office can
+  // edit + resend. Fixes the old `reopen()` which only set local state and
+  // never persisted (so a reload showed it still rejected). The server nulls
+  // the share_token (old /co/{token} 404s) + clears the Issue 5 attribution
+  // stamps; the change_order_sends snapshot stays as the liability record.
+  async function revise() {
     if (!co) return;
-    setCo({ ...co, status: "draft" });
+    if (
+      !confirm(
+        "Revise this change order? The customer's current link will stop working and it will return to draft for editing."
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/change-orders/${co.id}/revise`, {
+        method: "POST",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(j.error ?? `Revise failed (${res.status})`);
+        return;
+      }
+      toast.success("Returned to draft — make your changes and resend.");
+      router.refresh();
+    } catch {
+      toast.error("Revise failed — please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!authorized)
@@ -443,7 +503,7 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
               className="block w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
             <button
-              onClick={sendToOwner}
+              onClick={() => setPreviewOpen(true)}
               disabled={busy}
               className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -453,18 +513,68 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
           </div>
         )}
 
+        {(co.status === "submitted" || co.status === "draft") && (
+          <EmailPreviewModal
+            open={previewOpen}
+            onClose={() => setPreviewOpen(false)}
+            kind="change_order"
+            recordId={co.id}
+            message={sendNote.trim() || null}
+            sendLabel="Send to owner"
+            onConfirm={sendToOwner}
+          />
+        )}
+
         {co.status === "sent" && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-            <p className="text-sm font-medium text-blue-800">Awaiting customer decision</p>
-            <p className="text-xs text-blue-600 mt-1">
-              The owner received a secure portal link. You will be notified when they decide.
-            </p>
-          </div>
+          <>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+              <p className="text-sm font-medium text-blue-800">Awaiting customer decision</p>
+              <p className="text-xs text-blue-600 mt-1">
+                The owner received a secure portal link. You will be notified when they decide.
+              </p>
+            </div>
+            <OfficeManualApprove coId={co.id} />
+            <button
+              onClick={revise}
+              disabled={busy}
+              className="w-full bg-white border border-amber-300 text-amber-800 py-3 rounded-lg font-semibold text-sm active:bg-amber-50 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+              Revise (revoke & return to draft)
+            </button>
+          </>
         )}
 
         {co.status === "approved" && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-            <p className="text-sm font-medium text-green-800">Approved by customer</p>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-1">
+            {co.approval_method === "manual_office" ? (
+              <>
+                <p className="text-sm font-medium text-green-800">
+                  Approved manually by {co.approver_name ?? "office"}
+                  {co.approved_at
+                    ? ` on ${new Date(co.approved_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                    : ""}
+                </p>
+                {co.approval_note && (
+                  <p className="text-xs text-green-700">Note: {co.approval_note}</p>
+                )}
+              </>
+            ) : co.approval_method === "customer_portal" ? (
+              <p className="text-sm font-medium text-green-800">
+                Approved by customer via portal
+                {co.approved_at
+                  ? ` on ${new Date(co.approved_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                  : ""}
+              </p>
+            ) : (
+              <p className="text-sm font-medium text-green-800">
+                Approved
+                {co.approved_at
+                  ? ` on ${new Date(co.approved_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                  : ""}{" "}
+                (legacy — no attribution on record)
+              </p>
+            )}
             <p className="text-xs text-green-600 mt-1">
               Approved CO lines raise the budget on the job Budget tab.
             </p>
@@ -478,13 +588,19 @@ function ChangeOrderForm({ params }: { params: Promise<{ id: string }> }) {
               Revise the details and resend, or void this change order.
             </p>
             <button
-              onClick={reopen}
-              className="text-sm text-red-700 underline"
+              onClick={revise}
+              disabled={busy}
+              className="text-sm text-red-700 underline disabled:opacity-50"
             >
-              Reopen as draft
+              Revise &amp; return to draft
             </button>
           </div>
         )}
+
+        {/* Send history (Issue 3): every archived send of this change order,
+            newest first. Office-only; each row links to the immutable snapshot
+            of exactly what was sent. */}
+        <ChangeOrderSendHistory changeOrderId={co.id} />
       </main>
     </div>
   );

@@ -40,3 +40,29 @@ export async function signedFull(
     .createSignedUrl(path, expiresIn);
   return data?.signedUrl ?? null;
 }
+
+// Download URL — same as signedFull but with `download: true`, which makes
+// Supabase set `Content-Disposition: attachment` on the response so the
+// browser DOWNLOADS the file instead of navigating to it. This matters because
+// the signed URL is cross-origin (Supabase storage host ≠ the app host), and
+// the HTML `<a download>` attribute is IGNORED for cross-origin hrefs — an
+// `<a download href={signedUrl}>` would silently navigate to the image and
+// look broken. The server-side Content-Disposition header is the only reliable
+// cross-origin download trigger, and `download: true` is what sets it.
+// `signedDownload` returns the SAME kind of signed URL as `signedFull`; the
+// difference is purely the response disposition. `filename` (optional) sets the
+// downloaded file's name; omit to keep the stored object's original name.
+export async function signedDownload(
+  supabase: SupabaseClient,
+  bucket: string,
+  path: string,
+  expiresIn = 3600,
+  filename?: string
+): Promise<string | null> {
+  const { data } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(path, expiresIn, {
+      download: filename ? filename : true,
+    });
+  return data?.signedUrl ?? null;
+}

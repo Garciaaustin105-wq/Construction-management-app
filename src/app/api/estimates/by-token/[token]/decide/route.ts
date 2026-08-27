@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { deliverInvoice } from "@/lib/invoiceSend";
 import { sendEstimateDecisionEmail } from "@/lib/email";
 import { createInvoiceFromEstimate } from "@/lib/estimateInvoice";
+import { checkRateLimits, clientIp, rateLimitResponse } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,18 @@ export async function POST(
 ) {
   const { token } = await params;
 
+  // Public token endpoint — throttle so a leaked link can't be used to spam
+  // decisions. Keyed on token AND IP. Generous: a customer decides once.
+  const limited = await checkRateLimits([
+    { key: `estimate-decide:token:${token}`, max: 10, windowSeconds: 3600 },
+    {
+      key: `estimate-decide:ip:${clientIp(request)}`,
+      max: 40,
+      windowSeconds: 3600,
+    },
+  ]);
+  if (!limited.allowed) return rateLimitResponse(limited);
+
   let body: { decision?: string } = {};
   try {
     body = await request.json();
@@ -70,7 +83,7 @@ export async function POST(
   const { data: estimate } = await admin
     .from("estimates")
     .select(
-      "id, status, organization_id, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, estimate_number, title, jobs(name, type), customers(name)"
+      "id, status, organization_id, job_id, customer_id, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, estimate_number, title, valid_until, jobs(name, type), customers(name)"
     )
     .eq("share_token", token)
     .maybeSingle();
@@ -82,6 +95,19 @@ export async function POST(
     return NextResponse.json(
       { error: "This estimate is not awaiting action." },
       { status: 400 }
+    );
+  }
+
+  // §1.3 expiry race defense: the daily /api/estimates/cron/expire cron flips
+  // sent→expired once valid_until passes, but between expiry-day and the cron
+  // run the row is still 'sent'. Refuse here too (410 Gone) so a customer
+  // clicking an expired estimate's Approve button can't lock in a stale price.
+  // valid_until is a date (YYYY-MM-DD); compare date-only to today.
+  const validUntil = (estimate as { valid_until?: string | null }).valid_until;
+  if (validUntil && validUntil < new Date().toISOString().slice(0, 10)) {
+    return NextResponse.json(
+      { error: "This estimate has expired and can no longer be accepted." },
+      { status: 410 }
     );
   }
 
