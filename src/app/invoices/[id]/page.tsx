@@ -20,6 +20,7 @@ import { listProviderOptions } from "@/lib/accounting/provider";
 import "@/lib/accounting/providers"; // registers adapters so listProviderOptions resolves
 import InvoiceActions from "./InvoiceActions";
 import InvoiceDueDate from "./InvoiceDueDate";
+import DraftLineItems from "./DraftLineItems";
 import Link from "next/link";
 
 export default async function InvoiceDetailPage({
@@ -212,7 +213,23 @@ export default async function InvoiceDetailPage({
 
       <section>
         <SectionHeader className="mb-2">Line items ({items.length})</SectionHeader>
-        {items.length === 0 ? (
+        {status === "draft" && isOffice ? (
+          // §1.2: a draft invoice is editable in place — the office fixes a
+          // typo / adds / removes a line WITHOUT void+recreate. The editor does
+          // a full-replace PUT (array order = display order); the draft gate +
+          // race guard live in the replace_draft_invoice_line_items RPC. Once
+          // sent (or paid/void) the read-only branch below renders instead.
+          <DraftLineItems
+            invoiceId={invoice.id}
+            initialItems={items.map((i) => ({
+              id: i.id,
+              description: i.description ?? "",
+              quantity: Number(i.quantity) || 0,
+              unit_price: Number(i.unit_price) || 0,
+              position: Number(i.position) || 0,
+            }))}
+          />
+        ) : items.length === 0 ? (
           <div className="bg-white rounded-lg">
             <EmptyState
               icon={EmptyIcons.FileText}
