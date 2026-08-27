@@ -78,6 +78,11 @@ export default function BottomNav() {
             <Link
               key={href}
               href={href}
+              // prefetch OFF — same reason as Sidebar.tsx (see the note there).
+              // This bar is mounted on every authed page too, and on mobile the
+              // prefetch storm is worse: cell latency and a device that has to
+              // parse every prefetched payload.
+              prefetch={false}
               className={`flex-1 flex flex-col items-center justify-center py-3 text-xs relative ${
                 active ? "text-brand" : "text-gray-600"
               }`}

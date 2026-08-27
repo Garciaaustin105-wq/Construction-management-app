@@ -76,6 +76,26 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
+              // prefetch OFF. This sidebar is mounted on every authed page and
+              // renders one Link per role-visible nav item, so Next prefetched
+              // EVERY section on EVERY page view — each one a full server render
+              // of a dynamic, cookie-reading page.
+              //
+              // Vercel logs, 6h window: /dashboard 98 renders, and riding along
+              // with it /admin/insights 89, /admin/users 87, /change-orders 87,
+              // /crew/photo 86, /admin/email-preview 84, /daily-logs 83. Nobody
+              // opened email-preview 84 times — those are all prefetches, and
+              // they track the dashboard count almost exactly.
+              //
+              // So one navigation cost ~13 extra renders, each paying its own
+              // proxy getUser() round trip and running its own queries
+              // (/admin/insights pulls 13 months of invoices). On Hobby-plan
+              // concurrency they queue behind each other, which is where the
+              // 10s page loads came from.
+              //
+              // Little is lost: these are authed, force-dynamic pages, so a
+              // prefetched payload is stale by the time it's clicked anyway.
+              prefetch={false}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm ${
                 active
                   ? "bg-brand-bg text-brand-dark font-semibold"
