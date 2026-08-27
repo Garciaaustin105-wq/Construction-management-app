@@ -55,7 +55,26 @@ export function renderTemplate(
   // Real newlines pass through untouched; office-edited templates (which store
   // real newlines from the textarea) are unaffected.
   const normalized = body.replace(/\\n/g, "\n");
-  return normalized.replace(TOKEN_RE, (_, key: string) => vars[key] ?? "");
+  const substituted = normalized.replace(
+    TOKEN_RE,
+    (_, key: string) => vars[key] ?? ""
+  );
+
+  // Tidy up after an OPTIONAL token that resolved to "". Tokens like
+  // {{re_entry_notice}} and {{arrival_window}} are present on most messages and
+  // empty on the rest, so without this every message that doesn't carry one
+  // ships the leftover punctuation: a stranded blank line in email, a trailing
+  // space in SMS. Cosmetic individually, but it's on every send.
+  //
+  // Only whitespace is touched — a line that still has real content after
+  // substitution is left exactly as the office wrote it.
+  return substituted
+    // A line that became blank between two blank lines collapses to one break.
+    .replace(/\n{3,}/g, "\n\n")
+    // Trailing spaces a removed token left mid-message.
+    .replace(/[ \t]+$/gm, "")
+    // Leading/trailing whitespace on the whole message.
+    .trim();
 }
 
 // Per-invocation cache for settings + templates, so a batch sender (the morning
