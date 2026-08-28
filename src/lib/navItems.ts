@@ -56,6 +56,7 @@ import {
   Package,
   Sparkles,
   LayoutTemplate,
+  CalendarDays,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -152,6 +153,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // nav entry is in the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/ai", label: "AI admin", Icon: Sparkles },
       { href: "/lawn/notifications", label: "Notifications", Icon: Bell },
+      // Scheduling ops (weather auto-reschedule settings, batch reschedule,
+      // blackouts, zones, crew time off) — page gate is OFFICE_LIKE, this
+      // entry sits in the lawn office/admin fallthrough block to match.
+      { href: "/lawn/scheduling", label: "Scheduling", Icon: CalendarDays },
       { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
       { href: "/calendar", label: "Calendar", Icon: Calendar },
       { href: "/admin/users", label: "Admin", Icon: Users },
@@ -392,6 +397,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/admin/reviews",
             "/lawn/applications",
             "/lawn/products",
+            "/lawn/scheduling",
           ],
         },
         {
