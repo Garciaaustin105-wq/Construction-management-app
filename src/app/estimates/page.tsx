@@ -106,7 +106,7 @@ export default async function EstimatesPage() {
   });
 
   return (
-    <PageContainer title="Estimates" subtitle="Cost-coded job pricing" maxWidth="list">
+    <PageContainer title="Estimates" subtitle="Cost-coded job pricing" maxWidth="wide">
       <ListToolbar
         modes={MODES}
         defaultMode="cards"
@@ -138,36 +138,75 @@ export default async function EstimatesPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map((r) => (
-            <Link
-              key={r.id}
-              href={`/estimates/${r.id}`}
-              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
-            >
-              <div className="flex justify-between items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 truncate">
+        <>
+          <div className="space-y-2 lg:hidden">
+            <div className="space-y-2">
+              {rows.map((r) => (
+                <Link
+                  key={r.id}
+                  href={`/estimates/${r.id}`}
+                  className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-gray-900 truncate">
+                        {r.title || r.jobName}
+                      </p>
+                      <p className="text-xs text-muted truncate">
+                        {r.estimateNumber ? `${r.estimateNumber} · ` : ""}
+                        {r.title ? `${r.jobName} · ` : ""}
+                        {new Date(r.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </StatusBadge>
+                      <span className="text-sm font-semibold text-gray-900">
+                        {formatMoney(r.total)}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="hidden lg:block rounded-lg border border-line shadow-sm overflow-hidden">
+            <div className="grid grid-cols-[1fr_140px_120px_120px_110px] gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-line">
+              <span>Customer / Job</span>
+              <span>Estimate #</span>
+              <span>Status</span>
+              <span className="text-right">Total</span>
+              <span>Date</span>
+            </div>
+            <div className="divide-y divide-line">
+              {rows.map((r) => (
+                <Link
+                  key={r.id}
+                  href={`/estimates/${r.id}`}
+                  className="grid grid-cols-[1fr_140px_120px_120px_110px] gap-3 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors"
+                >
+                  <span className="min-w-0 truncate font-medium text-gray-900">
                     {r.title || r.jobName}
-                  </p>
-                  <p className="text-xs text-muted truncate">
-                    {r.estimateNumber ? `${r.estimateNumber} · ` : ""}
-                    {r.title ? `${r.jobName} · ` : ""}
-                    {new Date(r.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
+                  </span>
+                  <span className="text-sm text-gray-500 truncate">
+                    {r.estimateNumber ?? "—"}
+                  </span>
                   <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
                     {STATUS_LABEL[r.status] ?? r.status}
                   </StatusBadge>
-                  <span className="text-sm font-semibold text-gray-900">
+                  <span className="text-right text-sm font-semibold text-gray-900">
                     {formatMoney(r.total)}
                   </span>
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
+                  <span className="text-sm text-gray-500">
+                    {new Date(r.createdAt).toLocaleDateString()}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </>
       )}
     </PageContainer>
   );
