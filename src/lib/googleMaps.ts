@@ -51,11 +51,12 @@ export function loadGoogleMaps(): Promise<typeof google> {
     const loader = new Loader({
       apiKey: GOOGLE_MAPS_API_KEY,
       version: "weekly",
-      // `places` is required by AddressInput (Autocomplete). Geocoder,
+      // `places` is required by AddressInput (Autocomplete); `geometry` by the
+      // lawn measurement map (spherical.computeArea). Geocoder,
       // DirectionsService, and DistanceMatrixService are all in core (no library
-      // needed). Loading `places` here means a single script load covers every
+      // needed). Loading these here means a single script load covers every
       // map + autocomplete instance in the app.
-      libraries: ["places"],
+      libraries: ["places", "geometry"],
     });
     // loader.load() resolves once the `google` global is available.
     await loader.load();

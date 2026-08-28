@@ -21,6 +21,8 @@ import {
   type EstimateStatus,
 } from "@/lib/lifecycles/estimate";
 import { summarizeLineSchedule, type ScheduleFrequency } from "@/lib/lawnEstimate";
+import LawnMeasurementMap from "@/components/LawnMeasurementMap";
+import { isLawn } from "@/lib/variant";
 import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
 import ProposalOfficePanel from "./ProposalOfficePanel";
@@ -69,6 +71,11 @@ type Estimate = {
   signed_proposal_url: string | null;
   jobs: { name: string; address: string | null } | null;
   customers: { name: string | null; contact_email: string | null; phone: string | null; address: string | null } | null;
+  // Lawn measurement (map-drawn sqft) — lawn variant only, carried onto
+  // lawn_jobs by the convert trigger on invoice-paid conversion.
+  measured_sqft: number | null;
+  map_lat: number | null;
+  map_lng: number | null;
 };
 
 type OrgInfo = {
@@ -198,7 +205,7 @@ export default function EstimateDetailPage({
       // deep row-inference doesn't blow up (TS2589) on the long column list —
       // we cast the result to `Estimate` below regardless.
       const estSelect: string = isOffice
-        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, requires_signature, proposal_intro, proposal_accent, signed_proposal_url, jobs(name, address), customers(name, contact_email, phone, address)"
+        ? "id, job_id, title, status, note, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, viewed_at, requires_signature, proposal_intro, proposal_accent, signed_proposal_url, jobs(name, address), customers(name, contact_email, phone, address), measured_sqft, map_lat, map_lng"
         : "id, job_id, title, status, customer_notes, valid_until, customer_id, created_at, sent_at, approved_at, rejected_at, organization_id, estimate_number, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, exclusions, terms, payment_schedule, show_itemized, jobs(name, address), customers(name, contact_email, phone, address)";
       // Line items — office reads cost-coded rows + internal_cost + section;
       // customer reads only customer-safe columns (no cost_code_id, no unit,
@@ -864,6 +871,30 @@ export default function EstimateDetailPage({
               items={items}
               jobName={estimate.jobs?.name ?? null}
             />
+
+            {/* Lawn only: draw the lawn's boundary → measured_sqft on the
+                estimate. Self-gating via isLawn() so construction renders
+                nothing. Uses the customer's (else job's) address to center. */}
+            {isLawn() && (
+              <div>
+                <span className="text-sm font-medium text-gray-700">
+                  Lawn measurement
+                </span>
+                <div className="mt-2">
+                  <LawnMeasurementMap
+                    estimateId={estimate.id}
+                    address={
+                      estimate.customers?.address ?? estimate.jobs?.address ?? null
+                    }
+                    initial={{
+                      measured_sqft: estimate.measured_sqft,
+                      map_lat: estimate.map_lat,
+                      map_lng: estimate.map_lng,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             <label className="block">
               <span className="text-sm font-medium text-gray-700">

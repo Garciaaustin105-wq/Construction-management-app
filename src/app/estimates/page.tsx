@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { computeEstimateTotals, formatMoney } from "@/lib/money";
 import { PIPELINE, type Role } from "@/lib/roles";
-import { FileText, Plus } from "lucide-react";
+import { FileText, Plus, Zap } from "lucide-react";
 import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
@@ -113,10 +113,17 @@ export default async function EstimatesPage() {
         count={rows.length}
         action={
           canCreate ? (
-            <LinkButton href="/estimates/new">
-              <Plus className="w-4 h-4" />
-              New
-            </LinkButton>
+            <div className="flex items-center gap-2">
+              {/* Speed-to-quote path: customer + lines on one screen. */}
+              <LinkButton href="/estimates/quick" variant="secondary">
+                <Zap className="w-4 h-4" />
+                Quick
+              </LinkButton>
+              <LinkButton href="/estimates/new">
+                <Plus className="w-4 h-4" />
+                New
+              </LinkButton>
+            </div>
           ) : undefined
         }
       />

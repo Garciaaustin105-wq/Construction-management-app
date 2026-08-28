@@ -55,6 +55,7 @@ import {
   FlaskConical,
   Package,
   Sparkles,
+  LayoutTemplate,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -141,6 +142,9 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       { href: "/lawn/products", label: "Products", Icon: Package },
       { href: "/admin/crew-members", label: "Crew", Icon: UsersRound },
       { href: "/estimates", label: "Estimates", Icon: FileText },
+      // Reusable line-item templates — office/PM manage (/templates gate
+      // matches OFFICE_OR_PM; editor loads/saves them inline).
+      { href: "/templates", label: "Templates", Icon: LayoutTemplate },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
       { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
       // AI admin (slice 1: visit summarization). Office/admin only — the page
@@ -257,6 +261,8 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     // Customers page (it largely duplicated that page's customer list —
     // see the "two customer tabs" fix on /admin/customers).
     { href: "/photos", label: "Photos", Icon: Images },
+    // Reusable line-item templates (both variants use estimates).
+    { href: "/templates", label: "Templates", Icon: LayoutTemplate },
     { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
     { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
     { href: "/admin/users", label: "Admin", Icon: Users },
