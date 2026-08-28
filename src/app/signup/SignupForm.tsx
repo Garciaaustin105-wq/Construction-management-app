@@ -5,6 +5,8 @@ import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
 import { isLawn } from "@/lib/variant";
+import { getStoredAttribution } from "@/lib/attribution";
+import { fireSignupConversion } from "@/lib/gtag";
 
 // Client form for the public self-serve signup. The org + admin creation
 // happens server-side in /api/signup (service role, env-gated by SAAS_OPEN).
@@ -45,6 +47,9 @@ export default function SignupForm() {
         // tenant.ts know whether this is a lawn org. The form knows the deploy
         // variant at build time (NEXT_PUBLIC_APP_VARIANT inlined).
         variant: isLawn() ? "lawn" : "construction",
+        // Whatever utm_* + referrer was captured on landing this session (null
+        // if this was a direct/no-campaign visit). See src/lib/attribution.ts.
+        attribution: getStoredAttribution(),
       }),
     });
     const data = await res.json();
@@ -57,6 +62,8 @@ export default function SignupForm() {
       return;
     }
 
+    // No-op until NEXT_PUBLIC_GOOGLE_ADS_SIGNUP_CONVERSION is set (Phase 2).
+    fireSignupConversion();
     setSuccessEmail(email.trim());
     setEmailSent(data.emailSent !== false);
     setLoading(false);

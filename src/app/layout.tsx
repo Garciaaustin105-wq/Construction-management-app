@@ -6,6 +6,8 @@ import { BRAND } from "@/lib/brand";
 import { getMe } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import GoogleTag from "@/components/GoogleTag";
+import AttributionCapture from "@/components/AttributionCapture";
 
 // Brand color vars set per-deploy on <html> so the --brand/--brand-dark/
 // --brand-bg CSS vars (and their bg-brand/text-brand Tailwind utilities) resolve
@@ -67,6 +69,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             dev; only reports in production deploys. No env var needed; tied to
             the Vercel project. Measures the Tier 1 auth-preamble win. */}
         <SpeedInsights />
+        {/* Google Ads tag (no-op until NEXT_PUBLIC_GOOGLE_ADS_ID is set) +
+            utm_* capture for signup source attribution. See src/lib/gtag.ts
+            and src/lib/attribution.ts. */}
+        <GoogleTag />
+        <AttributionCapture />
       </body>
     </html>
   );

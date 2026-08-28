@@ -44,15 +44,47 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { business_name, full_name, email, password, company_website, variant } =
-    body as {
-      business_name?: string;
-      full_name?: string;
-      email?: string;
-      password?: string;
-      company_website?: string;
-      variant?: string;
-    };
+  const {
+    business_name,
+    full_name,
+    email,
+    password,
+    company_website,
+    variant,
+    attribution,
+  } = body as {
+    business_name?: string;
+    full_name?: string;
+    email?: string;
+    password?: string;
+    company_website?: string;
+    variant?: string;
+    attribution?: Record<string, unknown>;
+  };
+
+  // Signup-source attribution (utm_* + referrer) from src/lib/attribution.ts.
+  // Untrusted client input — allowlist the known keys and cap length so a
+  // malformed/hostile payload can't write arbitrary columns or oversized
+  // strings. Absent/malformed attribution is not an error; it just means no
+  // channel data (a direct visit, or storage blocked).
+  const ATTRIBUTION_KEYS = [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "referrer",
+  ] as const;
+  const attributionColumns: Record<string, string> = {};
+  if (attribution && typeof attribution === "object") {
+    for (const key of ATTRIBUTION_KEYS) {
+      const v = attribution[key];
+      if (typeof v === "string" && v.trim()) {
+        const column = key === "referrer" ? "signup_referrer" : key;
+        attributionColumns[column] = v.trim().slice(0, 255);
+      }
+    }
+  }
 
   // Honeypot: a real user never fills the hidden "company_website" field. Bots
   // do. Pretend success so the trap isn't revealed, but do nothing.
@@ -122,6 +154,9 @@ export async function POST(request: Request) {
       // sends "construction", lawn app sends "lawn"). Drives the DB trigger
       // guard + tenant.ts appVariant. Defaults to construction if absent.
       app_variant: isLawnSignup ? "lawn" : "construction",
+      // Which channel this signup came from (Google Ads, organic blog link,
+      // etc.) — see attribution_and_signup_source.sql + src/lib/attribution.ts.
+      ...attributionColumns,
     })
     .select("id")
     .single();

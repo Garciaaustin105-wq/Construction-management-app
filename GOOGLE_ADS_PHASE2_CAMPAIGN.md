@@ -10,13 +10,18 @@
 
 | Item | Status | Why it blocks launch |
 |---|---|---|
-| Homepage rewritten as a real marketing page with free-tier pitch | **Done** (2026-08-27) — [src/app/page.tsx](./src/app/page.tsx) | Ads need somewhere better than a bare "Sign In" screen to land on |
-| `SAAS_OPEN=true` confirmed in production env | **Unverified — check this** | If signup is gated "invitation-only," every ad click hits a dead end |
-| Conversion tracking (Google Ads tag + conversion action on signup) | **Not wired** | Without it you're spending blind — no cost-per-signup number, no way to let Smart Bidding optimize later |
-| UTM capture on signup (attribute signups to channel/campaign) | **Not wired** | Plan's own Section 7 KPI ("community-sourced signups... via UTM per channel") needs this; also the only way to compare Google Ads cost-per-signup against organic |
+| Homepage rewritten as a real marketing page with free-tier pitch | **Done** (2026-08-27) — [src/app/page.tsx](./src/app/page.tsx), live in production | Ads need somewhere better than a bare "Sign In" screen to land on |
+| `SAAS_OPEN=true` confirmed in production env | **Done** (2026-08-27) — verified live: `/signup` renders the real form | If signup is gated "invitation-only," every ad click hits a dead end |
+| Conversion tracking (Google Ads tag + conversion action on signup) | **Built, not yet activated** — see below | Without it you're spending blind — no cost-per-signup number, no way to let Smart Bidding optimize later |
+| UTM capture on signup (attribute signups to channel/campaign) | **Done** (2026-08-28) — `organizations.utm_source/medium/campaign/term/content/signup_referrer` | Plan's own Section 7 KPI ("community-sourced signups... via UTM per channel") needs this; also the only way to compare Google Ads cost-per-signup against organic |
 | Phase 1 exit criteria met (per plan Section 4) | Tracked separately | Confirms messaging before paying to scale it |
 
-**On tracking:** the app currently has no analytics/tag manager at all (no gtag, GA4, or similar) and the signup form doesn't capture `utm_source`/`utm_campaign`. This is a quick follow-up (Google tag snippet in the root layout + a conversion fire in [SignupForm.tsx](./src/app/signup/SignupForm.tsx) on the success state, plus persisting UTM params from the querystring into the signup payload) — flag if you want that built next, since it should land before spend starts, not after.
+**Tracking is built and wired, just not turned on.** [src/lib/attribution.ts](./src/lib/attribution.ts) captures `utm_*` + referrer client-side into sessionStorage on landing and carries it through to `/api/signup`, which persists it on the new `organizations` row. [src/components/GoogleTag.tsx](./src/components/GoogleTag.tsx) loads `gtag.js` sitewide, and [src/lib/gtag.ts](./src/lib/gtag.ts) fires the signup conversion — both are no-ops today and switch on by setting two env vars once a Google Ads account exists:
+
+- `NEXT_PUBLIC_GOOGLE_ADS_ID` — the account's tag id, e.g. `AW-123456789` (Google Ads → Tools → Conversions → the account's tag)
+- `NEXT_PUBLIC_GOOGLE_ADS_SIGNUP_CONVERSION` — the exact `send_to` string for the signup conversion action, e.g. `AW-123456789/AbC-D_efGh12i34` (same menu → your conversion action → "See tag setup" → event snippet)
+
+Set both in Vercel (Production) once the campaign in Sections 1–5 below is built in Google Ads, then redeploy.
 
 ---
 
