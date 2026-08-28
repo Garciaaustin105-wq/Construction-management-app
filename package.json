@@ -20,6 +20,7 @@
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
     "@types/archiver": "^8.0.0",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "archiver": "^8.0.0",
     "ical-generator": "^11.1.0",
