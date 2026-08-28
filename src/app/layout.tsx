@@ -6,6 +6,7 @@ import { BRAND } from "@/lib/brand";
 import { getMe } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 
 // Brand color vars set per-deploy on <html> so the --brand/--brand-dark/
 // --brand-bg CSS vars (and their bg-brand/text-brand Tailwind utilities) resolve
@@ -67,6 +68,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             dev; only reports in production deploys. No env var needed; tied to
             the Vercel project. Measures the Tier 1 auth-preamble win. */}
         <SpeedInsights />
+        {/* Vercel Web Analytics — page view tracking and audience insights.
+            No-op in dev; only reports in production deploys. Enable in Vercel
+            dashboard Analytics tab. */}
+        <Analytics />
       </body>
     </html>
   );
