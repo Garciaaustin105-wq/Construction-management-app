@@ -15,6 +15,7 @@ type Service = {
   /** Default visit length for this service, in minutes. Null = not set, which
    *  means a stop using it contributes no service time to route planning. */
   default_duration_minutes: number | null;
+  price_per_sqft: number | null;
 };
 
 export default function LawnServicesPage() {
@@ -26,6 +27,7 @@ export default function LawnServicesPage() {
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [price, setPrice] = useState("0");
+  const [pricePerSqft, setPricePerSqft] = useState("");
   // Blank = "no default duration" (null), not zero — a service with no
   // recorded length must not tell the router the stop takes 0 minutes.
   const [duration, setDuration] = useState("");
@@ -33,6 +35,7 @@ export default function LawnServicesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editPrice, setEditPrice] = useState("");
+  const [editPricePerSqft, setEditPricePerSqft] = useState("");
   const [editDuration, setEditDuration] = useState("");
   const [saving, setSaving] = useState(false);
   const [orgId, setOrgId] = useState<string>("");
@@ -41,7 +44,9 @@ export default function LawnServicesPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from("lawn_services")
-      .select("id, name, default_price, active, default_duration_minutes")
+      .select(
+        "id, name, default_price, active, default_duration_minutes, price_per_sqft"
+      )
       .order("name");
     setServices((data as Service[]) ?? []);
   }
@@ -80,7 +85,20 @@ export default function LawnServicesPage() {
     if (t === "") return null;
     const n = Number(t);
     if (!Number.isInteger(n) || n < 1) {
-      toast.warning("Duration must be a whole number of minutes (1 or more), or blank");
+      toast.warning(
+        "Duration must be a whole number of minutes (1 or more), or blank"
+      );
+      return undefined;
+    }
+    return n;
+  }
+
+  function parsePricePerSqft(raw: string): number | null | undefined {
+    const t = raw.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    if (isNaN(n) || n < 0) {
+      toast.warning("$/sq ft must be 0 or more, or blank");
       return undefined;
     }
     return n;
@@ -96,12 +114,16 @@ export default function LawnServicesPage() {
       toast.warning("Price must be 0 or more");
       return;
     }
+    const pps = parsePricePerSqft(pricePerSqft);
+    if (pps === undefined) return;
     const dur = parseDuration(duration);
     if (dur === undefined) return;
     setAdding(true);
     const supabase = createClient();
     if (!orgId) {
-      toast.error("Could not resolve your organization — reload and try again");
+      toast.error(
+        "Could not resolve your organization — reload and try again"
+      );
       setAdding(false);
       return;
     }
@@ -112,9 +134,12 @@ export default function LawnServicesPage() {
         default_price: p,
         active: true,
         default_duration_minutes: dur,
+        price_per_sqft: pps,
         organization_id: orgId,
       })
-      .select("id, name, default_price, active, default_duration_minutes")
+      .select(
+        "id, name, default_price, active, default_duration_minutes, price_per_sqft"
+      )
       .single();
     setAdding(false);
     if (error || !data) {
@@ -126,6 +151,7 @@ export default function LawnServicesPage() {
     );
     setName("");
     setPrice("0");
+    setPricePerSqft("");
     setDuration("");
     toast.success("Service added");
   }
@@ -148,10 +174,14 @@ export default function LawnServicesPage() {
   }
 
   async function removeService(svc: Service) {
-    if (!confirm(`Delete "${svc.name}"? This removes it from the service dropdown.`)) return;
+    if (!confirm(`Delete "${svc.name}"? This removes it from the service dropdown.`))
+      return;
     setBusy(true);
     const supabase = createClient();
-    const { error } = await supabase.from("lawn_services").delete().eq("id", svc.id);
+    const { error } = await supabase
+      .from("lawn_services")
+      .delete()
+      .eq("id", svc.id);
     setBusy(false);
     if (error) {
       toast.error(`Failed: ${error.message}`);
@@ -168,6 +198,9 @@ export default function LawnServicesPage() {
     setEditDuration(
       svc.default_duration_minutes === null ? "" : String(svc.default_duration_minutes)
     );
+    setEditPricePerSqft(
+      svc.price_per_sqft === null ? "" : String(svc.price_per_sqft)
+    );
   }
 
   function cancelEdit() {
@@ -175,6 +208,7 @@ export default function LawnServicesPage() {
     setEditName("");
     setEditPrice("0");
     setEditDuration("");
+    setEditPricePerSqft("");
   }
 
   async function saveEdit() {
@@ -188,6 +222,8 @@ export default function LawnServicesPage() {
       toast.warning("Price must be 0 or more");
       return;
     }
+    const pps = parsePricePerSqft(editPricePerSqft);
+    if (pps === undefined) return;
     const dur = parseDuration(editDuration);
     if (dur === undefined) return;
     setSaving(true);
@@ -198,9 +234,12 @@ export default function LawnServicesPage() {
         name: editName.trim(),
         default_price: p,
         default_duration_minutes: dur,
+        price_per_sqft: pps,
       })
       .eq("id", editingId)
-      .select("id, name, default_price, active, default_duration_minutes")
+      .select(
+        "id, name, default_price, active, default_duration_minutes, price_per_sqft"
+      )
       .single();
     setSaving(false);
     if (error || !data) {
@@ -208,12 +247,15 @@ export default function LawnServicesPage() {
       return;
     }
     setServices((prev) =>
-      [...prev.map((s) => (s.id === editingId ? (data as Service) : s))].sort((a, b) => a.name.localeCompare(b.name))
+      [...prev.map((s) => (s.id === editingId ? (data as Service) : s))].sort(
+        (a, b) => a.name.localeCompare(b.name)
+      )
     );
     setEditingId(null);
     setEditName("");
     setEditPrice("0");
     setEditDuration("");
+    setEditPricePerSqft("");
     toast.success("Service updated");
   }
 
@@ -247,6 +289,15 @@ export default function LawnServicesPage() {
           placeholder="Default price per visit"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
+          className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+        />
+        <input
+          type="number"
+          min={0}
+          step="0.01"
+          placeholder="$ per sq ft (optional, for area-based pricing)"
+          value={pricePerSqft}
+          onChange={(e) => setPricePerSqft(e.target.value)}
           className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
         />
         <input
@@ -306,6 +357,14 @@ export default function LawnServicesPage() {
                       />
                       <input
                         type="number"
+                        min={0}
+                        step="0.01"
+                        value={editPricePerSqft}
+                        onChange={(e) => setEditPricePerSqft(e.target.value)}
+                        className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base"
+                      />
+                      <input
+                        type="number"
                         min={1}
                         step="1"
                         placeholder="Duration (min)"
@@ -346,6 +405,8 @@ export default function LawnServicesPage() {
                         /visit
                         {s.default_duration_minutes !== null &&
                           ` \u00b7 ${s.default_duration_minutes} min`}
+                        {s.price_per_sqft !== null &&
+                          ` \u00b7 $${s.price_per_sqft}/sq ft`}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

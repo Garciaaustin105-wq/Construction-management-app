@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useToast } from "@/components/Toast";
 import {
   AREA_COLORS,
   areaSqftFromPoints,
@@ -31,10 +32,13 @@ import {
   ACCESS_TAG_PRESETS,
 } from "@/lib/estimateAreas";
 import { loadGoogleMaps } from "@/lib/googleMaps";
+import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
+import { formatMoney } from "@/lib/money";
 
 type Props = {
   estimateId: string;
   address: string | null;
+  onAddLineItem: (line: { description: string; quantity: number; unit: string; unit_price: number }) => void;
 };
 
 type Draft = { areaId: string | "new"; vertices: LatLng[]; tags: string[] } | null;
@@ -48,6 +52,7 @@ function errMessage(err: unknown): string {
 export default function LawnMeasurementMap({
   estimateId,
   address,
+  onAddLineItem,
 }: Props): React.ReactElement {
   /* ---------- State ---------- */
   const [areas, setAreas] = useState<EstimateArea[]>([]);
@@ -58,6 +63,12 @@ export default function LawnMeasurementMap({
   const [orgId, setOrgId] = useState<string | null>(null);
   const [loadingAreas, setLoadingAreas] = useState<boolean>(true);
   const [editName, setEditName] = useState<{ [id: string]: string }>({});
+  const [pricedServices, setPricedServices] = useState<PricedService[]>([]);
+  const [selectedAreaId, setSelectedAreaId] = useState<string>("");
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+
+  /* ---------- Toast ---------- */
+  const toast = useToast();
 
   /* ---------- Refs ---------- */
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -103,6 +114,12 @@ export default function LawnMeasurementMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estimateId]);
 
+  /* ---------- Load priced services ---------- */
+  useEffect(() => {
+    if (!orgId) return;
+    listPricedServices(supabase, orgId).then(({ data }) => setPricedServices(data));
+  }, [orgId, supabase]);
+
   /* ---------- Load Google Maps + create the map ONCE ---------- */
   useEffect(() => {
     if (mapRef.current) return;
@@ -124,6 +141,12 @@ export default function LawnMeasurementMap({
           geocoder.geocode({ address }, (results, status) => {
             if (status === "OK" && results && results[0]) {
               map.setCenter(results[0].geometry.location);
+              // Drop address marker
+              new g.maps.Marker({
+                position: results[0].geometry.location,
+                map,
+                title: address ?? undefined,
+              });
             }
           });
         }
@@ -366,6 +389,7 @@ export default function LawnMeasurementMap({
     }
 
     setErrorMsg(null);
+    toast.success(draft.areaId === "new" ? "Area saved" : "Area updated");
     const fresh = await loadAreas();
     const syncErr = await syncEstimateTotals(supabase, estimateId, fresh);
     if (syncErr) setErrorMsg(syncErr);
@@ -414,6 +438,7 @@ export default function LawnMeasurementMap({
       return;
     }
     setErrorMsg(null);
+    toast.success(`${area.name} deleted`);
     const fresh = await loadAreas();
     const syncErr = await syncEstimateTotals(supabase, estimateId, fresh);
     if (syncErr) setErrorMsg(syncErr);
@@ -623,6 +648,66 @@ export default function LawnMeasurementMap({
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Price an area panel */}
+        {areas.length > 0 && pricedServices.length > 0 && (
+          <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-2">
+            <p className="text-xs font-medium text-gray-700">Price an area</p>
+            <select
+              value={selectedAreaId}
+              onChange={(e) => setSelectedAreaId(e.target.value)}
+              className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">Select area…</option>
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.area_sqft.toLocaleString()} sq ft)
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedServiceId}
+              onChange={(e) => setSelectedServiceId(e.target.value)}
+              className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+            >
+              <option value="">Select service…</option>
+              {pricedServices.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} (${s.price_per_sqft}/sq ft)
+                </option>
+              ))}
+            </select>
+            {(() => {
+              const selectedArea = areas.find((a) => a.id === selectedAreaId);
+              const selectedSvc = pricedServices.find((s) => s.id === selectedServiceId);
+              if (!selectedArea || !selectedSvc) return null;
+              return (
+                <>
+                  <p className="text-sm font-medium text-gray-900">
+                    {formatMoney(sqftPrice(selectedArea.area_sqft, selectedSvc.price_per_sqft))}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddLineItem({
+                        description: `${selectedSvc.name} — ${selectedArea.name}`,
+                        quantity: 1,
+                        unit: "LOT",
+                        unit_price: sqftPrice(selectedArea.area_sqft, selectedSvc.price_per_sqft),
+                      });
+                      toast.success("Line item added");
+                      setSelectedAreaId("");
+                      setSelectedServiceId("");
+                    }}
+                    className="w-full rounded bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700"
+                  >
+                    Add to estimate
+                  </button>
+                </>
+              );
+            })()}
+          </div>
         )}
       </aside>
 

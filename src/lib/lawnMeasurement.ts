@@ -56,3 +56,29 @@ export async function saveEstimateMeasurement(
 export function sqftPrice(sqft: number, ratePerSqft: number): number {
   return Math.round(sqft * ratePerSqft * 100) / 100;
 }
+
+// A lawn_services row that has an opt-in $/sqft rate set (see
+// lawn_services_price_per_sqft.sql) — services without one can't price a
+// measured area and are excluded by listPricedServices below.
+export type PricedService = {
+  id: string;
+  name: string;
+  price_per_sqft: number;
+};
+
+export async function listPricedServices(
+  supabase: SupabaseClient,
+  orgId: string
+): Promise<{ data: PricedService[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from("lawn_services")
+    .select("id, name, price_per_sqft")
+    .eq("organization_id", orgId)
+    .eq("active", true)
+    .not("price_per_sqft", "is", null)
+    .order("name");
+  return {
+    data: (data as unknown as PricedService[]) ?? [],
+    error: error?.message ?? null,
+  };
+}

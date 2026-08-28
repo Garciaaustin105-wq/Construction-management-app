@@ -886,6 +886,27 @@ export default function EstimateDetailPage({
                     address={
                       estimate.customers?.address ?? estimate.jobs?.address ?? null
                     }
+                    onAddLineItem={(line) =>
+                      setItems((prev) => [
+                        ...prev,
+                        {
+                          cost_code_id: null,
+                          description: line.description,
+                          quantity: line.quantity,
+                          unit: line.unit,
+                          unit_price: line.unit_price,
+                          section: "",
+                          internal_cost: null,
+                          schedule_frequency: null,
+                          schedule_interval_weeks: 1,
+                          schedule_days_of_week: [],
+                          schedule_day_of_month: null,
+                          schedule_start_date: null,
+                          schedule_end_date: null,
+                          recurring_schedule_id: null,
+                        },
+                      ])
+                    }
                   />
                 </div>
               </div>
