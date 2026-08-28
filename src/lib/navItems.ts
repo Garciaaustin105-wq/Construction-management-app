@@ -58,6 +58,7 @@ import {
   LayoutTemplate,
   CalendarDays,
   ShieldCheck,
+  Ruler,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -147,6 +148,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/compliance", label: "Compliance", Icon: ShieldCheck },
       { href: "/admin/crew-members", label: "Crew", Icon: UsersRound },
+      // Headline lawn feature (user verdict, docs/handoff-estimator-v2): must
+      // be a TOP-of-nav entry, not buried inside estimate creation. Sits right
+      // above Estimates on purpose.
+      { href: "/estimates/quick", label: "Measure & quote", Icon: Ruler },
       { href: "/estimates", label: "Estimates", Icon: FileText },
       // Reusable line-item templates — office/PM manage (/templates gate
       // matches OFFICE_OR_PM; editor loads/saves them inline).

@@ -117,7 +117,7 @@ export default async function EstimatesPage() {
               {/* Speed-to-quote path: customer + lines on one screen. */}
               <LinkButton href="/estimates/quick" variant="secondary">
                 <Zap className="w-4 h-4" />
-                Quick
+                Measure &amp; quote
               </LinkButton>
               <LinkButton href="/estimates/new">
                 <Plus className="w-4 h-4" />

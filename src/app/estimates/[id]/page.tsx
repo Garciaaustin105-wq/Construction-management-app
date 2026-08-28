@@ -886,11 +886,6 @@ export default function EstimateDetailPage({
                     address={
                       estimate.customers?.address ?? estimate.jobs?.address ?? null
                     }
-                    initial={{
-                      measured_sqft: estimate.measured_sqft,
-                      map_lat: estimate.map_lat,
-                      map_lng: estimate.map_lng,
-                    }}
                   />
                 </div>
               </div>

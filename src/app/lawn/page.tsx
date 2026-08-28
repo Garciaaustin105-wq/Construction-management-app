@@ -26,6 +26,7 @@ import {
   TrendingUp,
   Snowflake,
   Bell,
+  Ruler,
 } from "lucide-react";
 
 // Row shapes for the relation joins (Supabase types these loosely, so we cast
@@ -392,6 +393,14 @@ export default async function LawnPage() {
 
                   <p className={GROUP_LABEL}>Plan</p>
                   <div className="grid grid-cols-2 gap-2">
+                    {/* Headline lawn feature (user verdict, docs/handoff-
+                        estimator-v2): first action in the rail, not buried. */}
+                    {officeLike && (
+                      <LinkButton href="/estimates/quick" variant="secondary" size="sm">
+                        <Ruler className="w-4 h-4" />
+                        Measure &amp; quote
+                      </LinkButton>
+                    )}
                     {officeLike && (
                       <LinkButton href="/lawn/new" variant="secondary" size="sm">
                         <Plus className="w-4 h-4" />

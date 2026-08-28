@@ -288,7 +288,7 @@ export async function POST(request: Request) {
       const { error: rErr } = await anon.auth.resend({
         type: "signup",
         email: mail,
-        options: { emailRedirectTo: `${origin}/auth/callback` },
+        options: { emailRedirectTo: `${origin}/auth/callback?flow=signup` },
       });
       if (rErr) emailSent = false;
     } catch {
