@@ -185,13 +185,19 @@ function LawnMarketing() {
           Scheduling, routing, and billing for solo operators and small crews.
           Start on a free tier that stays free — upgrade only when you outgrow it.
         </p>
-        <div className="mt-8 flex items-center justify-center">
+        <div className="mt-8 flex flex-col items-center gap-3">
           <Link
             href="/signup"
             className="bg-brand text-white px-8 py-3 rounded-lg font-semibold hover:bg-brand-dark"
           >
             Start free
           </Link>
+          <p className="text-sm text-gray-500">
+            Already have an account?{" "}
+            <Link href="/login" className="text-brand hover:underline">
+              Sign in
+            </Link>
+          </p>
         </div>
       </section>
 
@@ -355,13 +361,19 @@ function ConstructionMarketing() {
           Daily logs, RFIs, submittals, change orders, and punch lists — synced
           from the field to the office in real time.
         </p>
-        <div className="mt-8 flex items-center justify-center">
+        <div className="mt-8 flex flex-col items-center gap-3">
           <Link
             href="/signup"
             className="bg-brand text-white px-8 py-3 rounded-lg font-semibold hover:bg-brand-dark"
           >
             Start free trial
           </Link>
+          <p className="text-sm text-gray-500">
+            Already have an account?{" "}
+            <Link href="/login" className="text-brand hover:underline">
+              Sign in
+            </Link>
+          </p>
         </div>
       </section>
 
