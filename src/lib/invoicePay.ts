@@ -394,6 +394,69 @@ export async function applyInvoicePaymentFromPI(
   });
 }
 
+// ── Declined autopay: record retry state + tell the office ──────────────────
+// Called ONLY when a charge was actually attempted and failed (Stripe error or
+// a declined/requires-action PaymentIntent) — never for the benign "no saved
+// card / autopay off / no balance" skips. Stamps the invoice's retry state so
+// the retry cron (/api/lawn/cron/retry-autopay) picks it back up after
+// RETRY_IN_DAYS, up to MAX_AUTOPAY_ATTEMPTS total, and drops one office-feed
+// notification (deduped by the unique (type, entity_id) index, same pattern as
+// recordInvoicePayment's invoice_paid). All best-effort + non-fatal: the
+// invoice itself was billed fine and still delivers for manual payment.
+const MAX_AUTOPAY_ATTEMPTS = 3;
+const AUTOPAY_RETRY_IN_DAYS = 3;
+
+async function recordAutopayFailure(
+  invoiceId: string,
+  orgId: string,
+  reason: string
+): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    const { data: inv } = await admin
+      .from("invoices")
+      .select("autopay_attempts, customers(name), jobs(name)")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    const attempts = Math.min(
+      MAX_AUTOPAY_ATTEMPTS,
+      ((inv as { autopay_attempts?: number } | null)?.autopay_attempts ?? 0) + 1
+    );
+    const nextRetry = new Date();
+    nextRetry.setUTCDate(nextRetry.getUTCDate() + AUTOPAY_RETRY_IN_DAYS);
+    await admin
+      .from("invoices")
+      .update({
+        autopay_attempts: attempts,
+        autopay_last_error: reason.slice(0, 500),
+        // Past the final attempt: stop scheduling retries (the customer pays
+        // manually or the office collects); the error text stays for the office.
+        autopay_next_retry_at:
+          attempts >= MAX_AUTOPAY_ATTEMPTS ? null : nextRetry.toISOString(),
+      })
+      .eq("id", invoiceId);
+
+    const customerName =
+      (inv as unknown as { customers?: { name: string | null } } | null)
+        ?.customers?.name ?? "";
+    const jobName =
+      (inv as unknown as { jobs?: { name: string } } | null)?.jobs?.name ?? "";
+    await admin.from("notifications").insert({
+      organization_id: orgId,
+      type: "autopay_declined",
+      title: "Autopay charge declined",
+      body: [customerName, jobName, `attempt ${attempts}/${MAX_AUTOPAY_ATTEMPTS}`, reason]
+        .filter(Boolean)
+        .join(" · "),
+      href: `/invoices/${invoiceId}`,
+      entity_id: invoiceId,
+    });
+  } catch {
+    // Swallow — retry state + feed are best-effort; delivery already ran.
+  }
+}
+
 // ── Off-session auto-charge for cycle billing ────────────────────────────────
 // Creates an off-session PaymentIntent on the connected account using the
 // customer's saved card. On success, records the payment INLINE (synchronous —
@@ -483,10 +546,9 @@ export async function chargeInvoiceOffSession(input: {
       forAccount(account.stripeAccountId)
     );
   } catch (err) {
-    return {
-      charged: false,
-      reason: err instanceof Error ? err.message : "charge failed",
-    };
+    const reason = err instanceof Error ? err.message : "charge failed";
+    await recordAutopayFailure(input.invoiceId, invoice.organization_id, reason);
+    return { charged: false, reason };
   }
 
   if (pi.status === "succeeded") {
@@ -507,5 +569,6 @@ export async function chargeInvoiceOffSession(input: {
     pi.status === "requires_action"
       ? "card requires authentication — can't auto-charge"
       : pi.last_payment_error?.message ?? `charge ${pi.status}`;
+  await recordAutopayFailure(input.invoiceId, invoice.organization_id, reason);
   return { charged: false, reason };
 }

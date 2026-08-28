@@ -27,6 +27,14 @@
     {
       "path": "/api/cron/purge-rate-limits",
       "schedule": "12 4 * * *"
+    },
+    {
+      "path": "/api/lawn/cron/retry-autopay",
+      "schedule": "43 4 * * *"
+    },
+    {
+      "path": "/api/lawn/cron/weather-reschedule",
+      "schedule": "23 5 * * *"
     }
   ]
 }
