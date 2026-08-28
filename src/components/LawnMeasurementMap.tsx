@@ -34,6 +34,7 @@ import {
 import { loadGoogleMaps } from "@/lib/googleMaps";
 import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
 import { formatMoney } from "@/lib/money";
+import { Maximize2, Minimize2 } from "lucide-react";
 
 type Props = {
   estimateId: string;
@@ -66,6 +67,7 @@ export default function LawnMeasurementMap({
   const [pricedServices, setPricedServices] = useState<PricedService[]>([]);
   const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+  const [fullscreen, setFullscreen] = useState(false);
 
   /* ---------- Toast ---------- */
   const toast = useToast();
@@ -485,6 +487,24 @@ export default function LawnMeasurementMap({
     await loadAreas();
   };
 
+  /* ---------- Escape key closes fullscreen ---------- */
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  /* ---------- Google Maps must be told its container resized ---------- */
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const center = mapRef.current.getCenter();
+    google.maps.event.trigger(mapRef.current, "resize");
+    if (center) mapRef.current.setCenter(center);
+  }, [fullscreen]);
+
   /* ---------- Render ---------- */
   // While editing an existing (already-saved) area, drop its stored sqft
   // from the running total so the live draft figure replaces it instead of
@@ -495,17 +515,38 @@ export default function LawnMeasurementMap({
   const totalSqft = savedSqft + draftSqft;
 
   return (
-    <div className="flex flex-col gap-3 lg:h-[32rem] lg:flex-row">
+    <div
+      className={
+        fullscreen
+          ? "fixed inset-0 z-50 flex flex-col gap-3 bg-white p-3 lg:flex-row"
+          : "flex flex-col gap-3 lg:h-[42rem] lg:flex-row"
+      }
+    >
       {/* Sidebar sits ABOVE the map on mobile (DOM order + flex-col): this is
           used standing in a driveway on a phone. */}
-      <aside className="w-full space-y-3 rounded border border-gray-200 bg-white p-3 lg:w-80 lg:flex-shrink-0 lg:overflow-y-auto">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">
-            {totalSqft.toLocaleString()} sq ft
-          </h2>
-          <p className="text-xs text-gray-500">
-            {areas.length} {areas.length === 1 ? "area" : "areas"} measured
-          </p>
+      <aside
+        className={
+          "w-full space-y-3 rounded border border-gray-200 bg-white p-3 lg:w-96 lg:flex-shrink-0 lg:overflow-y-auto" +
+          (fullscreen ? " lg:h-full" : "")
+        }
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">
+              {totalSqft.toLocaleString()} sq ft
+            </h2>
+            <p className="text-xs text-gray-500">
+              {areas.length} {areas.length === 1 ? "area" : "areas"} measured
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFullscreen((f) => !f)}
+            title={fullscreen ? "Exit fullscreen" : "Expand to fullscreen"}
+            className="shrink-0 rounded border border-gray-300 p-2 text-gray-600 hover:bg-gray-50"
+          >
+            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
         </div>
 
         {loadingAreas && areas.length === 0 && (
@@ -711,7 +752,13 @@ export default function LawnMeasurementMap({
         )}
       </aside>
 
-      <div className="h-96 w-full rounded shadow lg:h-auto lg:flex-1">
+      <div
+        className={
+          fullscreen
+            ? "h-[60vh] w-full flex-1 rounded shadow lg:h-full"
+            : "h-96 w-full rounded shadow lg:h-auto lg:flex-1"
+        }
+      >
         <div ref={mapDivRef} className="h-full w-full rounded" />
       </div>
     </div>
