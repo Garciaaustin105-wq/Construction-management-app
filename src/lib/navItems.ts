@@ -491,6 +491,8 @@ const PUBLIC_EXACT = [
   "/reset-password",
   "/update-password",
   "/customer",
+  "/privacy",
+  "/terms",
 ];
 
 export function isPublicRoute(pathname: string): boolean {
