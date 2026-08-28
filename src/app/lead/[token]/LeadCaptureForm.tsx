@@ -39,6 +39,10 @@ export default function LeadCaptureForm({
       source: String(form.get("source") ?? "website"),
       referral_detail: String(form.get("referral_detail") ?? "").trim(),
       company_website: String(form.get("company_website") ?? "").trim(), // honeypot
+      // Referral credit: when reached from the review gate's "refer them here"
+      // link, ?ref= carries the REFERRER's review_requests token — /api/leads
+      // resolves it to that customer (referred_by_customer_id).
+      ref: new URLSearchParams(window.location.search).get("ref") || undefined,
     };
     try {
       const res = await fetch("/api/leads", {

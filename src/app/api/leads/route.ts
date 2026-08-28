@@ -81,6 +81,10 @@ export async function POST(request: Request) {
   }
 
   const token = typeof body.token === "string" ? body.token.trim() : "";
+  // Referral credit: the review gate's "know someone?" link passes the REFERRER's
+  // review_requests token as `ref`. Resolved below (post-org) to that customer.
+  const refToken =
+    typeof body.ref === "string" ? body.ref.trim().slice(0, 200) : "";
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const contactName =
     typeof body.contact_name === "string" ? body.contact_name.trim() : "";
@@ -142,7 +146,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid form link" }, { status: 404 });
   }
 
-  // 2) Insert the lead. status='new', source validated above.
+  // 2) Referral credit — resolve the referrer from their review_requests token
+  //    (best-effort; a bad/expired ref never blocks the lead capture).
+  let referredByCustomerId: string | null = null;
+  if (refToken) {
+    const { data: refRow } = await admin
+      .from("review_requests")
+      .select("customer_id")
+      .eq("token", refToken)
+      .maybeSingle();
+    referredByCustomerId =
+      (refRow as unknown as { customer_id: string | null } | null)?.customer_id ??
+      null;
+  }
+
+  // 3) Insert the lead. status='new', source validated above.
   const { data: inserted, error: insertError } = await admin
     .from("leads")
     .insert({
@@ -155,6 +173,7 @@ export async function POST(request: Request) {
       service_interest: serviceInterest || null,
       source,
       referral_detail: referralDetail || null,
+      referred_by_customer_id: referredByCustomerId,
       status: "new",
     })
     .select("id, email, contact_name, name")
@@ -172,7 +191,7 @@ export async function POST(request: Request) {
     name: string;
   };
 
-  // 3) Office feed: a `new_lead` notification so the office dashboard badge +
+  // 4) Office feed: a `new_lead` notification so the office dashboard badge +
   //    Home feed pick it up (reuses notifications.sql). unique (type,
   //    entity_id) → onConflict ignore is harmless (new lead id = no conflict).
   await admin
@@ -189,7 +208,7 @@ export async function POST(request: Request) {
       { onConflict: "type,entity_id", ignoreDuplicates: true }
     );
 
-  // 4) Auto-reply to the prospect. Free orgs are capped at
+  // 5) Auto-reply to the prospect. Free orgs are capped at
   //    FREE_LEAD_AUTOREPLY_CAP/month (bounds Resend cost); paid orgs always
   //    send. Non-fatal: a failed send is logged, never blocks the capture.
   let autoReply: "sent" | "skipped_cap" | "skipped_no_email" | "failed" =

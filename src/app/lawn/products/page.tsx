@@ -34,7 +34,7 @@ export default async function ChemicalProductsPage() {
   const { data } = await supabase
     .from("chemical_products")
     .select(
-      "id, organization_id, name, epa_reg_number, active_ingredient, default_rate, rate_unit, re_entry_hours, active, notes, created_at"
+      "id, organization_id, name, epa_reg_number, active_ingredient, default_rate, rate_unit, re_entry_hours, active, quantity_on_hand, is_restricted_use, notes, created_at"
     )
     .order("name", { ascending: true });
 

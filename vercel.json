@@ -35,6 +35,10 @@
     {
       "path": "/api/lawn/cron/weather-reschedule",
       "schedule": "23 5 * * *"
+    },
+    {
+      "path": "/api/lawn/cron/compliance-reminders",
+      "schedule": "13 5 * * *"
     }
   ]
 }

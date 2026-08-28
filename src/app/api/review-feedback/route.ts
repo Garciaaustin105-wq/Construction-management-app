@@ -119,6 +119,43 @@ export async function POST(request: Request) {
     );
   }
 
+  // 2b) Optional customer photo (item 16). The body may carry a base64 JPEG/PNG
+  //     (≤ ~2.5 MB encoded); it lands in the private job-photos bucket under
+  //     review-photos/{reviewRequestId}/ and gets a photos row linked via
+  //     photos.review_request_id. STRICTLY non-fatal: a bad/failed upload never
+  //     blocks the rating, which is already stored. Magic-byte checked — we
+  //     never trust a claimed content type.
+  const photoB64 =
+    typeof body.photo === "string" && body.photo.length > 0 && body.photo.length <= 3_500_000
+      ? body.photo
+      : null;
+  if (photoB64) {
+    try {
+      const buf = Buffer.from(photoB64, "base64");
+      const isJpeg = buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+      const isPng =
+        buf.length > 8 &&
+        buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+      if (isJpeg || isPng) {
+        const ext = isJpeg ? "jpg" : "png";
+        const path = `review-photos/${rr.id}/${Date.now()}.${ext}`;
+        const up = await admin.storage
+          .from("job-photos")
+          .upload(path, buf, { contentType: isJpeg ? "image/jpeg" : "image/png" });
+        if (!up.error) {
+          await admin.from("photos").insert({
+            organization_id: rr.organization_id,
+            storage_path: path,
+            caption: "Customer review photo",
+            review_request_id: rr.id,
+          });
+        }
+      }
+    } catch {
+      // Swallow — photo attach is optional garnish.
+    }
+  }
+
   // 3) For an unhappy rating (or any feedback left), notify the office so they
   //    can follow up before the customer goes public. Best-effort, never fatal.
   //    unique (type, entity_id) → onConflict ignore is harmless (one nudge per
@@ -151,23 +188,40 @@ export async function POST(request: Request) {
     }
   }
 
-  // 4) For a happy rating, return the org's Google Business Profile URL so the
-  //    gate page can offer a public review. null when the org hasn't configured
-  //    one (the page handles the no-Google case gracefully).
-  let redirectUrl: string | null = null;
+  // 4) For a happy rating, return the org's configured review-platform
+  //    destinations (review_platforms table, item 14) so the gate page can
+  //    offer the customer a choice. Falls back to the legacy
+  //    notification_settings.google_review_url when the org hasn't set any
+  //    platforms up, and to null when neither exists (the page degrades).
+  let platforms: { platform: string; review_url: string }[] = [];
   if (happy) {
-    const { data: settings } = await admin
-      .from("notification_settings")
-      .select("google_review_url")
+    const { data: platformRows } = await admin
+      .from("review_platforms")
+      .select("platform, review_url")
       .eq("organization_id", rr.organization_id)
-      .maybeSingle();
-    redirectUrl =
-      (settings as unknown as { google_review_url: string | null } | null)?.google_review_url?.trim() ||
-      null;
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(8);
+    platforms =
+      (platformRows as unknown as { platform: string; review_url: string }[] | null)
+        ?.filter((p) => p.review_url?.trim())
+        .map((p) => ({ platform: p.platform, review_url: p.review_url.trim() })) ??
+      [];
+    if (platforms.length === 0) {
+      const { data: settings } = await admin
+        .from("notification_settings")
+        .select("google_review_url")
+        .eq("organization_id", rr.organization_id)
+        .maybeSingle();
+      const googleUrl =
+        (settings as unknown as { google_review_url: string | null } | null)?.google_review_url?.trim() ||
+        null;
+      if (googleUrl) platforms = [{ platform: "google", review_url: googleUrl }];
+    }
   }
 
   return NextResponse.json(
-    { ok: true, status: newStatus, redirectUrl },
+    { ok: true, status: newStatus, platforms },
     { status: 201 }
   );
 }

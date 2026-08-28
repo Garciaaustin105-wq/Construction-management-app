@@ -57,6 +57,7 @@ import {
   Sparkles,
   LayoutTemplate,
   CalendarDays,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -141,6 +142,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // Products = the org's chemical catalog (office/PM manage).
       { href: "/lawn/applications", label: "Applications", Icon: FlaskConical },
       { href: "/lawn/products", label: "Products", Icon: Package },
+      // Compliance records (RUP purchases/30-day rule, disposal, CEU,
+      // noncertified training) — page gate is OFFICE_OR_PM; this entry sits in
+      // the lawn office/admin fallthrough block so it matches.
+      { href: "/lawn/compliance", label: "Compliance", Icon: ShieldCheck },
       { href: "/admin/crew-members", label: "Crew", Icon: UsersRound },
       { href: "/estimates", label: "Estimates", Icon: FileText },
       // Reusable line-item templates — office/PM manage (/templates gate
@@ -397,6 +402,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/admin/reviews",
             "/lawn/applications",
             "/lawn/products",
+            "/lawn/compliance",
             "/lawn/scheduling",
           ],
         },

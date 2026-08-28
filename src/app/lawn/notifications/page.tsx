@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import PageContainer from "@/components/PageContainer";
 import { useToast } from "@/components/Toast";
-import { Loader2, Save, Bell, MessageSquare, Mail } from "lucide-react";
+import { Loader2, Save, Bell, MessageSquare, Mail, Star, Plus, Trash2 } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
 import { OFFICE_LIKE, type Role } from "@/lib/roles";
 
@@ -26,6 +26,23 @@ type Template = {
   body: string;
   active: boolean;
 };
+
+// Review-destination row (review_platforms, item 14): one platform URL the
+// happy-path (4-5★) review gate offers the customer. Falls back to the legacy
+// google_review_url above when the org hasn't configured any.
+type ReviewPlatform = {
+  id: string;
+  platform: string;
+  review_url: string;
+  active: boolean;
+};
+
+const PLATFORM_OPTIONS = [
+  { value: "google", label: "Google" },
+  { value: "facebook", label: "Facebook" },
+  { value: "yelp", label: "Yelp" },
+  { value: "nextdoor", label: "Nextdoor" },
+] as const;
 
 const EVENT_ORDER = [
   "visit_reminder",
@@ -63,7 +80,15 @@ export default function LawnNotificationsPage() {
 
   const [enabled, setEnabled] = useState(false);
   const [reviewUrl, setReviewUrl] = useState("");
+  // Review gate threshold (item 15 config): the minimum happy rating that gets
+  // routed to public review destinations. 1-3★ stays internal regardless.
+  const [gateThreshold, setGateThreshold] = useState(4);
   const [savingSettings, setSavingSettings] = useState(false);
+
+  const [platforms, setPlatforms] = useState<ReviewPlatform[]>([]);
+  const [newPlatform, setNewPlatform] = useState("");
+  const [newPlatformUrl, setNewPlatformUrl] = useState("");
+  const [platformBusy, setPlatformBusy] = useState<string | null>(null);
 
   const [templates, setTemplates] = useState<Template[]>([]);
   // Per-row draft of subject/body so edits don't mutate the list until saved.
@@ -73,22 +98,32 @@ export default function LawnNotificationsPage() {
 
   async function load() {
     const supabase = createClient();
-    const [{ data: settings }, { data: tpls }] = await Promise.all([
+    const [{ data: settings }, { data: tpls }, { data: pf }] = await Promise.all([
       supabase
         .from("notification_settings")
-        .select("enabled, google_review_url")
+        .select("enabled, google_review_url, review_gate_threshold")
         .maybeSingle(),
       supabase
         .from("notification_templates")
         .select("id, event, channel, subject, body, active")
         .order("event")
         .order("channel"),
+      supabase
+        .from("review_platforms")
+        .select("id, platform, review_url, active")
+        .order("created_at"),
     ]);
     const s = settings as unknown as
-      | { enabled: boolean; google_review_url: string | null }
+      | {
+          enabled: boolean;
+          google_review_url: string | null;
+          review_gate_threshold: number | null;
+        }
       | null;
     setEnabled(s?.enabled ?? false);
     setReviewUrl(s?.google_review_url ?? "");
+    setGateThreshold(s?.review_gate_threshold ?? 4);
+    setPlatforms((pf as ReviewPlatform[] | null) ?? []);
     const list = (tpls as Template[] | null) ?? [];
     // Stable order regardless of DB sort.
     list.sort(
@@ -150,12 +185,82 @@ export default function LawnNotificationsPage() {
           organization_id: orgId,
           enabled,
           google_review_url: reviewUrl.trim() || null,
+          review_gate_threshold: gateThreshold,
         },
         { onConflict: "organization_id" }
       );
     setSavingSettings(false);
     if (error) toast.error(`Failed: ${error.message}`);
     else toast.success("Settings saved");
+  }
+
+  // --- Review destinations (review_platforms CRUD, item 14) ---
+
+  async function addPlatform() {
+    const url = newPlatformUrl.trim();
+    if (!newPlatform || !url) {
+      toast.error("Pick a platform and paste its review URL");
+      return;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      toast.error("URL must start with http:// or https://");
+      return;
+    }
+    setPlatformBusy("add");
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("review_platforms")
+      .insert({
+        organization_id: orgId,
+        platform: newPlatform,
+        review_url: url,
+        active: true,
+      })
+      .select("id, platform, review_url, active")
+      .single();
+    setPlatformBusy(null);
+    if (error || !data) {
+      toast.error(`Failed: ${error?.message ?? "error"}`);
+      return;
+    }
+    setPlatforms((prev) => [...prev, data as ReviewPlatform]);
+    setNewPlatform("");
+    setNewPlatformUrl("");
+    toast.success("Review destination added");
+  }
+
+  async function togglePlatform(p: ReviewPlatform) {
+    setPlatformBusy(p.id);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("review_platforms")
+      .update({ active: !p.active })
+      .eq("id", p.id);
+    setPlatformBusy(null);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setPlatforms((prev) =>
+      prev.map((x) => (x.id === p.id ? { ...x, active: !p.active } : x))
+    );
+  }
+
+  async function removePlatform(p: ReviewPlatform) {
+    if (!confirm(`Remove the ${p.platform} review destination?`)) return;
+    setPlatformBusy(p.id);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("review_platforms")
+      .delete()
+      .eq("id", p.id);
+    setPlatformBusy(null);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setPlatforms((prev) => prev.filter((x) => x.id !== p.id));
+    toast.success("Review destination removed");
   }
 
   async function toggleActive(t: Template) {
@@ -258,7 +363,30 @@ export default function LawnNotificationsPage() {
             className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm"
           />
           <p className="text-[11px] text-gray-400 mt-1">
-            Used by the “Review request” template&rsquo;s <code>{`{{review_link}}`}</code>.
+            Used by the “Review request” template&rsquo;s <code>{`{{review_link}}`}</code>,
+            and as the fallback destination when no review platforms are set
+            below.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Review gate threshold
+          </label>
+          <select
+            value={gateThreshold}
+            onChange={(e) => setGateThreshold(Number(e.target.value))}
+            className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            {[5, 4, 3].map((n) => (
+              <option key={n} value={n}>
+                {n}★ and above goes to public review
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-gray-400 mt-1">
+            Ratings below this stay internal so the office can follow up before
+            a bad experience becomes a public review.
           </p>
         </div>
 
@@ -275,6 +403,96 @@ export default function LawnNotificationsPage() {
           )}
           Save settings
         </button>
+      </div>
+
+      {/* Review destinations (item 14): where the happy-path gate sends the
+          customer. One row per platform; the gate page renders a button each. */}
+      <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+        <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+          <Star className="w-4 h-4 text-green-600" />
+          Review destinations
+        </h2>
+        <p className="text-xs text-gray-500">
+          Where happy customers are sent to leave a public review. Each active
+          destination gets its own button on the thank-you screen. With none
+          set, the Google review URL above is used.
+        </p>
+
+        {platforms.length > 0 && (
+          <ul className="space-y-2">
+            {platforms.map((p) => (
+              <li
+                key={p.id}
+                className={`flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 text-sm ${
+                  p.active ? "" : "opacity-60"
+                }`}
+              >
+                <span className="font-semibold text-gray-700 capitalize w-20 shrink-0">
+                  {p.platform}
+                </span>
+                <span className="flex-1 min-w-0 truncate text-gray-500 text-xs">
+                  {p.review_url}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => togglePlatform(p)}
+                  disabled={platformBusy === p.id}
+                  className={`text-[10px] font-semibold px-2 py-1 rounded shrink-0 ${
+                    p.active
+                      ? "bg-green-100 text-green-700"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
+                >
+                  {p.active ? "Active" : "Inactive"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removePlatform(p)}
+                  disabled={platformBusy === p.id}
+                  className="text-gray-300 hover:text-red-600 shrink-0"
+                  aria-label={`Remove ${p.platform}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex gap-2">
+          <select
+            value={newPlatform}
+            onChange={(e) => setNewPlatform(e.target.value)}
+            className="w-32 px-2 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            <option value="">Platform</option>
+            {PLATFORM_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="url"
+            placeholder="https://…review URL"
+            value={newPlatformUrl}
+            onChange={(e) => setNewPlatformUrl(e.target.value)}
+            className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+          <button
+            type="button"
+            onClick={addPlatform}
+            disabled={platformBusy === "add"}
+            className="flex items-center gap-1.5 shrink-0 text-xs font-semibold text-white bg-slate-900 rounded-lg px-3 py-2 active:bg-slate-800 disabled:opacity-50"
+          >
+            {platformBusy === "add" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Plus className="w-3.5 h-3.5" />
+            )}
+            Add
+          </button>
+        </div>
       </div>
 
       {/* Token legend */}

@@ -35,6 +35,11 @@ export type ChemicalProduct = {
   rate_unit: RateUnit | string | null;
   re_entry_hours: number | null;
   active: boolean;
+  // Inventory + restricted-use flags (compliance items 6/13): quantity_on_hand
+  // is auto-decremented by trg_decrement_product_inventory on application
+  // insert; is_restricted_use gates the RUP purchases / 30-day record tools.
+  quantity_on_hand: number | null;
+  is_restricted_use: boolean;
   notes: string | null;
   created_at: string;
 };

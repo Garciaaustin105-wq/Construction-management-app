@@ -53,14 +53,19 @@ export default async function PublicReviewGatePage({
       .eq("id", rr.id);
   }
 
-  // Org name + Google Business Profile URL (for the happy path redirect).
+  // Org name + Google Business Profile URL (for the happy path redirect) + the
+  // org's public lead-form token (for the referral prompt on the thank-you
+  // screen — the "know someone?" link credits the referrer via ?ref=).
   const { data: orgRow } = await admin
     .from("organizations")
-    .select("name")
+    .select("name, lead_form_token")
     .eq("id", rr.organization_id)
     .maybeSingle();
   const orgName =
     (orgRow as unknown as { name: string | null } | null)?.name ?? "our service";
+  const leadFormToken =
+    (orgRow as unknown as { lead_form_token: string | null } | null)
+      ?.lead_form_token ?? null;
 
   const { data: settings } = await admin
     .from("notification_settings")
@@ -103,6 +108,7 @@ export default async function PublicReviewGatePage({
               orgName={orgName}
               customerName={customerName}
               googleReviewUrl={googleReviewUrl}
+              leadFormToken={leadFormToken}
               alreadyAnswered={alreadyAnswered}
             />
           </div>

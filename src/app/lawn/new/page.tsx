@@ -27,6 +27,17 @@ const INTERVAL_BY_FREQUENCY: Record<string, number> = {
   biweekly: 2,
   monthly: 4,
 };
+// Quick-pick sensitive-site flags (item 10) — matches LawnPropertyDetails.
+const SENSITIVE_TAG_PRESETS = [
+  "daycare",
+  "school",
+  "playground",
+  "pets on site",
+  "pond / water",
+  "vegetable garden",
+  "bee hives",
+  "chemically sensitive",
+] as const;
 
 export default function NewLawnJobPage() {
   const router = useRouter();
@@ -64,6 +75,7 @@ export default function NewLawnJobPage() {
   const [sprinkler, setSprinkler] = useState(false);
   const [mapLat, setMapLat] = useState("");
   const [mapLng, setMapLng] = useState("");
+  const [sensitiveTags, setSensitiveTags] = useState<string[]>([]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -253,6 +265,7 @@ export default function NewLawnJobPage() {
       sprinkler,
       map_lat: numOrNull(mapLat),
       map_lng: numOrNull(mapLng),
+      sensitive_site_tags: sensitiveTags,
     });
     if (profileErr) {
       toast.error(`Job created, but property profile failed: ${profileErr.message}`);
@@ -443,6 +456,36 @@ export default function NewLawnJobPage() {
               />
               <span className="text-sm font-medium text-gray-700">Sprinkler system (avoid overspray)</span>
             </label>
+
+            {/* Sensitive-site flags (item 10) — stored on the lawn_jobs profile
+                and shown as a warning strip to crew on every visit. */}
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium text-gray-700">
+                Sensitive site flags
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {SENSITIVE_TAG_PRESETS.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() =>
+                      setSensitiveTags((prev) =>
+                        prev.includes(tag)
+                          ? prev.filter((t) => t !== tag)
+                          : [...prev, tag]
+                      )
+                    }
+                    className={`text-[11px] font-medium rounded-full px-2.5 py-1 border ${
+                      sensitiveTags.includes(tag)
+                        ? "bg-amber-100 border-amber-300 text-amber-800"
+                        : "bg-white border-gray-300 text-gray-500"
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-2">
               <label className="block">

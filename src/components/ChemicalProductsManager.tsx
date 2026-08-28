@@ -26,6 +26,8 @@ type Draft = {
   default_rate: number;
   rate_unit: string;
   re_entry_hours: number;
+  quantity_on_hand: number;
+  is_restricted_use: boolean;
   active: boolean;
   notes: string;
 };
@@ -37,6 +39,8 @@ const EMPTY: Draft = {
   default_rate: 0,
   rate_unit: RATE_UNITS[0],
   re_entry_hours: 0,
+  quantity_on_hand: 0,
+  is_restricted_use: false,
   active: true,
   notes: "",
 };
@@ -51,6 +55,8 @@ function toDraft(p: ChemicalProduct): Draft {
     default_rate: p.default_rate ?? 0,
     rate_unit: p.rate_unit ?? RATE_UNITS[0],
     re_entry_hours: p.re_entry_hours ?? 0,
+    quantity_on_hand: p.quantity_on_hand ?? 0,
+    is_restricted_use: p.is_restricted_use,
     active: p.active,
     notes: p.notes ?? "",
   };
@@ -118,6 +124,10 @@ export default function ChemicalProductsManager({
       rate_unit: draft.rate_unit || null,
       re_entry_hours: draft.re_entry_hours || null,
       active: draft.active,
+      // 0 = "not tracked" (the column's default); a real stock count overwrites
+      // it. Applications auto-decrement this via trg_decrement_product_inventory.
+      quantity_on_hand: draft.quantity_on_hand || null,
+      is_restricted_use: draft.is_restricted_use,
       notes: draft.notes.trim() || null,
     };
 
@@ -234,6 +244,11 @@ export default function ChemicalProductsManager({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate">
                       {p.name}
+                      {p.is_restricted_use && (
+                        <span className="ml-2 text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 align-middle">
+                          RUP
+                        </span>
+                      )}
                       {!p.active && (
                         <span className="ml-2 text-[11px] font-normal text-gray-500">
                           (inactive)
@@ -299,6 +314,11 @@ export default function ChemicalProductsManager({
                   <tr key={p.id} className={p.active ? "" : "opacity-55"}>
                     <td className="px-3 py-2 font-medium text-gray-900">
                       {p.name}
+                      {p.is_restricted_use && (
+                        <span className="ml-2 text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 align-middle">
+                          RUP
+                        </span>
+                      )}
                       {!p.active && (
                         <span className="ml-2 text-xs font-normal text-gray-500">
                           (inactive)
@@ -453,6 +473,42 @@ export default function ChemicalProductsManager({
                 <span className="mt-1 block text-[11px] text-gray-400">
                   How long people and pets must stay off the treated area. Used
                   to compute the re-entry time on every application.
+                </span>
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">
+                  Quantity on hand
+                </span>
+                <NumberInput
+                  value={draft.quantity_on_hand}
+                  onChange={(n) => setDraft({ ...draft, quantity_on_hand: n })}
+                  placeholder="0"
+                  className={`${field} mt-1`}
+                />
+                <span className="mt-1 block text-[11px] text-gray-400">
+                  Stock in the container/warehouse. Logging an application
+                  decrements this automatically; leave 0 if you don&apos;t track
+                  inventory.
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={draft.is_restricted_use}
+                  onChange={(e) =>
+                    setDraft({ ...draft, is_restricted_use: e.target.checked })
+                  }
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                />
+                <span>
+                  Restricted-use pesticide (RUP)
+                  <span className="mt-0.5 block text-[11px] text-gray-400">
+                    RUP products require a certified applicator and purchase
+                    records — they appear on the Compliance page (purchases +
+                    the 30-day customer record rule).
+                  </span>
                 </span>
               </label>
 

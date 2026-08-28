@@ -22,7 +22,22 @@ export type LawnJob = {
   sprinkler: boolean | null;
   map_lat: number | null;
   map_lng: number | null;
+  // Sensitive-site flags (item 10): daycares, schools, pets, ponds, etc. —
+  // crew sees them as a warning strip on the visit page before treating.
+  sensitive_site_tags?: string[] | null;
 };
+
+// Quick-pick tags in the editor; custom text can also be added.
+const SENSITIVE_TAG_PRESETS = [
+  "daycare",
+  "school",
+  "playground",
+  "pets on site",
+  "pond / water",
+  "vegetable garden",
+  "bee hives",
+  "chemically sensitive",
+] as const;
 
 export default function LawnPropertyDetails({
   jobId,
@@ -57,6 +72,23 @@ export default function LawnPropertyDetails({
   const [mapLng, setMapLng] = useState<string>(
     initial?.map_lng != null ? String(initial.map_lng) : ""
   );
+  const [sensitiveTags, setSensitiveTags] = useState<string[]>(
+    initial?.sensitive_site_tags ?? []
+  );
+  const [customTag, setCustomTag] = useState<string>("");
+
+  function toggleTag(tag: string) {
+    setSensitiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  }
+
+  function addCustomTag() {
+    const t = customTag.trim().toLowerCase();
+    if (!t) return;
+    if (!sensitiveTags.includes(t)) setSensitiveTags((prev) => [...prev, t]);
+    setCustomTag("");
+  }
 
   function numOrNull(s: string): number | null {
     if (s.trim() === "") return null;
@@ -102,6 +134,7 @@ export default function LawnPropertyDetails({
       sprinkler,
       map_lat: numOrNull(mapLat),
       map_lng: numOrNull(mapLng),
+      sensitive_site_tags: sensitiveTags,
     };
 
     const { error } = await supabase
@@ -200,6 +233,63 @@ export default function LawnPropertyDetails({
           </span>
         </label>
 
+        {/* Sensitive-site tags (item 10) — crew sees these as a warning strip. */}
+        <div className="space-y-1.5">
+          <span className="text-sm font-medium text-gray-700">
+            Sensitive site flags
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {SENSITIVE_TAG_PRESETS.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleTag(tag)}
+                className={`text-[11px] font-medium rounded-full px-2.5 py-1 border ${
+                  sensitiveTags.includes(tag)
+                    ? "bg-amber-100 border-amber-300 text-amber-800"
+                    : "bg-white border-gray-300 text-gray-500"
+                }`}
+              >
+                {tag}
+              </button>
+            ))}
+            {sensitiveTags
+              .filter((t) => !(SENSITIVE_TAG_PRESETS as readonly string[]).includes(t))
+              .map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  className="text-[11px] font-medium rounded-full px-2.5 py-1 border bg-amber-100 border-amber-300 text-amber-800"
+                >
+                  {tag}
+                </button>
+              ))}
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              value={customTag}
+              onChange={(e) => setCustomTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addCustomTag();
+                }
+              }}
+              className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+              placeholder="Custom flag (e.g. hospice next door)"
+            />
+            <button
+              type="button"
+              onClick={addCustomTag}
+              className="text-xs font-semibold text-slate-700 border border-gray-300 rounded-lg px-3"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="text-sm font-medium text-gray-700">Map lat</span>
@@ -248,7 +338,8 @@ export default function LawnPropertyDetails({
       profile.lot_sqft != null ||
       profile.sprinkler ||
       profile.map_lat != null ||
-      profile.map_lng != null);
+      profile.map_lng != null ||
+      (profile.sensitive_site_tags?.length ?? 0) > 0);
 
   return (
     <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
@@ -273,6 +364,22 @@ export default function LawnPropertyDetails({
         </p>
       ) : (
         <dl className="space-y-1.5 text-sm">
+          {/* Sensitive-site warning strip — crew checks this before treating. */}
+          {(profile?.sensitive_site_tags?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+              <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wide">
+                Sensitive site
+              </span>
+              {profile!.sensitive_site_tags!.map((tag) => (
+                <span
+                  key={tag}
+                  className="text-[11px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
           {profile?.gate_code && (
             <div className="flex justify-between gap-2">
               <dt className="text-gray-500">Gate code</dt>

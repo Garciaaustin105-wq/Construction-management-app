@@ -18,19 +18,33 @@ export default function ReviewGate({
   token,
   customerName,
   googleReviewUrl,
+  leadFormToken,
   alreadyAnswered,
 }: {
   token: string;
   orgName: string;
   customerName: string | null;
   googleReviewUrl: string | null;
+  leadFormToken: string | null;
   alreadyAnswered: boolean;
 }) {
   const [rating, setRating] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<string>("");
+  const [photoB64, setPhotoB64] = useState<string | null>(null);
+  const [photoName, setPhotoName] = useState<string | null>(null);
+  const [platforms, setPlatforms] = useState<
+    { platform: string; review_url: string }[] | null
+  >(null);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const PLATFORM_LABEL: Record<string, string> = {
+    google: "Leave a Google review",
+    facebook: "Leave a Facebook review",
+    yelp: "Leave a Yelp review",
+    nextdoor: "Leave a Nextdoor recommendation",
+  };
 
   if (alreadyAnswered) {
     return (
@@ -77,6 +91,7 @@ export default function ReviewGate({
     };
     const note = feedback.trim();
     if (note) payload.feedback = note;
+    if (photoB64) payload.photo = photoB64;
     try {
       const res = await fetch("/api/review-feedback", {
         method: "POST",
@@ -84,6 +99,10 @@ export default function ReviewGate({
         body: JSON.stringify(payload),
       });
       if (res.status === 201) {
+        const data = (await res.json().catch(() => ({}))) as {
+          platforms?: { platform: string; review_url: string }[];
+        };
+        setPlatforms(data.platforms ?? []);
         setSubmitted(true);
       } else {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -115,24 +134,56 @@ export default function ReviewGate({
             <p className="text-lg font-semibold text-gray-900">
               Thanks for the great review!
             </p>
-            {googleReviewUrl ? (
-              <a
-                href={googleReviewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block bg-green-700 text-white font-semibold text-sm rounded-lg px-5 py-3 mt-4 active:bg-green-800"
-              >
-                Leave a Google review
-              </a>
-            ) : (
-              <p className="text-sm text-gray-600 mt-2">
-                We&apos;re glad you were happy!
-              </p>
-            )}
+            {/* Review-platform destinations (item 14): the API resolves the
+                org's active platforms (falling back to Google); one button each. */}
+            {(() => {
+              const dests =
+                platforms && platforms.length > 0
+                  ? platforms
+                  : googleReviewUrl
+                  ? [{ platform: "google", review_url: googleReviewUrl }]
+                  : [];
+              if (dests.length === 0) {
+                return (
+                  <p className="text-sm text-gray-600 mt-2">
+                    We&apos;re glad you were happy!
+                  </p>
+                );
+              }
+              return (
+                <div className="mt-4 flex flex-col items-center gap-2">
+                  {dests.map((d) => (
+                    <a
+                      key={d.platform}
+                      href={d.review_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block bg-green-700 text-white font-semibold text-sm rounded-lg px-5 py-3 active:bg-green-800"
+                    >
+                      {PLATFORM_LABEL[d.platform.toLowerCase()] ??
+                        `Leave a ${d.platform} review`}
+                    </a>
+                  ))}
+                </div>
+              );
+            })()}
           </>
         ) : (
           <p className="text-lg font-semibold text-gray-900">
             Thank you - the office will follow up.
+          </p>
+        )}
+        {/* Referral prompt (item 17): the link credits the referrer — /api/leads
+            resolves ?ref= (this review token) to this customer. */}
+        {leadFormToken && (
+          <p className="text-sm text-gray-600 mt-5">
+            Know someone who needs lawn care?{" "}
+            <a
+              href={`/lead/${leadFormToken}?ref=${encodeURIComponent(token)}`}
+              className="text-green-700 font-semibold underline"
+            >
+              Refer them here
+            </a>
           </p>
         )}
       </div>
@@ -176,8 +227,43 @@ export default function ReviewGate({
 
       {rating != null && isHappy && (
         <p className="text-sm text-gray-600 text-center">
-          Glad to hear it! Would you mind leaving us a Google review?
+          Glad to hear it! Would you mind leaving us a public review?
         </p>
+      )}
+
+      {/* Optional photo attach (item 16) — sent base64 in the POST body. */}
+      {rating != null && (
+        <div className="space-y-1">
+          <label className="block text-xs font-semibold text-gray-700">
+            {photoName
+              ? `Photo attached: ${photoName}`
+              : "Add a photo (optional)"}
+          </label>
+          <input
+            type="file"
+            accept="image/jpeg,image/png"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) {
+                setPhotoB64(null);
+                setPhotoName(null);
+                return;
+              }
+              if (file.size > 2_500_000) {
+                setError("Photo is too large (max 2.5 MB).");
+                return;
+              }
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = String(reader.result ?? "");
+                setPhotoB64(result.split(",")[1] ?? null);
+                setPhotoName(file.name);
+              };
+              reader.readAsDataURL(file);
+            }}
+            className="text-xs text-gray-600"
+          />
+        </div>
       )}
 
       {rating != null && !isHappy && (
