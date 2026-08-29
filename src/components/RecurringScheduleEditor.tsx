@@ -32,6 +32,12 @@ interface RecurringScheduleEditorProps {
     default_duration_minutes: number | null;
   }[];
   canEdit: boolean;
+  // Opens straight into the edit form instead of the read-only summary —
+  // used when a caller (e.g. the calendar's inline schedule editor) already
+  // knows the office wants to edit, so they shouldn't need an extra tap on
+  // "Edit" first. Defaults to false, preserving every existing call site's
+  // read-only-first behavior.
+  initialEditing?: boolean;
   onSaved?: (patch: {
     frequency: string;
     interval_weeks: number;
@@ -51,6 +57,7 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
   initial,
   lawnServices,
   canEdit,
+  initialEditing = false,
   onSaved,
 }) => {
   const toast = useToast();
@@ -80,7 +87,7 @@ const RecurringScheduleEditor: React.FC<RecurringScheduleEditorProps> = ({
       ? ""
       : String(initial.estimated_duration_minutes)
   );
-  const [editing, setEditing] = useState<boolean>(false);
+  const [editing, setEditing] = useState<boolean>(initialEditing);
   const [saving, setSaving] = useState<boolean>(false);
 
   const toggleDay = (d: number) => {

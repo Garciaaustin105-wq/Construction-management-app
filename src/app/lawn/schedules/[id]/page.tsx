@@ -46,6 +46,12 @@ type Schedule = {
   paused_until: string | null;
   notes: string | null;
   estimated_duration_minutes: number | null;
+  // Seeds crew_id on newly generated visits (cron + the two client-side
+  // generation paths below) — null = unassigned, the old/default behavior.
+  // Distinct from jobs.assigned_crew (an array, edited via JobAssignmentEditor
+  // below): that's "who's authorized on this job," this is "who gets put on
+  // a fresh visit by default." Deliberately not derived from one another.
+  default_crew_id: string | null;
   // customers is reached through jobs (recurring_schedules has job_id, no
   // customer_id) — embed jobs(name, address, description, customers(name)).
   // address/description live on the jobs row (same as construction) so the
@@ -96,6 +102,8 @@ export default function ScheduleDetailPage({
       default_duration_minutes: number | null;
     }[]
   >([]);
+  const [crews, setCrews] = useState<{ id: string; name: string }[]>([]);
+  const [savingDefaultCrew, setSavingDefaultCrew] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -133,7 +141,7 @@ export default function ScheduleDetailPage({
       const { data: sched } = await supabase
         .from("recurring_schedules")
         .select(
-          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, estimated_duration_minutes, jobs(name, address, description, customer_id, assigned_crew, customers(name))"
+          "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, active, paused_from, paused_until, notes, estimated_duration_minutes, default_crew_id, jobs(name, address, description, customer_id, assigned_crew, customers(name))"
         )
         .eq("id", id)
         .maybeSingle();
@@ -145,7 +153,7 @@ export default function ScheduleDetailPage({
       setSchedule(sched as unknown as Schedule);
 
       const jobId = (sched as unknown as Schedule).job_id;
-      const [{ data: visitRows }, { data: lawnJob }, { data: services }] = await Promise.all([
+      const [{ data: visitRows }, { data: lawnJob }, { data: services }, { data: crewRows }] = await Promise.all([
         supabase
           .from("lawn_visits")
           .select("id, due_date, status, crew_id, notes, skip_reason")
@@ -161,6 +169,7 @@ export default function ScheduleDetailPage({
           .select("id, name, default_price, default_duration_minutes")
           .eq("active", true)
           .order("name"),
+        supabase.from("crew_members").select("id, name").order("name"),
       ]);
       setVisits((visitRows as unknown as Visit[]) ?? []);
       setProperty((lawnJob as unknown as LawnJob | null) ?? null);
@@ -172,6 +181,7 @@ export default function ScheduleDetailPage({
           default_duration_minutes: number | null;
         }[]) ?? []
       );
+      setCrews((crewRows as { id: string; name: string }[] | null) ?? []);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -307,6 +317,7 @@ export default function ScheduleDetailPage({
       job_id: schedule.job_id,
       due_date,
       status: "pending" as const,
+      crew_id: schedule.default_crew_id,
     }));
     const { error } = await supabase.from("lawn_visits").insert(inserts);
     setRegenerating(false);
@@ -372,6 +383,7 @@ export default function ScheduleDetailPage({
         job_id: schedule.job_id,
         due_date,
         status: "pending" as const,
+        crew_id: schedule.default_crew_id,
       }));
       const { error: insErr } = await supabase.from("lawn_visits").insert(inserts);
       if (insErr && insErr.code !== "23505") {
@@ -472,6 +484,23 @@ export default function ScheduleDetailPage({
     toast.success("Visit moved");
   }
 
+  async function saveDefaultCrew(crewId: string | null) {
+    if (!schedule) return;
+    setSavingDefaultCrew(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("recurring_schedules")
+      .update({ default_crew_id: crewId })
+      .eq("id", schedule.id);
+    setSavingDefaultCrew(false);
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+      return;
+    }
+    setSchedule({ ...schedule, default_crew_id: crewId });
+    toast.success(crewId ? "Default crew set" : "Default crew cleared");
+  }
+
   if (!authorized || !schedule) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -557,6 +586,35 @@ export default function ScheduleDetailPage({
             )}
             Generate / extend
           </button>
+        </div>
+
+        {/* Default crew — seeds crew_id on every NEW visit this schedule
+            generates (nightly cron, Generate/extend, and Reset upcoming
+            above). Doesn't touch visits that already exist. */}
+        <div className="pt-1">
+          <label className="block text-xs font-medium text-gray-500 mb-1">
+            Default crew for new visits
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              value={schedule.default_crew_id ?? ""}
+              onChange={(e) => saveDefaultCrew(e.target.value === "" ? null : e.target.value)}
+              disabled={savingDefaultCrew}
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-50"
+            >
+              <option value="">Unassigned</option>
+              {crews.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            {savingDefaultCrew && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
+          </div>
+          <p className="text-[11px] text-gray-400 mt-1">
+            Applies to visits generated from now on — doesn&rsquo;t change
+            already-scheduled visits.
+          </p>
         </div>
 
         {/* Export this property's full record (photos, visits, invoices) as a
