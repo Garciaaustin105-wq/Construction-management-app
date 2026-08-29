@@ -58,7 +58,6 @@ import {
   LayoutTemplate,
   CalendarDays,
   ShieldCheck,
-  Ruler,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -148,14 +147,14 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/compliance", label: "Compliance", Icon: ShieldCheck },
       { href: "/admin/crew-members", label: "Crew", Icon: UsersRound },
-      // Headline lawn feature (user verdict, docs/handoff-estimator-v2): must
-      // be a TOP-of-nav entry, not buried inside estimate creation. Sits right
-      // above Estimates on purpose.
-      { href: "/estimates/quick", label: "Measure & quote", Icon: Ruler },
+      // "Measure & quote" (/estimates/quick) and Templates (/templates) used
+      // to be separate top-of-nav tabs, but neither is a distinct top-level
+      // concept — both are entry points/config that live inside Estimates
+      // (the New menu and a Templates sub-view respectively). Consolidated
+      // per user request 2026-08-29: one Estimates tab, not three. The
+      // routes themselves still work (quick-actions on /lawn still link
+      // /estimates/quick directly; /templates redirects into the new view).
       { href: "/estimates", label: "Estimates", Icon: FileText },
-      // Reusable line-item templates — office/PM manage (/templates gate
-      // matches OFFICE_OR_PM; editor loads/saves them inline).
-      { href: "/templates", label: "Templates", Icon: LayoutTemplate },
       { href: "/invoices", label: "Invoices", Icon: Receipt },
       { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
       // AI admin (slice 1: visit summarization). Office/admin only — the page
