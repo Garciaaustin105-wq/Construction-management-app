@@ -42,7 +42,7 @@ export default async function CustomersPage() {
           role === "office" || role === "admin" ? "Directory" : "Read-only"
         }
       />
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-3">
+      <main className="max-w-md lg:max-w-6xl mx-auto p-4 space-y-3">
         {/* Client Portal (invite customers to the authed portal + reply to
             their messages) used to be its own top-level nav tab, listing the
             same customers as this page — it read as a duplicate "Customers"
