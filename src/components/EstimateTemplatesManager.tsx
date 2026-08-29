@@ -297,14 +297,17 @@ export default function EstimateTemplatesManager({
           No templates yet. Add one to start building your catalog.
         </p>
       ) : (
-        <ul className="space-y-2">
+        // Catalog of templates, not comparable rows — a grid of cards reads
+        // better here than a table (and doesn't stretch to a single skinny
+        // column of huge cards at desktop widths like max-w-7xl).
+        <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {sorted.map((t) => (
             <li
               key={t.id}
-              className="bg-white rounded-lg p-3 shadow-sm flex items-center justify-between"
+              className="bg-white rounded-lg p-3 shadow-sm flex flex-col"
             >
-              <div>
-                <p className="text-lg font-semibold">{t.name}</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-lg font-semibold truncate">{t.name}</p>
                 <p className="text-sm text-gray-500 truncate">
                   {t.description ?? "—"}
                 </p>
@@ -321,7 +324,7 @@ export default function EstimateTemplatesManager({
                   )}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3 mt-2 pt-2 border-t border-gray-100">
                 <button
                   onClick={() => openEdit(t)}
                   className="text-gray-400 hover:text-gray-700"
