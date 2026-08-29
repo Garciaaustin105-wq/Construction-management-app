@@ -279,7 +279,7 @@ function LawnMarketing() {
         <p className="mt-2 text-gray-600 text-center">
           Start free. Upgrade only when your crew or customer list outgrows it.
         </p>
-        <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           <div className="rounded-xl border-2 border-brand p-5 flex flex-col">
             <h3 className="font-semibold text-gray-900">{free.label}</h3>
             <p className="mt-1 text-2xl font-bold text-gray-900">$0</p>

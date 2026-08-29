@@ -3,9 +3,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Check, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import type { PaidTier } from "@/lib/plans";
 
 type Tier = {
-  tier: "starter" | "pro" | "enterprise";
+  tier: PaidTier;
   label: string;
   blurb: string;
   maxUsers: number | null;
@@ -78,6 +79,7 @@ export default function BillingForm({
     free: "Free",
     trial: "Trial",
     starter: "Starter",
+    growth: "Growth",
     pro: "Pro",
     enterprise: "Enterprise",
     expired: "Expired",
@@ -229,7 +231,7 @@ export default function BillingForm({
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {tiers.map((tier) => (
             <div
               key={tier.tier}

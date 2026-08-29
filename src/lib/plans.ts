@@ -27,6 +27,7 @@ export type PlanTier =
   | "free"
   | "trial"
   | "starter"
+  | "growth"
   | "pro"
   | "enterprise"
   | "expired"
@@ -132,6 +133,28 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     order: 1,
     blurb: "For small crews getting organized.",
   },
+  // Added 2026-08-29: Starter -> Pro was a 3.0x price jump ($49 -> $149) with
+  // no landing spot for a contractor who's outgrown Starter's 10-job/15-crew
+  // cap but doesn't need Pro's 50-job/100-crew ceiling. Sized as a rough
+  // interpolation between the two (not independently competitor-researched
+  // like the lawn tiers were -- sanity-check these numbers before pricing
+  // publicly).
+  growth: {
+    label: "Growth",
+    priceId: process.env.STRIPE_PRICE_GROWTH_CONSTRUCTION ?? null,
+    priceMonthly: 89,
+    maxUsers: 12,
+    maxJobs: 25,
+    maxLineItemsPerDoc: 45,
+    maxStorageBytes: 12 * GB,
+    storageCustom: false,
+    maxCrewMembers: 50,
+    maxCustomers: 200,
+    maxAiActionsPerMonth: 25,
+    maxRouteOptsPerDay: null,
+    order: 2,
+    blurb: "For contractors running more than one job at a time.",
+  },
   pro: {
     label: "Pro",
     priceId: process.env.STRIPE_PRICE_PRO_CONSTRUCTION ?? process.env.STRIPE_PRICE_PRO ?? null,
@@ -145,7 +168,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCustomers: 500,
     maxAiActionsPerMonth: 100,
     maxRouteOptsPerDay: null,
-    order: 2,
+    order: 3,
     blurb: "For growing contractors running multiple jobs.",
   },
   enterprise: {
@@ -161,7 +184,7 @@ const CONSTRUCTION_TIERS: Record<PlanTier, PlanConfig> = {
     maxCustomers: null,
     maxAiActionsPerMonth: 5000,
     maxRouteOptsPerDay: null,
-    order: 3,
+    order: 4,
     blurb: "Unlimited users + jobs. Need more storage? Call us.",
   },
   expired: {
@@ -259,6 +282,30 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     order: 1,
     blurb: "For a solo operator or small route.",
   },
+  // Added 2026-08-29: competitor research (LawnVex, GorillaDesk, Jobber,
+  // Yardbook, Service Autopilot) showed every one of them steps tier-to-tier
+  // at roughly 1.4x-2.8x price. Ours was $29 -> $149, a 5.1x jump -- the
+  // single largest step of any competitor reviewed, including Service
+  // Autopilot's widely-criticized $49->$199 gap. This tier fills that gap:
+  // sized for an operator who's outgrown Starter's 100-customer/25-crew cap
+  // but doesn't need Pro's 1000/150 ceiling. A small AI allotment (vs
+  // Starter's 0) gives a taste of the feature before Pro's 100/mo.
+  growth: {
+    label: "Growth",
+    priceId: process.env.STRIPE_PRICE_GROWTH_LAWN ?? null,
+    priceMonthly: 69,
+    maxUsers: 12,
+    maxJobs: 65,
+    maxLineItemsPerDoc: 25,
+    maxStorageBytes: 20 * GB,
+    storageCustom: false,
+    maxCrewMembers: 50,
+    maxCustomers: 400,
+    maxAiActionsPerMonth: 25,
+    maxRouteOptsPerDay: null,
+    order: 2,
+    blurb: "For a lawn business that's outgrown one crew.",
+  },
   pro: {
     label: "Pro",
     priceId: process.env.STRIPE_PRICE_PRO_LAWN ?? process.env.STRIPE_PRICE_PRO ?? null,
@@ -278,7 +325,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCustomers: 1000,
     maxAiActionsPerMonth: 100,
     maxRouteOptsPerDay: null,
-    order: 2,
+    order: 3,
     blurb: "For growing lawn businesses with multiple crews.",
   },
   enterprise: {
@@ -294,7 +341,7 @@ const LAWN_TIERS: Record<PlanTier, PlanConfig> = {
     maxCustomers: null,
     maxAiActionsPerMonth: 5000,
     maxRouteOptsPerDay: null,
-    order: 3,
+    order: 4,
     blurb: "For established operations. Need more storage? Call us.",
   },
   expired: {
@@ -336,7 +383,7 @@ export const PLAN_TIERS: Record<PlanTier, PlanConfig> = isLawn()
   : CONSTRUCTION_TIERS;
 
 /** Purchasable tiers, in display order. */
-export const PAID_TIERS = ["starter", "pro", "enterprise"] as const;
+export const PAID_TIERS = ["starter", "growth", "pro", "enterprise"] as const;
 /** The narrow union of tiers a customer can buy (subset of PlanTier). */
 export type PaidTier = (typeof PAID_TIERS)[number];
 

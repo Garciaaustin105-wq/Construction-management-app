@@ -9,16 +9,17 @@ The platform never touches customer money — Stripe here is SaaS subs ONLY.
 
 ---
 
-## 1. Prices to create in Stripe (6 total)
+## 1. Prices to create in Stripe (8 total)
 
 All prices: **Recurring → Monthly → USD**, quantity unit = 1 (flat per-org).
-You can use one Product ("Terra Vista SaaS") with six prices, or one product per
+You can use one Product ("Terra Vista SaaS") with eight prices, or one product per
 tier — either works; the app maps tier by the **price id** env var, not by product.
 
 ### Construction variant  (price env → set on the construction Vercel project)
 | Tier      | Amount  | Env var                          |
 |-----------|---------|----------------------------------|
 | Starter   | $49/mo  | `STRIPE_PRICE_STARTER_CONSTRUCTION` |
+| Growth    | **$89/mo** (NEW 2026-08-29) | `STRIPE_PRICE_GROWTH_CONSTRUCTION` |
 | Pro       | $149/mo | `STRIPE_PRICE_PRO_CONSTRUCTION`    |
 | Business  | $399/mo | `STRIPE_PRICE_ENTERPRISE_CONSTRUCTION` |
 
@@ -26,8 +27,16 @@ tier — either works; the app maps tier by the **price id** env var, not by pro
 | Tier      | Amount  | Env var                          |
 |-----------|---------|----------------------------------|
 | Starter   | $29/mo  | `STRIPE_PRICE_STARTER_LAWN` |
+| Growth    | **$69/mo** (NEW 2026-08-29 — fills the 5.1x Starter→Pro gap flagged by competitor research) | `STRIPE_PRICE_GROWTH_LAWN` |
 | Pro       | **$149/mo** (NEW — was $99) | `STRIPE_PRICE_PRO_LAWN` |
 | Business  | $199/mo | `STRIPE_PRICE_ENTERPRISE_LAWN` |
+
+> Until `STRIPE_PRICE_GROWTH_*` is set, `plans.ts` resolves Growth's `priceId`
+> to `null` (there's no legacy base-var fallback for a brand-new tier, unlike
+> Starter/Pro/Enterprise). A null `priceId` means the tier renders with no
+> "Subscribe" action on the billing page (see `admin/billing/page.tsx`'s
+> `.filter(t => PLAN_TIERS[t].priceId)`) rather than erroring — so shipping
+> the code before the Stripe price exists is safe, just inert.
 
 For each: Dashboard → Products → Add product → Recurring → Standard → Monthly →
 USD → enter amount → Save → copy the `price_…` id → paste into the matching env

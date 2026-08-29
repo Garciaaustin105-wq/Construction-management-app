@@ -4,7 +4,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getLimits, priceIdToTier, TRIAL_DAYS, PLAN_TIERS } from "@/lib/plans";
+import { getLimits, priceIdToTier, TRIAL_DAYS, PLAN_TIERS, type PaidTier } from "@/lib/plans";
 
 // ---------------------------------------------------------------------------
 // Stripe instance (lazy, shared)
@@ -157,7 +157,7 @@ export async function ensureStripeCustomer(
 /** Start a Stripe Checkout session for a paid tier (flat per-org monthly). */
 export async function createCheckoutSession(
   org: OrgForStripe,
-  tier: "starter" | "pro" | "enterprise",
+  tier: PaidTier,
   origin: string
 ): Promise<{ url: string }> {
   const stripe = await getStripe();
