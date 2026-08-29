@@ -28,6 +28,10 @@ export type BoardVisit = {
   // Needed so a crew-reassign drag can offer to also set the schedule's
   // default crew (recurring_schedules.default_crew_id) for future visits.
   recurring_schedule_id: string;
+  // Postgres `time` values ("HH:MM:SS"), only used by Day view. Most visits
+  // don't have one set -- those sort last and show no time label.
+  scheduled_window_start: string | null;
+  scheduled_window_end: string | null;
 };
 
 export type BoardCrew = {
@@ -40,7 +44,7 @@ export type BoardCrew = {
 };
 
 export type LawnCalendarBoardProps = {
-  view: "month" | "week" | "agenda";
+  view: "month" | "week" | "day" | "agenda";
   todayIso: string; // "YYYY-MM-DD"
   visits: BoardVisit[];
   crews: BoardCrew[];
@@ -59,8 +63,17 @@ export type LawnCalendarBoardProps = {
     nextHref: string;
     todayHref: string;
   };
+  day?: {
+    date: string; // "YYYY-MM-DD"
+    label: string; // already formatted, e.g. "Monday, Sep 15"
+    prevHref: string;
+    nextHref: string;
+    todayHref: string;
+    isToday: boolean;
+  };
   monthViewHref: string;
   weekViewHref: string;
+  dayViewHref: string;
   agendaViewHref: string;
 };
 
@@ -84,6 +97,19 @@ const FILTER_BTN = (active: boolean) =>
   `px-2.5 py-1 rounded-md text-xs font-medium capitalize transition-colors ${
     active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"
   }`;
+
+// "08:00:00" -> "8:00 AM". Returns null for an unset/unparseable window so
+// callers can decide what to show in its place.
+function formatWindowTime(t: string | null): string | null {
+  if (!t) return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(t);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = m[2];
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 === 0 ? 12 : h % 12;
+  return `${h}:${min} ${ampm}`;
+}
 
 const STATUS_BADGE: Record<BoardVisit["status"], string> = {
   done: "bg-gray-100 text-gray-500",
@@ -122,17 +148,21 @@ function DraggableChip({
   crewName,
   color,
   extraClassName,
+  showTime,
 }: {
   visit: BoardVisit;
   crewName: string;
   color: { dot: string; chip: string };
   extraClassName?: string;
+  // Day view only — prefixes the chip with its scheduled window, if set.
+  showTime?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: visit.id });
   const style: CSSProperties = {
     transform: transform ? CSS.Translate.toString(transform) : undefined,
   };
   const skipped = visit.status === "skipped";
+  const timeLabel = showTime ? formatWindowTime(visit.scheduled_window_start) : null;
   return (
     <div
       ref={setNodeRef}
@@ -149,6 +179,7 @@ function DraggableChip({
       ) : (
         <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${color.dot}`} />
       )}
+      {timeLabel && <span className="font-mono text-[9px] text-gray-500 align-middle mr-1">{timeLabel}</span>}
       <span className="font-semibold align-middle">{crewName}</span>
       {visit.service_type && <span className="align-middle"> {visit.service_type}</span>}
     </div>
@@ -156,8 +187,20 @@ function DraggableChip({
 }
 
 export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
-  const { view, todayIso, visits, crews, serviceTypes, month, week, monthViewHref, weekViewHref, agendaViewHref } =
-    props;
+  const {
+    view,
+    todayIso,
+    visits,
+    crews,
+    serviceTypes,
+    month,
+    week,
+    day,
+    monthViewHref,
+    weekViewHref,
+    dayViewHref,
+    agendaViewHref,
+  } = props;
   const toast = useToast();
 
   // Local optimistic visit state — reset whenever the server hands us a fresh
@@ -403,6 +446,14 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
           Week
         </Link>
         <Link
+          href={dayViewHref}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+            view === "day" ? "bg-brand text-white" : "bg-white text-gray-700 border border-gray-200"
+          }`}
+        >
+          Day
+        </Link>
+        <Link
           href={agendaViewHref}
           className={`px-4 py-2 rounded-lg text-sm font-semibold ${
             view === "agenda" ? "bg-brand text-white" : "bg-white text-gray-700 border border-gray-200"
@@ -636,6 +687,61 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
         </>
       )}
 
+      {/* Day view — one crew per row (+ Unassigned), visits within a row
+          sorted by scheduled window start (unset windows sort last and show
+          no time). Reuses the exact same `${date}::${crewId}` cell-id
+          convention as Week view, so handleDragEnd needs no Day-specific
+          branch -- dragging within the day just reassigns crew like Week's
+          same-day drag already does. */}
+      {view === "day" && day && (
+        <>
+          <div className="flex items-center justify-between">
+            <Link href={day.prevHref} className="p-2 -ml-2 text-gray-600 active:text-gray-900" aria-label="Previous day">
+              <ChevronLeft className="w-5 h-5" />
+            </Link>
+            <div className="text-center">
+              <p className="text-base font-bold text-gray-900">{day.label}</p>
+              {!day.isToday && (
+                <Link href={day.todayHref} className="text-xs text-blue-600 font-medium">
+                  Today
+                </Link>
+              )}
+            </div>
+            <Link href={day.nextHref} className="p-2 -mr-2 text-gray-600 active:text-gray-900" aria-label="Next day">
+              <ChevronRight className="w-5 h-5" />
+            </Link>
+          </div>
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <div className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white overflow-hidden">
+              {[...crews, { id: "unassigned", name: "Unassigned" }].map((c) => {
+                const rowVisits = filteredVisits
+                  .filter((v) => v.due_date === day.date && (c.id === "unassigned" ? !v.crew_id : v.crew_id === c.id))
+                  .sort((a, b) => {
+                    const at = a.scheduled_window_start ?? "";
+                    const bt = b.scheduled_window_start ?? "";
+                    if (!at && !bt) return 0;
+                    if (!at) return 1;
+                    if (!bt) return -1;
+                    return at.localeCompare(bt);
+                  });
+                return (
+                  <div key={c.id} className="flex items-start gap-3 p-2">
+                    <div className="w-28 shrink-0 text-sm font-medium text-gray-700 pt-1">{c.name}</div>
+                    <DroppableCell id={`${day.date}::${c.id}`} className="flex-1 min-h-[44px] flex flex-wrap gap-1.5 p-1 rounded">
+                      {rowVisits.length === 0 && <span className="text-xs text-gray-300 py-1">No visits</span>}
+                      {rowVisits.map((v) => (
+                        <DraggableChip key={v.id} visit={v} crewName={nameFor(v)} color={colorFor(v)} showTime />
+                      ))}
+                    </DroppableCell>
+                  </div>
+                );
+              })}
+            </div>
+          </DndContext>
+        </>
+      )}
+
       {/* Agenda view — no drag-and-drop, plain clickable list */}
       {view === "agenda" &&
         (agendaGroups.length === 0 ? (
@@ -688,7 +794,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
         ))}
 
       {/* Crew & Jobs legend — Month and Week views only */}
-      {(view === "month" || view === "week") && (
+      {(view === "month" || view === "week" || view === "day") && (
         <section className="space-y-2 pt-2">
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">Crew &amp; Jobs</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">

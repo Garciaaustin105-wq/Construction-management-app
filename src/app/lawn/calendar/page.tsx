@@ -17,9 +17,13 @@ type CalVisit = {
   status: string;
   crew_id: string | null;
   recurring_schedule_id: string;
+  scheduled_window_start: string | null;
+  scheduled_window_end: string | null;
   recurring_schedules: { service_type: string | null } | null;
   jobs: { name: string | null } | null;
 };
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 const MONTH_NAMES = [
   "January",
@@ -72,7 +76,8 @@ export default async function LawnCalendarPage({
   const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
-  const view = sp.view === "week" || sp.view === "agenda" ? sp.view : "month";
+  const view =
+    sp.view === "week" || sp.view === "day" || sp.view === "agenda" ? sp.view : "month";
 
   const todayIso = new Date().toISOString().slice(0, 10);
 
@@ -103,6 +108,11 @@ export default async function LawnCalendarPage({
     const weekEnd = addDays(weekStart, 6);
     gte = toISODate(weekStart);
     lte = toISODate(weekEnd);
+  } else if (view === "day") {
+    const dayIso =
+      sp.date && !isNaN(new Date(`${sp.date}T00:00:00`).getTime()) ? sp.date : todayIso;
+    gte = dayIso;
+    lte = dayIso;
   } else {
     gte = todayIso;
     lte = toISODate(addDays(new Date(), 30));
@@ -112,7 +122,7 @@ export default async function LawnCalendarPage({
     supabase
       .from("lawn_visits")
       .select(
-        "id, due_date, status, crew_id, recurring_schedule_id, recurring_schedules(service_type), jobs(name)",
+        "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name)",
       )
       .gte("due_date", gte)
       .lte("due_date", lte)
@@ -130,6 +140,8 @@ export default async function LawnCalendarPage({
       status: v.status as BoardVisit["status"],
       crew_id: v.crew_id,
       recurring_schedule_id: v.recurring_schedule_id,
+      scheduled_window_start: v.scheduled_window_start,
+      scheduled_window_end: v.scheduled_window_end,
       job_name: v.jobs?.name ?? "Untitled",
       service_type: v.recurring_schedules?.service_type ?? null,
     }));
@@ -237,6 +249,33 @@ export default async function LawnCalendarPage({
     };
   }
 
+  // Build day view props if applicable
+  let dayProps:
+    | {
+        date: string;
+        label: string;
+        prevHref: string;
+        nextHref: string;
+        todayHref: string;
+        isToday: boolean;
+      }
+    | undefined = undefined;
+
+  if (view === "day") {
+    const dayIso =
+      sp.date && !isNaN(new Date(`${sp.date}T00:00:00`).getTime()) ? sp.date : todayIso;
+    const d = new Date(`${dayIso}T00:00:00`);
+    const label = `${DAY_NAMES[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}`;
+    dayProps = {
+      date: dayIso,
+      label,
+      prevHref: `/lawn/calendar?view=day&date=${toISODate(addDays(d, -1))}`,
+      nextHref: `/lawn/calendar?view=day&date=${toISODate(addDays(d, 1))}`,
+      todayHref: `/lawn/calendar?view=day`,
+      isToday: dayIso === todayIso,
+    };
+  }
+
   // Fetch calendar feed for sync card
   const h = await headers();
   const host = h.get("x-forwarded-host") || h.get("host") || "localhost";
@@ -269,8 +308,10 @@ export default async function LawnCalendarPage({
         serviceTypes={serviceTypes}
         month={view === "month" ? monthProps : undefined}
         week={view === "week" ? weekProps : undefined}
+        day={view === "day" ? dayProps : undefined}
         monthViewHref="/lawn/calendar?view=month"
         weekViewHref="/lawn/calendar?view=week"
+        dayViewHref="/lawn/calendar?view=day"
         agendaViewHref="/lawn/calendar?view=agenda"
       />
 
