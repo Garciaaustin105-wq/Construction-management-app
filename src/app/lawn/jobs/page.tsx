@@ -125,8 +125,8 @@ export default function LawnJobsPage() {
         </h1>
         <div className="w-16" />
       </header>
-      <main className="max-w-md lg:max-w-2xl mx-auto p-4 pb-24 space-y-3">
-        <Link href="/lawn/new" className="block bg-green-600 text-white text-center py-3 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2">
+      <main className="max-w-md lg:max-w-6xl mx-auto p-4 pb-24 space-y-3">
+        <Link href="/lawn/new" className="block lg:inline-flex lg:w-auto bg-green-600 text-white text-center py-3 lg:px-5 rounded-lg font-semibold active:bg-green-700 flex items-center justify-center gap-2">
           <Plus className="w-5 h-5" /> New lawn job
         </Link>
         {rows.length === 0 ? (
@@ -143,7 +143,9 @@ export default function LawnJobsPage() {
               />
               {selected.size > 0 ? `${selected.size} selected` : "Select all"}
             </label>
-            <div className="space-y-2">
+
+            {/* Mobile: card list */}
+            <div className="space-y-2 lg:hidden">
               {rows.map((s) => {
                 const jobName = s.jobs?.name ?? "Untitled";
                 const custName = s.jobs?.customers?.name ?? null;
@@ -171,6 +173,48 @@ export default function LawnJobsPage() {
                 );
               })}
             </div>
+
+            {/* Desktop: real table */}
+            <div className="hidden lg:block rounded-lg border border-gray-200 shadow-sm overflow-hidden bg-white">
+              <div className="grid grid-cols-[28px_1fr_160px_1fr_110px] gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+                <span />
+                <span>Job / Customer</span>
+                <span>Service</span>
+                <span>Crew</span>
+                <span>Status</span>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {rows.map((s) => {
+                  const jobName = s.jobs?.name ?? "Untitled";
+                  const custName = s.jobs?.customers?.name ?? null;
+                  const crewIds: string[] = Array.isArray(s.jobs?.assigned_crew) ? s.jobs.assigned_crew : [];
+                  const crewNames = crewIds.map((id: string) => crewMap[id]).filter(Boolean).join(", ");
+                  return (
+                    <div key={s.id} className="grid grid-cols-[28px_1fr_160px_1fr_110px] gap-3 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(s.id)}
+                        onChange={() => toggleOne(s.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <Link href={`/lawn/schedules/${s.id}`} className="min-w-0">
+                        <p className="font-medium text-gray-900 truncate">{jobName}</p>
+                        {custName && <p className="text-xs text-gray-500 truncate">{custName}</p>}
+                      </Link>
+                      <Link href={`/lawn/schedules/${s.id}`} className="text-sm text-gray-600 truncate">
+                        {s.service_type ?? "Service"}
+                      </Link>
+                      <Link href={`/lawn/schedules/${s.id}`} className="text-sm text-gray-500 truncate">
+                        {crewNames || "Unassigned"}
+                      </Link>
+                      <Link href={`/lawn/schedules/${s.id}`}>
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${s.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>{s.active ? "Active" : "Paused"}</span>
+                      </Link>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </>
         )}
       </main>
@@ -180,7 +224,7 @@ export default function LawnJobsPage() {
           <button
             type="button"
             onClick={() => setShowBulkModal(true)}
-            className="mx-auto max-w-md lg:max-w-2xl w-full bg-gray-900 text-white py-3 rounded-lg font-semibold shadow-lg active:bg-gray-800 flex items-center justify-center gap-2"
+            className="mx-auto max-w-md lg:max-w-xs w-full bg-gray-900 text-white py-3 rounded-lg font-semibold shadow-lg active:bg-gray-800 flex items-center justify-center gap-2"
           >
             <Layers className="w-4 h-4" />
             Bulk edit ({selected.size})
