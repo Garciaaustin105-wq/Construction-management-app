@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { isLawn } from "@/lib/variant";
+
+// Home is /dashboard on construction, /lawn on the lawn variant (lawn office
+// users never land on /dashboard — it redirects them straight to /lawn).
+const HOME_PATH = isLawn() ? "/lawn" : "/dashboard";
 
 // `enabled` gates whether the poll runs. The desktop Sidebar and mobile
 // BottomNav both stay mounted (CSS hidden/lg:flex does not unmount them), so
@@ -43,11 +48,11 @@ export function useUnreadCount(enabled = true) {
 
   // Landing on Home marks everything seen in the same request so the badge
   // clears instantly rather than waiting on the next poll tick. This is the one
-  // case that genuinely needs to fire on navigation — and only for /dashboard,
+  // case that genuinely needs to fire on navigation — and only for Home,
   // not for every route. The periodic poll never marks seen, so the badge still
   // only clears when the user actually visits Home.
   useEffect(() => {
-    if (!enabled || pathname !== "/dashboard") return;
+    if (!enabled || pathname !== HOME_PATH) return;
     let active = true;
     (async () => {
       try {
