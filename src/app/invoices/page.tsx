@@ -1,30 +1,16 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import { formatMoney, computeTotal } from "@/lib/money";
+import { computeTotal } from "@/lib/money";
 import { OFFICE_OR_PM, ACCOUNTING, type Role } from "@/lib/roles";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
-import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
 import ClientPullToRefresh from "@/components/ClientPullToRefresh";
 import EmptyState, { EmptyIcons } from "@/components/EmptyState";
-
-const STATUS_TONE: { [key: string]: BadgeTone } = {
-  sent: "brand",
-  paid: "success",
-  void: "muted",
-  draft: "neutral",
-};
-
-const STATUS_LABEL: { [key: string]: string } = {
-  sent: "Unpaid",
-  paid: "Paid",
-  void: "Void",
-  draft: "Draft",
-};
+import InvoicesList from "@/components/invoices/InvoicesList";
 
 // Cards only — the Cards/Table switcher was a no-op (table just rendered the
 // same rows as plain line items, no reorganization), so the choice is removed
@@ -92,66 +78,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
             />
           </div>
         ) : (
-          <>
-            <div className="space-y-2 lg:hidden">
-              {rows.map((inv) => (
-                <Link
-                  key={inv.id}
-                  href={`/invoices/${inv.id}`}
-                  className="block bg-surface rounded-lg border border-line shadow-sm p-4 active:bg-gray-50"
-                >
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-gray-900 truncate">{inv.customerName}</p>
-                      <p className="text-sm text-gray-500 truncate">{inv.jobName}</p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        {inv.status === "draft"
-                          ? `Created ${new Date(inv.createdAt).toLocaleDateString()}`
-                          : inv.paidAt
-                          ? `Paid ${new Date(inv.paidAt).toLocaleDateString()}`
-                          : `Sent ${new Date(inv.createdAt).toLocaleDateString()}`}
-                      </p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <StatusBadge tone={STATUS_TONE[inv.status] ?? "neutral"}>{STATUS_LABEL[inv.status] ?? inv.status}</StatusBadge>
-                      <span className="text-sm font-bold text-gray-900">{formatMoney(inv.total)}</span>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-
-            <div className="hidden lg:block rounded-lg border border-line shadow-sm overflow-hidden">
-              <div className="grid grid-cols-[1fr_1fr_120px_120px_130px] gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-line">
-                <span>Customer</span>
-                <span>Job</span>
-                <span>Status</span>
-                <span className="text-right">Total</span>
-                <span>Date</span>
-              </div>
-              <div className="divide-y divide-line">
-                {rows.map((inv) => (
-                  <Link
-                    key={inv.id}
-                    href={`/invoices/${inv.id}`}
-                    className="grid grid-cols-[1fr_1fr_120px_120px_130px] gap-3 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors"
-                  >
-                    <span className="min-w-0 truncate font-medium text-gray-900">{inv.customerName}</span>
-                    <span className="min-w-0 truncate text-sm text-gray-500">{inv.jobName}</span>
-                    <StatusBadge tone={STATUS_TONE[inv.status] ?? "neutral"}>{STATUS_LABEL[inv.status] ?? inv.status}</StatusBadge>
-                    <span className="text-right text-sm font-semibold text-gray-900">{formatMoney(inv.total)}</span>
-                    <span className="text-sm text-gray-500">
-                      {inv.status === "draft"
-                        ? new Date(inv.createdAt).toLocaleDateString()
-                        : inv.paidAt
-                        ? new Date(inv.paidAt).toLocaleDateString()
-                        : new Date(inv.createdAt).toLocaleDateString()}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          </>
+          <InvoicesList rows={rows} />
         )}
       </ClientPullToRefresh>
     </PageContainer>
