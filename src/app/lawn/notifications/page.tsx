@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import PageContainer from "@/components/PageContainer";
 import { useToast } from "@/components/Toast";
-import { Loader2, Save, Bell, MessageSquare, Mail, Star, Plus, Trash2 } from "lucide-react";
+import { Loader2, Save, Bell, MessageSquare, Mail, Star, Plus, Trash2, Info } from "lucide-react";
 import { SMS_ENABLED } from "@/lib/smsFeature";
 import { OFFICE_LIKE, type Role } from "@/lib/roles";
 
@@ -330,12 +330,35 @@ export default function LawnNotificationsPage() {
   })).filter((g) => g.rows.length > 0);
 
   return (
-    <PageContainer title="Notifications" backHref="/lawn" backLabel="Lawn" maxWidth="list">
+    <PageContainer title="Customer notifications" backHref="/lawn" backLabel="Lawn" maxWidth="list">
+      {/* What this page is / isn't — the #1 point of confusion is mixing this
+          up with the app's own alerts (the bell/Recent activity feed on the
+          Lawn dashboard, which is for YOUR team, not customers). */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
+        <h2 className="text-sm font-semibold text-blue-900 flex items-center gap-1.5">
+          <Info className="w-4 h-4" />
+          What this page controls
+        </h2>
+        <p className="text-xs text-blue-900/80 leading-relaxed">
+          This is the automatic email (and, once texting is turned on, SMS)
+          your <strong>customers</strong> receive as their lawn service
+          progresses — reminders, &ldquo;on my way,&rdquo; job-done confirmations,
+          and review requests. It&rsquo;s separate from the notification bell
+          inside the app, which is for your office/crew, not customers.
+        </p>
+        <ol className="text-xs text-blue-900/80 leading-relaxed list-decimal list-inside space-y-0.5">
+          <li>Flip <strong>Enable notifications</strong> on below — nothing sends while it&rsquo;s off.</li>
+          <li>Each customer also needs to opt in individually, on their own record in <strong>Customers</strong> — enabling this page turns the feature on for the org, it doesn&rsquo;t opt anyone in.</li>
+          <li>Edit the wording for each event further down (use the tokens shown to personalize — customer name, job, address, etc.).</li>
+          <li>Pick where a happy customer gets sent to leave a review in <strong>Review destinations</strong> below.</li>
+        </ol>
+      </div>
+
       {/* Global settings */}
       <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
         <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
           <Bell className="w-4 h-4 text-green-600" />
-          Customer notifications
+          Enable &amp; configure
         </h2>
         <p className="text-xs text-gray-500">
           Templated email &amp; text messages sent to customers at visit

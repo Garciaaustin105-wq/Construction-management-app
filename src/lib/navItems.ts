@@ -162,7 +162,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // gate (src/app/lawn/ai/page.tsx) bounces super_admin + non-office; this
       // nav entry is in the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/ai", label: "AI admin", Icon: Sparkles },
-      { href: "/lawn/notifications", label: "Notifications", Icon: Bell },
+      { href: "/lawn/notifications", label: "Customer notifications", Icon: Bell },
       // Scheduling ops (weather auto-reschedule settings, batch reschedule,
       // blackouts, zones, crew time off) — page gate is OFFICE_LIKE, this
       // entry sits in the lawn office/admin fallthrough block to match.
