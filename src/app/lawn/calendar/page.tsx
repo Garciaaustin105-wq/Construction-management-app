@@ -20,10 +20,43 @@ type CalVisit = {
   scheduled_window_start: string | null;
   scheduled_window_end: string | null;
   recurring_schedules: { service_type: string | null } | null;
-  jobs: { name: string | null } | null;
+  jobs: { name: string | null; lawn_jobs: { map_lat: number | null; map_lng: number | null } | null } | null;
+};
+
+type ZoneRow = {
+  id: string;
+  name: string;
+  center_lat: number;
+  center_lng: number;
+  radius_miles: number;
 };
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Great-circle distance in miles — used to test a job's pin against each
+// zone's center+radius. service_zones/RouteMapPlanner have no zone-matching
+// logic anywhere else in the app to reuse (confirmed while planning this
+// feature — service_zones was fetched but otherwise unused).
+function milesBetween(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// First zone (in the given order) whose circle contains the point, or null.
+function zoneFor(lat: number | null, lng: number | null, zones: ZoneRow[]): string | null {
+  if (lat === null || lng === null) return null;
+  for (const z of zones) {
+    if (milesBetween(lat, lng, z.center_lat, z.center_lng) <= Number(z.radius_miles)) {
+      return z.id;
+    }
+  }
+  return null;
+}
 
 const MONTH_NAMES = [
   "January",
@@ -118,11 +151,11 @@ export default async function LawnCalendarPage({
     lte = toISODate(addDays(new Date(), 30));
   }
 
-  const [{ data: visitRows }, { data: crewRows }] = await Promise.all([
+  const [{ data: visitRows }, { data: crewRows }, { data: zoneRows }] = await Promise.all([
     supabase
       .from("lawn_visits")
       .select(
-        "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name)",
+        "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name, lawn_jobs(map_lat, map_lng))",
       )
       .gte("due_date", gte)
       .lte("due_date", lte)
@@ -131,7 +164,13 @@ export default async function LawnCalendarPage({
       .from("crew_members")
       .select("id, name, working_days, max_visits_per_day")
       .order("name"),
+    supabase
+      .from("service_zones")
+      .select("id, name, center_lat, center_lng, radius_miles")
+      .eq("active", true)
+      .order("name"),
   ]);
+  const zones = (zoneRows as unknown as ZoneRow[] | null) ?? [];
 
   const boardVisits: BoardVisit[] =
     (visitRows as unknown as CalVisit[] | null ?? []).map((v) => ({
@@ -144,6 +183,11 @@ export default async function LawnCalendarPage({
       scheduled_window_end: v.scheduled_window_end,
       job_name: v.jobs?.name ?? "Untitled",
       service_type: v.recurring_schedules?.service_type ?? null,
+      zone_id: zoneFor(
+        v.jobs?.lawn_jobs?.map_lat != null ? Number(v.jobs.lawn_jobs.map_lat) : null,
+        v.jobs?.lawn_jobs?.map_lng != null ? Number(v.jobs.lawn_jobs.map_lng) : null,
+        zones,
+      ),
     }));
 
   const boardCrews: BoardCrew[] =
@@ -306,6 +350,7 @@ export default async function LawnCalendarPage({
         visits={boardVisits}
         crews={boardCrews}
         serviceTypes={serviceTypes}
+        zones={zones.map((z) => ({ id: z.id, name: z.name }))}
         month={view === "month" ? monthProps : undefined}
         week={view === "week" ? weekProps : undefined}
         day={view === "day" ? dayProps : undefined}

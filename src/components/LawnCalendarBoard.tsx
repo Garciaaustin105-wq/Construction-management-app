@@ -32,6 +32,10 @@ export type BoardVisit = {
   // don't have one set -- those sort last and show no time label.
   scheduled_window_start: string | null;
   scheduled_window_end: string | null;
+  // The first service_zones circle (of the org's active zones) whose
+  // center+radius contains the job's map pin, computed server-side — null
+  // when the job has no pin or falls outside every zone.
+  zone_id: string | null;
 };
 
 export type BoardCrew = {
@@ -49,6 +53,7 @@ export type LawnCalendarBoardProps = {
   visits: BoardVisit[];
   crews: BoardCrew[];
   serviceTypes: string[];
+  zones: { id: string; name: string }[];
   month?: {
     monthLabel: string;
     cells: (string | null)[];
@@ -193,6 +198,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     visits,
     crews,
     serviceTypes,
+    zones,
     month,
     week,
     day,
@@ -238,6 +244,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
   const [crewFilter, setCrewFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<BoardVisit["status"]>>(new Set());
   const [serviceFilter, setServiceFilter] = useState("");
+  const [zoneFilter, setZoneFilter] = useState("");
   const [query, setQuery] = useState("");
 
   // "Apply to future visits too?" banner — shown after a successful
@@ -279,10 +286,11 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
       }
       if (statusFilter.size > 0 && !statusFilter.has(v.status)) return false;
       if (serviceFilter && v.service_type !== serviceFilter) return false;
+      if (zoneFilter && v.zone_id !== zoneFilter) return false;
       if (q && !v.job_name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [localVisits, crewFilter, statusFilter, serviceFilter, query]);
+  }, [localVisits, crewFilter, statusFilter, serviceFilter, zoneFilter, query]);
 
   // Agenda grouping — computed unconditionally (cheap) so the hook always
   // runs, rather than only when view === "agenda".
@@ -541,6 +549,21 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
             </option>
           ))}
         </select>
+
+        {zones.length > 0 && (
+          <select
+            value={zoneFilter}
+            onChange={(e) => setZoneFilter(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+          >
+            <option value="">All zones</option>
+            {zones.map((z) => (
+              <option key={z.id} value={z.id}>
+                {z.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         <div className="relative max-w-xs">
           <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
