@@ -8,7 +8,8 @@ import MonthGrid from "./MonthGrid";
 import AgendaList from "./AgendaList";
 import { getMe } from "@/lib/tenant";
 import { getCalendarEvents } from "@/lib/calendarEvents";
-import { MANAGEMENT, type Role } from "@/lib/roles";
+import { MANAGEMENT, OFFICE_LIKE, type Role } from "@/lib/roles";
+import { isLawn } from "@/lib/variant";
 
 // In-app calendar: a month grid + agenda list of this org's events (job
 // start/end, schedule events, subcontractor dates, invoice due, estimate
@@ -40,6 +41,12 @@ export default async function CalendarPage({
   // bounced; crew / sales / accountant / customer have no use for it. Was
   // previously ungated (any signed-in user, incl. customer, could load it).
   if (!MANAGEMENT.has(me.role as Role)) redirect("/dashboard");
+  // Lawn office/admin now have a purpose-built dispatch board at
+  // /lawn/calendar (Month/Week/Agenda, drag-to-reschedule, crew filters) --
+  // funnel them there instead of this generic org-wide calendar, even from an
+  // old bookmark/link. PM/superintendent aren't admitted to /lawn/calendar
+  // (OFFICE_LIKE-gated), so they still land here as before.
+  if (isLawn() && OFFICE_LIKE.has(me.role as Role)) redirect("/lawn/calendar");
   const tenant = me;
   const user = me.user;
 

@@ -168,7 +168,13 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // entry sits in the lawn office/admin fallthrough block to match.
       { href: "/lawn/scheduling", label: "Scheduling", Icon: CalendarDays },
       { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
-      { href: "/calendar", label: "Calendar", Icon: Calendar },
+      // Points at the lawn dispatch board (Month/Week/Agenda, drag-to-
+      // reschedule, filters, crew colors), not the generic org-wide /calendar
+      // page — office/admin is exactly who /lawn/calendar admits (OFFICE_LIKE),
+      // so this never dead-ends. PM/superintendent don't get this nav entry on
+      // lawn (their nav is the small `base` set), so they still only ever
+      // reach the generic /calendar (which they can access) — no dead link.
+      { href: "/lawn/calendar", label: "Calendar", Icon: Calendar },
       { href: "/admin/users", label: "Admin", Icon: Users },
     ];
     if (role === "admin") {
