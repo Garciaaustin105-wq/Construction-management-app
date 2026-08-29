@@ -44,6 +44,7 @@ type Sched = {
   day_of_month: number | null;
   start_date: string;
   end_date: string | null;
+  default_crew_id: string | null;
 };
 
 export async function POST(request: Request) {
@@ -104,7 +105,7 @@ export async function POST(request: Request) {
   const { data: rows } = await admin
     .from("recurring_schedules")
     .select(
-      "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date"
+      "id, job_id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, default_crew_id"
     )
     .eq("active", true)
     .order("id", { ascending: true });
@@ -152,6 +153,7 @@ export async function POST(request: Request) {
     job_id: string;
     due_date: string;
     status: "pending";
+    crew_id: string | null;
   }[] = [];
 
   for (const s of schedules) {
@@ -188,6 +190,7 @@ export async function POST(request: Request) {
           job_id: s.job_id,
           due_date,
           status: "pending",
+          crew_id: s.default_crew_id,
         });
       }
     } catch (e) {
