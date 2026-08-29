@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
-import { Loader2, Plus, Trash2, Users, Pencil, Check, X } from "lucide-react";
+import { Loader2, Plus, Trash2, Users, Pencil, Check, X, Search } from "lucide-react";
 
 // Expiry state for the licence badge. An expired applicator certification is
 // a compliance problem, not a cosmetic one, so it reads red; 60 days out reads
@@ -51,6 +51,17 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
   const [editTrade, setEditTrade] = useState("");
   const [editLicenseNo, setEditLicenseNo] = useState("");
   const [editLicenseExp, setEditLicenseExp] = useState("");
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter((m) =>
+      [m.name, m.trade, m.phone, m.applicator_license_number]
+        .filter(Boolean)
+        .some((v) => (v as string).toLowerCase().includes(q))
+    );
+  }, [members, query]);
 
   async function load() {
     const { data } = await supabase
@@ -227,8 +238,26 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
-          {members.map((m) => {
+        <>
+          <div className="relative max-w-xs">
+            <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name, trade, phone, license…"
+              className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            />
+          </div>
+
+          {filtered.length === 0 ? (
+            <p className="text-sm text-gray-500 text-center py-6">
+              No crew match &ldquo;{query}&rdquo;.
+            </p>
+          ) : (
+        <>
+        <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100 lg:hidden">
+          {filtered.map((m) => {
             const linked = !!m.user_id;
             const editing = editId === m.id;
             return (
@@ -350,6 +379,142 @@ export default function CrewMembersManager({ orgId }: { orgId: string }) {
             );
           })}
         </div>
+
+          {/* Desktop: real table. Editing a row expands it to a full-width
+              inline edit form (same inputs as mobile) instead of trying to
+              cram five fields into narrow grid columns. */}
+          <div className="hidden lg:block rounded-lg border border-gray-200 shadow-sm overflow-hidden bg-white">
+            <div className="grid grid-cols-[1fr_1fr_1fr_80px] gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
+              <span>Name</span>
+              <span>Contact</span>
+              <span>License</span>
+              <span />
+            </div>
+            <div className="divide-y divide-gray-100">
+              {filtered.map((m) => {
+                const linked = !!m.user_id;
+                const editing = editId === m.id;
+                if (editing) {
+                  return (
+                    <div key={m.id} className="p-3 space-y-2">
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="tel"
+                          placeholder="Phone"
+                          value={editPhone}
+                          onChange={(e) => setEditPhone(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Trade"
+                          value={editTrade}
+                          onChange={(e) => setEditTrade(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Applicator license #"
+                          value={editLicenseNo}
+                          onChange={(e) => setEditLicenseNo(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="date"
+                          title="License expiry"
+                          value={editLicenseExp}
+                          onChange={(e) => setEditLicenseExp(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={() => saveEdit(m.id)}
+                          className="text-green-600 p-2 rounded hover:bg-green-50 flex-shrink-0"
+                          title="Save"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditId(null)}
+                          className="text-gray-500 p-2 rounded hover:bg-gray-100 flex-shrink-0"
+                          title="Cancel"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={m.id}
+                    className="grid grid-cols-[1fr_1fr_1fr_80px] gap-3 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="min-w-0">
+                      <span className="block font-medium text-gray-900 truncate">{m.name}</span>
+                      <span className="block text-xs text-gray-400 truncate">
+                        {linked ? "App user" : "Scheduling only"}
+                      </span>
+                    </span>
+                    <span className="text-sm text-gray-600 truncate">
+                      {[m.trade, m.phone].filter(Boolean).join(" · ") || <span className="text-gray-300">—</span>}
+                    </span>
+                    <span className="text-sm text-gray-600 truncate">
+                      {m.applicator_license_number ? (
+                        <>
+                          {m.applicator_license_number}
+                          {m.applicator_license_expires && (
+                            <span
+                              className={
+                                licenseState(m.applicator_license_expires) === "expired"
+                                  ? "text-red-600 font-medium"
+                                  : licenseState(m.applicator_license_expires) === "soon"
+                                  ? "text-amber-700 font-medium"
+                                  : "text-gray-500"
+                              }
+                            >
+                              {" · "}
+                              {licenseState(m.applicator_license_expires) === "expired"
+                                ? `expired ${m.applicator_license_expires}`
+                                : `expires ${m.applicator_license_expires}`}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-1 justify-end">
+                      {!linked && (
+                        <button
+                          onClick={() => startEdit(m)}
+                          className="text-gray-500 p-1.5 rounded hover:bg-gray-100"
+                          title="Edit"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => remove(m)}
+                        className="text-red-600 p-1.5 rounded hover:bg-red-50"
+                        title="Remove"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          </>
+          )}
+        </>
       )}
       <p className="text-[10px] text-gray-400">
         Scheduling-only crew never receive a login. Assign them to visits from a
