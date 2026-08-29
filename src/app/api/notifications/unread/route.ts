@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMeIdentity } from "@/lib/tenant";
+import { isLawn } from "@/lib/variant";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -21,6 +22,27 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const markSeen = url.searchParams.get("markSeen") === "1";
+
+  // Lawn has no construction jobs (type="construction" never matches), so the
+  // jobs/job_views/photos/rfis section below is pure wasted round trips on
+  // every 30s poll for every lawn user — lawn's own activity (visits) isn't
+  // modeled through jobs/photos/rfis the same way. Skip straight to the
+  // shared notifications-feed count, which is the only thing that ever
+  // contributed to the badge on this variant anyway.
+  if (isLawn()) {
+    if (markSeen) {
+      await supabase
+        .from("notifications")
+        .update({ read_at: new Date().toISOString() })
+        .is("read_at", null);
+      return NextResponse.json({ unread: 0 });
+    }
+    const { count } = await supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .is("read_at", null);
+    return NextResponse.json({ unread: count ?? 0 });
+  }
 
   // Jobs the user can see (RLS scopes to assigned crew / all for office) and
   // their per-job last-seen stamps. Fetched together: neither depends on the
