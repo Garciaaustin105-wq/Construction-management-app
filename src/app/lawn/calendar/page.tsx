@@ -32,6 +32,22 @@ type ZoneRow = {
   radius_miles: number;
 };
 
+// Mirrors RecurringScheduleEditor's `initial` prop shape exactly, so the
+// fetched row can be handed straight through with no reshaping.
+type ScheduleDetail = {
+  id: string;
+  frequency: "weekly" | "biweekly" | "monthly";
+  interval_weeks: number;
+  days_of_week: number[];
+  day_of_month: number | null;
+  start_date: string;
+  end_date: string | null;
+  service_type: string | null;
+  price_per_visit: number;
+  notes: string | null;
+  estimated_duration_minutes: number | null;
+};
+
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // Great-circle distance in miles — used to test a job's pin against each
@@ -152,26 +168,36 @@ export default async function LawnCalendarPage({
     lte = toISODate(addDays(new Date(), 30));
   }
 
-  const [{ data: visitRows }, { data: crewRows }, { data: zoneRows }] = await Promise.all([
-    supabase
-      .from("lawn_visits")
-      .select(
-        "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name, lawn_jobs(map_lat, map_lng))",
-      )
-      .gte("due_date", gte)
-      .lte("due_date", lte)
-      .order("due_date", { ascending: true }),
-    supabase
-      .from("crew_members")
-      .select("id, name, working_days, max_visits_per_day")
-      .order("name"),
-    supabase
-      .from("service_zones")
-      .select("id, name, center_lat, center_lng, radius_miles")
-      .eq("active", true)
-      .order("name"),
-  ]);
+  const [{ data: visitRows }, { data: crewRows }, { data: zoneRows }, { data: lawnServiceRows }] =
+    await Promise.all([
+      supabase
+        .from("lawn_visits")
+        .select(
+          "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name, lawn_jobs(map_lat, map_lng))",
+        )
+        .gte("due_date", gte)
+        .lte("due_date", lte)
+        .order("due_date", { ascending: true }),
+      supabase
+        .from("crew_members")
+        .select("id, name, working_days, max_visits_per_day")
+        .order("name"),
+      supabase
+        .from("service_zones")
+        .select("id, name, center_lat, center_lng, radius_miles")
+        .eq("active", true)
+        .order("name"),
+      supabase
+        .from("lawn_services")
+        .select("id, name, default_price, default_duration_minutes")
+        .eq("active", true)
+        .order("name"),
+    ]);
   const zones = (zoneRows as unknown as ZoneRow[] | null) ?? [];
+  const lawnServices =
+    (lawnServiceRows as
+      | { id: string; name: string; default_price: number; default_duration_minutes: number | null }[]
+      | null) ?? [];
 
   const boardVisits: BoardVisit[] =
     (visitRows as unknown as CalVisit[] | null ?? []).map((v) => ({
@@ -211,6 +237,25 @@ export default async function LawnCalendarPage({
         .filter((s): s is string => !!s),
     ),
   ).sort();
+
+  // Full schedule detail for inline editing (calendar item #8) — scoped to
+  // only the schedules actually visible in this range, not the org's whole
+  // history, since that's all the on-calendar editor can ever need.
+  const scheduleIds = Array.from(new Set(boardVisits.map((v) => v.recurring_schedule_id)));
+  const { data: scheduleRows } = scheduleIds.length
+    ? await supabase
+        .from("recurring_schedules")
+        .select(
+          "id, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date, service_type, price_per_visit, notes, estimated_duration_minutes",
+        )
+        .in("id", scheduleIds)
+    : { data: [] as ScheduleDetail[] };
+  const schedules: Record<string, ScheduleDetail> = {};
+  for (const s of (scheduleRows as unknown as ScheduleDetail[] | null) ?? []) {
+    // Supabase returns numeric columns as strings — coerce like
+    // schedules/[id]/page.tsx does before handing this to the same editor.
+    schedules[s.id] = { ...s, price_per_visit: Number(s.price_per_visit) || 0 };
+  }
 
   // Build month view props if applicable
   let monthProps: {
@@ -360,6 +405,9 @@ export default async function LawnCalendarPage({
         serviceTypes={serviceTypes}
         zones={zones.map((z) => ({ id: z.id, name: z.name }))}
         rainRiskDates={rainRiskDates}
+        schedules={schedules}
+        lawnServices={lawnServices}
+        canEdit
         month={view === "month" ? monthProps : undefined}
         week={view === "week" ? weekProps : undefined}
         day={view === "day" ? dayProps : undefined}

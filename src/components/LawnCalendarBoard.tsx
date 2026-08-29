@@ -17,7 +17,8 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle, CloudRain } from "lucide-react";
+import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle, CloudRain, X } from "lucide-react";
+import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
 
 export type BoardVisit = {
   id: string;
@@ -37,6 +38,22 @@ export type BoardVisit = {
   // center+radius contains the job's map pin, computed server-side — null
   // when the job has no pin or falls outside every zone.
   zone_id: string | null;
+};
+
+// Mirrors RecurringScheduleEditor's `initial` prop shape exactly, so a fetched
+// row can be handed straight through with no reshaping.
+export type ScheduleDetail = {
+  id: string;
+  frequency: "weekly" | "biweekly" | "monthly";
+  interval_weeks: number;
+  days_of_week: number[];
+  day_of_month: number | null;
+  start_date: string;
+  end_date: string | null;
+  service_type: string | null;
+  price_per_visit: number;
+  notes: string | null;
+  estimated_duration_minutes: number | null;
 };
 
 export type BoardCrew = {
@@ -85,6 +102,13 @@ export type LawnCalendarBoardProps = {
   weekViewHref: string;
   dayViewHref: string;
   agendaViewHref: string;
+  // Inline schedule editing — clicking a chip in Month/Week/Day opens
+  // RecurringScheduleEditor in a modal (Agenda rows stay plain visit links).
+  // Keyed by recurring_schedule_id, scoped server-side to only the schedules
+  // visible in the current range.
+  schedules: Record<string, ScheduleDetail>;
+  lawnServices: { id: string; name: string; default_price: number; default_duration_minutes: number | null }[];
+  canEdit: boolean;
 };
 
 const CREW_COLORS = [
@@ -159,6 +183,7 @@ function DraggableChip({
   color,
   extraClassName,
   showTime,
+  onClick,
 }: {
   visit: BoardVisit;
   crewName: string;
@@ -166,6 +191,10 @@ function DraggableChip({
   extraClassName?: string;
   // Day view only — prefixes the chip with its scheduled window, if set.
   showTime?: boolean;
+  // Opens the schedule editor modal. A plain click (no drag movement) still
+  // fires this — dnd-kit's PointerSensor only starts a drag past its 6px
+  // activation distance, so a tap-and-release passes through as a click.
+  onClick?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: visit.id });
   const style: CSSProperties = {
@@ -179,7 +208,8 @@ function DraggableChip({
       style={style}
       {...attributes}
       {...listeners}
-      title={skipped ? "Skipped — needs a follow-up" : undefined}
+      onClick={onClick}
+      title={skipped ? "Skipped — needs a follow-up" : onClick ? "Click to edit this schedule" : undefined}
       className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing ${
         skipped ? "bg-red-50 text-red-700 border border-red-200 line-through" : color.chip
       } ${isDragging ? "opacity-60" : ""} ${extraClassName ?? ""}`}
@@ -212,9 +242,16 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     weekViewHref,
     dayViewHref,
     agendaViewHref,
+    schedules,
+    lawnServices,
+    canEdit,
   } = props;
   const toast = useToast();
   const router = useRouter();
+
+  // Inline schedule editor modal — opened by clicking a chip in Month/Week/Day.
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const openSchedule = canEdit ? (id: string) => setEditingScheduleId(id) : undefined;
 
   // Local optimistic visit state — reset whenever the server hands us a fresh
   // (differently-scoped) visits prop, e.g. after a month/week nav.
@@ -699,6 +736,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                         crewName={nameFor(v)}
                         color={colorFor(v)}
                         extraClassName={idx >= MAX_CHIPS_PER_CELL ? "hidden lg:block" : ""}
+                        onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
                       />
                     ))}
                     {mobileExtra > 0 && <span className="text-[9px] text-gray-400 px-1 lg:hidden">+{mobileExtra} more</span>}
@@ -766,7 +804,13 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                       return (
                         <DroppableCell key={d} id={`${d}::${c.id}`} className="min-h-[52px] p-1 flex flex-col gap-1">
                           {cellVisits.map((v) => (
-                            <DraggableChip key={v.id} visit={v} crewName={nameFor(v)} color={colorFor(v)} />
+                            <DraggableChip
+                              key={v.id}
+                              visit={v}
+                              crewName={nameFor(v)}
+                              color={colorFor(v)}
+                              onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
+                            />
                           ))}
                         </DroppableCell>
                       );
@@ -874,7 +918,14 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                     <DroppableCell id={`${day.date}::${c.id}`} className="flex-1 min-h-[44px] flex flex-wrap gap-1.5 p-1 rounded">
                       {rowVisits.length === 0 && <span className="text-xs text-gray-300 py-1">No visits</span>}
                       {rowVisits.map((v) => (
-                        <DraggableChip key={v.id} visit={v} crewName={nameFor(v)} color={colorFor(v)} showTime />
+                        <DraggableChip
+                          key={v.id}
+                          visit={v}
+                          crewName={nameFor(v)}
+                          color={colorFor(v)}
+                          showTime
+                          onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
+                        />
                       ))}
                     </DroppableCell>
                   </div>
@@ -968,6 +1019,47 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
             })()}
           </div>
         </section>
+      )}
+
+      {/* Inline schedule editor modal — item #8. Opened by clicking a chip in
+          Month/Week/Day; Agenda rows stay plain navigation links. */}
+      {editingScheduleId && schedules[editingScheduleId] && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setEditingScheduleId(null)}
+        >
+          <div
+            className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setEditingScheduleId(null)}
+              className="absolute top-3 right-3 z-10 p-1 rounded-full bg-white text-gray-400 hover:text-gray-600 shadow-sm"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <RecurringScheduleEditor
+              scheduleId={editingScheduleId}
+              initial={schedules[editingScheduleId]}
+              lawnServices={lawnServices}
+              canEdit={canEdit}
+              initialEditing
+              onSaved={(patch) => {
+                const scheduleId = editingScheduleId;
+                setLocalVisits((prev) =>
+                  prev.map((v) =>
+                    v.recurring_schedule_id === scheduleId
+                      ? { ...v, service_type: patch.service_type }
+                      : v
+                  )
+                );
+                setEditingScheduleId(null);
+              }}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
