@@ -17,7 +17,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
+import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle, CloudRain } from "lucide-react";
 
 export type BoardVisit = {
   id: string;
@@ -55,6 +55,10 @@ export type LawnCalendarBoardProps = {
   crews: BoardCrew[];
   serviceTypes: string[];
   zones: { id: string; name: string }[];
+  // ISO dates flagged as rain-risk by the NWS forecast (same data source as
+  // /lawn/weather) — only ever populated for dates within that board's
+  // ~10-day window; further-out dates just show no flag.
+  rainRiskDates: string[];
   month?: {
     monthLabel: string;
     cells: (string | null)[];
@@ -200,6 +204,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     crews,
     serviceTypes,
     zones,
+    rainRiskDates,
     month,
     week,
     day,
@@ -232,6 +237,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     crews.forEach((c) => map.set(c.id, c.name));
     return map;
   }, [crews]);
+  const rainRiskSet = useMemo(() => new Set(rainRiskDates), [rainRiskDates]);
 
   function colorFor(visit: BoardVisit) {
     if (!visit.crew_id) return UNASSIGNED_COLOR;
@@ -674,12 +680,17 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                       isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
                     }`}
                   >
-                    <span
-                      className={`text-[10px] lg:text-xs font-semibold ${
-                        isToday ? "text-blue-700" : "text-gray-400"
-                      } self-end leading-none`}
-                    >
-                      {Number(dateStr.slice(-2))}
+                    <span className="flex items-center justify-end gap-1 self-end leading-none">
+                      {rainRiskSet.has(dateStr) && (
+                        <CloudRain className="w-2.5 h-2.5 text-blue-400" aria-label="Rain risk" />
+                      )}
+                      <span
+                        className={`text-[10px] lg:text-xs font-semibold ${
+                          isToday ? "text-blue-700" : "text-gray-400"
+                        }`}
+                      >
+                        {Number(dateStr.slice(-2))}
+                      </span>
                     </span>
                     {shown.map((v, idx) => (
                       <DraggableChip
@@ -730,7 +741,13 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                 <div className="grid grid-cols-[140px_repeat(7,1fr)] gap-1">
                   <div />
                   {week.days.map((d) => (
-                    <div key={d} className="text-center text-[10px] font-semibold text-gray-400 uppercase py-1">
+                    <div
+                      key={d}
+                      className="flex items-center justify-center gap-1 text-center text-[10px] font-semibold text-gray-400 uppercase py-1"
+                    >
+                      {rainRiskSet.has(d) && (
+                        <CloudRain className="w-2.5 h-2.5 text-blue-400" aria-label="Rain risk" />
+                      )}
                       {new Date(d + "T00:00:00").toLocaleDateString(undefined, {
                         weekday: "short",
                         month: "numeric",
@@ -775,7 +792,15 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
               <ChevronLeft className="w-5 h-5" />
             </Link>
             <div className="text-center">
-              <p className="text-base font-bold text-gray-900">{day.label}</p>
+              <p className="text-base font-bold text-gray-900 flex items-center justify-center gap-1.5">
+                {day.label}
+                {rainRiskSet.has(day.date) && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600" title="Rain risk">
+                    <CloudRain className="w-3.5 h-3.5" />
+                    Rain risk
+                  </span>
+                )}
+              </p>
               {!day.isToday && (
                 <Link href={day.todayHref} className="text-xs text-blue-600 font-medium">
                   Today

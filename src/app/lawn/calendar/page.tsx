@@ -10,6 +10,7 @@ import LawnCalendarBoard, {
 import CalendarFeedCard from "@/app/calendar/CalendarFeedCard";
 import { startOfWeek, addDays, toISODate } from "@/lib/weekUtils";
 import { OFFICE_LIKE } from "@/lib/roles";
+import { getLawnWeatherBoard } from "@/lib/lawnWeather";
 
 type CalVisit = {
   id: string;
@@ -336,6 +337,13 @@ export default async function LawnCalendarPage({
     ? `${origin}/api/calendar/feed?token=${feed.token}`
     : null;
 
+  // Rain-risk overlay — reuses the SAME NWS-backed board already built for
+  // /lawn/weather (getLawnWeatherBoard, 30-min cached) rather than a second
+  // forecast integration. Its window is 10 days out, so only Month/Week/Day
+  // dates inside that range ever show a flag; nothing further out does.
+  const weatherBoard = await getLawnWeatherBoard(supabase);
+  const rainRiskDates = weatherBoard.days.filter((d) => d.rainRisk).map((d) => d.date);
+
   return (
     <PageContainer
       title="Lawn Calendar"
@@ -351,6 +359,7 @@ export default async function LawnCalendarPage({
         crews={boardCrews}
         serviceTypes={serviceTypes}
         zones={zones.map((z) => ({ id: z.id, name: z.name }))}
+        rainRiskDates={rainRiskDates}
         month={view === "month" ? monthProps : undefined}
         week={view === "week" ? weekProps : undefined}
         day={view === "day" ? dayProps : undefined}
