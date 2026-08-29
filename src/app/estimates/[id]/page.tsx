@@ -781,9 +781,11 @@ export default function EstimateDetailPage({
         </div>
       </div>
 
-      <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-6xl mx-auto p-4 space-y-4">
         {tab === "edit" ? (
           <>
+            <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
+              <div className="space-y-4">
             <section className="bg-white rounded-lg p-4 shadow-sm space-y-1">
               <div className="flex items-center justify-between gap-2">
                 {estimate.job_id ? (
@@ -952,7 +954,9 @@ export default function EstimateDetailPage({
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg text-base disabled:bg-gray-50"
               />
             </label>
+              </div>
 
+              <div className="space-y-4 lg:sticky lg:top-24">
             {/* Pricing summary — markup/contingency/tax/deposit */}
             <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
               <p className="text-sm font-semibold text-gray-700">
@@ -1276,6 +1280,8 @@ export default function EstimateDetailPage({
                 newest first. Office-only; each row links to the immutable
                 snapshot of exactly what was sent. */}
             <EstimateSendHistory estimateId={estimate.id} />
+              </div>
+            </div>
           </>
         ) : (
           <>
