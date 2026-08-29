@@ -44,7 +44,8 @@ export type NotificationEventId =
   | "on_my_way"
   | "service_complete"
   | "service_skipped"
-  | "review_request";
+  | "review_request"
+  | "schedule_confirmed";
 
 // Token set the templated events support (mirrors SendCustomerEmailInput in
 // customerNotifications.ts). Shown as copy-paste hints in the editor. Note
@@ -62,6 +63,10 @@ export const TEMPLATE_TOKENS = [
   "photo_link",
   "review_link",
   "reason",
+  // schedule_confirmed only — one line per active recurring schedule on the
+  // job (e.g. "Mow & edge: Weekly · Mon · from Sep 15"). Renders empty on
+  // every other event, same as any unused token.
+  "schedule_summary",
 ];
 
 // Human label for a templated event when no saved subject exists.
@@ -71,6 +76,7 @@ export const EVENT_LABEL: Record<NotificationEventId, string> = {
   service_complete: "Service complete",
   service_skipped: "Visit skipped",
   review_request: "Review request",
+  schedule_confirmed: "Schedule confirmed",
 };
 
 export const EMAIL_KIND_META: EmailKindMeta[] = [
@@ -119,6 +125,17 @@ export const EMAIL_KIND_META: EmailKindMeta[] = [
     editable: true,
     tokens: TEMPLATE_TOKENS,
     realData: { entityType: "visit", pickerLabel: "Pick a visit" },
+  },
+  {
+    id: "schedule_confirmed",
+    label: "Schedule Confirmed",
+    variant: "lawn",
+    audience: "customer",
+    editable: true,
+    tokens: TEMPLATE_TOKENS,
+    // No realData: this fires off a recurring_schedules row, not a visit, and
+    // there's no "real record" loader for schedules (sample preview only —
+    // same pattern the auth-flow kinds already use).
   },
   // Fixed copy (preview + test only; available on both variants — construction
   // sends estimate/invoice emails, lawn sends invoice emails via cycle billing)

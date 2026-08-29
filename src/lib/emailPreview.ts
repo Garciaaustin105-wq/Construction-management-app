@@ -346,6 +346,7 @@ function sampleTemplateVars(orgName: string): Record<string, string> {
     org_name: orgName,
     photo_link: `${publicBaseUrl()}/v/sample-photo-token`,
     review_link: "https://g.page/r/sample-review/edit",
+    schedule_summary: "Mow & edge: Weekly · Mon · from Sep 15",
   };
 }
 

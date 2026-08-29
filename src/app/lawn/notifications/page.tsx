@@ -50,6 +50,7 @@ const EVENT_ORDER = [
   "service_complete",
   "service_skipped",
   "review_request",
+  "schedule_confirmed",
 ] as const;
 
 const EVENT_LABEL: Record<string, string> = {
@@ -58,6 +59,7 @@ const EVENT_LABEL: Record<string, string> = {
   service_complete: "Service complete",
   service_skipped: "Visit skipped",
   review_request: "Review request",
+  schedule_confirmed: "Schedule confirmed",
 };
 
 const EVENT_HINT: Record<string, string> = {
@@ -66,10 +68,12 @@ const EVENT_HINT: Record<string, string> = {
   service_complete: "Sent when a visit is marked done. Includes a photo link.",
   service_skipped: "Sent when a visit is marked skipped (weather, no access, etc.).",
   review_request: "Sent right after service complete. Links to your review URL.",
+  schedule_confirmed:
+    "Sent once, the moment a paid estimate creates a recurring schedule. Describes the cadence, not specific dates.",
 };
 
 const TOKENS =
-  "{{customer_name}} {{job_name}} {{address}} {{service_date}} {{org_name}} {{photo_link}} {{review_link}}";
+  "{{customer_name}} {{job_name}} {{address}} {{service_date}} {{org_name}} {{photo_link}} {{review_link}} {{schedule_summary}}";
 
 export default function LawnNotificationsPage() {
   const router = useRouter();

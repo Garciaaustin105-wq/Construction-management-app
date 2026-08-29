@@ -24,13 +24,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { publicBaseUrl } from "@/lib/invoiceSend";
 import { sendCustomerEmail } from "@/lib/email";
 import { sendCustomerSms, normalizePhoneToE164 } from "@/lib/sms";
+import { summarizeLineSchedule, type ScheduleFrequency } from "@/lib/lawnEstimate";
 
 export type NotificationEvent =
   | "visit_reminder"
   | "on_my_way"
   | "service_complete"
   | "service_skipped"
-  | "review_request";
+  | "review_request"
+  // Sent once, the moment an estimate converts to a job with at least one
+  // recurring_schedules row — tells the customer their service cadence (NOT
+  // dated visits; those are generated later by the nightly cron and aren't
+  // crew/route-assigned yet, see sendScheduleConfirmation below). Keyed to a
+  // recurring_schedules row via entityType "recurring_schedule", not a visit.
+  | "schedule_confirmed";
 
 export type NotificationChannel = "email" | "sms";
 
@@ -212,7 +219,8 @@ async function logAttempt(
   event: NotificationEvent,
   channel: NotificationChannel,
   toContact: string | null,
-  visitId: string,
+  entityId: string,
+  entityType: string,
   status: "sent" | "failed" | "skipped",
   error: string | null
 ): Promise<void> {
@@ -223,8 +231,8 @@ async function logAttempt(
       event,
       channel,
       to_contact: toContact ?? null,
-      entity_type: "visit",
-      entity_id: visitId,
+      entity_type: entityType,
+      entity_id: entityId,
       status,
       error,
     });
@@ -244,6 +252,11 @@ export type SendCustomerNotificationInput = {
   event: NotificationEvent;
   organizationId: string;
   visitId: string;
+  // Override for events not keyed to a visit (e.g. schedule_confirmed, keyed
+  // to a recurring_schedules row). Defaults to "visit"/visitId when omitted —
+  // every existing caller is unaffected.
+  entityType?: string;
+  entityId?: string;
   customerId: string;
   // Token-substitution context. All optional; missing values render empty.
   customerName?: string | null;
@@ -275,18 +288,23 @@ export type SendCustomerNotificationInput = {
   // full sentence (the template engine has no conditionals), so a missing
   // interval never leaves a dangling "until ." fragment.
   reEntryNotice?: string | null;
+  // schedule_confirmed only — the rendered cadence summary (one line per
+  // active recurring schedule on the job). Renders as {{schedule_summary}}.
+  scheduleSummary?: string | null;
   // Optional per-invocation settings/template cache for batch senders (the
   // remind cron). Omit for single-send routes (status / on-my-way) — they
   // fetch once and don't benefit.
   cache?: NotificationCache;
 };
 
-// Send one event to the visit's customer across both channels, gated + logged.
+// Send one event to the customer across both channels, gated + logged.
 // Returns the per-channel outcomes. Never throws.
 export async function sendCustomerNotification(
   input: SendCustomerNotificationInput
 ): Promise<ChannelResult[]> {
   const { supabase, event, organizationId, visitId, customerId } = input;
+  const entityType = input.entityType ?? "visit";
+  const entityId = input.entityId ?? visitId;
   const results: ChannelResult[] = [];
 
   const settings = await getSettings(supabase, organizationId, input.cache);
@@ -301,7 +319,8 @@ export async function sendCustomerNotification(
         event,
         channel,
         null,
-        visitId,
+        entityId,
+        entityType,
         "skipped",
         "notifications disabled"
       );
@@ -330,6 +349,7 @@ export async function sendCustomerNotification(
     review_link: reviewLink ?? "",
     reason: input.reason?.trim() || "N/A",
     re_entry_notice: input.reEntryNotice ?? "",
+    schedule_summary: input.scheduleSummary ?? "",
   };
 
   for (const channel of CHANNELS) {
@@ -342,7 +362,8 @@ export async function sendCustomerNotification(
         event,
         channel,
         channel === "email" ? contact.email : contact.phone,
-        visitId,
+        entityId,
+        entityType,
         "skipped",
         `${channel} opt-out`
       );
@@ -358,7 +379,8 @@ export async function sendCustomerNotification(
         event,
         channel,
         null,
-        visitId,
+        entityId,
+        entityType,
         "skipped",
         `no ${channel} contact`
       );
@@ -374,7 +396,8 @@ export async function sendCustomerNotification(
         event,
         channel,
         dest,
-        visitId,
+        entityId,
+        entityType,
         "skipped",
         "no active template"
       );
@@ -409,7 +432,8 @@ export async function sendCustomerNotification(
       event,
       channel,
       dest,
-      visitId,
+      entityId,
+      entityType,
       status,
       errMsg
     );
@@ -427,4 +451,77 @@ export async function sendCustomerNotification(
 // decide the notified flag)? Skipped/failed-only counts as not notified.
 export function anySent(results: ChannelResult[]): boolean {
   return results.some((r) => r.status === "sent");
+}
+
+// Fires once, right after an estimate converts to a job (invoice just fully
+// paid, the DB trigger convert_estimate_on_invoice_paid already ran in the
+// same transaction). Looks up whatever recurring_schedules landed on the new
+// job and — if there are any — tells the customer their cadence in one
+// message. Deliberately NOT dated visits: those are generated later by the
+// nightly /api/lawn/cron/generate sweep and aren't crew/zone-assigned yet
+// (that loop isn't wired up), so promising specific days here would be a lie.
+// Never throws — call sites are payment paths that must not be broken by a
+// notification hiccup.
+export async function sendScheduleConfirmation(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    jobId: string;
+    customerId: string;
+    jobName: string;
+    address?: string | null;
+    orgName?: string | null;
+  }
+): Promise<void> {
+  try {
+    const { data: schedules } = await supabase
+      .from("recurring_schedules")
+      .select(
+        "id, service_type, frequency, interval_weeks, days_of_week, day_of_month, start_date, end_date"
+      )
+      .eq("job_id", input.jobId)
+      .eq("active", true);
+    const rows = (schedules ?? []) as {
+      id: string;
+      service_type: string | null;
+      frequency: string | null;
+      interval_weeks: number | null;
+      days_of_week: number[] | null;
+      day_of_month: number | null;
+      start_date: string | null;
+      end_date: string | null;
+    }[];
+    if (rows.length === 0) return; // no cadence on this estimate — nothing to confirm
+
+    const lines = rows.map((s) => {
+      const summary = summarizeLineSchedule({
+        schedule_frequency: s.frequency as ScheduleFrequency | null,
+        schedule_interval_weeks: s.interval_weeks ?? 1,
+        schedule_days_of_week: s.days_of_week ?? [],
+        schedule_day_of_month: s.day_of_month,
+        schedule_start_date: s.start_date,
+        schedule_end_date: s.end_date,
+      });
+      const label = s.service_type?.trim() || "Service";
+      return summary ? `${label}: ${summary}` : label;
+    });
+
+    await sendCustomerNotification({
+      supabase,
+      event: "schedule_confirmed",
+      organizationId: input.organizationId,
+      // visitId is unused for this event (entityType/entityId below override
+      // it) but stays required on the shared type for every other caller.
+      visitId: rows[0].id,
+      entityType: "recurring_schedule",
+      entityId: rows[0].id,
+      customerId: input.customerId,
+      jobName: input.jobName,
+      address: input.address ?? null,
+      orgName: input.orgName ?? null,
+      scheduleSummary: lines.join("\n"),
+    });
+  } catch {
+    // Never break the payment path.
+  }
 }

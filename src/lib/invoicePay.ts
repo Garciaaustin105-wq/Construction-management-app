@@ -43,6 +43,7 @@ import {
   requireChargeableAccount,
 } from "@/lib/connectAccount";
 import { ensureStripeCustomer, stampCustomerCard } from "@/lib/invoiceCharge";
+import { sendScheduleConfirmation } from "@/lib/customerNotifications";
 
 // ── Create a Stripe Checkout session for the invoice balance (DIRECT charge) ─
 export async function createInvoiceCheckoutSession(input: {
@@ -161,7 +162,9 @@ export async function recordInvoicePayment(input: {
   const admin = createAdminClient();
   const { data: invoice } = await admin
     .from("invoices")
-    .select("id, status, organization_id, amount_paid, jobs(name), customers(name)")
+    .select(
+      "id, status, organization_id, amount_paid, estimate_id, customer_id, jobs(name), customers(name)"
+    )
     .eq("id", input.invoiceId)
     .maybeSingle();
   if (!invoice) return;
@@ -286,6 +289,45 @@ export async function recordInvoicePayment(input: {
       });
     } catch {
       // Swallow — feed is best-effort; payment already recorded.
+    }
+
+    // Schedule-confirmed customer notification. The DB trigger
+    // convert_estimate_on_invoice_paid already ran synchronously as part of
+    // the .update() above (same transaction), so if this invoice is linked to
+    // an estimate, the estimate is 'converted' and its job_id (+ any
+    // recurring_schedules) already exist by the time we get here. Non-fatal —
+    // wrapped so a lookup/send hiccup can never surface back to the webhook.
+    try {
+      const estimateId = (invoice as { estimate_id: string | null })
+        .estimate_id;
+      const customerId = (invoice as { customer_id: string | null })
+        .customer_id;
+      if (estimateId && customerId) {
+        const { data: est } = await admin
+          .from("estimates")
+          .select("status, job_id")
+          .eq("id", estimateId)
+          .maybeSingle();
+        const estRow = est as { status: string; job_id: string | null } | null;
+        if (estRow?.status === "converted" && estRow.job_id) {
+          const jobName =
+            (invoice.jobs as unknown as { name: string } | null)?.name ?? "";
+          const { data: orgRow } = await admin
+            .from("organizations")
+            .select("name")
+            .eq("id", invoice.organization_id)
+            .maybeSingle();
+          await sendScheduleConfirmation(admin, {
+            organizationId: invoice.organization_id,
+            jobId: estRow.job_id,
+            customerId,
+            jobName,
+            orgName: (orgRow as { name: string | null } | null)?.name ?? null,
+          });
+        }
+      }
+    } catch {
+      // Never break the payment path.
     }
   }
 

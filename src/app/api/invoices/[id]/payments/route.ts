@@ -3,6 +3,7 @@ import { getMeIdentity } from "@/lib/tenant";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
 import { computeTotal } from "@/lib/money";
+import { sendScheduleConfirmation } from "@/lib/customerNotifications";
 
 // /api/invoices/[id]/payments — record + list offline (cash / check / other)
 // payments against an invoice. The platform never touches customer money
@@ -39,6 +40,8 @@ type InvoiceRow = {
   status: string;
   amount_paid: number | string | null;
   organization_id: string;
+  estimate_id: string | null;
+  customer_id: string | null;
   jobs: { name: string | null } | null;
   customers: { name: string | null } | null;
 };
@@ -158,7 +161,7 @@ export async function POST(
   const { data: invoiceData, error: invErr } = await supabase
     .from("invoices")
     .select(
-      "id, status, amount_paid, organization_id, jobs(name), customers(name)"
+      "id, status, amount_paid, organization_id, estimate_id, customer_id, jobs(name), customers(name)"
     )
     .eq("id", id)
     .maybeSingle();
@@ -250,6 +253,40 @@ export async function POST(
       });
     } catch {
       // best-effort
+    }
+
+    // Schedule-confirmed customer notification. The DB trigger
+    // convert_estimate_on_invoice_paid already ran synchronously as part of
+    // applyPaymentToInvoice's .update() above (same transaction) — if this
+    // invoice is linked to an estimate, it's already 'converted' with its
+    // job_id (+ any recurring_schedules) in place. Non-fatal: the payment is
+    // already recorded by the time this runs.
+    try {
+      if (invoice.estimate_id && invoice.customer_id) {
+        const admin = createAdminClient();
+        const { data: est } = await admin
+          .from("estimates")
+          .select("status, job_id")
+          .eq("id", invoice.estimate_id)
+          .maybeSingle();
+        const estRow = est as { status: string; job_id: string | null } | null;
+        if (estRow?.status === "converted" && estRow.job_id) {
+          const { data: orgRow } = await admin
+            .from("organizations")
+            .select("name")
+            .eq("id", invoice.organization_id)
+            .maybeSingle();
+          await sendScheduleConfirmation(admin, {
+            organizationId: invoice.organization_id,
+            jobId: estRow.job_id,
+            customerId: invoice.customer_id,
+            jobName: invoice.jobs?.name ?? "",
+            orgName: (orgRow as { name: string | null } | null)?.name ?? null,
+          });
+        }
+      }
+    } catch {
+      // Never break the payment path.
     }
   }
 
