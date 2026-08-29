@@ -16,6 +16,7 @@ type CalVisit = {
   due_date: string;
   status: string;
   crew_id: string | null;
+  recurring_schedule_id: string;
   recurring_schedules: { service_type: string | null } | null;
   jobs: { name: string | null } | null;
 };
@@ -111,7 +112,7 @@ export default async function LawnCalendarPage({
     supabase
       .from("lawn_visits")
       .select(
-        "id, due_date, status, crew_id, recurring_schedules(service_type), jobs(name)",
+        "id, due_date, status, crew_id, recurring_schedule_id, recurring_schedules(service_type), jobs(name)",
       )
       .gte("due_date", gte)
       .lte("due_date", lte)
@@ -125,6 +126,7 @@ export default async function LawnCalendarPage({
       due_date: v.due_date,
       status: v.status as BoardVisit["status"],
       crew_id: v.crew_id,
+      recurring_schedule_id: v.recurring_schedule_id,
       job_name: v.jobs?.name ?? "Untitled",
       service_type: v.recurring_schedules?.service_type ?? null,
     }));

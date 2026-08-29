@@ -25,6 +25,9 @@ export type BoardVisit = {
   crew_id: string | null;
   job_name: string;
   service_type: string | null;
+  // Needed so a crew-reassign drag can offer to also set the schedule's
+  // default crew (recurring_schedules.default_crew_id) for future visits.
+  recurring_schedule_id: string;
 };
 
 export type BoardCrew = { id: string; name: string };
@@ -179,6 +182,36 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
   const [serviceFilter, setServiceFilter] = useState("");
   const [query, setQuery] = useState("");
 
+  // "Apply to future visits too?" banner — shown after a successful
+  // crew-reassign drag. Confirming updates the recurring schedule's default
+  // crew; dismissing leaves it as a one-off change (today's existing behavior).
+  const [applyPrompt, setApplyPrompt] = useState<{
+    scheduleId: string;
+    crewId: string;
+    crewName: string;
+    jobName: string;
+  } | null>(null);
+  const [applyingPrompt, setApplyingPrompt] = useState(false);
+
+  async function applyDefaultCrew() {
+    if (!applyPrompt) return;
+    setApplyingPrompt(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("recurring_schedules")
+        .update({ default_crew_id: applyPrompt.crewId })
+        .eq("id", applyPrompt.scheduleId);
+      if (error) throw error;
+      toast.success(`${applyPrompt.crewName} set as the default crew for future visits`);
+    } catch {
+      toast.error("Could not update the default crew — try again from the schedule page");
+    } finally {
+      setApplyingPrompt(false);
+      setApplyPrompt(null);
+    }
+  }
+
   const filteredVisits = useMemo(() => {
     const q = query.trim().toLowerCase();
     return localVisits.filter((v) => {
@@ -261,6 +294,13 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
         if (error) {
           toast.error(error.message);
           setLocalVisits((prev) => prev.map((v) => (v.id === visitId ? original : v)));
+        } else if (newCrew) {
+          // Offer to make this the schedule's default crew for future visits
+          // too (recurring_schedules.default_crew_id) — otherwise every fresh
+          // visit the cron generates keeps coming in unassigned regardless of
+          // this one-off reassignment.
+          const crewName = crews.find((c) => c.id === newCrew)?.name ?? "this crew";
+          setApplyPrompt({ scheduleId: visit.recurring_schedule_id, crewId: newCrew, crewName, jobName: visit.job_name });
         }
       }
     } catch {
@@ -271,6 +311,34 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
 
   return (
     <div className="space-y-4">
+      {/* "Apply to future?" banner after a crew-reassign drag */}
+      {applyPrompt && (
+        <div className="flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+          <p className="text-sm text-blue-900 flex-1 min-w-[220px]">
+            Moved <strong>{applyPrompt.jobName}</strong> to <strong>{applyPrompt.crewName}</strong>.
+            Also make {applyPrompt.crewName} the default crew for this schedule&rsquo;s future visits?
+          </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={applyDefaultCrew}
+              disabled={applyingPrompt}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 active:bg-blue-700 disabled:opacity-50"
+            >
+              {applyingPrompt ? "Saving…" : "Yes, set default"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setApplyPrompt(null)}
+              disabled={applyingPrompt}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-900 bg-white border border-blue-200 disabled:opacity-50"
+            >
+              Just this once
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* View switcher */}
       <div className="flex gap-2">
         <Link
