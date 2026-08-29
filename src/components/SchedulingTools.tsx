@@ -92,6 +92,30 @@ export default function SchedulingTools(
   const [timeOffEnd, setTimeOffEnd] = useState("");
   const [timeOffReason, setTimeOffReason] = useState("");
 
+  // Section 6: Crew capacity (working_days + max_visits_per_day) — these
+  // columns already drive the real crew_has_capacity() DB function that
+  // batch_reschedule_visits (Section 2) checks, but until now nothing let the
+  // office actually SET them, so every crew was effectively unlimited.
+  //
+  // IMPORTANT: crew_members.working_days is stored 1=Sun..7=Sat (Postgres
+  // extract(dow)+1 inside crew_has_capacity), NOT this app's usual 0=Sun..6=Sat
+  // (e.g. recurring_schedules.days_of_week, the DOW[] array below). The chip
+  // toggles below work in the 0-6 UI convention and convert +1 on save / -1 on
+  // load so the stored value matches what the DB function actually reads.
+  type CapacityDraft = { days: Set<number>; max: string };
+  const initialCapacity = (): Record<string, CapacityDraft> => {
+    const map: Record<string, CapacityDraft> = {};
+    for (const c of crews) {
+      map[c.id] = {
+        // Stored 1-7 -> UI 0-6.
+        days: new Set((c.working_days ?? []).map((d) => d - 1)),
+        max: c.max_visits_per_day === null ? "" : String(c.max_visits_per_day),
+      };
+    }
+    return map;
+  };
+  const [capacity, setCapacity] = useState<Record<string, CapacityDraft>>(initialCapacity);
+
   // Helper: load supabase client
   const loadSupabase = async () => {
     const supabaseMod = await import("@/lib/supabase/client");
@@ -374,6 +398,38 @@ export default function SchedulingTools(
       router.refresh();
     } catch (e) {
       toast.error(errMsg(e) || "Failed to delete time off");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Section 6: Save one crew's capacity settings
+  const handleSaveCapacity = async (crewId: string) => {
+    const draft = capacity[crewId];
+    if (!draft) return;
+    if (draft.max !== "" && (!/^\d+$/.test(draft.max) || Number(draft.max) < 1)) {
+      toast.error("Max visits/day must be a whole number of 1 or more");
+      return;
+    }
+    setBusyId(`capacity-${crewId}`);
+    try {
+      const supabase = await loadSupabase();
+      // Empty selection = "no restriction" (working every day), stored as
+      // null rather than [] — an empty array would make crew_has_capacity()
+      // match no day at all, silently locking the crew out of every date.
+      const daysArr = [...draft.days].sort((a, b) => a - b);
+      const { error } = await supabase
+        .from("crew_members")
+        .update({
+          working_days: daysArr.length === 0 ? null : daysArr.map((d) => d + 1),
+          max_visits_per_day: draft.max === "" ? null : Number(draft.max),
+        })
+        .eq("id", crewId);
+      if (error) throw error;
+      toast.success("Capacity updated");
+      router.refresh();
+    } catch (e) {
+      toast.error(errMsg(e) || "Failed to update capacity");
     } finally {
       setBusyId(null);
     }
@@ -854,6 +910,86 @@ export default function SchedulingTools(
           )}
           Add
         </button>
+      </div>
+
+      {/* Section 6 – Crew capacity */}
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4">
+        <h3 className="font-bold mb-2">Crew capacity</h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Working days and a daily visit cap per crew. Used by capacity checks
+          elsewhere (Batch reschedule above, and the calendar&apos;s
+          drag-to-reschedule) — leave a crew unrestricted if you don&apos;t
+          want it enforced.
+        </p>
+        <div className="space-y-4">
+          {crews.map((c) => {
+            const draft = capacity[c.id] ?? { days: new Set<number>(), max: "" };
+            const busy = busyId === `capacity-${c.id}`;
+            return (
+              <div key={c.id} className="border border-gray-100 rounded-lg p-3">
+                <h4 className="font-medium mb-2">{c.name}</h4>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {DOW.map((d, i) => {
+                    const on = draft.days.has(i);
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() =>
+                          setCapacity((prev) => {
+                            const next = new Set(prev[c.id]?.days ?? []);
+                            if (next.has(i)) next.delete(i);
+                            else next.add(i);
+                            return { ...prev, [c.id]: { ...draft, days: next } };
+                          })
+                        }
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                          on ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        }`}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-400 mb-3">
+                  {draft.days.size === 0
+                    ? "No days selected — works any day (unrestricted)."
+                    : "Only works the highlighted days."}
+                </p>
+                <div className="flex items-end gap-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Max visits/day</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={draft.max}
+                      onChange={(e) =>
+                        setCapacity((prev) => ({
+                          ...prev,
+                          [c.id]: { ...draft, max: e.target.value.replace(/[^\d]/g, "") },
+                        }))
+                      }
+                      placeholder="Unlimited"
+                      className="w-32 border border-gray-300 rounded-lg px-2 py-1 text-sm"
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleSaveCapacity(c.id)}
+                    disabled={busy}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg px-3 py-1.5 active:bg-slate-800 disabled:opacity-50"
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {crews.length === 0 && (
+            <p className="text-sm text-gray-500">No crew members yet.</p>
+          )}
+        </div>
       </div>
     </div>
   );
