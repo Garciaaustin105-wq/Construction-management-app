@@ -34,6 +34,7 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 const MAX_CHIPS_PER_CELL = 3;
+const MAX_CHIPS_PER_CELL_DESKTOP = 6;
 
 type CalVisit = {
   id: string;
@@ -158,7 +159,7 @@ export default async function LawnCalendarPage({
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   return (
-    <PageContainer title="Lawn Calendar" subtitle="Monthly crew routes" backHref="/lawn" backLabel="Lawn" maxWidth="list">
+    <PageContainer title="Lawn Calendar" subtitle="Monthly crew routes" backHref="/lawn" backLabel="Lawn" maxWidth="full">
       {/* Month nav */}
       <div className="flex items-center justify-between">
         <Link
@@ -211,27 +212,32 @@ export default async function LawnCalendarPage({
       ) : (
         <div className="grid grid-cols-7 gap-1">
           {cells.map((d, i) => {
-            if (d === null) return <div key={`b-${i}`} className="min-h-[64px]" />;
+            if (d === null) return <div key={`b-${i}`} className="min-h-[64px] lg:min-h-[110px]" />;
             const dateStr = `${iso}-${String(d).padStart(2, "0")}`;
             const dayVisits = visitsByDate.get(dateStr) ?? [];
             const isToday = dateStr === todayIso;
-            const shown = dayVisits.slice(0, MAX_CHIPS_PER_CELL);
-            const extra = dayVisits.length - shown.length;
+            // Desktop cells are taller, so they can show more chips before
+            // falling back to "+N more" — render up to the desktop cap, but
+            // hide the extra (mobile..desktop] chips with lg: so mobile still
+            // only sees MAX_CHIPS_PER_CELL.
+            const shown = dayVisits.slice(0, MAX_CHIPS_PER_CELL_DESKTOP);
+            const mobileExtra = dayVisits.length - Math.min(dayVisits.length, MAX_CHIPS_PER_CELL);
+            const desktopExtra = dayVisits.length - shown.length;
             return (
               <div
                 key={dateStr}
-                className={`min-h-[64px] rounded-lg p-1 flex flex-col gap-1 ${
+                className={`min-h-[64px] lg:min-h-[110px] rounded-lg p-1 lg:p-1.5 flex flex-col gap-1 ${
                   isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
                 }`}
               >
                 <span
-                  className={`text-[10px] font-semibold ${
+                  className={`text-[10px] lg:text-xs font-semibold ${
                     isToday ? "text-blue-700" : "text-gray-400"
                   } self-end leading-none`}
                 >
                   {d}
                 </span>
-                {shown.map((v) => {
+                {shown.map((v, idx) => {
                   const c = crewOf(v);
                   const col = colorFor(c.colorIdx);
                   return (
@@ -240,7 +246,7 @@ export default async function LawnCalendarPage({
                       href={`/lawn/visits/${v.id}`}
                       className={`block rounded px-1 py-0.5 text-[10px] leading-tight truncate ${col.chip} ${
                         v.status === "skipped" ? "line-through opacity-60" : ""
-                      }`}
+                      } ${idx >= MAX_CHIPS_PER_CELL ? "hidden lg:block" : ""}`}
                     >
                       <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${col.dot}`} />
                       <span className="font-semibold align-middle">{initials(c.name)}</span>
@@ -254,8 +260,11 @@ export default async function LawnCalendarPage({
                     </Link>
                   );
                 })}
-                {extra > 0 && (
-                  <span className="text-[9px] text-gray-400 px-1">+{extra} more</span>
+                {mobileExtra > 0 && (
+                  <span className="text-[9px] text-gray-400 px-1 lg:hidden">+{mobileExtra} more</span>
+                )}
+                {desktopExtra > 0 && (
+                  <span className="hidden lg:block text-[9px] text-gray-400 px-1">+{desktopExtra} more</span>
                 )}
               </div>
             );
@@ -269,7 +278,7 @@ export default async function LawnCalendarPage({
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
             Crew &amp; Jobs
           </h2>
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {legendList.map((e) => {
               const col = colorFor(e.colorIdx);
               return (

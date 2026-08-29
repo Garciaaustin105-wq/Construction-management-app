@@ -138,7 +138,7 @@ export default async function LawnRoutesPage({
     <PageContainer
       title="Route Planner"
       subtitle="Map + drag to order"
-      maxWidth="list"
+      maxWidth="full"
       backHref="/lawn"
       backLabel="Back to Lawn"
     >

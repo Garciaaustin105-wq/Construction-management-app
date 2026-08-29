@@ -633,6 +633,12 @@ export default function RouteMapPlanner({
         </div>
       )}
 
+      {/* Desktop: map + toolbar get the wide column, the drag-to-reorder
+          list sits beside it like a real dispatch tool. Mobile stays a
+          single stacked column (unchanged). */}
+      <div className="lg:grid lg:grid-cols-[1fr_380px] lg:gap-4 lg:items-start">
+      <div className="space-y-3">
+
       {/* Route summary */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-white rounded-lg p-2.5 shadow-sm text-xs">
         <span className="inline-flex items-center gap-1.5 text-gray-700 font-medium">
@@ -808,7 +814,10 @@ export default function RouteMapPlanner({
         </div>
       )}
 
+      </div>
+
       {/* Drag-to-reorder list */}
+      <div className="mt-3 lg:mt-0">
       <RouteList
         stops={ordered}
         crews={crews}
@@ -826,6 +835,9 @@ export default function RouteMapPlanner({
         }}
         onSetOnMap={setDropTargetId}
       />
+      </div>
+
+      </div>
 
       <p className="text-[11px] text-gray-400 text-center">
         Changes save automatically — drag to reorder, pick a crew, or hit Optimize.
