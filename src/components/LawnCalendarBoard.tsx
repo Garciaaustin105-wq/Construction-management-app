@@ -30,7 +30,14 @@ export type BoardVisit = {
   recurring_schedule_id: string;
 };
 
-export type BoardCrew = { id: string; name: string };
+export type BoardCrew = {
+  id: string;
+  name: string;
+  // 1=Sun..7=Sat (matches the crew_has_capacity() DB function's convention,
+  // NOT this app's usual 0=Sun..6=Sat) -- null/empty = works any day.
+  working_days: number[] | null;
+  max_visits_per_day: number | null;
+};
 
 export type LawnCalendarBoardProps = {
   view: "month" | "week" | "agenda";
@@ -265,6 +272,36 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
       newDate = cellId;
     }
     if (newDate === visit.due_date && newCrew === visit.crew_id) return;
+
+    // Soft capacity warning — a heuristic check against the crew's own
+    // settings (Scheduling > Crew capacity), not a hard block. Blackout dates
+    // and crew time-off aren't checked here (that's server-side, in
+    // crew_has_capacity()); this is just enough to stop an accidental
+    // overload before it happens, with an easy override for a deliberate one.
+    if (newCrew) {
+      const crew = crews.find((c) => c.id === newCrew);
+      const warnings: string[] = [];
+      if (crew?.working_days && crew.working_days.length > 0) {
+        const dow1to7 = new Date(newDate + "T00:00:00").getDay() + 1;
+        if (!crew.working_days.includes(dow1to7)) {
+          warnings.push(`${crew.name} isn't scheduled to work that day.`);
+        }
+      }
+      if (crew?.max_visits_per_day) {
+        const countedStatuses = new Set(["pending", "done"]);
+        const already = localVisits.filter(
+          (v) => v.id !== visitId && v.crew_id === newCrew && v.due_date === newDate && countedStatuses.has(v.status)
+        ).length;
+        if (already >= crew.max_visits_per_day) {
+          warnings.push(
+            `${crew.name} already has ${already} visit${already === 1 ? "" : "s"} that day (cap: ${crew.max_visits_per_day}).`
+          );
+        }
+      }
+      if (warnings.length > 0 && !confirm(`${warnings.join(" ")}\n\nMove it anyway?`)) {
+        return;
+      }
+    }
 
     const original = visit;
     setLocalVisits((prev) => prev.map((v) => (v.id === visitId ? { ...v, due_date: newDate, crew_id: newCrew } : v)));

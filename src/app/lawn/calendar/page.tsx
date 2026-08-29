@@ -117,7 +117,10 @@ export default async function LawnCalendarPage({
       .gte("due_date", gte)
       .lte("due_date", lte)
       .order("due_date", { ascending: true }),
-    supabase.from("crew_members").select("id, name").order("name"),
+    supabase
+      .from("crew_members")
+      .select("id, name, working_days, max_visits_per_day")
+      .order("name"),
   ]);
 
   const boardVisits: BoardVisit[] =
@@ -132,9 +135,16 @@ export default async function LawnCalendarPage({
     }));
 
   const boardCrews: BoardCrew[] =
-    (crewRows as { id: string; name: string }[] | null ?? []).map((c) => ({
+    (
+      crewRows as
+        | { id: string; name: string; working_days: number[] | null; max_visits_per_day: number | null }[]
+        | null
+      ?? []
+    ).map((c) => ({
       id: c.id,
       name: c.name?.trim() ?? "Crew",
+      working_days: c.working_days,
+      max_visits_per_day: c.max_visits_per_day,
     }));
 
   const serviceTypes = Array.from(
