@@ -16,7 +16,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Search, CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
 
 export type BoardVisit = {
   id: string;
@@ -87,7 +87,9 @@ const FILTER_BTN = (active: boolean) =>
 
 const STATUS_BADGE: Record<BoardVisit["status"], string> = {
   done: "bg-gray-100 text-gray-500",
-  skipped: "bg-gray-100 text-gray-500",
+  // Distinct from "done" on purpose — a skipped visit needs a human decision
+  // (reschedule, or leave it), it isn't finished work like "done" is.
+  skipped: "bg-red-100 text-red-700",
   pending: "bg-amber-100 text-amber-700",
   paused: "bg-blue-100 text-blue-700",
 };
@@ -130,17 +132,23 @@ function DraggableChip({
   const style: CSSProperties = {
     transform: transform ? CSS.Translate.toString(transform) : undefined,
   };
+  const skipped = visit.status === "skipped";
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing ${color.chip} ${
-        visit.status === "skipped" ? "line-through opacity-60" : ""
+      title={skipped ? "Skipped — needs a follow-up" : undefined}
+      className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing ${
+        skipped ? "bg-red-50 text-red-700 border border-red-200 line-through" : color.chip
       } ${isDragging ? "opacity-60" : ""} ${extraClassName ?? ""}`}
     >
-      <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${color.dot}`} />
+      {skipped ? (
+        <AlertTriangle className="inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0" />
+      ) : (
+        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${color.dot}`} />
+      )}
       <span className="font-semibold align-middle">{crewName}</span>
       {visit.service_type && <span className="align-middle"> {visit.service_type}</span>}
     </div>
