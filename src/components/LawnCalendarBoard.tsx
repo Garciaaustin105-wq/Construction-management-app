@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect, type CSSProperties } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import {
@@ -208,6 +209,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     agendaViewHref,
   } = props;
   const toast = useToast();
+  const router = useRouter();
 
   // Local optimistic visit state — reset whenever the server hands us a fresh
   // (differently-scoped) visits prop, e.g. after a month/week nav.
@@ -274,6 +276,56 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     } finally {
       setApplyingPrompt(false);
       setApplyPrompt(null);
+    }
+  }
+
+  // Bulk move — Day view only. Reuses the existing /api/lawn/visits/bulk-move
+  // endpoint as-is (it already moves every PENDING visit on a date in one
+  // request, in place, no new rows). Moves ALL of the day's pending visits
+  // org-wide, not just what's currently filtered/visible -- called out in the
+  // UI copy so the office isn't surprised by a filtered-out crew's visits
+  // moving too.
+  const [showMoveDay, setShowMoveDay] = useState(false);
+  const [moveDayTarget, setMoveDayTarget] = useState("");
+  const [movingDay, setMovingDay] = useState(false);
+
+  async function moveDay(fromDate: string) {
+    if (!moveDayTarget) {
+      toast.error("Pick a target date");
+      return;
+    }
+    if (moveDayTarget === fromDate) {
+      toast.error("Pick a different date");
+      return;
+    }
+    setMovingDay(true);
+    try {
+      const res = await fetch("/api/lawn/visits/bulk-move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromDate, toDate: moveDayTarget }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data?.error ?? "Could not move the day");
+        return;
+      }
+      const moved = data.moved ?? 0;
+      const conflicts = (data.conflicts ?? []) as { jobName: string }[];
+      if (conflicts.length > 0) {
+        toast.warning(
+          `Moved ${moved}, skipped ${conflicts.length} (already a visit on that date for that schedule)`
+        );
+      } else {
+        toast.success(`Moved ${moved} visit${moved === 1 ? "" : "s"}`);
+      }
+      setShowMoveDay(false);
+      setMoveDayTarget("");
+      router.refresh();
+    } catch {
+      toast.error("Could not move the day — try again");
+    } finally {
+      setMovingDay(false);
     }
   }
 
@@ -733,6 +785,49 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
             <Link href={day.nextHref} className="p-2 -mr-2 text-gray-600 active:text-gray-900" aria-label="Next day">
               <ChevronRight className="w-5 h-5" />
             </Link>
+          </div>
+
+          <div>
+            {!showMoveDay ? (
+              <button
+                type="button"
+                onClick={() => setShowMoveDay(true)}
+                className="text-xs font-medium text-blue-600 hover:underline"
+              >
+                Move all of this day&rsquo;s visits…
+              </button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2">
+                <span className="text-xs text-blue-900">
+                  Move every <strong>pending</strong> visit on {day.label} (org-wide — not just what&rsquo;s filtered/shown) to:
+                </span>
+                <input
+                  type="date"
+                  value={moveDayTarget}
+                  onChange={(e) => setMoveDayTarget(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-2 py-1 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => moveDay(day.date)}
+                  disabled={movingDay}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold text-white bg-blue-600 active:bg-blue-700 disabled:opacity-50"
+                >
+                  {movingDay ? "Moving…" : "Move"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMoveDay(false);
+                    setMoveDayTarget("");
+                  }}
+                  disabled={movingDay}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold text-blue-900 bg-white border border-blue-200 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
 
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
