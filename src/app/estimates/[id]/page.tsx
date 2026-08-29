@@ -781,9 +781,52 @@ export default function EstimateDetailPage({
         </div>
       </div>
 
-      <main className="max-w-md lg:max-w-6xl mx-auto p-4 space-y-4">
+      <main className="max-w-md lg:max-w-7xl mx-auto p-4 space-y-4">
         {tab === "edit" ? (
           <>
+            {/* Lawn only: draw the lawn's boundary → measured_sqft on the
+                estimate. Full-width, above the two-column form -- this is the
+                biggest, most interactive tool on the page and was unusable
+                squeezed into the ~600px main column alongside the pricing
+                sidebar (its own internal sidebar + map need real width).
+                Self-gating via isLawn() so construction renders nothing. */}
+            {isLawn() && (
+              <div>
+                <span className="text-sm font-medium text-gray-700">
+                  Lawn measurement
+                </span>
+                <div className="mt-2">
+                  <LawnMeasurementMap
+                    estimateId={estimate.id}
+                    address={
+                      estimate.customers?.address ?? estimate.jobs?.address ?? null
+                    }
+                    onAddLineItem={(line) =>
+                      setItems((prev) => [
+                        ...prev,
+                        {
+                          cost_code_id: null,
+                          description: line.description,
+                          quantity: line.quantity,
+                          unit: line.unit,
+                          unit_price: line.unit_price,
+                          section: "",
+                          internal_cost: null,
+                          schedule_frequency: null,
+                          schedule_interval_weeks: 1,
+                          schedule_days_of_week: [],
+                          schedule_day_of_month: null,
+                          schedule_start_date: null,
+                          schedule_end_date: null,
+                          recurring_schedule_id: null,
+                        },
+                      ])
+                    }
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
               <div className="space-y-4">
             <section className="bg-white rounded-lg p-4 shadow-sm space-y-1">
@@ -873,46 +916,6 @@ export default function EstimateDetailPage({
               items={items}
               jobName={estimate.jobs?.name ?? null}
             />
-
-            {/* Lawn only: draw the lawn's boundary → measured_sqft on the
-                estimate. Self-gating via isLawn() so construction renders
-                nothing. Uses the customer's (else job's) address to center. */}
-            {isLawn() && (
-              <div>
-                <span className="text-sm font-medium text-gray-700">
-                  Lawn measurement
-                </span>
-                <div className="mt-2">
-                  <LawnMeasurementMap
-                    estimateId={estimate.id}
-                    address={
-                      estimate.customers?.address ?? estimate.jobs?.address ?? null
-                    }
-                    onAddLineItem={(line) =>
-                      setItems((prev) => [
-                        ...prev,
-                        {
-                          cost_code_id: null,
-                          description: line.description,
-                          quantity: line.quantity,
-                          unit: line.unit,
-                          unit_price: line.unit_price,
-                          section: "",
-                          internal_cost: null,
-                          schedule_frequency: null,
-                          schedule_interval_weeks: 1,
-                          schedule_days_of_week: [],
-                          schedule_day_of_month: null,
-                          schedule_start_date: null,
-                          schedule_end_date: null,
-                          recurring_schedule_id: null,
-                        },
-                      ])
-                    }
-                  />
-                </div>
-              </div>
-            )}
 
             <label className="block">
               <span className="text-sm font-medium text-gray-700">
