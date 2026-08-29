@@ -15,7 +15,7 @@ export default async function CostCodesPage() {
   const orgId = me.orgId ?? "";
 
   return (
-    <PageContainer title="Cost Codes" subtitle="The shared job-costing backbone" maxWidth="list">
+    <PageContainer title="Cost Codes" subtitle="The shared job-costing backbone" maxWidth="list" backHref="/manage" backLabel="Manage">
       <CostCodesManager orgId={orgId} />
     </PageContainer>
   );

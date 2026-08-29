@@ -6,7 +6,6 @@ import ReceiptReportFilters from "@/components/ReceiptReportFilters";
 import { fetchReceiptsReport, receiptTotals, type ReceiptReportFilters as Filters } from "@/lib/reports";
 import { signedThumbnail } from "@/lib/storage";
 import { formatMoney } from "@/lib/money";
-import Link from "next/link";
 import ReceiptReportPaidToggle from "@/components/ReceiptReportPaidToggle";
 import { Download, FileSpreadsheet, FileText } from "lucide-react";
 import { OFFICE_OR_PM } from "@/lib/roles";
@@ -94,16 +93,7 @@ export default async function ReceiptsReportPage({
   const qs = exportQs.toString();
 
   return (
-    <PageContainer title="Receipts Report" subtitle="Itemized expenses" maxWidth="list">
-      <div className="flex items-center justify-between">
-        <Link
-          href="/admin/reports"
-          className="text-xs text-blue-600 font-medium"
-        >
-          ← All reports
-        </Link>
-      </div>
-
+    <PageContainer title="Receipts Report" subtitle="Itemized expenses" maxWidth="list" backHref="/admin/reports" backLabel="Reports">
       {/* Filters */}
       <div className="bg-white rounded-lg p-3 shadow-sm">
         <ReceiptReportFilters

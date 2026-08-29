@@ -17,7 +17,7 @@ export default async function QuickQuotePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Quick quote" subtitle="New prospect" />
+      <TopBar title="Quick quote" subtitle="New prospect" backHref="/estimates" backLabel="Estimates" />
       <main className="max-w-md lg:max-w-2xl mx-auto p-4">
         <Suspense fallback={null}>
           <QuickQuoteForm orgId={me.orgId ?? ""} />

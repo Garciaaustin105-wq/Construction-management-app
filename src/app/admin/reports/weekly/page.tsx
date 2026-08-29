@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import PageContainer from "@/components/PageContainer";
 import WeeklyReportFilters from "@/components/WeeklyReportFilters";
 import {
@@ -243,11 +242,7 @@ export default async function WeeklyReportPage({
   };
 
   return (
-    <PageContainer title="Per-Worker Report" subtitle={rangeLabel} maxWidth="list">
-      <Link href="/admin/reports" className="text-xs text-blue-600 font-medium">
-        ← All reports
-      </Link>
-
+    <PageContainer title="Per-Worker Report" subtitle={rangeLabel} maxWidth="list" backHref="/admin/reports" backLabel="Reports">
       {/* Filters (date range + job / worker / cost code) */}
       <div className="bg-white rounded-lg p-3 shadow-sm">
         <WeeklyReportFilters

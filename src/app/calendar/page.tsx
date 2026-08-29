@@ -61,7 +61,7 @@ export default async function CalendarPage({
   // same_org bypass would surface every org). Show a notice instead.
   if (!tenant.orgId) {
     return (
-    <PageContainer title="Calendar" subtitle="Events" maxWidth="list">
+    <PageContainer title="Calendar" subtitle="Events" maxWidth="list" backHref="/office" backLabel="Office">
         <div className="bg-white rounded-lg p-4 shadow-sm text-sm text-gray-600">
           Platform (super admin) accounts don&rsquo;t have an organization
           calendar. Sign in under an organization to see its events.
@@ -91,7 +91,7 @@ export default async function CalendarPage({
   const agendaHref = "/calendar?view=agenda";
 
   return (
-    <PageContainer title="Calendar" subtitle="Events" maxWidth="list">
+    <PageContainer title="Calendar" subtitle="Events" maxWidth="list" backHref="/office" backLabel="Office">
       {/* View tabs (URL-driven, no client JS) */}
       <div className="flex gap-2">
         <Link

@@ -24,7 +24,7 @@ export default async function SubcontractorsPage() {
     .order("company");
 
   return (
-    <PageContainer title="Subcontractors" subtitle={role === "superintendent" ? "Read-only" : "Directory"} maxWidth="list">
+    <PageContainer title="Subcontractors" subtitle={role === "superintendent" ? "Read-only" : "Directory"} maxWidth="list" backHref="/manage" backLabel="Manage">
       <SubcontractorsManager
         initial={(data as Subcontractor[]) ?? []}
         canEdit={role === "office" || role === "admin" || role === "project_manager"}

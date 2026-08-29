@@ -56,7 +56,7 @@ export default async function SubcontractorDetailPage({
   });
 
   return (
-    <PageContainer title="Subcontractor" maxWidth="list">
+    <PageContainer title="Subcontractor" maxWidth="list" backHref="/admin/subcontractors" backLabel="Subcontractors">
       <SubcontractorDetail
         sub={sub as unknown as SubDetail}
         attachments={(atts as SubAttachment[]) ?? []}

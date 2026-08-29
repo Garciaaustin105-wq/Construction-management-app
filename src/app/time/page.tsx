@@ -308,7 +308,7 @@ export default async function TimeOverviewPage({
   }
 
   return (
-    <PageContainer title="Time" subtitle="Weekly breakdown" maxWidth="list">
+    <PageContainer title="Time" subtitle="Weekly breakdown" maxWidth="list" backHref="/dashboard" backLabel="Home">
       {/* Summary */}
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-white rounded-lg p-3 shadow-sm text-center">

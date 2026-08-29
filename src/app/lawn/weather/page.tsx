@@ -11,8 +11,7 @@ import {
   type VisitByDate,
 } from "@/lib/lawnWeather";
 import LawnWeatherMover from "@/components/LawnWeatherMover";
-import Link from "next/link";
-import { CloudSun, CloudRain, ArrowLeft, MapPin } from "lucide-react";
+import { CloudSun, CloudRain, MapPin } from "lucide-react";
 
 function fmtDay(date: string): string {
   const today = new Date().toISOString().slice(0, 10);
@@ -59,14 +58,7 @@ export default async function LawnWeatherPage() {
   });
 
   return (
-    <PageContainer title="Weather" subtitle={ forecastAvailable ? `Forecast near ${locationLabel}` : "Forecast unavailable" } maxWidth="list" mainClassName="space-y-6">
-      <Link
-        href="/lawn"
-        className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
-      >
-        <ArrowLeft className="w-4 h-4" /> Back to Lawn
-      </Link>
-
+    <PageContainer title="Weather" subtitle={ forecastAvailable ? `Forecast near ${locationLabel}` : "Forecast unavailable" } maxWidth="list" mainClassName="space-y-6" backHref="/lawn" backLabel="Lawn">
       {!forecastAvailable && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
           NWS forecast could not be loaded

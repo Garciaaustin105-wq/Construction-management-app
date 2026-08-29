@@ -132,7 +132,7 @@ export default async function CustomerDetailPage({
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Customer" />
+      <TopBar title="Customer" backHref="/admin/customers" backLabel="Customers" />
       <main className="max-w-md lg:max-w-5xl mx-auto p-4">
         <CustomerDetail
           customer={cust as unknown as CustomerDetailRow}

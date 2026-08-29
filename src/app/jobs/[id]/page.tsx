@@ -269,7 +269,7 @@ export default async function JobDetailPage({
   }));
 
   return (
-    <PageContainer title={job.name} subtitle={(job.customers as unknown as { name: string } | null)?.name ?? ""} maxWidth="list" mainClassName="space-y-6">
+    <PageContainer title={job.name} subtitle={(job.customers as unknown as { name: string } | null)?.name ?? ""} maxWidth="list" mainClassName="space-y-6" backHref="/dashboard" backLabel="Home">
       <Card as="section">
         <div className="mb-2">
           <StatusBadge tone={JOB_STATUS_TONE[job.status] ?? "neutral"} size="md">

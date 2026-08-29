@@ -1,12 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { OFFICE_LIKE } from "@/lib/roles";
 import LawnCycleBillingButton from "@/components/LawnCycleBillingButton";
-import { FileText, ArrowLeft } from "lucide-react";
+import { FileText } from "lucide-react";
 
 // Lawn cycle billing preview. Shows each customer's done-but-unbilled lawn
 // visits (count + total at price_per_visit) so the office can review before
@@ -89,14 +88,7 @@ export default async function LawnBillingPage() {
   const totalVisits = visits.length;
 
   return (
-    <PageContainer title="Lawn Billing" subtitle="Monthly cycle invoicing" maxWidth="list">
-      <Link
-        href="/lawn"
-        className="inline-flex items-center gap-1 text-sm text-green-700 font-semibold"
-      >
-        <ArrowLeft className="w-4 h-4" /> Back to Lawn
-      </Link>
-
+    <PageContainer title="Lawn Billing" subtitle="Monthly cycle invoicing" maxWidth="list" backHref="/lawn" backLabel="Lawn">
       {totalVisits === 0 ? (
         <div className="bg-white rounded-lg">
           <EmptyState

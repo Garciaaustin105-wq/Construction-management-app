@@ -56,7 +56,7 @@ export default async function ClientsPage() {
   }));
 
   return (
-    <PageContainer title="Client Portal" subtitle="Invite customers & reply to messages" maxWidth="list">
+    <PageContainer title="Client Portal" subtitle="Invite customers & reply to messages" maxWidth="list" backHref="/admin/customers" backLabel="Customers">
       <ClientManager initial={rows} canEdit={role === "office" || role === "admin"} />
     </PageContainer>
   );
