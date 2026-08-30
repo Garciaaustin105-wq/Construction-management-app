@@ -6,7 +6,7 @@ import { SUPPORT_EMAIL } from "@/lib/legal";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
 import Link from "next/link";
-import { Users, Contact, Briefcase, Tag, CreditCard, Building, LifeBuoy } from "lucide-react";
+import { Users, Contact, Briefcase, Tag, CreditCard, Building, LifeBuoy, UserCog } from "lucide-react";
 
 export default async function ManagePage() {
   const me = await getMe();
@@ -27,6 +27,10 @@ export default async function ManagePage() {
       <TopBar title="Manage" subtitle="People, billing & platform" />
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <div className="grid grid-cols-2 gap-2">
+          <Link href="/account" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+            <UserCog className="w-5 h-5" />
+            <span>Account</span>
+          </Link>
           <Link href="/admin/users" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
             <Users className="w-5 h-5" />
             <span>Users</span>

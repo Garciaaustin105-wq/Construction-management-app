@@ -503,6 +503,10 @@ const PUBLIC_EXACT = [
   "/customer",
   "/privacy",
   "/terms",
+  // Pre-full-auth MFA step-up screen -- same category as /login (the user has
+  // a session but hasn't completed sign-in yet), not a normal authenticated
+  // page. /account (MFA enrollment itself) keeps normal chrome deliberately.
+  "/mfa/challenge",
 ];
 
 export function isPublicRoute(pathname: string): boolean {

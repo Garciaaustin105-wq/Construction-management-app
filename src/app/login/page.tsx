@@ -3,11 +3,17 @@
 import { useState, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Turnstile } from "@marsidev/react-turnstile";
 import { Loader2, Mail } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
 import { isLawn, APP_VARIANT, APP_URLS, type AppVariant } from "@/lib/variant";
+import { needsMfaChallenge } from "@/lib/mfaGate";
+
+// Same key SignupForm.tsx uses — unset until NEXT_PUBLIC_TURNSTILE_SITE_KEY
+// is configured, in which case the widget just doesn't render.
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 function Banner() {
   // Reads query flags set by /auth/callback and /reset-password and surfaces
@@ -73,6 +79,7 @@ export default function LoginPage() {
   // we sign them back out and set this so the form shows a banner pointing them
   // to their home app. null = no mismatch.
   const [wrongApp, setWrongApp] = useState<AppVariant | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | undefined>();
   const supabase = createClient();
   const toast = useToast();
   const router = useRouter();
@@ -140,6 +147,10 @@ export default function LoginPage() {
           : isLawn()
             ? "/lawn"
             : "/dashboard";
+      if (await needsMfaChallenge(supabase)) {
+        router.replace(`/mfa/challenge?next=${encodeURIComponent(dest)}`);
+        return;
+      }
       router.replace(dest);
     })();
     return () => {
@@ -184,6 +195,7 @@ export default function LoginPage() {
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
+      options: { captchaToken },
     });
     if (error) {
       toast.error(error.message);
@@ -203,11 +215,17 @@ export default function LoginPage() {
       setPwdLoading(false);
       return;
     }
+    const dest = isLawn() ? "/lawn" : "/dashboard";
+    if (await needsMfaChallenge(supabase)) {
+      setPwdLoading(false);
+      router.replace(`/mfa/challenge?next=${encodeURIComponent(dest)}`);
+      return;
+    }
     toast.success("Signed in");
     // Use a small delay so the auth cookie is fully set before navigating.
     // router.replace (not window.location) so it's a proper Next navigation.
     setTimeout(() => {
-      router.replace(isLawn() ? "/lawn" : "/dashboard");
+      router.replace(dest);
     }, 200);
   }
 
@@ -226,6 +244,7 @@ export default function LoginPage() {
         // Relative redirect resolves to this deploy's origin; the callback
         // routes the signed-in user by their role + org variant.
         emailRedirectTo: `${window.location.origin}/auth/callback?flow=client`,
+        captchaToken,
       },
     });
     setLinkLoading(false);
@@ -336,9 +355,18 @@ export default function LoginPage() {
                 Forgot password?
               </Link>
             </div>
+            {TURNSTILE_SITE_KEY && (
+              <div className="flex justify-center">
+                <Turnstile
+                  siteKey={TURNSTILE_SITE_KEY}
+                  onSuccess={(token) => setCaptchaToken(token)}
+                  onExpire={() => setCaptchaToken(undefined)}
+                />
+              </div>
+            )}
             <button
               type="submit"
-              disabled={pwdLoading || linkLoading}
+              disabled={pwdLoading || linkLoading || (!!TURNSTILE_SITE_KEY && !captchaToken)}
               className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {pwdLoading && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -347,7 +375,7 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={handleMagicLink}
-              disabled={pwdLoading || linkLoading}
+              disabled={pwdLoading || linkLoading || (!!TURNSTILE_SITE_KEY && !captchaToken)}
               className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {linkLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}

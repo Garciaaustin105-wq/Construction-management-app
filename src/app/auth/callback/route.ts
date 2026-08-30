@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isLawn, APP_VARIANT } from "@/lib/variant";
+import { needsMfaChallenge } from "@/lib/mfaGate";
 
 // PKCE email-link callback. Two flows share this route (both arrive with
 // ?code=... from Supabase's /auth/v1/verify):
@@ -97,5 +98,10 @@ export async function GET(request: Request) {
 
   // Correct variant: route by role.
   const dest = profile.role === "customer" ? "/customer" : isLawn() ? "/lawn" : "/dashboard";
+  if (await needsMfaChallenge(supabase)) {
+    return NextResponse.redirect(
+      new URL(`/mfa/challenge?next=${encodeURIComponent(dest)}`, url)
+    );
+  }
   return NextResponse.redirect(new URL(dest, url));
 }

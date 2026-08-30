@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { LogOut, UserCog } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUnreadCount } from "@/lib/useUnreadCount";
 import { useIsDesktop } from "@/lib/useIsDesktop";
@@ -117,8 +117,18 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Sign-out pinned to the bottom, separated from nav. */}
-      <div className="border-t border-gray-200 p-3 shrink-0">
+      {/* Account + sign-out pinned to the bottom, separated from nav. Account
+          is the one personal (not org-level) settings page, reachable by
+          every role -- there's no per-role nav entry for it, so it lives
+          here next to Sign Out, the other universal account action. */}
+      <div className="border-t border-gray-200 p-3 shrink-0 space-y-1">
+        <Link
+          href="/account"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"
+        >
+          <UserCog className="w-5 h-5" />
+          <span>Account</span>
+        </Link>
         <button
           onClick={handleSignOut}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"

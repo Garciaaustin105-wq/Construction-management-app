@@ -1,12 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { Turnstile } from "@marsidev/react-turnstile";
 import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { BRAND } from "@/lib/brand";
 import { isLawn } from "@/lib/variant";
 import { getStoredAttribution } from "@/lib/attribution";
 import { fireSignupConversion } from "@/lib/gtag";
+
+// Unset until NEXT_PUBLIC_TURNSTILE_SITE_KEY is configured (a free Cloudflare
+// Turnstile account, separate from the TURNSTILE_SECRET_KEY the server side
+// verifies against). The widget only renders once a site key exists, so this
+// ships inert rather than broken until that's set up.
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 // Client form for the public self-serve signup. The org + admin creation
 // happens server-side in /api/signup (service role, env-gated by SAAS_OPEN).
@@ -24,6 +31,7 @@ export default function SignupForm() {
   const [password, setPassword] = useState("");
   // Honeypot — must stay empty. Visually hidden, tab-indexed out of the flow.
   const [companyWebsite, setCompanyWebsite] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [successEmail, setSuccessEmail] = useState<string | null>(null);
@@ -50,6 +58,7 @@ export default function SignupForm() {
         // Whatever utm_* + referrer was captured on landing this session (null
         // if this was a direct/no-campaign visit). See src/lib/attribution.ts.
         attribution: getStoredAttribution(),
+        captcha_token: captchaToken,
       }),
     });
     const data = await res.json();
@@ -192,9 +201,19 @@ export default function SignupForm() {
         className="hidden"
       />
 
+      {TURNSTILE_SITE_KEY && (
+        <div className="flex justify-center">
+          <Turnstile
+            siteKey={TURNSTILE_SITE_KEY}
+            onSuccess={(token) => setCaptchaToken(token)}
+            onExpire={() => setCaptchaToken(undefined)}
+          />
+        </div>
+      )}
+
       <button
         type="submit"
-        disabled={loading}
+        disabled={loading || (!!TURNSTILE_SITE_KEY && !captchaToken)}
         className="w-full bg-brand text-white py-3 rounded-lg font-semibold active:bg-brand-dark disabled:opacity-50 flex items-center justify-center gap-2"
       >
         {loading && <Loader2 className="w-4 h-4 animate-spin" />}

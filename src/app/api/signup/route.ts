@@ -3,6 +3,8 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendVerificationEmail } from "@/lib/email";
 import { ensureStripeCustomer, TRIAL_DAYS } from "@/lib/billing";
 import { checkRateLimit, clientIp } from "@/lib/rateLimit";
+import { verifyTurnstile } from "@/lib/turnstile";
+import { captureException } from "@/lib/sentry";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +15,15 @@ export const dynamic = "force-dynamic";
 // Env-gated by SAAS_OPEN: keep it "false" (unset) until multi_tenancy_b.sql
 // is live, so no second org can sign up during the policy-rewrite window.
 //
-// Abuse protection: a hidden honeypot field ("company_website") + a per-IP
-// rate limit (max 5 signups/hour). There is no captcha and no email verification
-// beyond Supabase Auth's built-in limits. The rate limit is SHARED across
-// serverless instances (Postgres-backed — see src/lib/rateLimit.ts); it was
-// previously an in-memory Map, which on Vercel is per-instance and ephemeral
-// and so barely limited anything.
+// Abuse protection: a hidden honeypot field ("company_website"), a per-IP
+// rate limit (max 5 signups/hour), and Cloudflare Turnstile CAPTCHA
+// (src/lib/turnstile.ts — verifyTurnstile fails OPEN with a distinguishable
+// "not_configured" signal until TURNSTILE_SECRET_KEY is set, so this route
+// isn't hard-broken before that env var exists). There is no email
+// verification beyond Supabase Auth's built-in limits. The rate limit is
+// SHARED across serverless instances (Postgres-backed — see
+// src/lib/rateLimit.ts); it was previously an in-memory Map, which on Vercel
+// is per-instance and ephemeral and so barely limited anything.
 
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60; // 1 hour
@@ -52,6 +57,7 @@ export async function POST(request: Request) {
     company_website,
     variant,
     attribution,
+    captcha_token,
   } = body as {
     business_name?: string;
     full_name?: string;
@@ -60,7 +66,21 @@ export async function POST(request: Request) {
     company_website?: string;
     variant?: string;
     attribution?: Record<string, unknown>;
+    captcha_token?: string;
   };
+
+  const captcha = await verifyTurnstile(captcha_token, clientIp(request));
+  if (!captcha.success) {
+    if (captcha.error !== "not_configured") {
+      captureException(new Error(`signup captcha failed: ${captcha.error}`), {
+        extra: { ip: clientIp(request) },
+      });
+    }
+    return NextResponse.json(
+      { error: "Captcha verification failed. Please try again." },
+      { status: 400 }
+    );
+  }
 
   // Signup-source attribution (utm_* + referrer) from src/lib/attribution.ts.
   // Untrusted client input — allowlist the known keys and cap length so a
