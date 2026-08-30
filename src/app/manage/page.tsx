@@ -2,10 +2,11 @@ import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
+import { SUPPORT_EMAIL } from "@/lib/legal";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
 import Link from "next/link";
-import { Users, Contact, Briefcase, Tag, CreditCard, Building } from "lucide-react";
+import { Users, Contact, Briefcase, Tag, CreditCard, Building, LifeBuoy } from "lucide-react";
 
 export default async function ManagePage() {
   const me = await getMe();
@@ -16,6 +17,10 @@ export default async function ManagePage() {
   const isOfficeOrAdmin = role === "office" || role === "admin";
   const showBilling = role === "office" || role === "admin";
   const showPlatform = role === "super_admin";
+  // Org admin only, not office/super_admin -- the one in-app support contact
+  // surface, scoped narrowly per the user's own call rather than opened to
+  // every office-like role.
+  const showSupport = role === "admin";
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
@@ -55,6 +60,12 @@ export default async function ManagePage() {
               <Building className="w-5 h-5" />
               <span>Platform</span>
             </Link>
+          )}
+          {showSupport && (
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <LifeBuoy className="w-5 h-5" />
+              <span>Contact support</span>
+            </a>
           )}
         </div>
         <SignOutButton />
