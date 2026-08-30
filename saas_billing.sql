@@ -37,7 +37,7 @@ alter table public.organizations
 
 alter table public.organizations
   add constraint organizations_plan_check
-  check (plan in ('trial','starter','pro','enterprise','expired','canceled','free'));
+  check (plan in ('trial','starter','growth','pro','enterprise','expired','canceled','free'));
 
 -- ---------------------------------------------------------------------------
 -- 3. billing_events: webhook idempotency + audit log

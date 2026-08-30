@@ -97,6 +97,7 @@ begin
   return case v_eff
     when 'trial'                       then 25
     when 'free'                        then 0
+    when 'growth'                      then 25
     when 'pro'                         then 100
     when 'enterprise'                  then 5000
     when 'starter'                     then 0

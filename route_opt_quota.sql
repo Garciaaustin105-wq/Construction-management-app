@@ -90,6 +90,7 @@ begin
     when 'free'                        then 5
     when 'trial'                       then null  -- unlimited
     when 'starter'                     then null
+    when 'growth'                      then null
     when 'pro'                         then null
     when 'enterprise'                  then null
     when 'expired'                     then 0

@@ -6,18 +6,22 @@
 -- can't bypass a trigger). Reads the org's plan + app_variant + trial expiry.
 --
 -- Caps (must match src/lib/plans.ts PLAN_TIERS):
---   construction: starter jobs=10, pro jobs=50, enterprise(null)
---                  starter crew=15, pro crew=100, enterprise(null)
---                  starter customers=50, pro customers=500, enterprise(null)
---   lawn:          starter jobs=25, pro jobs=150, enterprise jobs=500
---                  starter crew=25, pro crew=150, enterprise(null)
---                  starter customers=100, pro customers=1000, enterprise(null)
+--   construction: starter jobs=10, growth jobs=25, pro jobs=50, enterprise(null)
+--                  starter crew=15, growth crew=50, pro crew=100, enterprise(null)
+--                  starter customers=50, growth customers=200, pro customers=500, enterprise(null)
+--   lawn:          starter jobs=25, growth jobs=65, pro jobs=150, enterprise jobs=500
+--                  starter crew=25, growth crew=50, pro crew=150, enterprise(null)
+--                  starter customers=100, growth customers=400, pro customers=1000, enterprise(null)
 --   trial:         unlimited.  expired/canceled: 0 (block all creates).
 --   free:          jobs=25, crew=3, customers=25 (lawn-only tier; variant-
 --                  independent — a construction plan='free' is an invalid state
 --                  no code produces, capping it at lawn-free values is the safe
 --                  failure). free is NOT in the expired/canceled block-create, so
 --                  free orgs CAN create up to the caps.
+--
+-- 2026-08-29: added 'growth' (crew is NOT variant-aware — 50 both — matching
+-- src/lib/plans.ts, which happens to set the same crew cap for both variants
+-- on this one tier; jobs/customers ARE variant-aware, same as every other tier).
 --
 -- ⚠️ BEHAVIOR CHANGE for existing orgs: they were grandfathered to Pro (see
 -- saas_billing.sql §4). Construction Pro now caps jobs at 50 (was 100). A
@@ -70,6 +74,7 @@ begin
     when v_eff = 'free'      then 25
     when v_eff = 'enterprise' then (case when v_variant = 'lawn' then 500 else null end)
     when v_eff = 'pro'        then (case when v_variant = 'lawn' then 150 else 50 end)
+    when v_eff = 'growth'     then (case when v_variant = 'lawn' then 65 else 25 end)
     when v_eff = 'starter'    then (case when v_variant = 'lawn' then 25 else 10 end)
     else null
   end;
@@ -134,6 +139,7 @@ begin
     when v_eff = 'free'      then 3
     when v_eff = 'enterprise' then null
     when v_eff = 'pro'        then (case when v_variant = 'lawn' then 150 else 100 end)
+    when v_eff = 'growth'     then 50
     when v_eff = 'starter'    then (case when v_variant = 'lawn' then 25 else 15 end)
     else null
   end;
@@ -200,6 +206,7 @@ begin
     when v_eff = 'free'       then 25
     when v_eff = 'enterprise' then null
     when v_eff = 'pro'        then (case when v_variant = 'lawn' then 1000 else 500 end)
+    when v_eff = 'growth'     then (case when v_variant = 'lawn' then 400 else 200 end)
     when v_eff = 'starter'    then (case when v_variant = 'lawn' then 100 else 50 end)
     else null
   end;

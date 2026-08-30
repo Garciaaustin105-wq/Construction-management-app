@@ -147,6 +147,7 @@ begin
     when v_eff = 'enterprise'                       then null
     when v_eff = 'pro' and v_variant = 'lawn'       then 75::bigint * 1024 * 1024 * 1024
     when v_eff = 'pro'                              then 25::bigint * 1024 * 1024 * 1024
+    when v_eff = 'growth'                           then 20::bigint * 1024 * 1024 * 1024
     when v_eff = 'starter'                          then 5::bigint  * 1024 * 1024 * 1024
     when v_eff in ('expired', 'canceled')           then 0::bigint
     else null
