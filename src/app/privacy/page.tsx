@@ -110,6 +110,51 @@ export default function PrivacyPolicyPage() {
           active, Google may set its own cookie for that purpose — see
           Google&apos;s own privacy policy for how it handles that data.
         </p>
+        <p className="mt-3 text-gray-700">
+          Some browsers send a &quot;Do Not Track&quot; signal. There isn&apos;t
+          an industry-standard way to respond to it yet, so we don&apos;t
+          currently change our behavior based on that signal — the essential
+          cookies above are required for the service to function regardless.
+        </p>
+
+        <h2 className="mt-10 text-xl font-semibold text-gray-900">California privacy rights (CCPA/CPRA)</h2>
+        <p className="mt-3 text-gray-700">
+          If you&apos;re a California resident, state law gives you additional
+          rights over your personal information, on top of everything already
+          described in this policy.
+        </p>
+        <p className="mt-3 text-gray-700">
+          <strong>We don&apos;t sell personal information.</strong> We&apos;ve
+          never sold, and don&apos;t sell, personal information for money.
+        </p>
+        <p className="mt-3 text-gray-700">
+          <strong>&quot;Sharing&quot; for advertising.</strong> California law
+          defines &quot;sharing&quot; broadly enough that it can cover
+          standard ad-conversion tracking. The one place that applies here: if
+          Google Ads conversion tracking is active on our marketing pages (see
+          &quot;Usage and campaign data&quot; above), the fact that a signup
+          happened after clicking an ad is passed to Google — no account or
+          business data, just that a conversion occurred. To opt out of this
+          specifically, don&apos;t click through from a Google ad, or use your
+          browser&apos;s or ad blocker&apos;s tracking-protection settings; you
+          can also email us at the address below and we&apos;ll exclude your
+          account from conversion tracking going forward.
+        </p>
+        <p className="mt-3 text-gray-700">
+          <strong>Your rights.</strong> You can request to (1) know what
+          personal information we&apos;ve collected about you, (2) delete it,
+          (3) correct inaccurate information, and (4) not be discriminated
+          against (denied service, charged a different price, etc.) for
+          exercising any of these rights. To exercise any of them, email{" "}
+          <a href={`mailto:${supportEmail}`} className="text-brand hover:underline">
+            {supportEmail}
+          </a>{" "}
+          from the address on your account (so we can verify it&apos;s you);
+          we&apos;ll respond within the timeframe California law requires. You
+          can also designate an authorized agent to make a request on your
+          behalf — have them contact us with written proof of your
+          authorization.
+        </p>
 
         <h2 className="mt-10 text-xl font-semibold text-gray-900">Data retention and deletion</h2>
         <p className="mt-3 text-gray-700">

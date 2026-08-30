@@ -80,11 +80,41 @@ export default function TermsOfServicePage() {
           without our written permission.
         </p>
 
+        <h2 className="mt-10 text-xl font-semibold text-gray-900">Copyright complaints (DMCA)</h2>
+        <p className="mt-3 text-gray-700">
+          If you believe content stored on this platform by one of our
+          customers infringes your copyright, send a notice to{" "}
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="text-brand hover:underline">
+            {SUPPORT_EMAIL}
+          </a>{" "}
+          including: (1) a description of the copyrighted work you claim is
+          infringed, (2) the specific material you want removed and where to
+          find it, (3) your contact information, (4) a statement that you
+          have a good-faith belief the use isn&apos;t authorized, (5) a
+          statement, under penalty of perjury, that the notice is accurate
+          and you&apos;re authorized to act on the copyright owner&apos;s
+          behalf, and (6) your signature. We&apos;ll remove or disable access
+          to material that appears to infringe and notify the customer who
+          posted it. If they submit a valid counter-notice disputing the
+          claim, we may restore the material and will tell you when we do.
+        </p>
+
         <h2 className="mt-10 text-xl font-semibold text-gray-900">Our intellectual property</h2>
         <p className="mt-3 text-gray-700">
           The software, design, and branding of {BRAND.company} belong to{" "}
           {LEGAL_ENTITY}. These terms don&apos;t grant you any rights to our
           intellectual property beyond using the service as intended.
+        </p>
+
+        <h2 className="mt-10 text-xl font-semibold text-gray-900">Indemnification</h2>
+        <p className="mt-3 text-gray-700">
+          You agree to defend, indemnify, and hold {LEGAL_ENTITY} harmless
+          from any claim, loss, or expense (including reasonable attorneys&apos;
+          fees) arising from: your use of the service, the data or content
+          you or your staff/crew enter into it, your violation of these
+          terms, or your violation of any law or a third party&apos;s rights
+          (for example, a dispute with your own customer over how you used
+          the service to communicate with them).
         </p>
 
         <h2 className="mt-10 text-xl font-semibold text-gray-900">Service availability</h2>
@@ -110,12 +140,49 @@ export default function TermsOfServicePage() {
           request, we&apos;ll help you export your data before deletion.
         </p>
 
+        <h2 className="mt-10 text-xl font-semibold text-gray-900">Dispute resolution: binding arbitration</h2>
+        <p className="mt-3 text-gray-700">
+          <strong>Please read this section carefully — it affects your legal
+          rights.</strong> You and {LEGAL_ENTITY} agree to resolve any dispute
+          arising from these terms or the service through binding individual
+          arbitration, rather than in court, except that either side may
+          bring an individual claim in small claims court, and we may seek
+          injunctive relief in court to protect our intellectual property or
+          prevent unauthorized access to the service.
+        </p>
+        <p className="mt-3 text-gray-700">
+          <strong>Class action waiver.</strong> Arbitration will be on an
+          individual basis. You and we each waive any right to bring or
+          participate in a class, collective, or representative action, and
+          waive any right to a jury trial.
+        </p>
+        <p className="mt-3 text-gray-700">
+          <strong>How arbitration works.</strong> Arbitration will be
+          administered by the American Arbitration Association under its
+          Commercial Arbitration Rules, seated in Florida, before a single
+          arbitrator. The arbitrator&apos;s decision is final and binding,
+          enforceable in any court with jurisdiction. Each side bears its own
+          attorneys&apos; fees unless the arbitrator awards them under
+          applicable law.
+        </p>
+        <p className="mt-3 text-gray-700">
+          <strong>Opting out.</strong> You can opt out of this arbitration
+          agreement by emailing{" "}
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="text-brand hover:underline">
+            {SUPPORT_EMAIL}
+          </a>{" "}
+          within 30 days of first creating an account, stating that you
+          decline to arbitrate. Opting out doesn&apos;t affect any other part
+          of these terms.
+        </p>
+
         <h2 className="mt-10 text-xl font-semibold text-gray-900">Governing law</h2>
         <p className="mt-3 text-gray-700">
           These terms are governed by the laws of the State of Florida,
-          without regard to its conflict-of-laws principles. Any dispute
-          arising from these terms or the service will be resolved in the
-          state or federal courts located in Florida.
+          without regard to its conflict-of-laws principles. Any dispute not
+          subject to arbitration above (for example, a small-claims or
+          injunctive-relief matter) will be resolved in the state or federal
+          courts located in Florida.
         </p>
 
         <h2 className="mt-10 text-xl font-semibold text-gray-900">Changes to these terms</h2>

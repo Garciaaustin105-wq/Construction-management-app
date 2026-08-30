@@ -12,4 +12,4 @@ export const LEGAL_ENTITY = "Terra Vista Building and Development LLC";
 export const SUPPORT_EMAIL = `support@${new URL(APP_URLS[APP_VARIANT]).hostname}`;
 
 // Bump this whenever either legal page's substantive content changes.
-export const LEGAL_LAST_UPDATED = "August 27, 2026";
+export const LEGAL_LAST_UPDATED = "August 29, 2026";
