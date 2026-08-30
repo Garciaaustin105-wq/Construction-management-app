@@ -3,6 +3,7 @@ import { getProvider } from "@/lib/accounting/provider";
 import type { AccountingProviderId } from "@/lib/accounting/provider";
 import { signState } from "@/lib/accounting/crypto";
 import { markConnected } from "@/lib/accounting/connections";
+import { captureException } from "@/lib/sentry";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,9 @@ export async function GET(request: Request) {
     return billing("connected");
   } catch (err) {
     const msg = err instanceof Error ? err.message : "token exchange failed";
+    captureException(err instanceof Error ? err : new Error(msg), {
+      extra: { organizationId: orgId, provider: providerParam },
+    });
     return billing(`error=${encodeURIComponent(msg)}`);
   }
 }

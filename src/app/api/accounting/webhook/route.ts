@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getUsableTokens } from "@/lib/accounting/connections";
 import { getProvider } from "@/lib/accounting/provider";
+import { captureException } from "@/lib/sentry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,7 +67,15 @@ export async function POST(request: Request) {
       .maybeSingle();
     const c = conn as { organization_id: string; provider: "quickbooks"; status: string } | null;
     if (!c || c.status !== "active") continue;
-    await refreshInvoicesForOrg(admin, c.organization_id, c.provider, result.invoiceIds).catch(() => {});
+    // Was a bare `.catch(() => {})` -- a failed webhook-triggered refresh
+    // (token dead, Intuit API error) vanished with no record anywhere.
+    await refreshInvoicesForOrg(admin, c.organization_id, c.provider, result.invoiceIds).catch(
+      (err) => {
+        captureException(err instanceof Error ? err : new Error("webhook invoice refresh failed"), {
+          extra: { organizationId: c.organization_id, provider: c.provider, realmId },
+        });
+      }
+    );
   }
 
   return NextResponse.json({ received: true, refreshed: result.invoiceIds.length });

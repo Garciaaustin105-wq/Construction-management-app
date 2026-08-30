@@ -50,19 +50,27 @@ const money = (n: number): string => (Number.isFinite(n) ? n.toFixed(2) : "0.00"
 
 const todayISO = (): string => new Date().toISOString().slice(0, 10);
 
-/** Extract a readable error message from an Intuit error response. */
+/** Extract a readable error message from an Intuit error response. Appends
+ * the `intuit_tid` response header when present — Intuit support uses this
+ * trace id to look up the exact failed request on their side, so surfacing
+ * it in every error message (not just logging it separately) makes a
+ * support ticket actionable without extra back-and-forth. */
 async function intuitError(res: Response): Promise<string> {
+  const tid = res.headers.get("intuit_tid");
+  const suffix = tid ? ` (intuit_tid: ${tid})` : "";
   let body: unknown = null;
   try {
     body = await res.json();
   } catch {
-    return `Intuit HTTP ${res.status}`;
+    return `Intuit HTTP ${res.status}${suffix}`;
   }
   const b = body as Record<string, unknown>;
   const fault = b.Fault as { Error?: Array<{ Message?: string }> } | undefined;
-  if (fault?.Error?.[0]?.Message) return fault.Error[0].Message;
-  if (typeof b.error === "string") return (b.error_description as string) ?? (b.error as string);
-  return `Intuit HTTP ${res.status}`;
+  if (fault?.Error?.[0]?.Message) return `${fault.Error[0].Message}${suffix}`;
+  if (typeof b.error === "string") {
+    return `${(b.error_description as string) ?? (b.error as string)}${suffix}`;
+  }
+  return `Intuit HTTP ${res.status}${suffix}`;
 }
 
 function authBasic(): string {

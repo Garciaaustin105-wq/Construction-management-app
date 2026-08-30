@@ -23,6 +23,7 @@ import {
   getProvider,
 } from "./provider";
 import { getConnections, getUsableTokens } from "./connections";
+import { captureException } from "@/lib/sentry";
 
 type Admin = SupabaseClient;
 
@@ -132,7 +133,16 @@ export async function syncCustomer(
     phone: c.phone,
     billingAddress: c.address ? { line1: c.address } : null,
   });
-  if (res.externalId) await persistExtId(admin, "customers", c.id, res.externalId, orgId);
+  if (res.externalId) {
+    await persistExtId(admin, "customers", c.id, res.externalId, orgId);
+  } else if (res.error) {
+    // Logged here (not just returned to the caller) so a failed sync leaves a
+    // record Intuit/our own support can pull up — the intuit_tid embedded in
+    // res.error by intuitError() carries straight through into this report.
+    captureException(new Error(`accounting syncCustomer failed: ${res.error}`), {
+      extra: { organizationId: orgId, customerId: id, provider: provider.id },
+    });
+  }
   return res;
 }
 
@@ -186,6 +196,10 @@ export async function pushInvoiceToProvider(
     });
     if (res.externalId) {
       await persistExtId(admin, "invoices", inv.id, res.externalId, orgId);
+    } else if (res.error) {
+      captureException(new Error(`accounting syncInvoice failed: ${res.error}`), {
+        extra: { organizationId: orgId, invoiceId, provider: providerId },
+      });
     }
     return {
       provider: providerId,
@@ -194,10 +208,17 @@ export async function pushInvoiceToProvider(
       error: res.error,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Sync failed";
+    // Covers token-refresh failures (getUsableTokens) and anything else that
+    // throws rather than returning a SyncResult — those never reach the
+    // res.error branch above, so they need their own capture.
+    captureException(err instanceof Error ? err : new Error(message), {
+      extra: { organizationId: orgId, invoiceId, provider: providerId },
+    });
     return {
       provider: providerId,
       externalId: null,
-      error: err instanceof Error ? err.message : "Sync failed",
+      error: message,
     };
   }
 }

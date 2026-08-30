@@ -13,6 +13,7 @@ import {
   loadInvoice,
   persistExtId,
 } from "@/lib/accounting/pushInvoice";
+import { captureException } from "@/lib/sentry";
 
 export const dynamic = "force-dynamic";
 
@@ -74,10 +75,13 @@ export async function POST(request: Request) {
     if (entity === "payment") return NextResponse.json(await recordPayment(admin, tokens, provider, orgId, id, body));
     return NextResponse.json({ error: "Unknown entity" }, { status: 400 });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Sync failed" },
-      { status: 502 }
-    );
+    const message = err instanceof Error ? err.message : "Sync failed";
+    // Covers getUsableTokens (token refresh) failures for every entity type,
+    // including "customer" — the one entity with no dedicated helper below.
+    captureException(err instanceof Error ? err : new Error(message), {
+      extra: { organizationId: orgId, provider: providerId, entity, id },
+    });
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }
 
@@ -113,7 +117,13 @@ async function syncEstimate(admin: Admin, tokens: TokenSet, provider: Accounting
       description: l.description, quantity: l.quantity, unitPrice: l.unit_price,
     })),
   });
-  if (res.externalId) await persistExtId(admin, "estimates", est.id, res.externalId, orgId);
+  if (res.externalId) {
+    await persistExtId(admin, "estimates", est.id, res.externalId, orgId);
+  } else if (res.error) {
+    captureException(new Error(`accounting syncEstimate failed: ${res.error}`), {
+      extra: { organizationId: orgId, estimateId: est.id, provider: provider.id },
+    });
+  }
   return res;
 }
 
@@ -131,5 +141,10 @@ async function recordPayment(
     amount: body.amount, method: body.method ?? "other",
     reference: body.reference ?? null, paidAt: body.paidAt ?? null,
   });
+  if (!res.externalId && res.error) {
+    captureException(new Error(`accounting recordPayment failed: ${res.error}`), {
+      extra: { organizationId: orgId, invoiceId: id, provider: provider.id },
+    });
+  }
   return res;
 }
