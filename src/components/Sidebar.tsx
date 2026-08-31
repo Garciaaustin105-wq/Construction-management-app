@@ -37,6 +37,9 @@ export default function Sidebar() {
   }
 
   const items = buildNavItems(role);
+  // Derived from the nav itself rather than a second role list, so the two can
+  // never disagree about who already has an Account entry.
+  const hasAccountInNav = items.some((i) => i.href === "/manage");
   const hrefs = items.map((i) => i.href);
 
   return (
@@ -117,18 +120,23 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Account + sign-out pinned to the bottom, separated from nav. Account
-          is the one personal (not org-level) settings page, reachable by
-          every role -- there's no per-role nav entry for it, so it lives
-          here next to Sign Out, the other universal account action. */}
+      {/* Sign-out pinned to the bottom, with Account beside it ONLY for roles
+          that have no Account entry in the nav above.
+          Office-like roles get "Account" in the nav (-> /manage, which now
+          inlines the personal security settings), so showing this link too put
+          TWO items labelled "Account" in the same sidebar pointing at different
+          pages. Crew, superintendent and accountant have no nav entry for it,
+          so for them this is still the only way in. */}
       <div className="border-t border-gray-200 p-3 shrink-0 space-y-1">
-        <Link
-          href="/account"
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"
-        >
-          <UserCog className="w-5 h-5" />
-          <span>Account</span>
-        </Link>
+        {!hasAccountInNav && (
+          <Link
+            href="/account"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"
+          >
+            <UserCog className="w-5 h-5" />
+            <span>Account</span>
+          </Link>
+        )}
         <button
           onClick={handleSignOut}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"

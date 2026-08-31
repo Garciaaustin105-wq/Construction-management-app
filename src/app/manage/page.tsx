@@ -4,8 +4,9 @@ import { OFFICE_LIKE } from "@/lib/roles";
 import { SUPPORT_EMAIL } from "@/lib/legal";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
+import AccountMfaManager from "@/components/AccountMfaManager";
 import Link from "next/link";
-import { Users, CreditCard, Building, Building2, LifeBuoy, UserCog } from "lucide-react";
+import { Users, CreditCard, Building, Building2, LifeBuoy } from "lucide-react";
 
 export default async function ManagePage() {
   const me = await getMe();
@@ -30,11 +31,12 @@ export default async function ManagePage() {
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
       <TopBar title="Account" subtitle="Your login, people & billing" />
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
+        {/* Personal login security, inlined rather than hidden behind a card
+            called "Account" on a page already titled "Account". Office-like
+            roles now have exactly ONE account destination; roles without
+            /manage still reach the same component at /account via the sidebar. */}
+        <AccountMfaManager />
         <div className="grid grid-cols-2 gap-2">
-          <Link href="/account" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-            <UserCog className="w-5 h-5" />
-            <span>Account</span>
-          </Link>
           <Link href="/admin/users" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
             <Users className="w-5 h-5" />
             <span>Users</span>
