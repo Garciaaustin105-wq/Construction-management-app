@@ -2,6 +2,7 @@ import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { OFFICE_LIKE, FIELD } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
+import { describeShiftFlags, formatDuration } from "@/lib/shiftRules";
 import { isLawn } from "@/lib/variant";
 import PageContainer from "@/components/PageContainer";
 import Link from "next/link";
@@ -57,6 +58,45 @@ export default async function OfficePage() {
       last: lastShiftByUser.get(p.id) ?? null,
     }));
 
+  // ── Shifts with no recorded property time ────────────────────────────────
+  // The strongest payroll signal there is — hours clocked with zero on-site
+  // stamps — and the noisiest, because the identical record is produced by a
+  // dead phone, a route without map pins, or a day of shop work. So this is
+  // a plain review list: neutral colours, no counter, wording that leads
+  // with the innocent explanations. The RPC is already scoped to the
+  // caller's org and takes nothing from the client. Lawn only — on-site
+  // stamps are a lawn concept, so the section would be permanently empty
+  // construction noise.
+  const nameById = new Map<string, string>();
+  for (const p of (crewRes.data ?? []) as { id: string; full_name: string | null }[]) {
+    nameById.set(p.id, p.full_name ?? "Unknown");
+  }
+  type MissingOnSiteRow = {
+    user_id?: string;
+    name?: string | null;
+    hours: number | string | null;
+    crew_size: number | string | null;
+    clock_in_backdated: boolean | null;
+    auto_closed: boolean | null;
+    clock_in_location_source: string | null;
+  };
+  const missingRaw = isLawn()
+    ? await supabase.rpc("shifts_missing_on_site_time")
+    : { data: [], error: null };
+  const missingShifts = ((missingRaw.data ?? []) as MissingOnSiteRow[])
+    .map((r) => ({
+      who:
+        r.name ??
+        nameById.get(r.user_id ?? "") ??
+        (r.user_id ? "Unknown" : "—"),
+      hours: Number(r.hours ?? 0),
+      crewSize: r.crew_size == null ? null : Number(r.crew_size),
+      backdated: r.clock_in_backdated ?? false,
+      autoClosed: r.auto_closed ?? false,
+      source: r.clock_in_location_source ?? null,
+    }))
+    .sort((a, b) => b.hours - a.hours);
+
   return (
     <PageContainer title="Office" subtitle="Records, reports & schedule" maxWidth="list">
       {/* Not clocked in today — rendered only when someone is missing, so the
@@ -88,6 +128,76 @@ export default async function OfficePage() {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+      {/* ── Shifts with no recorded property time ──────────────────────────
+          A review list, not a red flag: the identical record comes from a
+          dead phone, a shop day, or a route without map pins as from
+          anything dishonest. Neutral styling, no badge, no counter — this
+          exists so the office can ASK the same day, not so it can count. */}
+      {isLawn() && (
+        <section className="mb-3 bg-white border border-gray-200 rounded-lg p-3">
+          <h2 className="text-sm font-semibold text-gray-900">
+            Shifts with no recorded property time
+          </h2>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Completed shifts of 2+ hours with no on-site stamp at any
+            property. Often the simplest explanation — a dead phone, a route
+            whose stops had no map pins, or a day of shop work. The office
+            knows the crew; this is the list to start the conversation, not a
+            verdict.
+          </p>
+          {(missingRaw.error) ? (
+            <p className="text-[11px] text-gray-400 mt-2">
+              Couldn&apos;t load this list.
+            </p>
+          ) : missingShifts.length === 0 ? (
+            <p className="text-xs text-gray-400 mt-2">
+              Nothing here — every shift long enough to count has at least
+              one property stamp.
+            </p>
+          ) : (
+            <ul className="mt-2 divide-y divide-gray-100">
+              {missingShifts.map((r, i) => {
+                // Same reduced-claim wording the crew page + weekly report use.
+                const flags = describeShiftFlags({
+                  backdated: r.backdated,
+                  autoClosed: r.autoClosed,
+                  crewSize: r.crewSize,
+                });
+                return (
+                  <li
+                    key={`${r.who}-${r.hours}-${i}`}
+                    className="py-1.5 flex items-start justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-900 truncate">{r.who}</p>
+                      <p className="text-[11px] text-gray-500">
+                        {formatDuration(r.hours * 3_600_000)}
+                        {flags.length > 0 && ` · ${flags.join(" · ")}`}
+                      </p>
+                    </div>
+                    {/* Clock-in pin quality: a GPS fix is evidence; an IP
+                        one can be wrong by miles, so it reads weaker — same
+                        amber tint the shift card uses. */}
+                    {r.source === "gps" ? (
+                      <span className="text-[10px] text-gray-600 bg-gray-100 rounded px-1.5 py-0.5 flex-shrink-0">
+                        GPS clock-in
+                      </span>
+                    ) : r.source === "ip" ? (
+                      <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 flex-shrink-0">
+                        Approximate clock-in
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-gray-400 rounded px-1.5 py-0.5 flex-shrink-0">
+                        No clock-in pin
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
       )}
       <div className="grid grid-cols-2 gap-2">
