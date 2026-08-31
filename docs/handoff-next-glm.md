@@ -108,6 +108,50 @@ not "fix" it.
 
 ---
 
+## Task 2 results — browser E2E PASS (2026-08-31, appended before push)
+
+Everything below was verified in a real browser (Playwright/Chromium) against
+the dev server at `localhost:3000`, lawn variant, logged in as real sessions.
+Login: two throwaway password accounts in Terra Verde Test Co
+(`e2e-crew-lawn@test.local` crew / `e2e-admin-lawn@test.local` admin) —
+password-grant tokens injected through the app's own `/login#access_token=`
+implicit-flow recovery. jane and Lawn Test Admin were left untouched.
+Harness + assertion gotchas live in the session memory (`browser-e2e-harness`).
+
+**Crew (`/crew/time`, 375px):** no job picker, no cost code on lawn; button
+says "Start shift"; clock-in → "On shift" panel reading "Whole day — all
+properties on your route"; **location disclosure renders**; "End shift";
+clock-out returns to the form. DB row confirmed: `job_id IS NULL`,
+`clock_out_at` stamped. Mobile bar: Home / Photos / Clock in/out / Route.
+
+**My Route (`/lawn/my-route`):** Start → **"On site" chip** → Mark done →
+card clears. Verified twice; DB shows `started_at` + `completed_at` on both
+visits — visits get a duration.
+
+**Office (`/admin/reports/weekly`):** 30-day range renders the worker × week
+month grid ("Weekly total" row + legend); ≤14-day range renders the original
+day grid; job filter hidden on lawn (one select — worker only). At 375px the
+first column computes to `position: sticky` and the table genuinely overflows.
+
+**`/lawn/track`:** plan gate open, no map load error, roster/empty-state +
+explainer render.
+
+**"Both themes" is inapplicable** — the app has no dark mode at all.
+
+**Task 3 was already fixed** before this run: `/office` is variant-gated, so
+no dead construction cards on lawn.
+
+Two mid-run check FAILs were harness bugs (a text match hitting the
+CSS-hidden desktop sidebar's copy at 375px, and a race against a button's
+disabled busy state) — both re-ran clean. No app bugs found. Verified on
+dev, not prod.
+
+Test-data side effects in Terra Verde Test Co: the two throwaway users, one
+pending shift entry, two visits marked done, and the "Austins house"
+schedule's `default_crew_id` now points at E2E Crew (was NULL).
+
+---
+
 ## Rules
 
 - `npx tsc --noEmit` exit 0 and `npx eslint <changed files>` clean before commit.
