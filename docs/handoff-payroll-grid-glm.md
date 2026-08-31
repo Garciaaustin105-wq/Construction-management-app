@@ -158,3 +158,75 @@ Verify with seeded data instead:
 3. Confirm a ≤14-day range still renders the original day grid unchanged.
 
 Report what you verified, not just that you finished.
+
+---
+
+# ADDENDUM — 2026-08-30, while you are mid-build
+
+Four things changed under you since this handoff was written. Read all four;
+the first two change what you should write.
+
+## 1. `src/lib/payrollWeeks.ts` now EXISTS — use it, don't reinvent it
+
+The original handoff said "if it is missing, write your own local helpers and
+leave a TODO". **That no longer applies.** The file is written, type-checked,
+lint-clean and behaviourally tested (14/14 against the tsc-compiled output).
+Import from it rather than rolling your own bucketing:
+
+```ts
+import {
+  weeksInRange, weekIndexFor, bucketByWeek, weekStart, fmtHours,
+  type PayWeek,
+} from "@/lib/payrollWeeks";
+```
+
+| Export | Signature | Notes |
+|---|---|---|
+| `PayWeek` | `{ start: string; end: string; label: string }` | `start` = Monday, `end` = Sunday (inclusive), both `YYYY-MM-DD`. `label` is e.g. `"Mar 3-9"` |
+| `weekStart` | `(iso: string) => string` | Monday of the week containing `iso` |
+| `weeksInRange` | `(from: string, to: string) => PayWeek[]` | Every Mon–Sun week overlapping the range. First may start before `from`, last may end after `to`. A sub-week range returns exactly one week |
+| `weekIndexFor` | `(iso: string, weeks: PayWeek[]) => number` | Bucket index, or `-1` outside all weeks |
+| `bucketByWeek` | `(byDay: Record<string, number>, weeks: PayWeek[]) => number[]` | **This is the one you want.** Feed it the `r.byDay` the page already builds; get back one total per week, same length as `weeks` |
+| `fmtHours` | `(h: number) => string` | At most one decimal, no trailing `.0` — `8` → `"8"`, `7.25` → `"7.3"` |
+
+**Weeks are Monday–Sunday.** If your grid needs Sunday-start, say so rather than
+converting at the call site — it belongs in the helper, not smeared across the page.
+
+Do not edit that file. If you need something it doesn't do, note it and I'll add it.
+
+## 2. The job filter now silently excludes every lawn hour
+
+`/admin/reports/weekly` has `if (jobId) q = q.eq("job_id", jobId)`. With shift
+entries (`job_id IS NULL`) that filter excludes **all** lawn hours, because a
+shift is by definition not attributed to a job.
+
+That is correct SQL and a bad experience: an office that filters by job to check
+payroll gets zero lawn hours and no explanation. **On the lawn variant, hide the
+job filter** (`isLawn()` from `@/lib/variant`), or label it so it is obvious it
+only applies to job-attributed construction time. Your call which, but don't
+leave it as a silent empty result.
+
+## 3. The `jobs` embed is a LEFT join — keep it that way
+
+`job:jobs(name)` embeds without `!inner`, so rows with a null `job_id` survive.
+**Do not add `!inner`** to any `time_entries` query, and do not add a
+`.not("job_id","is",null)`. Either one drops every shift entry from the grid,
+which would be the whole lawn side of payroll vanishing — and it would look like
+"no data" rather than an error.
+
+## 4. Migrations live on prod (all applied, nothing for you to run)
+
+- `time_entries_shift_clock` — `job_id` nullable + `idx_time_entries_org_clock`
+- `time_entries_allow_shift_insert` — crew INSERT policy allows a null job
+- `time_entries_org_stamp_allows_shift` — `time_entries` got its own org-stamp
+  trigger (`set_org_from_job_or_user`); the shared `set_org_from_job` is
+  untouched and still hard-errors on a null job for the other 16 tables
+
+## Where the other lanes are
+
+- Phases 1–2 (shift clock + Start button on My Route) are **committed on
+  `feat/shift-clock`, not merged to `main`.** So if you branched from `main`,
+  your tree has the schema change but not the UI that produces shift entries.
+  That is fine — seed test rows as the verification section says.
+- `main` is still `b4f9cea`. Branch from it, and I'll merge both branches
+  together once you're done.
