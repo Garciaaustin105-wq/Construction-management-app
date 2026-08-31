@@ -54,17 +54,23 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // profiles on top of this. (Tier 1 perf fix.) The Suspense/PPR static-shell
   // unlock is deferred (would reintroduce the cold-load nav flash).
   let initialRole: Role | null = null;
+  let initialOrgId: string | null = null;
   try {
     const me = await getMe();
     initialRole = me ? ((me.role as Role) ?? null) : null;
+    // Same cached read — no extra query. Feeds CrewTrackingMount.
+    initialOrgId = me?.orgId ?? null;
   } catch {
     initialRole = null;
+    initialOrgId = null;
   }
 
   return (
     <html lang="en" className="h-full antialiased" style={brandVars}>
       <body className="min-h-full bg-gray-50 text-gray-900">
-        <Providers initialRole={initialRole}>{children}</Providers>
+        <Providers initialRole={initialRole} initialOrgId={initialOrgId}>
+          {children}
+        </Providers>
         {/* Vercel Speed Insights — real-user perf monitoring (RUM). No-op in
             dev; only reports in production deploys. No env var needed; tied to
             the Vercel project. Measures the Tier 1 auth-preamble win. */}

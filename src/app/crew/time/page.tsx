@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
 import { useCrewLocationBroadcast } from "@/lib/useCrewLocationBroadcast";
+import { CLOCK_CHANGED_EVENT } from "@/lib/crewTracking";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 
 // Time-entry review status -> badge tone (was the legacy StatusBadge palette).
@@ -151,18 +152,15 @@ export default function CrewTimePage() {
     return () => clearInterval(t);
   }, [openEntry]);
 
-  // Live location sharing (lawn only), active ONLY while clocked in. Clocking
-  // out sets openEntry to null, which tears the channel down and sends the
-  // offline broadcast so the office pin disappears immediately.
+  // Location sharing itself is NOT mounted here. It lives in the persistent
+  // chrome (CrewTrackingMount, rendered by Providers) because crew clock in and
+  // then navigate straight to My Route — a page-scoped mount would stop
+  // broadcasting the moment they left this screen, which is almost immediately.
   //
-  // Note this is not plan-gated here, and deliberately so: the crew client just
-  // joins a channel and waits. It cannot transmit unless an office viewer is
-  // present, and the office map only mounts for orgs whose plan allows it
-  // (canTrackCrew, enforced in /lawn/track). So a free org's crew sit in
-  // "standby" forever — no GPS, no messages — without this component needing to
-  // know anything about billing.
+  // This page's only job is to TELL it when the clock changes, so tracking
+  // starts and stops instantly without anything having to poll.
   const tracking = useCrewLocationBroadcast({
-    enabled: isLawn() && !!openEntry,
+    enabled: false, // read-only: this instance never broadcasts
     orgId,
     userId,
     name: fullName,
@@ -216,6 +214,9 @@ export default function CrewTimePage() {
       setOpenEntry(data);
       setNow(Date.now());
       toast.success("Clocked in");
+      // Wake the persistent broadcaster (CrewTrackingMount) — it is what shares
+      // location, not this page, so it has to be told the shift began.
+      window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
       setNote("");
       setGps(null);
       setGpsStatus("getting");
@@ -237,6 +238,9 @@ export default function CrewTimePage() {
       setRecent((prev) => [{ ...openEntry, clock_out_at: new Date().toISOString() }, ...prev].slice(0, 20));
       setOpenEntry(null);
       toast.success("Clocked out");
+      // Tell the persistent broadcaster the shift ended so it stops sharing
+      // location immediately, rather than on some later poll.
+      window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
     }
     setBusy(false);
   }
@@ -261,7 +265,7 @@ export default function CrewTimePage() {
   const elapsed = openEntry ? now - new Date(openEntry.clock_in_at).getTime() : 0;
 
   return (
-    <PageContainer title="Time Clock" maxWidth="list">
+    <PageContainer title="Clock in & out" maxWidth="list">
       {loading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-7 h-7 animate-spin text-gray-400" />

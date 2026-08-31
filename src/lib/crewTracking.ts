@@ -68,6 +68,12 @@ export const STALE_MS = 150_000; // 2.5 minutes ≈ 5 missed broadcasts
  *  surveillance archive. */
 export const RETENTION_DAYS = 7;
 
+/** Window event the time clock fires on clock-in / clock-out so the persistent
+ *  broadcaster picks the change up immediately. A DOM event rather than a poll:
+ *  a poll would otherwise run on every page, for every field user, all day —
+ *  and background polling is exactly what made this app slow before. */
+export const CLOCK_CHANGED_EVENT = "crew-clock-changed";
+
 /** One crew member's position as broadcast on the channel. */
 export type CrewPosition = {
   userId: string;

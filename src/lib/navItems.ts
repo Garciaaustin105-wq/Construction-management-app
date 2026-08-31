@@ -85,7 +85,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     const base: NavItem[] = [
       { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
       { href: "/crew/photo", label: "Photos", Icon: Camera },
-      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/crew/time", label: "Clock", Icon: Clock },
     ];
     if (role === "crew" || role === "superintendent") {
       return [...base, { href: "/lawn/my-route", label: "Route", Icon: Sprout }];
@@ -134,7 +134,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
       { href: "/lawn/jobs", label: "Jobs", Icon: CheckSquare },
       { href: "/crew/photo", label: "Photos", Icon: Camera },
-      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/crew/time", label: "Clock", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
       { href: "/admin/leads", label: "Leads", Icon: UserPlus },
       { href: "/admin/reviews", label: "Reviews", Icon: Star },
@@ -207,7 +207,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     return [
       { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
       { href: "/crew/photo", label: "Photos", Icon: Camera },
-      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/crew/time", label: "Clock", Icon: Clock },
     ];
   }
 
@@ -218,7 +218,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     return [
       { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
       { href: "/crew/photo", label: "Photos", Icon: Camera },
-      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/crew/time", label: "Clock", Icon: Clock },
       { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
       { href: "/punch", label: "Punch List", Icon: CheckSquare },
       { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
@@ -230,7 +230,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     return [
       { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
       { href: "/crew/photo", label: "Photos", Icon: Camera },
-      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/crew/time", label: "Clock", Icon: Clock },
       { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
       { href: "/punch", label: "Punch List", Icon: CheckSquare },
       { href: "/change-orders", label: "Change Orders", Icon: FileDiff },
@@ -277,7 +277,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
   const items: NavItem[] = [
     { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
     { href: "/crew/photo", label: "Upload Photo", Icon: Camera },
-    { href: "/crew/time", label: "Time", Icon: Clock },
+    { href: "/crew/time", label: "Clock", Icon: Clock },
     { href: "/receipts", label: "Receipts", Icon: Receipt },
     { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
     { href: "/punch", label: "Punch List", Icon: CheckSquare },
@@ -311,7 +311,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
   const base: NavItem[] = [
     { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
     { href: "/crew/photo", label: "Photos", Icon: Camera },
-    { href: "/crew/time", label: "Time", Icon: Clock },
+    { href: "/crew/time", label: "Clock", Icon: Clock },
   ];
   if (role === "crew") {
     // Lawn crew get their Route tab; construction crew don't (construction is
@@ -330,7 +330,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
     }
     return [
       { href: "/dashboard", label: "Home", Icon: Home, badge: "unread" },
-      { href: "/crew/time", label: "Time", Icon: Clock },
+      { href: "/crew/time", label: "Clock", Icon: Clock },
       { href: "/daily-logs", label: "Daily Logs", Icon: ClipboardList },
       { href: "/punch", label: "Punch", Icon: CheckSquare },
     ];
