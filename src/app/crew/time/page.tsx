@@ -19,6 +19,14 @@ import {
   type SettleableRow,
 } from "@/lib/endShiftFlush";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
+import {
+  isTriviallyShort,
+  validateBackdate,
+  describeShiftFlags,
+  formatDuration,
+  TRIVIAL_SHIFT_MS,
+  type BackdateCheck,
+} from "@/lib/shiftRules";
 
 // Time-entry review status -> badge tone (was the legacy StatusBadge palette).
 const TIME_STATUS_TONE: Record<string, BadgeTone> = {
@@ -45,6 +53,12 @@ type TimeEntry = {
   lng: number | null;
   location_source: GpsSource | null;
   status: string;
+  // DB-stamped correction labels. clock_in_backdated is set by a TRIGGER when
+  // the client posts an explicit clock_in_at — the client never sets it, so an
+  // entry cannot be backdated without being labelled. auto_closed is stamped
+  // by the nightly sweep. Both are what the office reviews before approving.
+  clock_in_backdated: boolean | null;
+  auto_closed: boolean | null;
 };
 
 function fmtDuration(ms: number): string {
@@ -55,6 +69,27 @@ function fmtDuration(ms: number): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${sec}s`;
   return `${sec}s`;
+}
+
+// HH:MM for the <input type="time"> — "I started earlier" defaults to now so
+// ticking the box is the only deliberate step; adjusting the value is optional.
+function nowHHMM(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// Flags describe a reduced claim about the DATA, shown wherever the entry is
+// reviewed. crew_size is a lawn measurement (how many were on the truck), so
+// the "not recorded" phrase applies only there — a construction job entry has
+// no crew size concept and would read as noise.
+function shiftFlagList(
+  entry: Pick<TimeEntry, "clock_in_backdated" | "auto_closed" | "crew_size">
+): string[] {
+  return describeShiftFlags({
+    backdated: entry.clock_in_backdated ?? false,
+    autoClosed: entry.auto_closed ?? false,
+    ...(isLawn() ? { crewSize: entry.crew_size } : {}),
+  });
 }
 
 export default function CrewTimePage() {
@@ -89,6 +124,15 @@ export default function CrewTimePage() {
   const [gps, setGps] = useState<GpsResult | null>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("getting");
   const [busy, setBusy] = useState(false);
+
+  // Mis-tap guard: when End shift lands on a trivially short duration, we ask
+  // (Discard / Record anyway) instead of silently recording OR silently
+  // deleting. Never auto-discard — a genuinely short visit is real.
+  const [trivialPrompt, setTrivialPrompt] = useState(false);
+  // Forgotten-start recovery at clock-in: unchecked by default, so backdating
+  // is a deliberate extra step, never the path of least resistance.
+  const [backdateEnabled, setBackdateEnabled] = useState(false);
+  const [backdateTime, setBackdateTime] = useState("");
 
   // Ticking "now" for the live elapsed timer
   const [now, setNow] = useState(() => Date.now());
@@ -125,7 +169,7 @@ export default function CrewTimePage() {
       user?.id
         ? supabase
             .from("time_entries")
-            .select("id, job_id, cost_code_id, crew_size, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
+            .select("id, job_id, cost_code_id, crew_size, clock_in_at, clock_out_at, note, lat, lng, location_source, status, clock_in_backdated, auto_closed")
             .eq("user_id", user.id)
             .order("clock_in_at", { ascending: false })
             .limit(50)
@@ -249,6 +293,27 @@ export default function CrewTimePage() {
       toast.warning("You're already clocked in — clock out first");
       return;
     }
+    // "I started earlier": only the start time is ever supplied — the trigger
+    // stamps clock_in_backdated, not us, so a typed start cannot sneak in
+    // unlabelled. Validate locally so the user gets validateBackdate's
+    // sentence instead of guard_time_entry_clock_in's Postgres error; the
+    // database applies the same limits and remains the real rule.
+    let clockInAt: string | null = null;
+    if (backdateEnabled) {
+      if (!backdateTime) {
+        toast.warning("Enter the time you started, or untick “I started earlier”");
+        return;
+      }
+      const [hh, mm] = backdateTime.split(":").map(Number);
+      const d = new Date();
+      d.setHours(hh, mm, 0, 0);
+      const check = validateBackdate(d.getTime(), Date.now());
+      if (!check.ok) {
+        toast.error(check.message);
+        return;
+      }
+      clockInAt = d.toISOString();
+    }
     setBusy(true);
     // Crew size (lawn only): an integer >= 1 typed by the lead. Blank, NaN or
     // < 1 records NULL — an unknown measurement recorded as visibly missing.
@@ -267,8 +332,12 @@ export default function CrewTimePage() {
         lng: gps?.lng ?? null,
         location_source: gps?.source ?? null,
         location_accuracy: gps?.accuracy ?? null,
+        // Omitted entirely when not backdating — the DB default (now()) applies
+        // and the entry stays a measured one. Never pass a value the trigger
+        // would have to interpret.
+        ...(clockInAt ? { clock_in_at: clockInAt } : {}),
       })
-      .select("id, job_id, cost_code_id, crew_size, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
+      .select("id, job_id, cost_code_id, crew_size, clock_in_at, clock_out_at, note, lat, lng, location_source, status, clock_in_backdated, auto_closed")
       .single();
     if (error) {
       toast.error(
@@ -284,6 +353,9 @@ export default function CrewTimePage() {
       // location, not this page, so it has to be told the shift began.
       window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
       setNote("");
+      // A backdate is a one-shot correction — never sticky for the next shift.
+      setBackdateEnabled(false);
+      setBackdateTime("");
       setGps(null);
       setGpsStatus("getting");
       getLocation();
@@ -343,8 +415,22 @@ export default function CrewTimePage() {
     if (msg) toast.success(msg);
   }
 
+  // End shift. A trivially short duration is probably a mis-tap — but it might
+  // be a genuine ten-minute return to redo an edge — so we ASK instead of
+  // recording or deleting on the user's behalf (see isTriviallyShort).
   async function clockOut() {
     if (!openEntry) return;
+    const dur = Date.now() - new Date(openEntry.clock_in_at).getTime();
+    if (isTriviallyShort(dur)) {
+      setTrivialPrompt(true);
+      return;
+    }
+    await doClockOut();
+  }
+
+  async function doClockOut() {
+    if (!openEntry) return;
+    setTrivialPrompt(false);
     setBusy(true);
     const { error } = await supabase
       .from("time_entries")
@@ -366,6 +452,28 @@ export default function CrewTimePage() {
     setBusy(false);
   }
 
+  // Discard = delete the unapproved entry outright (RFS permits a crew member
+  // to delete their own unapproved entry; same path as removeEntry). No
+  // settlement flush runs: a discarded mis-tap means the day did NOT end, and
+  // the nightly sweep still catches any visit that genuinely settled on its
+  // own. The clock change IS broadcast so the office's tracking view stops
+  // showing this person as on-shift right away.
+  async function discardTrivialShift() {
+    if (!openEntry) return;
+    const id = openEntry.id;
+    setBusy(true);
+    const { error } = await supabase.from("time_entries").delete().eq("id", id);
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setTrivialPrompt(false);
+    setOpenEntry(null);
+    toast.success("Discarded — nothing was recorded");
+    window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
+  }
+
   async function removeEntry(entry: TimeEntry) {
     // Defense in depth — the button is also hidden for approved rows below.
     // RLS enforces this server-side; this just gives a clear message.
@@ -384,9 +492,74 @@ export default function CrewTimePage() {
   }
 
   const elapsed = openEntry ? now - new Date(openEntry.clock_in_at).getTime() : 0;
+  // The mis-tap guard fires before anything is written, so the duration shown
+  // is live elapsed at the moment End shift was pressed.
+  const trivialMs = openEntry ? now - new Date(openEntry.clock_in_at).getTime() : 0;
+  // formatDuration rounds down to whole minutes; a mis-tap is usually seconds,
+  // where "0m" would hide the very fact being confirmed. Sub-minute shows the
+  // seconds-precise variant; otherwise the shared wording.
+  const trivialShown =
+    trivialMs < 60_000 ? fmtDuration(trivialMs) : formatDuration(trivialMs);
+  // Live backdate validation for the form below (plain compute, no state).
+  let backdateCheck: BackdateCheck | null = null;
+  if (backdateEnabled && backdateTime) {
+    const [bh, bm] = backdateTime.split(":").map(Number);
+    const d = new Date();
+    d.setHours(bh, bm, 0, 0);
+    backdateCheck = validateBackdate(d.getTime(), Date.now());
+  }
+  const openFlags = openEntry ? shiftFlagList(openEntry) : [];
 
   return (
     <PageContainer title="Clock in/out" maxWidth="list">
+      {/* ── Mis-tap guard: asks, never decides ─────────────────────────────
+          Ending a shift under {TRIVIAL_SHIFT_MS / 60000} minutes offers a
+          choice instead of silently writing a payroll row (or silently
+          deleting real time — both destroy trust in the clock). */}
+      {openEntry && trivialPrompt && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-4 shadow-xl w-full max-w-sm space-y-3">
+            <p className="text-base font-semibold text-gray-900">
+              This shift was {trivialShown}.
+            </p>
+            <p className="text-sm text-gray-600">
+              Shorter than {formatDuration(TRIVIAL_SHIFT_MS)}. If that was a
+              mis-tap, discard it. If you really did work — a quick return to
+              redo an edge counts — record it; the office reviews short shifts
+              either way.
+            </p>
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={doClockOut}
+                disabled={busy}
+                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                Record it anyway
+              </button>
+              <button
+                type="button"
+                onClick={discardTrivialShift}
+                disabled={busy}
+                className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold active:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Discard — mis-tap
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrivialPrompt(false)}
+                disabled={busy}
+                className="w-full bg-white border border-gray-300 text-gray-700 py-2.5 rounded-lg text-sm font-semibold active:bg-gray-50 disabled:opacity-50"
+              >
+                Keep the shift open
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-7 h-7 animate-spin text-gray-400" />
@@ -454,6 +627,20 @@ export default function CrewTimePage() {
             <p className="text-xs text-gray-500 mt-1">
               Since {new Date(openEntry.clock_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </p>
+            {/* Correction labels on the shift itself — the crew member sees
+                the same reduced-claim wording the office reviews. */}
+            {openFlags.length > 0 && (
+              <div className="flex flex-wrap justify-center gap-1.5 mt-2">
+                {openFlags.map((f) => (
+                  <span
+                    key={f}
+                    className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5"
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="text-sm text-gray-700 space-y-0.5">
             <p className="font-medium truncate">
@@ -590,6 +777,56 @@ export default function CrewTimePage() {
             />
           </label>
 
+          {/* ── "I started earlier" — forgotten-start recovery ────────────
+              Off by default so the normal tap-to-start stays the path of
+              least resistance; ticking the box IS the deliberate step. The
+              value pre-fills with the current time, validation shows
+              validateBackdate's sentence inline, and the office always
+              reviews a hand-entered start before approving it. */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={backdateEnabled}
+                onChange={(e) => {
+                  setBackdateEnabled(e.target.checked);
+                  if (e.target.checked) setBackdateTime(nowHHMM());
+                }}
+                className="w-4 h-4 text-green-600"
+              />
+              <span className="text-sm font-medium text-gray-800">
+                I started earlier
+              </span>
+            </label>
+            {backdateEnabled && (
+              <div className="mt-2 space-y-1">
+                <input
+                  type="time"
+                  value={backdateTime}
+                  onChange={(e) => setBackdateTime(e.target.value)}
+                  className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base bg-white"
+                />
+                {backdateCheck === null && (
+                  <p className="text-xs text-gray-500">
+                    Enter the time you actually started today. A typed start
+                    time is reviewed by the office.
+                  </p>
+                )}
+                {backdateCheck && backdateCheck.ok && (
+                  <p className="text-xs text-gray-500">
+                    Shift will start at {backdateTime} today — a hand-entered
+                    start is reviewed by the office before it&apos;s approved.
+                  </p>
+                )}
+                {backdateCheck && !backdateCheck.ok && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    {backdateCheck.message}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Location — auto-captured on page open */}
           <div className="text-xs space-y-1.5">
             {gpsStatus === "ok" && gps ? (
@@ -657,6 +894,7 @@ export default function CrewTimePage() {
           <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
             {recent.map((e) => {
               const dur = new Date(e.clock_out_at!).getTime() - new Date(e.clock_in_at).getTime();
+              const flags = shiftFlagList(e);
               return (
                 <div key={e.id} className="p-3 flex items-center gap-2">
                   <div className="min-w-0 flex-1">
@@ -672,6 +910,15 @@ export default function CrewTimePage() {
                       {" → "}
                       {new Date(e.clock_out_at!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </p>
+                    {/* Reduced-claim labels: same wording the office sees when
+                        reviewing — no editorialising. */}
+                    {flags.length > 0 && (
+                      <p className="text-[11px] text-amber-800 mt-0.5 flex flex-wrap gap-x-2">
+                        {flags.map((f) => (
+                          <span key={f}>{f}</span>
+                        ))}
+                      </p>
+                    )}
                     {e.cost_code_id && (
                       <p className="text-xs text-blue-600 truncate">{codeLabelById[e.cost_code_id]}</p>
                     )}
