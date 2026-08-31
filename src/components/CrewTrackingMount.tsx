@@ -75,9 +75,12 @@ async function loadTodaysStops(
 
   let solo = false;
   if (!crewLike) {
+    // Linked logins only — see the matching guard on My Route. A placeholder
+    // crew_member with no account must not demote a solo owner to dispatcher.
     const { count } = await supabase
       .from("crew_members")
-      .select("id", { count: "exact", head: true });
+      .select("id", { count: "exact", head: true })
+      .not("user_id", "is", null);
     solo = (count ?? 0) === 0;
     // Office/admin with a real crew: dispatcher, not field. No stops.
     if (!solo) return [];

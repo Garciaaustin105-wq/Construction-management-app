@@ -301,9 +301,16 @@ export default function MyRoutePage() {
       if (crewLike) {
         // proceed — field crew / superintendent on their own visits.
       } else if (officeLike) {
+        // Only crew_members with a LINKED LOGIN count. A row with a null
+        // user_id is a name on a list — nobody can sign in as it, so it cannot
+        // be the field worker. Counting it flipped a solo owner to "dispatcher"
+        // and bounced them off their own route with no error and no
+        // explanation, which is exactly what happened the first time an owner
+        // added a placeholder crew member before that person had an account.
         const { count } = await supabase
           .from("crew_members")
-          .select("id", { count: "exact", head: true });
+          .select("id", { count: "exact", head: true })
+          .not("user_id", "is", null);
         solo = (count ?? 0) === 0;
         if (!solo) {
           router.push("/dashboard");
