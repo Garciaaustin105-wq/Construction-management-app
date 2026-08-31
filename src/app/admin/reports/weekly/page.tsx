@@ -16,6 +16,7 @@ import { Download, Camera, Receipt, Briefcase } from "lucide-react";
 import { isLawn } from "@/lib/variant";
 import { OFFICE_OR_PM, ACCOUNTING } from "@/lib/roles";
 import { weeksInRange, bucketByWeek, weekStart, fmtHours } from "@/lib/payrollWeeks";
+import { describeShiftFlags } from "@/lib/shiftRules";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,11 @@ type TimeEntry = {
   clock_out_at: string | null;
   note: string | null;
   status: string; // pending | approved | rejected
+  // DB-stamped correction labels (trigger + nightly sweep). Shown in the day
+  // drill-down so whoever approves sees the reduced-claim wording.
+  clock_in_backdated: boolean | null;
+  auto_closed: boolean | null;
+  crew_size: number | null;
   job: { name: string | null } | null;
 };
 
@@ -120,7 +126,7 @@ export default async function WeeklyReportPage({
           // status drives the approval flag on every cell; job_id being
           // NULL is a whole-route SHIFT entry (not "no job").
           .select(
-            "id, user_id, note, clock_in_at, clock_out_at, status, job:jobs(name)"
+            "id, user_id, note, clock_in_at, clock_out_at, status, clock_in_backdated, auto_closed, crew_size, job:jobs(name)"
           )
           .gte("clock_in_at", startISO)
           .lt("clock_in_at", endISO);
@@ -800,6 +806,15 @@ function WeekDrillDown({
                   const outMs = e.clock_out_at
                     ? new Date(e.clock_out_at).getTime()
                     : null;
+                  // Shift-flags wording exactly as describeShiftFlags returns
+                  // it — a fact about the data, never a judgement about the
+                  // person. crew_size is a lawn concept; on construction the
+                  // (always-null) crew size would read as noise on every row.
+                  const flagTexts = describeShiftFlags({
+                    backdated: e.clock_in_backdated ?? false,
+                    autoClosed: e.auto_closed ?? false,
+                    ...(isLawn() ? { crewSize: e.crew_size } : {}),
+                  });
                   return (
                     <div
                       key={e.id}
@@ -836,6 +851,12 @@ function WeekDrillDown({
                           <span className="text-gray-400"> · {e.note}</span>
                         )}
                       </p>
+                      {/* Correction labels, reviewable before approval. */}
+                      {flagTexts.length > 0 && (
+                        <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-1">
+                          {flagTexts.join(" · ")}
+                        </span>
+                      )}
                       <span className="flex items-center gap-2 flex-shrink-0">
                         <span
                           className={`font-mono text-xs tabular-nums ${

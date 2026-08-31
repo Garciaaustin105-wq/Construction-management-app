@@ -1,6 +1,7 @@
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
-import { OFFICE_LIKE } from "@/lib/roles";
+import { OFFICE_LIKE, FIELD } from "@/lib/roles";
+import { createClient } from "@/lib/supabase/server";
 import { isLawn } from "@/lib/variant";
 import PageContainer from "@/components/PageContainer";
 import Link from "next/link";
@@ -14,8 +15,81 @@ export default async function OfficePage() {
 
   const showReports = role === "office" || role === "admin";  // /admin/reports excludes super_admin
 
+  const supabase = await createClient();
+
+  // ── Who has not clocked in today ──────────────────────────────────────────
+  // The only way a forgotten clock-in gets caught the same day: GPS exists
+  // only while the clock runs, so the phone cannot report the absence — the
+  // office must see the absence. Read once per page load; no polling.
+  // "Today" is the server's local midnight (UTC on the host) — the same
+  // convention the reports use.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const [crewRes, todaysRes, lastRes] = await Promise.all([
+    // Field roles only — the people the time clock exists for. Leads get
+    // flagged missing here, not chased as managers.
+    supabase.from("profiles").select("id, full_name, role").in("role", [...FIELD]),
+    supabase
+      .from("time_entries")
+      .select("user_id")
+      .gte("clock_in_at", todayStart.toISOString()),
+    // Cheap last-seen date: one ordered page, first hit per user wins.
+    supabase
+      .from("time_entries")
+      .select("user_id, clock_in_at")
+      .order("clock_in_at", { ascending: false })
+      .limit(500),
+  ]);
+  const clockedInToday = new Set(
+    ((todaysRes.data ?? []) as { user_id: string }[]).map((r) => r.user_id)
+  );
+  const lastShiftByUser = new Map<string, string>();
+  for (const r of (lastRes.data ?? []) as { user_id: string; clock_in_at: string }[]) {
+    if (!lastShiftByUser.has(r.user_id)) lastShiftByUser.set(r.user_id, r.clock_in_at);
+  }
+  const notClockedIn = ((crewRes.data ?? []) as {
+    id: string;
+    full_name: string | null;
+  }[])
+    .filter((p) => !clockedInToday.has(p.id))
+    .map((p) => ({
+      name: p.full_name ?? "Unknown",
+      last: lastShiftByUser.get(p.id) ?? null,
+    }));
+
   return (
     <PageContainer title="Office" subtitle="Records, reports & schedule" maxWidth="list">
+      {/* Not clocked in today — rendered only when someone is missing, so the
+          hub stays quiet on the good days. This is the same-day catch the
+          phone cannot do: without a running clock there is no location, so
+          "not here yet" only exists as a list on this side. */}
+      {notClockedIn.length > 0 && (
+        <section className="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <h2 className="text-sm font-semibold text-amber-900 flex items-center gap-1.5">
+            <Clock className="w-4 h-4" />
+            Not clocked in today ({notClockedIn.length})
+          </h2>
+          <p className="text-[11px] text-amber-800 mt-0.5">
+            Field crew with no shift started today. Worth a call before the day
+            is gone — there is no signal from the phone until the clock runs.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {notClockedIn.map((p) => (
+              <li
+                key={p.name}
+                className="flex items-center justify-between gap-2 text-sm text-amber-900"
+              >
+                <span className="truncate">{p.name}</span>
+                <span className="text-[11px] text-amber-700 flex-shrink-0">
+                  {p.last
+                    ? `Last shift ${new Date(p.last).toLocaleDateString([], { month: "short", day: "numeric" })}`
+                    : "Never clocked in"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <div className="grid grid-cols-2 gap-2">
         {isLawn() ? (
           <>
