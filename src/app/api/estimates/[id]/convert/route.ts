@@ -38,7 +38,7 @@ export async function POST(
   // me.orgId). RLS session client — office reads its own estimates.
   const { data: est, error: estErr } = await supabase
     .from("estimates")
-    .select("id, job_id, customer_id, status, organization_id, title, customers(name, address)")
+    .select("id, job_id, customer_id, status, organization_id, title, measured_sqft, map_lat, map_lng, customers(name, address)")
     .eq("id", id)
     .maybeSingle();
   if (estErr) return NextResponse.json({ error: `Load failed: ${estErr.message}` }, { status: 500 });
@@ -80,6 +80,28 @@ export async function POST(
     if (!job) return NextResponse.json({ error: "Linked job not found" }, { status: 404 });
     if (job.type !== "lawn")
       return NextResponse.json({ error: "Linked job is not a lawn job" }, { status: 409 });
+
+    // The job already exists, so only fill the gaps — a value the office typed
+    // by hand outranks the estimate's measurement and must not be overwritten.
+    // Non-fatal: failing to enrich a profile should never block scheduling.
+    if (est.measured_sqft != null || est.map_lat != null) {
+      const { data: prof } = await supabase
+        .from("lawn_jobs")
+        .select("lot_sqft, map_lat")
+        .eq("id", jobId)
+        .maybeSingle();
+      const patch: Record<string, number> = {};
+      if (prof && prof.lot_sqft == null && est.measured_sqft != null) {
+        patch.lot_sqft = est.measured_sqft as number;
+      }
+      if (prof && prof.map_lat == null && est.map_lat != null && est.map_lng != null) {
+        patch.map_lat = est.map_lat as number;
+        patch.map_lng = est.map_lng as number;
+      }
+      if (Object.keys(patch).length > 0) {
+        await supabase.from("lawn_jobs").update(patch).eq("id", jobId);
+      }
+    }
   } else {
     // Create a new lawn job from the estimate.
     if (!est.customer_id)
@@ -107,11 +129,23 @@ export async function POST(
     jobId = newJob.id;
     createdJob = true;
 
-    // 1:1 lawn_jobs profile (id IS the job id). Defaults — office fills
-    // lot_sqft/pets/etc. on the schedule detail page later.
+    // 1:1 lawn_jobs profile (id IS the job id), SEEDED FROM THE ESTIMATE.
+    //
+    // This used to insert only the ids, with a comment saying the office would
+    // fill lot_sqft in later on the schedule page. They didn't — 4 of 13 lawn
+    // jobs have a lot size. The property was already measured to produce the
+    // quote; asking someone to retype that number onto the job is a step that
+    // simply doesn't happen, and without it there is no price-per-sqft data.
+    //
+    // The map pin rides along for the same reason: it comes from the same
+    // measurement, and pin coverage is what geofenced auto arrive/depart
+    // depends on (currently 100% / 40% / 0% across orgs).
     const { error: profileErr } = await supabase.from("lawn_jobs").insert({
       id: jobId,
       organization_id: est.organization_id,
+      lot_sqft: est.measured_sqft ?? null,
+      map_lat: est.map_lat ?? null,
+      map_lng: est.map_lng ?? null,
     });
     if (profileErr && profileErr.code !== "23505")
       return NextResponse.json({ error: `Lawn profile failed: ${profileErr.message}` }, { status: 500 });
