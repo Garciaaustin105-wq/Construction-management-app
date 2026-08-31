@@ -50,17 +50,35 @@ Geofencing fails in known ways. These values are chosen, not guessed:
 `useCrewLocationBroadcast` currently starts GPS **only when an office viewer is
 present** (the presence gate that keeps the live map cheap).
 
-**That has to change, and it is the one real design decision here.** Auto
-arrive/depart must work unattended — arrivals happen all day whether or not
-anyone is watching the map. So:
+Auto arrive/depart must work unattended — arrivals happen all day whether or not
+anyone is watching the map. So GPS has to run for the whole shift.
 
-- **GPS runs whenever the crew member is on shift.** Not presence-gated.
-- **Broadcasting stays presence-gated.** Do not send Realtime messages when
-  nobody is watching — that quota discipline is why this feature is affordable.
+**But do NOT keep the Realtime channel open for the whole shift.** Separate the
+two concerns; this is the most important instruction in this document:
 
-So the cost moves from Realtime messages to battery. Keep
-`enableHighAccuracy: false`; it is the difference between a phone lasting a
-shift and not.
+| | Needs GPS | Needs a Realtime socket |
+|---|---|---|
+| **Geofencing** (auto arrive/depart) | yes, whole shift | **NO** |
+| **Live map** (office watching) | yes | yes, only while watched |
+
+The geofence is a pure local state machine. It needs the GPS fix and the stop
+list, and on an event it POSTs to an existing API route. **It never needs
+Realtime.** Only the live map does.
+
+WHY THIS MATTERS FINANCIALLY. Supabase caps CONCURRENT Realtime connections —
+200 on Free, 500 on Pro — and that ceiling is platform-wide across every tenant,
+so it scales with total simultaneously-clocked-in crew rather than with revenue.
+Holding a socket for an entire shift instead of only while an office is watching
+is roughly a 4x increase in connection-hours, and it is the one resource that
+would force an infrastructure upgrade well before the feature pays for itself.
+
+Structure it so the socket lifecycle is unchanged from today (join when needed
+for the live map, leave when the last viewer goes) while the GPS watch and the
+geofence reducer run independently for the whole shift.
+
+Keep `enableHighAccuracy: false` — it is the difference between a phone lasting
+a shift and not, and it is well within the tolerance the 100m/150m radii were
+chosen for.
 
 ### 2. Load today's stops
 
