@@ -4,7 +4,7 @@ import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import PageContainer from "@/components/PageContainer";
 import Link from "next/link";
-import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera, Contact } from "lucide-react";
+import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera, Contact, Briefcase, Tag } from "lucide-react";
 
 export default async function OfficePage() {
   const me = await getMe();
@@ -80,6 +80,19 @@ export default async function OfficePage() {
             <Link href="/receipts" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Receipt className="w-5 h-5" />
               Receipts
+            </Link>
+            {/* Subcontractors + Cost Codes moved off the Account hub: they are
+                construction business/config surfaces, not account concerns.
+                Safe to move because /dashboard (construction's Home tab)
+                already links both, so neither depends on this card for
+                reachability — it is discoverability, not the only door. */}
+            <Link href="/admin/subcontractors" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Briefcase className="w-5 h-5" />
+              Subcontractors
+            </Link>
+            <Link href="/admin/cost-codes" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Tag className="w-5 h-5" />
+              Cost Codes
             </Link>
             <Link href="/daily-logs" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <ClipboardList className="w-5 h-5" />

@@ -1,12 +1,11 @@
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { OFFICE_LIKE } from "@/lib/roles";
-import { isLawn } from "@/lib/variant";
 import { SUPPORT_EMAIL } from "@/lib/legal";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
 import Link from "next/link";
-import { Users, Briefcase, Tag, CreditCard, Building, Building2, LifeBuoy, UserCog } from "lucide-react";
+import { Users, CreditCard, Building, Building2, LifeBuoy, UserCog } from "lucide-react";
 
 export default async function ManagePage() {
   const me = await getMe();
@@ -14,7 +13,6 @@ export default async function ManagePage() {
   const role = me.role;
   if (!OFFICE_LIKE.has(role as never)) redirect("/dashboard");
 
-  const isOfficeOrAdmin = role === "office" || role === "admin";
   const showBilling = role === "office" || role === "admin";
   const showPlatform = role === "super_admin";
   // Org admin only, not office/super_admin -- the one in-app support contact
@@ -45,18 +43,6 @@ export default async function ManagePage() {
             <Link href="/admin/org" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Building2 className="w-5 h-5" />
               <span>Org settings</span>
-            </Link>
-          )}
-          {isOfficeOrAdmin && !isLawn() && (
-            <Link href="/admin/subcontractors" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Briefcase className="w-5 h-5" />
-              <span>Subcontractors</span>
-            </Link>
-          )}
-          {isOfficeOrAdmin && !isLawn() && (
-            <Link href="/admin/cost-codes" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Tag className="w-5 h-5" />
-              <span>Cost Codes</span>
             </Link>
           )}
           {showBilling && (

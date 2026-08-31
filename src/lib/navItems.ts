@@ -480,6 +480,8 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
         aliases: [
           "/receipts",
           "/admin/customers",
+          "/admin/subcontractors",
+          "/admin/cost-codes",
           "/admin/reports",
           "/admin/insights",
           "/calendar",
@@ -497,8 +499,6 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
         Icon: Settings,
         aliases: [
           "/admin/users",
-          "/admin/subcontractors",
-          "/admin/cost-codes",
           "/admin/billing",
           "/admin/orgs",
           "/admin/clients",
