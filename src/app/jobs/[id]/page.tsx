@@ -54,7 +54,7 @@ export default async function JobDetailPage({
   const [jobRes, photosRes, rfisRes, blueprintsRes, receiptsRes, crewRes, customersRes, jobSubsRes, allSubsRes, schedEventsRes, dailyLogsRes, punchRes, changeOrdersRes, submittalsRes] = await Promise.all([
     supabase
       .from("jobs")
-      .select("id, name, address, description, status, created_at, assigned_crew, customer_id, customers(name), type")
+      .select("id, name, address, description, status, created_at, archived_at, assigned_crew, customer_id, customers(name), type")
       .eq("id", id)
       .single(),
     supabase
@@ -271,10 +271,18 @@ export default async function JobDetailPage({
   return (
     <PageContainer title={job.name} subtitle={(job.customers as unknown as { name: string } | null)?.name ?? ""} maxWidth="list" mainClassName="space-y-6" backHref="/dashboard" backLabel="Home">
       <Card as="section">
-        <div className="mb-2">
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <StatusBadge tone={JOB_STATUS_TONE[job.status] ?? "neutral"} size="md">
             {job.status.replace("_", " ")}
           </StatusBadge>
+          {/* Archiving is visibility, not lifecycle (jobs.archived_at, not a
+              status value) — shown beside the status so an archived job opened
+              by URL doesn't read as active. */}
+          {(job as unknown as { archived_at?: string | null }).archived_at && (
+            <StatusBadge tone="neutral" size="md">
+              Archived
+            </StatusBadge>
+          )}
         </div>
         <JobDetailsEditor
           jobId={job.id}
