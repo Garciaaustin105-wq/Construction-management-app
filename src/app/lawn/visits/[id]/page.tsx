@@ -35,6 +35,7 @@ import {
 import LawnPropertyDetails, {
   type LawnJob,
 } from "@/components/LawnPropertyDetails";
+import { manHours } from "@/lib/manHours";
 
 // Only mounts after "Skip" is pressed — kept out of the first-load bundle.
 const SkipReasonPicker = dynamic(
@@ -55,9 +56,20 @@ type Visit = {
   crew_id: string | null;
   completed_at: string | null;
   /** Stamped by the Start action. Deliberately does NOT move `status` — the
-   *  pending -> [done, skipped] lifecycle in src/lib/lifecycles/lawn-visit.ts
+   *  done -> pending lifecycle in src/lib/lifecycles/lawn-visit.ts
    *  is untouched. On-site time is completed_at - started_at. */
   started_at: string | null;
+  /** Measured on-site window (geofence). Written by any crew phone's location
+   *  pings and does not depend on anyone tapping Start/Done — this is the
+   *  figure pricing trusts; started/completed is only the labelled fallback. */
+  on_site_first_at: string | null;
+  on_site_last_at: string | null;
+  /** Auth user ids of phones recorded on site. length > 1 is the evidence the
+   *  measurement is real. */
+  on_site_user_ids: string[] | null;
+  /** too_long / too_short / no_departure — set by the measurement pipeline.
+   *  A flag usually means we lack a lot size, never that the crew slacked. */
+  measurement_flag: string | null;
   /** Optional appointment window ("between 9 and 11"). `time` columns, so
    *  these arrive as "HH:MM:SS"; NULL = any time that day. */
   scheduled_window_start: string | null;
@@ -120,20 +132,50 @@ export default function VisitDetailPage({
   const [moveDate, setMoveDate] = useState("");
   const [uploading, setUploading] = useState(false);
   const [property, setProperty] = useState<LawnJob | null>(null);
-  const [sendingOMW, setSendingOMW] = useState(false);
+    const [sendingOMW, setSendingOMW] = useState(false);
   const [showSkipPicker, setShowSkipPicker] = useState(false);
+  // Crew size for man-hours, joined from time_entries (see load()). null =
+  // unknown: no covering shift, or the covering shift never recorded a size.
+  // The display MUST treat null as missing, never as 1 — a wrong multiplier
+  // silently under-prices the job while a missing one is visibly chaseable.
+  const [crewSize, setCrewSize] = useState<number | null>(null);
 
   async function load() {
     const supabase = createClient();
     const { data: v } = await supabase
       .from("lawn_visits")
       .select(
-        "id, job_id, due_date, status, crew_id, completed_at, started_at, scheduled_window_start, scheduled_window_end, notes, skip_reason, recurring_schedule_id, recurring_schedules(estimated_duration_minutes, service_type), jobs(name, address, customers(name, contact_email, phone))"
+        "id, job_id, due_date, status, crew_id, completed_at, started_at, on_site_first_at, on_site_last_at, on_site_user_ids, measurement_flag, scheduled_window_start, scheduled_window_end, notes, skip_reason, recurring_schedule_id, recurring_schedules(estimated_duration_minutes, service_type), jobs(name, address, customers(name, contact_email, phone))"
       )
       .eq("id", id)
       .maybeSingle();
     if (!v) return;
     setVisit(v as unknown as Visit);
+
+    // ── crew_size join ──────────────────────────────────────────────────────
+    // crew_size lives on time_entries, not on the visit. Find the SHIFT that
+    // covers this visit (RLS-scoped to the org — no manual org filter): the
+    // visit's measured arrival must fall between clock_in_at and
+    // coalesce(clock_out_at, now()). When several shifts cover it (each crew
+    // member clocks their own), prefer the visit's assigned crew member —
+    // crew size is recorded on the lead's shift — else the latest clock-in.
+    // Only measured visits join at all: without on_site_first_at there is no
+    // measured window and therefore no man-hour claim to make.
+    const anchor = (v as unknown as Visit).on_site_first_at;
+    if (anchor) {
+      const { data: shifts } = await supabase
+        .from("time_entries")
+        .select("id, user_id, crew_size, clock_in_at")
+        .lte("clock_in_at", anchor)
+        .or(`clock_out_at.is.null,clock_out_at.gte.${anchor}`)
+        .order("clock_in_at", { ascending: false });
+      const covering = (shifts as { user_id: string | null; crew_size: number | null }[] | null) ?? [];
+      const lead = covering.find(
+        (s) => s.crew_size !== null && s.user_id === (v as unknown as Visit).crew_id
+      );
+      const any = covering.find((s) => s.crew_size !== null);
+      setCrewSize(lead?.crew_size ?? any?.crew_size ?? null);
+    }
 
     const [{ data: photoRows }, { data: crewRows }, { data: lawnJob }, { data: svcRows }] =
       await Promise.all([
@@ -512,9 +554,22 @@ export default function VisitDetailPage({
       ? `${fmtTime(visit.scheduled_window_start)} – ${fmtTime(visit.scheduled_window_end)}`
       : null;
 
-  // On-site time, once both ends exist.
+  // ── On-site time: MEASURED first, status-coupled second ────────────────────
+  // The geofence window (on_site_first_at → on_site_last_at) is written by any
+  // crew phone and needs nobody to remember Start or Done — it is the figure
+  // pricing trusts. completed_at - started_at is a labelled FALLBACK so old
+  // visits still show something. The two are different claims and never
+  // silently swap: the label says which one you are looking at.
+  const measuredMs =
+    visit.on_site_first_at && visit.on_site_last_at
+      ? Math.max(0, new Date(visit.on_site_last_at).getTime() - new Date(visit.on_site_first_at).getTime())
+      : null;
+  const measuredMinutes = measuredMs !== null ? Math.round(measuredMs / 60000) : null;
+  const phonesOnSite = visit.on_site_user_ids?.length ?? 0;
+
+  // Status-coupled fallback — "Start to done", only when there is no measured window.
   const onSiteMinutes =
-    visit.started_at && visit.completed_at
+    measuredMinutes === null && visit.started_at && visit.completed_at
       ? Math.max(
           0,
           Math.round(
@@ -524,6 +579,25 @@ export default function VisitDetailPage({
           )
         )
       : null;
+
+  // Man-hours: measured duration × the shift's recorded crew size. Shown ONLY
+  // when the join above actually found a shift with a crew_size — if the
+  // multiplier is unknown it must LOOK unknown (null), never default to 1.
+  const manHoursOnSite =
+    measuredMs !== null && measuredMs > 0 && crewSize !== null
+      ? manHours(measuredMs, crewSize)
+      : null;
+
+  // Measurement flag — phrased as missing measurement context, never as crew
+  // fault: too_long/too_short most often mean we lack a lot size.
+  const MEASUREMENT_FLAG_LABEL: Record<string, string> = {
+    too_long: "Longer than the expected range",
+    too_short: "Shorter than the expected range",
+    no_departure: "No departure recorded",
+  };
+  const flagLabel = visit.measurement_flag
+    ? MEASUREMENT_FLAG_LABEL[visit.measurement_flag] ?? visit.measurement_flag
+    : null;
 
   // Start is a one-way stamp and only makes sense on work not yet finished.
   const canStart = !visit.started_at && status === "pending";
@@ -553,9 +627,18 @@ export default function VisitDetailPage({
             value: effectiveDuration === null ? "—" : `${effectiveDuration} min`,
           },
           {
-            label: onSiteMinutes !== null ? "On site" : "Completed",
+            // Label carries the claim: measured geofence window vs the
+            // status-coupled start-to-done fallback. Never silently swap.
+            label:
+              measuredMinutes !== null
+                ? "On site (measured)"
+                : onSiteMinutes !== null
+                ? "Start to done"
+                : "Completed",
             value:
-              onSiteMinutes !== null
+              measuredMinutes !== null
+                ? `${measuredMinutes} min${phonesOnSite > 1 ? ` · ${phonesOnSite} phones` : ""}`
+                : onSiteMinutes !== null
                 ? `${onSiteMinutes} min`
                 : visit.completed_at
                 ? new Date(visit.completed_at).toLocaleDateString()
@@ -627,8 +710,58 @@ export default function VisitDetailPage({
               hour: "numeric",
               minute: "2-digit",
             })}
-            {onSiteMinutes !== null && ` · ${onSiteMinutes} min on site`}
+            {onSiteMinutes !== null && ` · start to done ${onSiteMinutes} min`}
           </p>
+        )}
+
+        {/* On-site measurement — the geofence window, its man-hour figure, and
+            the flag state. Fallback (started/completed) is labelled above; this
+            card exists only when the measurement exists or was flagged. */}
+        {(measuredMinutes !== null || visit.measurement_flag) && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-1">
+            {measuredMinutes !== null ? (
+              <p>
+                <span className="font-medium text-gray-700">Measured on site:</span>{" "}
+                {measuredMinutes} min
+                {phonesOnSite > 1
+                  ? ` · ${phonesOnSite} phones on site`
+                  : ` · ${phonesOnSite} phone${phonesOnSite === 1 ? "" : "s"}`}
+              </p>
+            ) : (
+              visit.on_site_first_at && (
+                <p>
+                  <span className="font-medium text-gray-700">Measured on site:</span>{" "}
+                  arrived{" "}
+                  {new Date(visit.on_site_first_at).toLocaleTimeString([], {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}{" "}
+                  — no departure recorded yet
+                </p>
+              )
+            )}
+            {manHoursOnSite !== null ? (
+              <p>
+                <span className="font-medium text-gray-700">Man-hours:</span>{" "}
+                {manHoursOnSite.toFixed(2)} ({crewSize} crew × {measuredMinutes} min)
+              </p>
+            ) : (
+              measuredMinutes !== null && (
+                <p>
+                  <span className="font-medium text-gray-700">Man-hours:</span> not
+                  shown — the shift covering this visit has no crew size recorded
+                  on it.
+                </p>
+              )
+            )}
+            {flagLabel && (
+              <p className="text-gray-500">
+                Measurement flagged ({flagLabel}) — not used for pricing. This
+                usually means the property&apos;s lot size is missing, not that
+                the visit went wrong.
+              </p>
+            )}
+          </div>
         )}
 
         {/* Appointment window — office/PM only (a window is a scheduling

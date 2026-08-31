@@ -12,6 +12,9 @@ import {
 } from "@/lib/money";
 import { startOfWeek, addDays, toISODate, hoursFromMs } from "@/lib/weekUtils";
 import { arAgingBuckets, overdueTotal } from "@/lib/insights";
+// Man-hour pricing maths — see the module for why duration alone cannot price
+// labour. This page is currently the module's only consumer.
+import { buildBaseline, classifyMeasurement, lotSizeBand, BASELINE_DEFAULTS, type Measurement } from "@/lib/manHours";
 import PageContainer from "@/components/PageContainer";
 import KpiTile from "@/components/charts/KpiTile";
 import BarChart, { type BarDatum } from "@/components/charts/BarChart";
@@ -78,6 +81,12 @@ type VisitRow = {
   // Time model (2026-08-23): started_at is stamped by the visit-detail Start
   // action. Both ends present = a measurable on-site duration.
   started_at: string | null;
+  // Measured window (geofence): the figure pricing trusts. Null on both =
+  // never measured (the dominant case until crews drive a route with pins).
+  on_site_first_at: string | null;
+  on_site_last_at: string | null;
+  job_id: string;
+  crew_id: string | null;
   recurring_schedule_id: string | null;
 };
 type TimeRow = {
@@ -87,6 +96,15 @@ type TimeRow = {
   user_id: string;
   user: { id: string; full_name: string | null } | null;
 };
+// Shifts that recorded a crew size — the join partner for man-hours. Only
+// leads write crew_size, so this is a small set.
+type CrewSizeRow = {
+  crew_size: number;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  user_id: string;
+};
+type LotRow = { id: string; lot_sqft: number | string | null };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -178,6 +196,8 @@ export default async function LawnInsightsPage() {
     timeRes,
     billing,
     servicesRes,
+    lotsRes,
+    crewSizeRes,
   ] = await Promise.all([
     supabase
       .from("invoices")
@@ -196,7 +216,7 @@ export default async function LawnInsightsPage() {
     supabase.from("customers").select("id", { count: "exact", head: true }),
     supabase
       .from("lawn_visits")
-      .select("id, status, due_date, completed_at, started_at, recurring_schedule_id")
+      .select("id, status, due_date, completed_at, started_at, on_site_first_at, on_site_last_at, job_id, crew_id, recurring_schedule_id")
       .gte("due_date", twelveWeeksAgoISO),
     supabase
       .from("time_entries")
@@ -207,6 +227,16 @@ export default async function LawnInsightsPage() {
     // Catalog durations, so a visit whose schedule has no override still
     // resolves an estimate. Cheap: one small org-scoped table.
     supabase.from("lawn_services").select("name, default_duration_minutes"),
+    // Lot areas — the denominator of the per-1,000-sqft labour rate.
+    supabase.from("lawn_jobs").select("id, lot_sqft"),
+    // Shifts with a recorded crew size (only leads record one). A separate —
+    // not the 8-week — fetch, so widening coverage here can't change the
+    // crew-hours charts above.
+    supabase
+      .from("time_entries")
+      .select("crew_size, clock_in_at, clock_out_at, user_id")
+      .not("crew_size", "is", null)
+      .gte("clock_in_at", twelveWeeksAgoISO),
   ]);
 
   const invoices = (invoicesRes.data as unknown as InvoiceRow[]) ?? [];
@@ -220,6 +250,8 @@ export default async function LawnInsightsPage() {
       name: string;
       default_duration_minutes: number | null;
     }[]) ?? [];
+  const lots = (lotsRes.data as unknown as LotRow[]) ?? [];
+  const crewSizes = (crewSizeRes.data as unknown as CrewSizeRow[]) ?? [];
 
   // ---- KPI tiles -----------------------------------------------------------
   const outstandingAR = invoices
@@ -299,6 +331,82 @@ export default async function LawnInsightsPage() {
   const pipelineValue = estimates
     .filter((e) => e.status === "draft" || e.status === "sent" || e.status === "approved")
     .reduce((s, e) => s + estimateGrand(e), 0);
+
+  // ---- Measured labour baseline (man-hours) --------------------------------
+  // The payoff of the crew model: measured on-site window × crew size, priced
+  // per 1,000 sqft. crew_size lives on time_entries, so each visit joins to
+  // the SHIFT covering its measured arrival (same org — RLS scopes; the
+  // visit's on_site_first_at between clock_in_at and
+  // coalesce(clock_out_at, now())). Several shifts can cover one visit (each
+  // crew member clocks their own); the lead's crew_size is the one that
+  // counts, so prefer a shift from the visit's assigned crew member, else the
+  // latest clock-in. No covering shift, or no crew size on it → the multiplier
+  // is UNKNOWN and the row is excluded as missing data — never assumed to be 1.
+  const lotsById = new Map(
+    lots.map((l) => [l.id, Number(l.lot_sqft) > 0 ? Number(l.lot_sqft) : null])
+  );
+  const sizesDesc = [...crewSizes].sort(
+    (a, b) => new Date(b.clock_in_at).getTime() - new Date(a.clock_in_at).getTime()
+  );
+  function coveringCrewSize(anchor: string, crewId: string | null): number | null {
+    const covering = sizesDesc.find(
+      (s) =>
+        s.clock_in_at <= anchor &&
+        (!s.clock_out_at || s.clock_out_at >= anchor)
+    );
+    // find() already returned the latest clock-in; re-scan for the lead's
+    // shift so a second crew member's shift never outranks the lead's number.
+    const lead = sizesDesc.find(
+      (s) =>
+        s.user_id === crewId &&
+        s.clock_in_at <= anchor &&
+        (!s.clock_out_at || s.clock_out_at >= anchor)
+    );
+    return (lead ?? covering)?.crew_size ?? null;
+  }
+  const measurements: Measurement[] = visits
+    .filter((v) => v.on_site_first_at && v.on_site_last_at)
+    .map((v) => {
+      const anchor = v.on_site_first_at!;
+      const ms = Math.max(
+        0,
+        new Date(v.on_site_last_at!).getTime() - new Date(anchor).getTime()
+      );
+      const lot = lotsById.get(v.job_id) ?? null;
+      const size = coveringCrewSize(anchor, v.crew_id);
+      return {
+        visitId: v.id,
+        onSiteMs: ms > 0 ? ms : null,
+        // 0 = unknown covering-shift size; buildBaseline excludes it as
+        // missing data (flag null), never as an outlier.
+        crewSize: size ?? 0,
+        lotSqft: lot,
+      };
+    });
+
+  const BAND_ORDER = ["under-5k", "5k-10k", "10k-20k", "20k-1acre", "1acre-plus", "unknown"];
+  const measuredVisits = measurements.length;
+  const bandRows = BAND_ORDER.map((band) => {
+    const group = measurements.filter((m) => lotSizeBand(m.lotSqft ?? 0) === band);
+    return { band, ...buildBaseline(group) };
+  }).filter((r) => r.n > 0);
+  const cleanMeasurements = bandRows.reduce((s, r) => s + r.n, 0);
+
+  // Why rows are excluded. flag === null exclusions are MISSING DATA — no lot
+  // size on file, or no crew size on the covering shift — not outliers, and
+  // presented as exactly that.
+  const excludedReasons = { missingLot: 0, missingCrew: 0, tooLong: 0, tooShort: 0, noDeparture: 0 };
+  for (const m of measurements) {
+    const flag = classifyMeasurement(m);
+    if (flag === "too_long") excludedReasons.tooLong++;
+    else if (flag === "too_short") excludedReasons.tooShort++;
+    else if (flag === "no_departure") excludedReasons.noDeparture++;
+    else if ((m.lotSqft ?? 0) <= 0) excludedReasons.missingLot++;
+    else if (m.crewSize <= 0) excludedReasons.missingCrew++;
+  }
+  const excludedTotal =
+    excludedReasons.tooLong + excludedReasons.tooShort + excludedReasons.noDeparture +
+    excludedReasons.missingLot + excludedReasons.missingCrew;
 
   // ---- Charts --------------------------------------------------------------
   // 1. Revenue collected per month (12 mo) — paid invoices by paid_at month.
@@ -488,6 +596,72 @@ export default async function LawnInsightsPage() {
           <BarChart data={topCustomers} formatValue={(n) => (n >= 1000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n)}`)} showTotals emptyText="No paid invoices yet" />
         </ChartCard>
       </div>
+
+      {/* Measured labour — the man-hour payoff. Sits below the charts because
+          it only becomes meaningful once measured visits accumulate; the EMPTY
+          state below is what users see first, so it explains what will fill it. */}
+      <ChartCard
+        title="Measured labour"
+        subtitle="Median man-minutes per 1,000 sqft by lot-size band — geofence on-site time × the shift's crew size"
+      >
+        {measuredVisits === 0 ? (
+          <div className="py-2 space-y-1">
+            <p className="text-sm font-medium text-gray-700">No measured visits yet</p>
+            <p className="text-xs text-gray-500 max-w-lg">
+              Crews record this automatically — once they clock in and work a
+              route with map pins, each stop&apos;s on-site window and head
+              count start landing here. Nobody has to fill anything in; a
+              measured route just needs phones along for the ride.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-gray-400 text-left">
+                    <th className="py-1 pr-4 font-medium">Lot size</th>
+                    <th className="py-1 pr-4 font-medium">Median man-min / 1k sqft</th>
+                    <th className="py-1 font-medium">n</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {bandRows.map((r) => (
+                    <tr key={r.band}>
+                      <td className="py-1.5 pr-4 text-gray-700">{r.band}</td>
+                      <td className="py-1.5 pr-4 font-semibold tabular-nums text-gray-900">
+                        {r.medianManMinutesPer1000.toFixed(1)}
+                      </td>
+                      <td className="py-1.5 font-medium tabular-nums text-gray-500">{r.n}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-gray-500">
+              Based on {cleanMeasurements} clean measurement{cleanMeasurements === 1 ? "" : "s"}
+              {measuredVisits !== cleanMeasurements &&
+                ` from ${measuredVisits} measured visit${measuredVisits === 1 ? "" : "s"}`}
+              .
+              {excludedTotal > 0 && " Excluded: "}
+              {excludedReasons.missingLot > 0 && `${excludedReasons.missingLot} with no lot size on file (missing data, not outliers)`}
+              {excludedReasons.missingCrew > 0 && `${excludedReasons.missingLot > 0 ? ", " : ""}${excludedReasons.missingCrew} with no crew size on the covering shift (missing data)`}
+              {excludedReasons.tooLong > 0 && `${excludedReasons.missingLot + excludedReasons.missingCrew > 0 ? ", " : ""}${excludedReasons.tooLong} well over the expected range`}
+              {excludedReasons.tooShort > 0 && `${excludedTotal > excludedReasons.tooShort ? ", " : ""}${excludedReasons.tooShort} under the ${BASELINE_DEFAULTS.minOnSiteMinutes}-minute floor`}
+              {excludedReasons.noDeparture > 0 && `${excludedTotal > excludedReasons.noDeparture ? ", " : ""}${excludedReasons.noDeparture} with no departure recorded`}
+              {excludedTotal > 0 && "."}
+            </p>
+            {cleanMeasurements < 30 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <span className="font-semibold">Provisional</span> — below 30
+                clean measurements, treat every figure as directional. Averages
+                over small samples move with a single unusual stop; 30+ is
+                where a median starts meaning something.
+              </p>
+            )}
+          </div>
+        )}
+      </ChartCard>
 
       <p className="text-[11px] text-gray-400 text-center pt-1">
         All figures are scoped to your organization. Revenue is from paid
