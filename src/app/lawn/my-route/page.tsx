@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
+import { todayInZone, formatDueStamp, DEFAULT_TIME_ZONE } from "@/lib/orgDate";
 import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
@@ -79,12 +80,14 @@ const STATUS_CHIP: Record<string, string> = {
   paused: "bg-blue-100 text-blue-700",
 };
 
-function dueLabel(due: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  if (due < today) return "Overdue";
+// `today` is passed in, computed in the ORGANISATION's timezone. It used to be
+// new Date().toISOString().slice(0,10) — the UTC date — which from 20:00
+// Eastern each evening is already tomorrow, so for four hours every night this
+// screen labelled today's remaining work "Overdue" and tomorrow's "Today".
+function dueLabel(due: string, today: string): string {
+  if (due < today) return `Overdue · was due ${formatDueStamp(due)}`;
   if (due === today) return "Today";
-  const t = new Date(`${due}T00:00:00.000Z`);
-  return t.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return formatDueStamp(due);
 }
 
 /** "12m" / "1h 05m" since a visit was started. Coarse on purpose — the crew
@@ -98,12 +101,14 @@ function sinceLabel(startedAt: string): string {
 
 function VisitCard({
   v,
+  today,
   busyId,
   onStart,
   onDone,
   onSkip,
   onReopen,
 }: {
+  today: string;
   v: Visit;
   busyId: string | null;
   onStart: (id: string) => void;
@@ -133,7 +138,7 @@ function VisitCard({
               : (STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600")
           }`}
         >
-          {v.started_at ? `On site ${sinceLabel(v.started_at)}` : dueLabel(v.due_date)}
+          {v.started_at ? `On site ${sinceLabel(v.started_at)}` : dueLabel(v.due_date, today)}
         </span>
       </div>
       {v.status === "done" || v.status === "skipped" ? (
@@ -233,9 +238,11 @@ function Section({
   onDone,
   onSkip,
   onReopen,
+  today,
 }: {
   label: string;
   list: Visit[];
+  today: string;
   icon: React.ReactNode;
   busyId: string | null;
   onStart: (id: string) => void;
@@ -252,7 +259,7 @@ function Section({
       </h2>
       <div className="space-y-2">
         {list.map((v) => (
-          <VisitCard key={v.id} v={v} busyId={busyId} onStart={onStart} onDone={onDone} onSkip={onSkip} onReopen={onReopen} />
+          <VisitCard key={v.id} v={v} today={today} busyId={busyId} onStart={onStart} onDone={onDone} onSkip={onSkip} onReopen={onReopen} />
         ))}
       </div>
     </section>
@@ -269,6 +276,9 @@ export default function MyRoutePage() {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [authorized, setAuthorized] = useState(false);
   const [soloMode, setSoloMode] = useState(false);
+  // The organisation's IANA zone. Until the profile loads, the safe default
+  // keeps grouping stable rather than briefly flashing UTC-based buckets.
+  const [orgTz, setOrgTz] = useState<string>(DEFAULT_TIME_ZONE);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -283,10 +293,16 @@ export default function MyRoutePage() {
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, organizations(timezone)")
         .eq("id", user.id)
         .single();
       const role = profile?.role ?? "crew";
+      // Same round trip, no extra query. What counts as "today" belongs to the
+      // business, not to the server (UTC) or the phone (wherever it is).
+      const orgTz =
+        (profile as unknown as { organizations?: { timezone?: string | null } } | null)
+          ?.organizations?.timezone ?? DEFAULT_TIME_ZONE;
+      setOrgTz(orgTz);
 
       const crewLike = role === "crew" || role === "superintendent";
       const officeLike = role === "office" || role === "admin";
@@ -494,7 +510,7 @@ export default function MyRoutePage() {
     );
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInZone(orgTz);
   const overdue = visits.filter((v) => v.due_date < today);
   const todays = visits.filter((v) => v.due_date === today);
   const upcoming = visits.filter((v) => v.due_date > today);
@@ -571,6 +587,7 @@ export default function MyRoutePage() {
             </div>
           )}
           <Section
+            today={today}
             label="Overdue"
             list={overdue}
             icon={<CalendarDays className="w-3.5 h-3.5" />}
@@ -581,6 +598,7 @@ export default function MyRoutePage() {
             onReopen={reopenVisit}
           />
           <Section
+            today={today}
             label="Today"
             list={todays}
             icon={<CalendarDays className="w-3.5 h-3.5" />}
@@ -591,6 +609,7 @@ export default function MyRoutePage() {
             onReopen={reopenVisit}
           />
           <Section
+            today={today}
             label="Upcoming"
             list={upcoming}
             icon={<CalendarDays className="w-3.5 h-3.5" />}
