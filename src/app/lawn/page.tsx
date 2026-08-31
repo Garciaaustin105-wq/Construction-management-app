@@ -10,6 +10,7 @@ import { FIELD_MGMT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
 import { summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
+import FieldReadinessBanner from "@/components/FieldReadinessBanner";
 import { getMe } from "@/lib/tenant";
 import Link from "next/link";
 import {
@@ -204,6 +205,12 @@ export default async function LawnPage() {
               a clean board stays visually quiet. */}
           {showHubTools && (
             <div className="space-y-2">
+              {/* "Will today actually work?" — persistent solo/crew readiness
+                  answer from @/lib/fieldReadiness. Above the KPI strip because
+                  it answers the question those counts feed into. Solo mode is
+                  rendered as reassurance, never a call to action (the rule is
+                  enforced inside the component + the lib). */}
+              <FieldReadinessBanner />
               <p className="text-[11px] text-gray-400">
                 As of {dateStr} · live counts
               </p>
