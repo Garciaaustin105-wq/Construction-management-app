@@ -87,6 +87,12 @@ export default function LawnNotificationsPage() {
   // Review gate threshold (item 15 config): the minimum happy rating that gets
   // routed to public review destinations. 1-3★ stays internal regardless.
   const [gateThreshold, setGateThreshold] = useState(4);
+  // Completion settlement (gates 1-4). completion_mode default is
+  // office_approval — the safe default, held in SETTLEMENT_DEFAULTS; keep in
+  // sync if that ever changes.
+  const [completionMode, setCompletionMode] = useState<"auto" | "office_approval">("office_approval");
+  const [graceMinutes, setGraceMinutes] = useState(30);
+  const [minOnSiteMinutes, setMinOnSiteMinutes] = useState(4);
   const [savingSettings, setSavingSettings] = useState(false);
 
   const [platforms, setPlatforms] = useState<ReviewPlatform[]>([]);
@@ -105,7 +111,9 @@ export default function LawnNotificationsPage() {
     const [{ data: settings }, { data: tpls }, { data: pf }] = await Promise.all([
       supabase
         .from("notification_settings")
-        .select("enabled, google_review_url, review_gate_threshold")
+        .select(
+          "enabled, google_review_url, review_gate_threshold, completion_mode, settlement_grace_minutes, min_on_site_minutes"
+        )
         .maybeSingle(),
       supabase
         .from("notification_templates")
@@ -122,11 +130,17 @@ export default function LawnNotificationsPage() {
           enabled: boolean;
           google_review_url: string | null;
           review_gate_threshold: number | null;
+          completion_mode: string | null;
+          settlement_grace_minutes: number | null;
+          min_on_site_minutes: number | null;
         }
       | null;
     setEnabled(s?.enabled ?? false);
     setReviewUrl(s?.google_review_url ?? "");
     setGateThreshold(s?.review_gate_threshold ?? 4);
+    setCompletionMode(s?.completion_mode === "auto" ? "auto" : "office_approval");
+    setGraceMinutes(s?.settlement_grace_minutes ?? 30);
+    setMinOnSiteMinutes(s?.min_on_site_minutes ?? 4);
     setPlatforms((pf as ReviewPlatform[] | null) ?? []);
     const list = (tpls as Template[] | null) ?? [];
     // Stable order regardless of DB sort.
@@ -180,6 +194,23 @@ export default function LawnNotificationsPage() {
       toast.error("Could not resolve your organization — reload and try again");
       return;
     }
+    // Validate the settlement ranges in the UI so the user gets a sentence
+    // rather than a Postgres check-constraint violation (5-480 grace,
+    // 1-120 min on site are the DB's allowed bounds).
+    const grace = graceMinutes;
+    const minSite = minOnSiteMinutes;
+    if (!Number.isInteger(grace) || grace < 5 || grace > 480) {
+      toast.error("Grace period must be a whole number between 5 and 480 minutes");
+      return;
+    }
+    if (!Number.isInteger(minSite) || minSite < 1 || minSite > 120) {
+      toast.error("Minimum on-site time must be a whole number between 1 and 120 minutes");
+      return;
+    }
+    if (minSite > grace) {
+      toast.error("Minimum on-site time can't be longer than the grace period — the crew must be gone first");
+      return;
+    }
     setSavingSettings(true);
     const supabase = createClient();
     const { error } = await supabase
@@ -190,6 +221,9 @@ export default function LawnNotificationsPage() {
           enabled,
           google_review_url: reviewUrl.trim() || null,
           review_gate_threshold: gateThreshold,
+          completion_mode: completionMode,
+          settlement_grace_minutes: grace,
+          min_on_site_minutes: minSite,
         },
         { onConflict: "organization_id" }
       );
@@ -415,6 +449,95 @@ export default function LawnNotificationsPage() {
             Ratings below this stay internal so the office can follow up before
             a bad experience becomes a public review.
           </p>
+        </div>
+
+        {/* ── Completion settlement (gates 1-4) ──────────────────────────────
+            Gate 4 is this page; gates 1-3 read here. The mode copy is
+            load-bearing: approval is a CHOICE, not a delay to be switched
+            off — for many operators it is the reason they'd trust this. */}
+        <div className="border-t border-gray-100 pt-3 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-700">
+            When &ldquo;your yard is done&rdquo; goes out
+          </h3>
+
+          <div className="space-y-2">
+            <label className="flex items-start gap-2.5 p-3 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50">
+              <input
+                type="radio"
+                name="completion_mode"
+                checked={completionMode === "office_approval"}
+                onChange={() => setCompletionMode("office_approval")}
+                className="mt-0.5 w-4 h-4 text-green-600"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-gray-800">
+                  Hold for my approval
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Finished visits wait on the <strong>Approvals</strong> page
+                  until you approve them — and approving is what emails the
+                  customer. Nothing is ever sent without you.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 p-3 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50">
+              <input
+                type="radio"
+                name="completion_mode"
+                checked={completionMode === "auto"}
+                onChange={() => setCompletionMode("auto")}
+                className="mt-0.5 w-4 h-4 text-green-600"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-gray-800">
+                  Send automatically
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Once the whole crew has left the property (and stayed gone)
+                  and the visit meets the minimum time below, the customer is
+                  emailed with no further action from you.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Grace period (minutes after the crew leaves)
+            </label>
+            <input
+              type="number"
+              min={5}
+              max={480}
+              value={graceMinutes}
+              onChange={(e) => setGraceMinutes(Number(e.target.value))}
+              className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm"
+            />
+            <p className="text-[11px] text-gray-400 mt-1">
+              How long the app waits after the last crew phone leaves before a
+              visit counts as finished (5&ndash;480). The wait restarts
+              whenever anyone goes back onto the property — going back for a
+              trimmer pushes this out automatically.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Minimum on-site time (minutes)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={120}
+              value={minOnSiteMinutes}
+              onChange={(e) => setMinOnSiteMinutes(Number(e.target.value))}
+              className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm"
+            />
+            <p className="text-[11px] text-gray-400 mt-1">
+              A visit shorter than this is treated as too brief to be real
+              work, and never tells a customer their lawn is done (1&ndash;120).
+            </p>
+          </div>
         </div>
 
         <button

@@ -51,6 +51,7 @@ import {
   Radio,
   UserPlus,
   Star,
+  ClipboardCheck,
   FlaskConical,
   Package,
   Sparkles,
@@ -166,6 +167,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // gate (src/app/lawn/ai/page.tsx) bounces super_admin + non-office; this
       // nav entry is in the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/ai", label: "AI admin", Icon: Sparkles },
+      // Completion approvals (gate 4 of the settlement gates): finished
+      // visits the office signs off before the customer is emailed. Office/
+      // admin only — matches the page gate, same fallthrough block.
+      { href: "/lawn/approvals", label: "Approvals", Icon: ClipboardCheck },
       { href: "/lawn/notifications", label: "Customer notifications", Icon: Bell },
       // Scheduling ops (weather auto-reschedule settings, batch reschedule,
       // blackouts, zones, crew time off) — page gate is OFFICE_LIKE, this
@@ -433,6 +438,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/crew/photo",
             "/lawn/insights",
             "/lawn/ai",
+            "/lawn/approvals",
             "/lawn/notifications",
             "/admin/email-preview",
             "/admin/leads",
