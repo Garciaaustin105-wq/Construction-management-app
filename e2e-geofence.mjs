@@ -112,6 +112,36 @@ console.log("\n[moving between properties]");
      `events: ${JSON.stringify(ev)}`);
 }
 
+console.log("\n[neighbouring properties — the normal lawn route]");
+{
+  // Four houses on one street ~30 m apart. Lawn routes are BUILT by geographic
+  // clustering, so this is the common case, not an edge case. 30 m is well
+  // inside the 150 m exit radius, so distance alone can never close a visit —
+  // this caught a bug where three arrivals produced ZERO departures and every
+  // visit stayed open forever.
+  const N = [
+    { id: "n1", lat: 30.00000, lng: -95 },
+    { id: "n2", lat: 30.00027, lng: -95 },
+    { id: "n3", lat: 30.00054, lng: -95 },
+  ];
+  let st = G.initialGeofenceState(); const log = [];
+  let t = 0;
+  const work = (lat, mins) => {
+    for (let k = 0; k < mins; k++) {
+      const r = G.stepGeofence(st, { lat, lng: -95, accuracyM: 8, at: (t += 60_000) }, N);
+      st = r.state; log.push(...r.events.map((e) => `${e.type}:${e.stopId}`));
+    }
+  };
+  work(30.00000, 20); work(30.00027, 20); work(30.00054, 20);
+  const arrives = log.filter((e) => e.startsWith("arrive")).length;
+  const departs = log.filter((e) => e.startsWith("depart")).length;
+  ok("each neighbour is arrived at", arrives === 3, log.join(" | "));
+  ok("moving next door CLOSES the previous visit", departs === 2, log.join(" | "));
+  ok("depart precedes the next arrive",
+     log.join(",").includes("depart:n1,arrive:n2"), log.join(" | "));
+}
+
+
 console.log("\n[robustness]");
 {
   const s0 = G.initialGeofenceState();

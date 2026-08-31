@@ -170,6 +170,22 @@ export function stepGeofence(
   if (next.insideStopId !== null && next.insideSince !== null) {
     const dwelled = fix.at - next.insideSince;
     if (dwelled >= opts.arriveDwellMs && next.arrivedStopId !== next.insideStopId) {
+      // IMPLICIT DEPART. Arriving at a different property necessarily means you
+      // left the previous one — you can only be at one at a time.
+      //
+      // Without this, neighbouring properties never complete. Lawn routes are
+      // built by geographic clustering, so adjacent jobs are the NORMAL case,
+      // and suburban lots are ~25-30 m apart — well inside the 150 m exit
+      // radius. Standing on B you are still ~30 m from A, so the distance-based
+      // depart above can never fire and A's visit stays open forever. Measured:
+      // four neighbours on one street produced 3 arrivals and 0 departures.
+      //
+      // The distance-based depart above still handles the ordinary case of
+      // driving away from the last property of the day, where there is no next
+      // stop to imply it.
+      if (next.arrivedStopId !== null) {
+        events.push({ type: "depart", stopId: next.arrivedStopId, at: fix.at });
+      }
       events.push({ type: "arrive", stopId: next.insideStopId, at: fix.at });
       next = { ...next, arrivedStopId: next.insideStopId, outsideSince: null };
     }
