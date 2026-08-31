@@ -61,6 +61,40 @@ Somewhere on the office side (`/office` is fine), list crew members with **no ti
 
 Show name, and last-seen-on-shift date if you can get it cheaply. One query, no polling.
 
+### 5. Hours with no measured property time
+
+`shifts_missing_on_site_time(p_min_hours numeric default 2)` is applied and
+scoped to the caller's own organisation — no org parameter, nothing to tamper
+with. It returns completed shifts of at least `p_min_hours` where the person
+appears in NO visit's `on_site_user_ids` during their own shift window, along
+with `hours`, `crew_size`, `clock_in_backdated`, `auto_closed` and
+`clock_in_location_source`.
+
+Put it on the office side next to the "not clocked in today" list.
+
+**The framing is the hard part, and I am asking you to get it right.** This is
+the strongest payroll signal the system has — someone who clocked in and never
+reached a property produces hours with zero on-site stamps, and that cannot be
+defeated by clocking in at the shop and going home. But the identical record is
+produced by a dead phone, a route whose properties have no map pins, an app that
+was never opened, or a legitimate day of shop work.
+
+So:
+
+- Head it something like **"Shifts with no recorded property time"**. Never
+  "suspicious", "unverified", "missing work", or anything implying theft.
+- Lead with the innocent explanations in the description, not the guilty one.
+  The office knows their own crew; your job is to show them a list, not a verdict.
+- Show `clock_in_location_source`. A `gps` fix is meaningful; an `ip` one can be
+  wrong by miles and must be visibly weaker — the shift card already tints `ip`
+  amber, so match that.
+- Show `clock_in_backdated` and `auto_closed` where they apply. A shift that was
+  auto-closed had no clock-out, which alone explains a lot.
+- **No badge, no counter, no red.** This list is for occasional review, not a
+  dashboard metric. A number that goes up creates pressure to act on people.
+
+If you think a piece of copy here reads as an accusation, it does. Soften it.
+
 ## Constraints
 
 - `npx tsc --noEmit` exits 0. `npx eslint src/` must not gain a new error — there are about 14 pre-existing ones being fixed separately; do not add to them and do not fix them here.
