@@ -55,7 +55,61 @@ export async function GET(request: Request) {
   }
 
   // Signup verification: email confirmed → prompt password sign-in.
+  //
+  // The variant check is NOT redundant with the one below, and this route
+  // previously skipped it. Observed on 2026-08-31: a lawn signup completed on a
+  // desktop, the emailed link opened on a phone, and the callback ran on the
+  // CONSTRUCTION deploy. Supabase honours a redirect only if it is on its
+  // allow-list and silently substitutes the project Site URL otherwise, so one
+  // missing entry sends every verification to the other app.
+  //
+  // That is not cosmetic here, because of the two lines above: signOut() had
+  // already destroyed whatever session the phone held, and
+  // exchangeCodeForSession then minted a session for the NEW account on the
+  // WRONG deploy. The user landed on the construction app holding a lawn
+  // account's session. RLS still scoped them to their own (empty) org, so no
+  // data was exposed — but they were signed out of the app they were using and
+  // into one they had never signed up for.
+  //
+  // An allow-list is configuration and configuration goes missing. This makes
+  // the wrong landing recoverable in code.
   if (flow === "signup") {
+    const {
+      data: { user: newUser },
+    } = await supabase.auth.getUser();
+
+    if (newUser) {
+      const { data: newProfile } = await supabase
+        .from("profiles")
+        .select("role, organization_id")
+        .eq("id", newUser.id)
+        .maybeSingle();
+
+      if (
+        newProfile &&
+        newProfile.role !== "super_admin" &&
+        newProfile.organization_id
+      ) {
+        const { data: newOrg } = await supabase
+          .from("organizations")
+          .select("app_variant")
+          .eq("id", newProfile.organization_id)
+          .maybeSingle();
+        const signupHome =
+          newOrg?.app_variant === "lawn" ? "lawn" : "construction";
+
+        if (signupHome !== APP_VARIANT) {
+          // Do not leave them holding a session on the wrong deploy. The email
+          // IS confirmed by this point — the exchange above did that — so the
+          // account is fine and they simply need to sign in on the right app.
+          await supabase.auth.signOut();
+          return NextResponse.redirect(
+            new URL(`/login?verified=1&wrong_app=${signupHome}`, url)
+          );
+        }
+      }
+    }
+
     return NextResponse.redirect(new URL("/login?verified=1", url));
   }
 
