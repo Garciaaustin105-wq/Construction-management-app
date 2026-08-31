@@ -7,6 +7,7 @@ import {
   BROADCAST_MS,
   EVENT_OFFLINE,
   EVENT_POSITION,
+  ON_SITE_PING_MS,
   PRESENCE_ROLE_CREW,
   PRESENCE_ROLE_VIEWER,
   crewChannelName,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/crewTracking";
 import {
   initialGeofenceState,
+  onSiteStopId,
   stepGeofence,
   type GeoStop,
   type GeofenceState,
@@ -102,6 +104,9 @@ export function useCrewLocationBroadcast({
   // Read inside the GPS callback without making it an effect dependency, which
   // would restart the watch every time the route is refreshed.
   const stopsRef = useRef<GeoStop[]>(stops);
+  // Last time we stamped the on-site mark for each visit, so a 1-second GPS
+  // stream does not become a 1-second write stream.
+  const onSitePingedAt = useRef<Record<string, number>>({});
 
   // Keep the ref in step with the prop OUTSIDE render. The GPS callback reads
   // it, so the stop list can be refreshed mid-shift without `stops` being an
@@ -156,6 +161,56 @@ export function useCrewLocationBroadcast({
         current
       );
       fence.current = nextFence;
+
+      // ── MEASUREMENT, deliberately independent of STATUS ──────────────────
+      //
+      // This runs before the events check, and that placement is the point: a
+      // fix that produces no arrive/depart still proves the crew is standing on
+      // the property. Measuring only on state changes would record two
+      // timestamps per visit and nothing in between, and would stop entirely
+      // for a crew that never triggers a clean depart.
+      //
+      // Risk asymmetry drives the whole design here (see the crew-model doc
+      // §4): getting COMPLETION wrong emails a customer mid-job, so it stays
+      // deliberate. Getting MEASUREMENT wrong costs a row in a dataset nobody
+      // but the office sees, so it can be fully automatic. Separating them is
+      // what lets the pricing dataset accumulate from day one with no taps.
+      //
+      // THE GATE: inside AND arrived, both required.
+      //
+      //   arrived  — a crew driving past stop #5 on the way to stop #1 must not
+      //              stamp on_site_first_at hours early. The dwell (90s) is far
+      //              longer than the ~15s it takes to cross the radius at road
+      //              speed, so presence alone is not enough.
+      //   inside   — arrivedStopId STAYS set through the 3-minute depart dwell,
+      //              so keying on it alone would keep pushing the high-water
+      //              mark for three minutes after the truck has physically
+      //              gone, inflating every visit by that much.
+      //
+      // Known cost: on_site_first_at therefore lands ~90s after real arrival, a
+      // systematic under-measurement of one dwell per visit. That is ~7% of a
+      // 20-minute stop. It is under-measurement rather than over-, which is the
+      // safe direction for a pricing floor, and it is fixable later by passing
+      // the observed insideSince to the RPC instead of using its clock.
+      const onSiteId = onSiteStopId(nextFence);
+      if (onSiteId !== null) {
+        const last = onSitePingedAt.current[onSiteId] ?? 0;
+        const now = Date.now();
+        if (now - last >= ON_SITE_PING_MS) {
+          // Claim the slot BEFORE awaiting, so two fixes arriving together
+          // cannot both fire; roll back on failure so the next fix retries.
+          onSitePingedAt.current[onSiteId] = now;
+          try {
+            const { error } = await supabase.rpc("record_visit_on_site", {
+              p_visit_id: onSiteId,
+            });
+            if (error) onSitePingedAt.current[onSiteId] = last;
+          } catch {
+            onSitePingedAt.current[onSiteId] = last;
+          }
+        }
+      }
+
       if (events.length === 0) return;
 
       const { calls, ledger: nextLedger } = planGeofenceCalls(
