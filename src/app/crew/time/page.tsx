@@ -29,6 +29,9 @@ type TimeEntry = {
   // whole lawn route for the day; set = a construction job entry.
   job_id: string | null;
   cost_code_id: string | null;
+  // How many people were on the truck at shift start (lawn). Null = unknown,
+  // which is visibly missing — never silently filled in.
+  crew_size: number | null;
   clock_in_at: string;
   clock_out_at: string | null;
   note: string | null;
@@ -71,6 +74,12 @@ export default function CrewTimePage() {
   const [jobId, setJobId] = useState("");
   const [costCodeId, setCostCodeId] = useState("");
   const [note, setNote] = useState("");
+  // LAWN crew-size prompt. `ledTeam` is set only when the signed-in user leads
+  // an active crew_team — solo operators (no team) clock in without the
+  // prompt. `crewSize` is the editable head count; pre-filled from the team's
+  // member count but ALWAYS editable (someone is out sick, a helper joined).
+  const [ledTeam, setLedTeam] = useState<{ id: string; name: string; size: number } | null>(null);
+  const [crewSize, setCrewSize] = useState("");
   const [gps, setGps] = useState<GpsResult | null>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("getting");
   const [busy, setBusy] = useState(false);
@@ -89,7 +98,20 @@ export default function CrewTimePage() {
     // a lawn deploy, so crew could never clock in — time_entries.job_id is
     // NOT NULL.) Cost codes are a construction surface; skip them in lawn.
     const jobType = isLawn() ? "lawn" : "construction";
-    const [jobsR, codesR, entriesR] = await Promise.all([
+    // LAWN only — "how many people on the truck?" Defaults from the active
+    // crew_team this user leads. crew_members.id for a linked app-user IS the
+    // profile id (sync trigger), so lead_id matches user.id directly.
+    const ledTeamR =
+      isLawn() && user?.id
+        ? supabase
+            .from("crew_teams")
+            .select("id, name")
+            .eq("lead_id", user.id)
+            .eq("active", true)
+            .order("created_at")
+            .limit(1)
+        : Promise.resolve({ data: [] });
+    const [jobsR, codesR, entriesR, teamR] = await Promise.all([
       supabase.from("jobs").select("id, name").eq("type", jobType).order("name"),
       isLawn()
         ? Promise.resolve({ data: [] })
@@ -97,12 +119,25 @@ export default function CrewTimePage() {
       user?.id
         ? supabase
             .from("time_entries")
-            .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
+            .select("id, job_id, cost_code_id, crew_size, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
             .eq("user_id", user.id)
             .order("clock_in_at", { ascending: false })
             .limit(50)
         : { data: [] },
+      ledTeamR,
     ]);
+
+    // Pre-fill the truck count from the team's roster. A team of zero members
+    // leaves the field empty — the lead must type the real number.
+    const t = (teamR.data as { id: string; name: string }[])?.[0];
+    if (t) {
+      const { count } = await supabase
+        .from("crew_team_members")
+        .select("*", { count: "exact", head: true })
+        .eq("crew_team_id", t.id);
+      setLedTeam({ id: t.id, name: t.name, size: count ?? 0 });
+      setCrewSize(count && count > 0 ? String(count) : "");
+    }
 
     const j = (jobsR.data as Job[]) ?? [];
     const c = (codesR.data as CostCode[]) ?? [];
@@ -209,19 +244,25 @@ export default function CrewTimePage() {
       return;
     }
     setBusy(true);
+    // Crew size (lawn only): an integer >= 1 typed by the lead. Blank, NaN or
+    // < 1 records NULL — an unknown measurement recorded as visibly missing.
+    // It is NEVER coerced to 1: a wrong 1 looks like an answer and silently
+    // under-counts man-hours every job it touches.
+    const parsedSize = parseInt(crewSize, 10);
     const { data, error } = await supabase
       .from("time_entries")
       .insert({
         user_id: userId,
         job_id: shiftMode ? null : jobId,
         cost_code_id: costCodeId || null,
+        crew_size: shiftMode && Number.isFinite(parsedSize) && parsedSize >= 1 ? parsedSize : null,
         note: note.trim() || null,
         lat: gps?.lat ?? null,
         lng: gps?.lng ?? null,
         location_source: gps?.source ?? null,
         location_accuracy: gps?.accuracy ?? null,
       })
-      .select("id, job_id, cost_code_id, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
+      .select("id, job_id, cost_code_id, crew_size, clock_in_at, clock_out_at, note, lat, lng, location_source, status")
       .single();
     if (error) {
       toast.error(
@@ -359,6 +400,11 @@ export default function CrewTimePage() {
                 ? (jobNameById[openEntry.job_id] ?? "—")
                 : "Whole day — all properties on your route"}
             </p>
+            {typeof openEntry.crew_size === "number" && (
+              <p className="text-xs text-gray-500">
+                {openEntry.crew_size} on the truck
+              </p>
+            )}
             {openEntry.cost_code_id && (
               <p className="text-xs text-gray-500 truncate">
                 {codeLabelById[openEntry.cost_code_id]}
@@ -397,11 +443,48 @@ export default function CrewTimePage() {
               one start per day for the whole route — so there is nothing to
               pick. See the note in clockIn(). */}
           {isLawn() ? (
-            <p className="text-sm text-gray-600">
-              Starts your shift for the whole day. Mark each property done on{" "}
-              <span className="font-medium">My Route</span> as you go — you
-              don&apos;t clock in and out per property.
-            </p>
+            <>
+              <p className="text-sm text-gray-600">
+                Starts your shift for the whole day. Mark each property done
+                on <span className="font-medium">My Route</span> as you go —
+                you don&apos;t clock in and out per property.
+              </p>
+              {/* "How many on the truck?" — asked only of crew-team leads.
+                  Pre-filled with the team roster and always editable, because
+                  someone is out sick or a helper hopped on. This number is
+                  what converts the shift's duration into priced man-hours.
+                  Leaving it blank records an unknown (null): a shift the
+                  office sees as missing, which they can chase up. Skipped
+                  shifts are NOT silently treated as one-person crews. */}
+              {ledTeam && (
+                <label className="block bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <span className="text-sm font-medium text-gray-900">
+                    How many people are on the truck today?
+                  </span>
+                  <span className="block text-xs text-gray-600 mt-0.5">
+                    {ledTeam.name} · pre-filled from the roster — change it if
+                    someone is off or someone extra is riding along. Count
+                    everyone, including crew without the app.
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={crewSize}
+                    onChange={(e) => setCrewSize(e.target.value)}
+                    placeholder="Count (leave blank if unsure)"
+                    className="mt-2 block w-full px-3 py-2.5 border border-blue-300 rounded-lg text-base bg-white text-center font-semibold"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCrewSize("")}
+                    className="mt-1.5 text-xs text-gray-500 underline"
+                  >
+                    Skip — don&apos;t record today
+                  </button>
+                </label>
+              )}
+            </>
           ) : (
             <label className="block">
               <span className="text-sm font-medium text-gray-700">Job</span>
@@ -518,6 +601,9 @@ export default function CrewTimePage() {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900 truncate">
                       {e.job_id ? (jobNameById[e.job_id] ?? "—") : "Shift"}
+                      {typeof e.crew_size === "number" ? (
+                        <span className="text-xs font-normal text-gray-500 ml-1">· {e.crew_size} crew</span>
+                      ) : null}
                     </p>
                     <p className="text-xs text-gray-500">
                       {new Date(e.clock_in_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}
