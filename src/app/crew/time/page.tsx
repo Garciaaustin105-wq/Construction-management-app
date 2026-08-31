@@ -10,6 +10,7 @@ import { isLawn } from "@/lib/variant";
 import { useRouter } from "next/navigation";
 import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
+import { useCrewLocationBroadcast } from "@/lib/useCrewLocationBroadcast";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 
 // Time-entry review status -> badge tone (was the legacy StatusBadge palette).
@@ -50,6 +51,11 @@ export default function CrewTimePage() {
   const toast = useToast();
 
   const [userId, setUserId] = useState<string | null>(null);
+  // Org + name are needed by the live-tracking broadcaster (lawn). Read from
+  // the profile fetch the role gate already does, so this costs no extra
+  // round trip.
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [fullName, setFullName] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [openEntry, setOpenEntry] = useState<TimeEntry | null>(null);
@@ -121,10 +127,12 @@ export default function CrewTimePage() {
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, organization_id, full_name")
         .eq("id", user.id)
         .single();
       const role = (profile?.role as Role) ?? "crew";
+      setOrgId((profile?.organization_id as string | null) ?? null);
+      setFullName((profile?.full_name as string | null) ?? null);
       if (!(FIELD.has(role) || MANAGEMENT.has(role))) {
         router.push("/dashboard");
         return;
@@ -142,6 +150,23 @@ export default function CrewTimePage() {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [openEntry]);
+
+  // Live location sharing (lawn only), active ONLY while clocked in. Clocking
+  // out sets openEntry to null, which tears the channel down and sends the
+  // offline broadcast so the office pin disappears immediately.
+  //
+  // Note this is not plan-gated here, and deliberately so: the crew client just
+  // joins a channel and waits. It cannot transmit unless an office viewer is
+  // present, and the office map only mounts for orgs whose plan allows it
+  // (canTrackCrew, enforced in /lawn/track). So a free org's crew sit in
+  // "standby" forever — no GPS, no messages — without this component needing to
+  // know anything about billing.
+  const tracking = useCrewLocationBroadcast({
+    enabled: isLawn() && !!openEntry,
+    orgId,
+    userId,
+    name: fullName,
+  });
 
   // High-accuracy GPS, falling back to approximate IP location if denied.
   // Initial status is "getting" (set in useState) so we don't setState
@@ -248,6 +273,53 @@ export default function CrewTimePage() {
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
             <span className="text-sm font-semibold uppercase">On the clock</span>
           </div>
+
+          {/* Location-sharing disclosure. Deliberately always shown while
+              clocked in on lawn — including in "standby", when nothing is being
+              sent — because "your employer can see this when they look" is the
+              thing a crew member needs to know, and only rendering it during
+              active sharing would make it feel like it appeared out of nowhere.
+              Employee location tracking is regulated and notice rules vary by
+              state; this is the in-app half of that. */}
+          {isLawn() && tracking.status !== "off" && (
+            <div
+              className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
+                tracking.status === "sharing"
+                  ? "bg-blue-50 text-blue-800"
+                  : tracking.status === "denied"
+                    ? "bg-amber-50 text-amber-800"
+                    : "bg-gray-50 text-gray-600"
+              }`}
+            >
+              <MapPin className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                {tracking.status === "sharing" ? (
+                  <>
+                    <strong>Sharing your location</strong> with the office while
+                    you&apos;re on the clock
+                    {tracking.lastSentAt
+                      ? ` · updated ${new Date(tracking.lastSentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : ""}
+                    .
+                  </>
+                ) : tracking.status === "denied" ? (
+                  <>
+                    Location is blocked on this device, so the office
+                    can&apos;t see where you are. Your clock-in and clock-out
+                    still work normally.
+                  </>
+                ) : tracking.status === "error" ? (
+                  <>Couldn&apos;t connect location sharing. Time tracking is unaffected.</>
+                ) : (
+                  <>
+                    Location sharing is on standby — nothing is being sent. It
+                    starts only while someone in the office has the tracking
+                    page open, and stops when they close it.
+                  </>
+                )}
+              </span>
+            </div>
+          )}
           <div className="text-center py-2">
             <p className="font-mono text-4xl font-bold tabular-nums text-gray-900">
               {fmtDuration(elapsed)}

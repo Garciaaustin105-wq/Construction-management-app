@@ -58,6 +58,7 @@ import {
   LayoutTemplate,
   CalendarDays,
   ShieldCheck,
+  LocateFixed,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
@@ -166,6 +167,13 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // blackouts, zones, crew time off) — page gate is OFFICE_LIKE, this
       // entry sits in the lawn office/admin fallthrough block to match.
       { href: "/lawn/scheduling", label: "Scheduling", Icon: CalendarDays },
+      // Live crew tracking. Sits next to Scheduling because it answers a
+      // dispatch question ("how far out is he?"), not a reporting one. Page
+      // gate is OFFICE_OR_PM and the crew_locations read policy is
+      // me_is_office_or_pm, so this entry sits in the office/admin block to
+      // match both. Free-plan orgs still see the tab and get the upgrade
+      // panel — hiding it would make the feature undiscoverable.
+      { href: "/lawn/track", label: "Crew tracking", Icon: LocateFixed },
       { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
       // Points at the lawn dispatch board (Month/Week/Agenda, drag-to-
       // reschedule, filters, crew colors), not the generic org-wide /calendar

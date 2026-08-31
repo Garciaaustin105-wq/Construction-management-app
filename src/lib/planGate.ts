@@ -57,3 +57,26 @@ export function assertNotFreePlan(t: MyTenant): NextResponse | null {
   }
   return null;
 }
+
+/**
+ * Live crew tracking (lawn) — paid tiers + trial only.
+ *
+ * Two reasons this is gated, and the first is the honest one: the free tier is
+ * `maxUsers: 1`, a solo operator. There is nobody to track but yourself, so the
+ * feature is meaningless there rather than artificially withheld.
+ *
+ * The second is cost control. Tracking is the one surface whose running cost
+ * scales with how many orgs switch it on (Realtime messages, Google Maps
+ * dynamic loads), so free orgs generating that load with no revenue attached is
+ * exactly the shape of bill this feature was designed to avoid.
+ *
+ * Derived from the tier rather than added as a PlanConfig field: that would be
+ * 14 config edits (7 tiers x 2 variants) to encode one boolean that already
+ * follows from "is this a paying org", and every one of them a chance to miss a
+ * tier. `expired` and `canceled` fall through to false, which is correct — they
+ * are not paying.
+ */
+export function canTrackCrew(t: MyTenant): boolean {
+  const plan = effectivePlan(t);
+  return plan !== "free" && plan !== "expired" && plan !== "canceled";
+}
