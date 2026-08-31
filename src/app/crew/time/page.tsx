@@ -12,6 +12,12 @@ import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
 import TimeEntryEditModal from "@/components/TimeEntryEditModal";
 import { useCrewLocationBroadcast } from "@/lib/useCrewLocationBroadcast";
 import { CLOCK_CHANGED_EVENT } from "@/lib/crewTracking";
+import {
+  planFlush,
+  summariseFlush,
+  type FlushAction,
+  type SettleableRow,
+} from "@/lib/endShiftFlush";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 
 // Time-entry review status -> badge tone (was the legacy StatusBadge palette).
@@ -285,6 +291,58 @@ export default function CrewTimePage() {
     setBusy(false);
   }
 
+  // ── End-shift settlement flush ───────────────────────────────────────────
+  //
+  // The primary settlement trigger, and it lives here for a behavioural reason:
+  // End shift is the one button crews reliably press, because it is how they
+  // get paid. A countdown on the phone would never fire — the app is
+  // backgrounded, the screen off, sometimes the battery dead — and the nightly
+  // cron deliberately never emails because it runs unattended. This is the
+  // moment a real session exists, so the ordinary status route can do the
+  // completing and the emailing. One email path, always.
+  //
+  // Never blocks or fails the clock-out. A crew member ending their shift is
+  // recording their pay; a settlement hiccup must not make that look like it
+  // failed, and the nightly cron will queue anything missed anyway.
+  async function flushSettlements() {
+    if (!isLawn()) return;
+    const { data, error } = await supabase.rpc("my_settleable_visits");
+    if (error || !data) return;
+
+    const actions = planFlush(data as SettleableRow[]);
+    if (actions.length === 0) return;
+
+    const succeeded: FlushAction[] = [];
+    let failed = 0;
+    for (const action of actions) {
+      try {
+        if (action.kind === "complete") {
+          // The status route, not a direct update — it is what sends
+          // service_complete and the review request.
+          const res = await fetch(`/api/lawn/visits/${action.visitId}/status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "done" }),
+          });
+          if (res.ok) succeeded.push(action);
+          else failed++;
+        } else {
+          const { error: qErr } = await supabase.rpc("queue_visit_for_approval", {
+            p_visit_id: action.visitId,
+          });
+          if (qErr) failed++;
+          else succeeded.push(action);
+        }
+      } catch {
+        failed++;
+      }
+    }
+
+    // Reports what SUCCEEDED, never what was merely attempted.
+    const msg = summariseFlush(succeeded, failed);
+    if (msg) toast.success(msg);
+  }
+
   async function clockOut() {
     if (!openEntry) return;
     setBusy(true);
@@ -301,6 +359,9 @@ export default function CrewTimePage() {
       // Tell the persistent broadcaster the shift ended so it stops sharing
       // location immediately, rather than on some later poll.
       window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
+      // Settle after the shift is safely recorded, so a failure here can never
+      // be mistaken for a failed clock-out.
+      await flushSettlements();
     }
     setBusy(false);
   }
