@@ -20,7 +20,7 @@ export default async function CrewMembersPage() {
   const orgId = me.orgId ?? "";
 
   return (
-    <PageContainer title="Crew Members" subtitle="Crew roster for scheduling" maxWidth="list">
+    <PageContainer title="Team" subtitle="Crew roster for scheduling" maxWidth="list">
       <CrewMembersManager orgId={orgId} />
     </PageContainer>
   );

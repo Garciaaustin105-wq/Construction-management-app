@@ -50,7 +50,7 @@ export default async function OfficePage() {
                 which read as "two customer tabs doing the same thing." */}
             <Link href="/crew/time" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Clock className="w-5 h-5" />
-              Time Clock
+              Clock in/out
             </Link>
             <Link href="/lawn/insights" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <TrendingUp className="w-5 h-5" />

@@ -162,7 +162,11 @@ export default function CrewTimePage() {
   // This page's only job is to TELL it when the clock changes, so tracking
   // starts and stops instantly without anything having to poll.
   const tracking = useCrewLocationBroadcast({
-    enabled: false, // read-only: this instance never broadcasts
+    // Never broadcasts — CrewTrackingMount owns that. This instance exists
+    // only so the disclosure below can render; with enabled:false its status
+    // is always "off", which falls through to the standby copy — accurate,
+    // since sharing only starts when an office viewer opens the tracking tab.
+    enabled: false,
     orgId,
     userId,
     name: fullName,
@@ -280,7 +284,7 @@ export default function CrewTimePage() {
   const elapsed = openEntry ? now - new Date(openEntry.clock_in_at).getTime() : 0;
 
   return (
-    <PageContainer title="Clock in & out" maxWidth="list">
+    <PageContainer title="Clock in/out" maxWidth="list">
       {loading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-7 h-7 animate-spin text-gray-400" />
@@ -302,7 +306,7 @@ export default function CrewTimePage() {
               active sharing would make it feel like it appeared out of nowhere.
               Employee location tracking is regulated and notice rules vary by
               state; this is the in-app half of that. */}
-          {isLawn() && tracking.status !== "off" && (
+          {isLawn() && (
             <div
               className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
                 tracking.status === "sharing"
