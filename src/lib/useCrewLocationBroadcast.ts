@@ -21,6 +21,11 @@ import {
   type GeofenceState,
 } from "@/lib/geofence";
 import {
+  clusterOf,
+  clusterStops,
+  type Cluster,
+} from "@/lib/stopClusters";
+import {
   emptyLedger,
   planGeofenceCalls,
   rollbackCall,
@@ -104,9 +109,12 @@ export function useCrewLocationBroadcast({
   // Read inside the GPS callback without making it an effect dependency, which
   // would restart the watch every time the route is refreshed.
   const stopsRef = useRef<GeoStop[]>(stops);
-  // Last time we stamped the on-site mark for each visit, so a 1-second GPS
+  // Last time we stamped the on-site mark for each CLUSTER, so a 1-second GPS
   // stream does not become a 1-second write stream.
   const onSitePingedAt = useRef<Record<string, number>>({});
+  // Today's stops grouped into work areas. Recomputed only when the route
+  // changes, never per fix — clustering is O(n^2) over the day's stops.
+  const clustersRef = useRef<Cluster[]>([]);
 
   // Keep the ref in step with the prop OUTSIDE render. The GPS callback reads
   // it, so the stop list can be refreshed mid-shift without `stops` being an
@@ -114,6 +122,7 @@ export function useCrewLocationBroadcast({
   // time the route reloaded.
   useEffect(() => {
     stopsRef.current = stops;
+    clustersRef.current = clusterStops(stops);
   }, [stops]);
 
   useEffect(() => {
@@ -192,21 +201,35 @@ export function useCrewLocationBroadcast({
       // 20-minute stop. It is under-measurement rather than over-, which is the
       // safe direction for a pricing floor, and it is fixable later by passing
       // the observed insideSince to the RPC instead of using its clock.
+      // MEASURE THE CLUSTER, NOT THE PROPERTY.
+      //
+      // Standing on one lawn of a four-house street does not mean the other
+      // three are idle — the mower, edger and blower are on different lawns at
+      // the same time, and GPS cannot separate lots 25-30 m apart anyway. So
+      // the whole adjacent group is stamped together, which is both honest
+      // about the sensor and the only way the pricing maths comes out right:
+      // one window over the cluster's summed area, never a per-house rate
+      // derived from a shared window.
+      //
+      // One call for the whole cluster, not one per visit — a five-property
+      // street worked by four crew would otherwise be 20 round trips a minute
+      // from phones on cellular data. Throttling is keyed by CLUSTER to match.
       const onSiteId = onSiteStopId(nextFence);
-      if (onSiteId !== null) {
-        const last = onSitePingedAt.current[onSiteId] ?? 0;
+      const cluster = onSiteId ? clusterOf(onSiteId, clustersRef.current) : null;
+      if (cluster) {
+        const last = onSitePingedAt.current[cluster.id] ?? 0;
         const now = Date.now();
         if (now - last >= ON_SITE_PING_MS) {
           // Claim the slot BEFORE awaiting, so two fixes arriving together
           // cannot both fire; roll back on failure so the next fix retries.
-          onSitePingedAt.current[onSiteId] = now;
+          onSitePingedAt.current[cluster.id] = now;
           try {
-            const { error } = await supabase.rpc("record_visit_on_site", {
-              p_visit_id: onSiteId,
+            const { error } = await supabase.rpc("record_cluster_on_site", {
+              p_visit_ids: cluster.stopIds,
             });
-            if (error) onSitePingedAt.current[onSiteId] = last;
+            if (error) onSitePingedAt.current[cluster.id] = last;
           } catch {
-            onSitePingedAt.current[onSiteId] = last;
+            onSitePingedAt.current[cluster.id] = last;
           }
         }
       }
