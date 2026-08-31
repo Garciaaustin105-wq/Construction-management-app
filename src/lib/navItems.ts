@@ -33,7 +33,6 @@ import {
   Sprout,
   Users,
   Building,
-  CreditCard,
   HardHat,
   ClipboardList,
   CheckSquare,
@@ -182,11 +181,19 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // lawn (their nav is the small `base` set), so they still only ever
       // reach the generic /calendar (which they can access) — no dead link.
       { href: "/lawn/calendar", label: "Calendar", Icon: Calendar },
-      { href: "/admin/users", label: "Admin", Icon: Users },
+      // Account = the org-settings hub (/manage), replacing the separate
+      // "Admin" and "Billing" tabs. Billing and user management both read as
+      // account concerns, and two near-identical tabs at the end of a 20-item
+      // sidebar was clutter.
+      //
+      // Deliberately NOT /account: that page is PERSONAL (own login + MFA) and
+      // open to every role including crew and customers. Moving org billing
+      // there would either expose it to crew or force a gate that costs crew
+      // their own MFA page. /manage is already the org-level hub, is already
+      // OFFICE_LIKE-gated, and already shows billing only to office/admin — so
+      // this changes discoverability, not permissions.
+      { href: "/manage", label: "Account", Icon: Settings },
     ];
-    if (role === "admin") {
-      items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
-    }
     return items;
   }
 
@@ -293,13 +300,19 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     { href: "/templates", label: "Templates", Icon: LayoutTemplate },
     { href: "/admin/insights", label: "Insights", Icon: TrendingUp },
     { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
-    { href: "/admin/users", label: "Admin", Icon: Users },
+    // Account = the org-settings hub (/manage), replacing the separate
+    // "Admin" and "Billing" tabs. Billing and user management both read as
+    // account concerns, and two near-identical tabs at the end of a 20-item
+    // sidebar was clutter.
+    //
+    // Deliberately NOT /account: that page is PERSONAL (own login + MFA) and
+    // open to every role including crew and customers. Moving org billing
+    // there would either expose it to crew or force a gate that costs crew
+    // their own MFA page. /manage is already the org-level hub, is already
+    // OFFICE_LIKE-gated, and already shows billing only to office/admin — so
+    // this changes discoverability, not permissions.
+    { href: "/manage", label: "Account", Icon: Settings },
   ];
-  // Only the org admin manages billing (checkout + Customer Portal routes are
-  // admin-only). office/super_admin don't get the tab.
-  if (role === "admin") {
-    items.push({ href: "/admin/billing", label: "Billing", Icon: CreditCard });
-  }
   return items;
 }
 
@@ -426,7 +439,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
         },
         {
           href: "/manage",
-          label: "Manage",
+          label: "Account",
           Icon: Settings,
           // /admin/customers moved here from Office's aliases — the Customers
           // card itself was removed from the lawn Office page (it duplicated
@@ -476,7 +489,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
       },
       {
         href: "/manage",
-        label: "Manage",
+        label: "Account",
         Icon: Settings,
         aliases: [
           "/admin/users",

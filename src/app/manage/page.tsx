@@ -24,7 +24,7 @@ export default async function ManagePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Manage" subtitle="People, billing & platform" />
+      <TopBar title="Account" subtitle="People, billing & platform" />
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <div className="grid grid-cols-2 gap-2">
           <Link href="/account" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">

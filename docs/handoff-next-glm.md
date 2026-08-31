@@ -22,7 +22,15 @@ Three migrations are live on prod: `time_entries_shift_clock`,
 
 ---
 
-## Task 1 — Account tab (the user asked for this; it is NOT yet designed)
+## ~~Task 1 — Account tab~~ — DONE, do not build this
+
+**Built by Claude 2026-08-31.** Admin + Billing collapsed into a single
+**Account** tab -> `/manage`, on both variants, desktop and mobile, with the
+`/manage` page retitled to match. `/account` (personal/MFA) was left alone for
+the reason below. Skip to Task 2.
+
+<details><summary>Original brief, kept for context</summary>
+
 
 The request: *"for account tab, lets add the billing tab to the account tab. also admin does too."*
 
@@ -63,6 +71,8 @@ That gives the user one Account tab containing billing + users + their own
 login, with the existing role gates intact and no new page.
 
 Files: `src/lib/navItems.ts`, `src/app/manage/page.tsx`. Nothing else.
+
+</details>
 
 ## Task 2 — Browser verification (nobody has done this)
 
