@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle, CloudRain, X } from "lucide-react";
 import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
+import { lateLabel } from "@/lib/orgDate";
 
 export type BoardVisit = {
   id: string;
@@ -26,6 +27,9 @@ export type BoardVisit = {
   status: "pending" | "done" | "skipped" | "paused";
   crew_id: string | null;
   job_name: string;
+  /** Null is normal: a job can exist with no customer record. */
+  customer_name: string | null;
+  address: string | null;
   service_type: string | null;
   // Needed so a crew-reassign drag can offer to also set the schedule's
   // default crew (recurring_schedules.default_crew_id) for future visits.
@@ -180,6 +184,7 @@ function DroppableCell({
 function DraggableChip({
   visit,
   crewName,
+  today,
   color,
   extraClassName,
   showTime,
@@ -187,6 +192,8 @@ function DraggableChip({
 }: {
   visit: BoardVisit;
   crewName: string;
+  /** The organisation's today, so "late" means late where the work happens. */
+  today: string;
   color: { dot: string; chip: string };
   extraClassName?: string;
   // Day view only — prefixes the chip with its scheduled window, if set.
@@ -201,6 +208,15 @@ function DraggableChip({
     transform: transform ? CSS.Translate.toString(transform) : undefined,
   };
   const skipped = visit.status === "skipped";
+  // OVERDUE is derived, not stored. A visit due tomorrow and one due seven days
+  // ago both carry status "pending"; only the date separates them, and without
+  // this the calendar cannot show the difference at all.
+  const overdue = visit.status === "pending" && visit.due_date < today;
+  const late = overdue ? lateLabel(visit.due_date, today) : "";
+  // The customer is what a crew recognises — "the Hendersons", not "job 4c1".
+  // Crew assignment is secondary; it used to be the loudest thing on the chip,
+  // which is why an unassigned day read as a wall of "Unassigned".
+  const primary = visit.customer_name ?? visit.job_name;
   const timeLabel = showTime ? formatWindowTime(visit.scheduled_window_start) : null;
   return (
     <div
@@ -209,19 +225,40 @@ function DraggableChip({
       {...attributes}
       {...listeners}
       onClick={onClick}
-      title={skipped ? "Skipped — needs a follow-up" : onClick ? "Click to edit this schedule" : undefined}
+      title={
+        skipped
+          ? "Skipped — needs a follow-up"
+          : overdue
+            ? `${primary} — ${late}, still pending`
+            : onClick
+              ? "Click to edit this schedule"
+              : undefined
+      }
       className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing ${
-        skipped ? "bg-red-50 text-red-700 border border-red-200 line-through" : color.chip
+        skipped
+          ? "bg-red-50 text-red-700 border border-red-200 line-through"
+          : overdue
+            ? "bg-orange-100 text-orange-900 border border-orange-300 font-medium"
+            : color.chip
       } ${isDragging ? "opacity-60" : ""} ${extraClassName ?? ""}`}
     >
       {skipped ? (
         <AlertTriangle className="inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0" />
+      ) : overdue ? (
+        <AlertTriangle className="inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0 text-orange-600" />
       ) : (
         <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${color.dot}`} />
       )}
       {timeLabel && <span className="font-mono text-[9px] text-gray-500 align-middle mr-1">{timeLabel}</span>}
-      <span className="font-semibold align-middle">{crewName}</span>
-      {visit.service_type && <span className="align-middle"> {visit.service_type}</span>}
+      {/* Customer leads. Crew and service follow, muted — they are context, not
+          identity, and putting the crew first made every unassigned day read as
+          a column of "Unassigned". */}
+      <span className="font-semibold align-middle truncate">{primary}</span>
+      {late && <span className="align-middle ml-1 font-semibold shrink-0">· {late}</span>}
+      <span className="align-middle ml-1 opacity-70 truncate">
+        {crewName}
+        {visit.service_type ? ` · ${visit.service_type}` : ""}
+      </span>
     </div>
   );
 }
@@ -382,7 +419,16 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
       if (statusFilter.size > 0 && !statusFilter.has(v.status)) return false;
       if (serviceFilter && v.service_type !== serviceFilter) return false;
       if (zoneFilter && v.zone_id !== zoneFilter) return false;
-      if (q && !v.job_name.toLowerCase().includes(q)) return false;
+      // Search the customer and address too. Searching only job names meant you
+      // could not find a property by the name you actually know it by.
+      if (
+        q &&
+        !v.job_name.toLowerCase().includes(q) &&
+        !(v.customer_name ?? "").toLowerCase().includes(q) &&
+        !(v.address ?? "").toLowerCase().includes(q)
+      ) {
+        return false;
+      }
       return true;
     });
   }, [localVisits, crewFilter, statusFilter, serviceFilter, zoneFilter, query]);
@@ -396,8 +442,17 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
       arr.push(v);
       map.set(v.due_date, arr);
     }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredVisits]);
+    // PAST DUE FIRST, then today onward. Strict chronological order buries the
+    // work that actually needs a decision below a month of upcoming visits —
+    // and this view previously could not show past dates at all, because the
+    // query started at today.
+    return Array.from(map.entries()).sort(([a], [b]) => {
+      const aPast = a < todayIso;
+      const bPast = b < todayIso;
+      if (aPast !== bPast) return aPast ? -1 : 1;
+      return a.localeCompare(b);
+    });
+  }, [filteredVisits, todayIso]);
 
   // DnD sensors — device-aware, matching RouteList.tsx's setup.
   const isCoarse =
@@ -731,6 +786,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                     </span>
                     {shown.map((v, idx) => (
                       <DraggableChip
+                        today={todayIso}
                         key={v.id}
                         visit={v}
                         crewName={nameFor(v)}
@@ -805,6 +861,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                         <DroppableCell key={d} id={`${d}::${c.id}`} className="min-h-[52px] p-1 flex flex-col gap-1">
                           {cellVisits.map((v) => (
                             <DraggableChip
+                        today={todayIso}
                               key={v.id}
                               visit={v}
                               crewName={nameFor(v)}
@@ -919,6 +976,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                       {rowVisits.length === 0 && <span className="text-xs text-gray-300 py-1">No visits</span>}
                       {rowVisits.map((v) => (
                         <DraggableChip
+                        today={todayIso}
                           key={v.id}
                           visit={v}
                           crewName={nameFor(v)}
@@ -941,8 +999,10 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
         (agendaGroups.length === 0 ? (
           <div className="text-center py-10">
             <CalendarDays className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-medium text-gray-700">No upcoming visits</p>
-            <p className="text-xs text-gray-500 mt-1">Visits in the next 30 days will appear here.</p>
+            <p className="text-sm font-medium text-gray-700">Nothing scheduled or overdue</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Past-due visits and anything due in the next 30 days appear here.
+            </p>
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow-sm divide-y divide-gray-100">
@@ -952,6 +1012,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                 d.setDate(d.getDate() + 1);
                 return d.toISOString().slice(0, 10);
               })();
+              const isPastDue = dateStr < todayIso;
               const label =
                 dateStr === todayIso
                   ? "Today"
@@ -964,8 +1025,23 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                     });
               return (
                 <div key={dateStr}>
-                  <div className="px-3 py-2 bg-gray-50 sticky top-0">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</p>
+                  <div
+                    className={`px-3 py-2 sticky top-0 ${
+                      isPastDue ? "bg-orange-50 border-y border-orange-200" : "bg-gray-50"
+                    }`}
+                  >
+                    <p
+                      className={`text-xs font-semibold uppercase tracking-wide ${
+                        isPastDue ? "text-orange-800" : "text-gray-500"
+                      }`}
+                    >
+                      {label}
+                      {isPastDue && (
+                        <span className="normal-case font-normal">
+                          {" "}· past due, {lateLabel(dateStr, todayIso)}
+                        </span>
+                      )}
+                    </p>
                   </div>
                   {dayVisits.map((v) => (
                     <Link
@@ -974,7 +1050,12 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                       className="flex items-center gap-2 px-3 py-2 active:bg-gray-50 hover:bg-gray-50"
                     >
                       <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colorFor(v).dot}`} />
-                      <span className="text-sm text-gray-900 truncate flex-1 min-w-0">{v.job_name}</span>
+                      <span className="text-sm text-gray-900 truncate flex-1 min-w-0">
+                        {v.customer_name ?? v.job_name}
+                        {v.customer_name && (
+                          <span className="text-gray-400"> · {v.job_name}</span>
+                        )}
+                      </span>
                       {v.service_type && <span className="text-xs text-gray-400 shrink-0">{v.service_type}</span>}
                       <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize shrink-0 ${STATUS_BADGE[v.status]}`}>
                         {v.status}

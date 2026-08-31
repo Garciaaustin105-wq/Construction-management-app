@@ -22,7 +22,12 @@ type CalVisit = {
   scheduled_window_start: string | null;
   scheduled_window_end: string | null;
   recurring_schedules: { service_type: string | null } | null;
-  jobs: { name: string | null; lawn_jobs: { map_lat: number | null; map_lng: number | null } | null } | null;
+  jobs: {
+    name: string | null;
+    address: string | null;
+    customers: { name: string | null } | null;
+    lawn_jobs: { map_lat: number | null; map_lng: number | null } | null;
+  } | null;
 };
 
 type ZoneRow = {
@@ -178,7 +183,11 @@ export default async function LawnCalendarPage({
     gte = dayIso;
     lte = dayIso;
   } else {
-    gte = todayIso;
+    // AGENDA. This used to start at todayIso, so overdue visits were excluded
+    // from the query itself — the work most needing attention was the work you
+    // could not reach. Look back far enough to cover a real backlog (the live
+    // data has visits 7 days late) and forward far enough to plan.
+    gte = toISODate(addDays(new Date(), -60));
     lte = toISODate(addDays(new Date(), 30));
   }
 
@@ -187,7 +196,10 @@ export default async function LawnCalendarPage({
       supabase
         .from("lawn_visits")
         .select(
-          "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name, lawn_jobs(map_lat, map_lng))",
+          // customers(name) and address are a LEFT join on purpose: 4 of the test org's
+          // 8 overdue visits have no customer at all, and !inner would silently drop
+          // exactly the rows the office is looking for.
+          "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))",
         )
         .gte("due_date", gte)
         .lte("due_date", lte)
@@ -223,6 +235,11 @@ export default async function LawnCalendarPage({
       scheduled_window_start: v.scheduled_window_start,
       scheduled_window_end: v.scheduled_window_end,
       job_name: v.jobs?.name ?? "Untitled",
+      // A crew knows "the Hendersons", not "job 4c1". Null is normal — a job
+      // can exist without a customer record — so the board falls back to the
+      // job name rather than rendering an empty chip.
+      customer_name: v.jobs?.customers?.name ?? null,
+      address: v.jobs?.address ?? null,
       service_type: v.recurring_schedules?.service_type ?? null,
       zone_id: zoneFor(
         v.jobs?.lawn_jobs?.map_lat != null ? Number(v.jobs.lawn_jobs.map_lat) : null,
