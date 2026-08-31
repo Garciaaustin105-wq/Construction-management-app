@@ -58,6 +58,29 @@ export async function POST(request: Request) {
   );
 
   try {
+    // ── Close shifts nobody ended ─────────────────────────────────────────
+    // Runs BEFORE settlement, because a forgotten clock-out otherwise runs to
+    // 40 hours and quietly ruins a payroll week — the live data already has an
+    // entry open for a week. The close time is the clock-in plus a sane shift
+    // length, NOT now(): pretending someone worked until 05:47 is a different
+    // falsehood from the one being fixed. Flagged auto_closed so the cutoff is
+    // never mistaken for an observation.
+    let autoClosed = 0;
+    const { data: closed, error: closeErr } = await admin.rpc(
+      "auto_close_open_shifts",
+      { p_max_hours: 12 }
+    );
+    if (closeErr) {
+      // Non-fatal: settlement is the more time-critical half of this sweep and
+      // must still run.
+      captureException(
+        closeErr instanceof Error ? closeErr : new Error(String(closeErr)),
+        { extra: { route: "cron/settle", stage: "auto_close" } }
+      );
+    } else {
+      autoClosed = typeof closed === "number" ? closed : 0;
+    }
+
     // Gates 1-3 live in SQL so this route and the client agree by construction.
     const { data, error } = await admin.rpc("settleable_visits");
     if (error) {
@@ -79,7 +102,7 @@ export async function POST(request: Request) {
     // queue and make it look newer than it is.
     const toQueue = rows.filter((r) => !r.already_queued).map((r) => r.visit_id);
     if (toQueue.length === 0) {
-      return NextResponse.json({ ok: true, examined: rows.length, queued: 0 });
+      return NextResponse.json({ ok: true, examined: rows.length, queued: 0, autoClosed });
     }
 
     const { error: upErr } = await admin
@@ -98,6 +121,7 @@ export async function POST(request: Request) {
       ok: true,
       examined: rows.length,
       queued: toQueue.length,
+      autoClosed,
       // Reported so a mode that never completes unattended is visible in the
       // logs rather than silently surprising someone later.
       auto_mode_awaiting_end_shift: rows.filter(
