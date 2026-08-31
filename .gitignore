@@ -44,4 +44,6 @@ next-env.d.ts
 # geofence test build output
 .geofence-build/
 .mh-build/
+.cl-build/
+.cl-tsconfig.json
 .local-ai-bundles/
