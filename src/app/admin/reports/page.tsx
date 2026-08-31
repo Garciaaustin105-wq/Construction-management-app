@@ -30,8 +30,8 @@ export default async function ReportsIndexPage() {
     {
       href: "/admin/reports/weekly",
       icon: FileSpreadsheet,
-      title: "Per-Worker Report",
-      desc: "Hours, receipts, and payments per worker for a date range. Excel export.",
+      title: "Timesheets & payroll",
+      desc: "Per-worker hours for a pay period — month (week-by-week) view, day detail, approval status, still-on-clock shifts. Excel export.",
     },
     // Receipts are a construction-only surface (material receipts with photos /
     // cost codes). Lawn orgs have no receipts, so hide the card in the lawn

@@ -216,7 +216,8 @@ export default async function TimeOverviewPage({
   >();
   for (const s of weekShifts) {
     const id = s.job?.id ?? "no-job";
-    const name = s.job?.name ?? "No job";
+    // job_id IS NULL = a whole-route SHIFT entry, not a missing job.
+    const name = s.job?.name ?? "Shift";
     const dur = shiftDurationMs(s, now);
     let job = byJob.get(id);
     if (!job) {

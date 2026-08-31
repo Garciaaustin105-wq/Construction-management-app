@@ -11,6 +11,7 @@ export default function WeeklyReportFilters({
   costCodes,
   current,
   showCostCode = true,
+  showJob = true,
 }: {
   jobs: { id: string; name: string }[];
   workers: { id: string; name: string }[];
@@ -24,6 +25,10 @@ export default function WeeklyReportFilters({
   };
   // Cost codes are a construction surface — the lawn variant hides this filter.
   showCostCode?: boolean;
+  // Shift entries (job_id IS NULL) never match a job filter, so a job filter on
+  // lawn would silently exclude every lawn hour (lawn time is all shifts).
+  // The lawn variant hides this filter too.
+  showJob?: boolean;
 }) {
   const router = useRouter();
 
@@ -64,22 +69,24 @@ export default function WeeklyReportFilters({
           />
         </label>
       </div>
-      <div className={`grid ${showCostCode ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
-        <label className="block">
-          <span className="text-[10px] uppercase font-semibold text-gray-500">Job</span>
-          <select
-            value={current.job}
-            onChange={(e) => go({ job: e.target.value })}
-            className={selectCls}
-          >
-            <option value="">All</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {j.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className={`grid ${showCostCode || showJob ? (showCostCode && showJob ? "grid-cols-3" : "grid-cols-2") : "grid-cols-1"} gap-2`}>
+        {showJob && (
+          <label className="block">
+            <span className="text-[10px] uppercase font-semibold text-gray-500">Job</span>
+            <select
+              value={current.job}
+              onChange={(e) => go({ job: e.target.value })}
+              className={selectCls}
+            >
+              <option value="">All</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="block">
           <span className="text-[10px] uppercase font-semibold text-gray-500">Worker</span>
           <select
