@@ -142,6 +142,41 @@ console.log("\n[neighbouring properties — the normal lawn route]");
 }
 
 
+console.log("\n[route order breaks GPS ties between neighbours]");
+{
+  // Two houses 30 m apart. The crew is standing 5 m from n2, so pure
+  // nearest-wins picks n2 — but the fix has 25 m accuracy, so that 30 m
+  // difference is inside the error bar and geometry has no real opinion.
+  // Route order does: n1 is next in the route, so it should win.
+  const A = { id: "n1", lat: 30.00000, lng: -95, routeOrder: 1 };
+  const B = { id: "n2", lat: 30.00027, lng: -95, routeOrder: 2 };
+  let st = G.initialGeofenceState(); const log = [];
+  let t = 0;
+  for (let k = 0; k < 5; k++) {
+    const r = G.stepGeofence(st, { lat: 30.00023, lng: -95, accuracyM: 25, at: (t += 60_000) }, [A, B]);
+    st = r.state; log.push(...r.events.map((e) => e.type + ":" + e.stopId));
+  }
+  ok("a tied fix resolves to the next visit in route order",
+     log.includes("arrive:n1") && !log.includes("arrive:n2"), log.join(" | "));
+}
+
+console.log("\n[a precise fix still trusts geometry]");
+{
+  // Same geometry, but a 5 m fix. Now 30 m IS meaningful, so the nearer
+  // property wins even though it is later in the route.
+  const A = { id: "n1", lat: 30.00000, lng: -95, routeOrder: 1 };
+  const B = { id: "n2", lat: 30.00027, lng: -95, routeOrder: 2 };
+  let st = G.initialGeofenceState(); const log = [];
+  let t = 0;
+  for (let k = 0; k < 5; k++) {
+    const r = G.stepGeofence(st, { lat: 30.00027, lng: -95, accuracyM: 5, at: (t += 60_000) },
+      [A, B], { tieBreakMarginM: 10 });
+    st = r.state; log.push(...r.events.map((e) => e.type + ":" + e.stopId));
+  }
+  ok("an accurate fix is not overridden by route order",
+     log.includes("arrive:n2"), log.join(" | "));
+}
+
 console.log("\n[robustness]");
 {
   const s0 = G.initialGeofenceState();

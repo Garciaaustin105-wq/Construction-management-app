@@ -17,8 +17,18 @@
 //   * An ACCURACY FLOOR matters because a fix with a 200m accuracy radius cannot
 //     tell you which property you are standing on. Drop it rather than act on it.
 
-/** A property the crew may arrive at — a lawn visit plus its map pin. */
-export type GeoStop = { id: string; lat: number; lng: number };
+/** A property the crew may arrive at — a lawn visit plus its map pin.
+ *
+ *  `routeOrder` is the visit's position in the day's planned route. It is the
+ *  tie-breaker when two properties are too close together for GPS to separate
+ *  them: crews work a route in sequence, so "the next one I have not done yet"
+ *  is stronger evidence than a distance difference smaller than the error bar. */
+export type GeoStop = {
+  id: string;
+  lat: number;
+  lng: number;
+  routeOrder?: number | null;
+};
 
 /** One GPS reading. */
 export type Fix = {
@@ -51,6 +61,10 @@ export type GeofenceOptions = {
   arriveDwellMs?: number;
   departDwellMs?: number;
   maxAccuracyM?: number;
+  /** Two candidates whose distances differ by less than this (or less than the
+   *  fix's own accuracy, whichever is larger) are treated as tied, and route
+   *  order decides. Default 30 m — about one suburban lot. */
+  tieBreakMarginM?: number;
 };
 
 export const GEOFENCE_DEFAULTS: Required<GeofenceOptions> = {
@@ -61,6 +75,7 @@ export const GEOFENCE_DEFAULTS: Required<GeofenceOptions> = {
   arriveDwellMs: 90_000,
   departDwellMs: 180_000,
   maxAccuracyM: 75,
+  tieBreakMarginM: 30,
 };
 
 const EARTH_RADIUS_M = 6_371_000;
@@ -114,14 +129,39 @@ export function stepGeofence(
     return { state: next, events };
   }
 
-  // ── Which stop, if any, are we inside right now? Nearest wins. ───────────
-  let nearest: GeoStop | null = null;
-  let nearestDist = Infinity;
+  // ── Which stop are we inside? Nearest wins, but route order breaks ties ──
+  //
+  // Pure nearest-wins misattributes in exactly the case that matters most:
+  // neighbouring properties. Suburban lots are ~25-30 m apart and GPS error is
+  // 10-20 m, so the "nearest" pin can easily be the house next door. When two
+  // candidates are closer to each other than the error bar, geometry has no
+  // real opinion — but the ROUTE does. Crews work a route in sequence, so among
+  // tied candidates the earliest unfinished one in route order wins.
+  //
+  // The tie margin widens with the fix's own accuracy: a sloppy fix should make
+  // more candidates count as tied, not fewer.
+  const inRange: { stop: GeoStop; d: number }[] = [];
   for (const stop of stops) {
     const d = distanceMeters(fix.lat, fix.lng, stop.lat, stop.lng);
-    if (d <= opts.enterRadiusM && d < nearestDist) {
-      nearest = stop;
-      nearestDist = d;
+    if (d <= opts.enterRadiusM) inRange.push({ stop, d });
+  }
+
+  let nearest: GeoStop | null = null;
+  if (inRange.length > 0) {
+    const closest = inRange.reduce((a, b) => (b.d < a.d ? b : a));
+    const margin = Math.max(opts.tieBreakMarginM, fix.accuracyM ?? 0);
+    const tied = inRange.filter((c) => c.d - closest.d <= margin);
+    if (tied.length === 1) {
+      nearest = closest.stop;
+    } else {
+      // Lowest routeOrder wins; stops without one sort last, and distance
+      // decides between two that are equally unordered.
+      const rank = (c: { stop: GeoStop; d: number }) =>
+        c.stop.routeOrder ?? Number.POSITIVE_INFINITY;
+      nearest = tied.reduce((a, b) => {
+        if (rank(b) !== rank(a)) return rank(b) < rank(a) ? b : a;
+        return b.d < a.d ? b : a;
+      }).stop;
     }
   }
 

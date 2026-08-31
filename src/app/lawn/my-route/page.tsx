@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
-import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X, Play } from "lucide-react";
+import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X, Play, Undo2 } from "lucide-react";
 import type { RouteStop } from "@/lib/lawnRouting";
 
 // Google Maps touches window — load the map client-only.
@@ -61,6 +61,7 @@ type Visit = {
   // Set when the crew starts the visit. Paired with completed_at it is what
   // makes a visit DURATION possible — which is the whole reason Start exists.
   started_at: string | null;
+  completed_at: string | null;
   // customers reached through jobs (lawn_visits has job_id, no customer_id).
   // lawn_jobs carries the map pin (map_lat/map_lng) set by the office planner.
   jobs: {
@@ -101,12 +102,14 @@ function VisitCard({
   onStart,
   onDone,
   onSkip,
+  onReopen,
 }: {
   v: Visit;
   busyId: string | null;
   onStart: (id: string) => void;
   onDone: (id: string) => void;
   onSkip: (id: string, reason: string) => void;
+  onReopen: (id: string) => void;
 }) {
   const [showSkip, setShowSkip] = useState(false);
   const jobName = v.jobs?.name ?? "—";
@@ -133,7 +136,31 @@ function VisitCard({
           {v.started_at ? `On site ${sinceLabel(v.started_at)}` : dueLabel(v.due_date)}
         </span>
       </div>
-      {showSkip ? (
+      {v.status === "done" || v.status === "skipped" ? (
+        /* Finished. Shown rather than removed so an AUTOMATIC stamp is visible
+           and reversible — the geofence can pick a neighbour within GPS error,
+           or fire because someone parked to take a call. */
+        <div className="flex items-center gap-2">
+          <span className="flex-1 text-sm text-gray-500">
+            {v.status === "done" ? "Completed" : "Skipped"}
+            {v.completed_at
+              ? ` · ${new Date(v.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : ""}
+            {v.status === "done" && v.started_at && v.completed_at
+              ? ` · ${Math.max(1, Math.round((new Date(v.completed_at).getTime() - new Date(v.started_at).getTime()) / 60000))} min`
+              : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => onReopen(v.id)}
+            disabled={busy}
+            className="bg-white border border-gray-300 text-gray-700 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Undo2 className="w-4 h-4" />}
+            Undo
+          </button>
+        </div>
+      ) : showSkip ? (
         <SkipReasonPicker
           busy={busy}
           onConfirm={(reason) => onSkip(v.id, reason)}
@@ -205,6 +232,7 @@ function Section({
   onStart,
   onDone,
   onSkip,
+  onReopen,
 }: {
   label: string;
   list: Visit[];
@@ -213,6 +241,7 @@ function Section({
   onStart: (id: string) => void;
   onDone: (id: string) => void;
   onSkip: (id: string, reason: string) => void;
+  onReopen: (id: string) => void;
 }) {
   if (list.length === 0) return null;
   return (
@@ -223,7 +252,7 @@ function Section({
       </h2>
       <div className="space-y-2">
         {list.map((v) => (
-          <VisitCard key={v.id} v={v} busyId={busyId} onStart={onStart} onDone={onDone} onSkip={onSkip} />
+          <VisitCard key={v.id} v={v} busyId={busyId} onStart={onStart} onDone={onDone} onSkip={onSkip} onReopen={onReopen} />
         ))}
       </div>
     </section>
@@ -298,9 +327,14 @@ export default function MyRoutePage() {
       let q = supabase
         .from("lawn_visits")
         .select(
-          "id, job_id, due_date, status, route_order, started_at, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))"
+          "id, job_id, due_date, status, route_order, started_at, completed_at, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))"
         )
-        .eq("status", "pending")
+        // Pending AND today's already-finished visits. Finished ones used to be
+        // dropped entirely, which was fine when a crew member tapped "done"
+        // themselves — but the geofence can now mark a visit done automatically,
+        // and an automatic action you cannot see or undo is worse than no
+        // automation. They stay visible for the rest of the day with an Undo.
+        .in("status", ["pending", "done", "skipped"])
         .lte("due_date", horizonDate);
       if (solo) {
         q = q.or(`crew_id.eq.${user.id},crew_id.is.null`);
@@ -349,6 +383,39 @@ export default function MyRoutePage() {
     toast.success("Started");
   }
 
+  // Undo an auto-stamp. The geofence can get it wrong — a wrong pin, a
+  // neighbour within GPS error, a crew member who parked to take a call. done ->
+  // pending is an existing, server-validated transition, and the /status route
+  // already admits crew for status-only changes on their own visits, so this
+  // needs no new endpoint and no new permission.
+  async function reopenVisit(visitId: string) {
+    setBusyId(visitId);
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visitId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "pending" }),
+      });
+    } catch {
+      setBusyId(null);
+      toast.error("Failed: network error");
+      return;
+    }
+    setBusyId(null);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
+    }
+    setVisits((prev) =>
+      prev.map((v) =>
+        v.id === visitId ? { ...v, status: "pending", completed_at: null } : v
+      )
+    );
+    toast.success("Reopened");
+  }
+
   async function markDone(visitId: string) {
     setBusyId(visitId);
     // Route through the /status API (not a direct RLS update) so the customer
@@ -373,7 +440,13 @@ export default function MyRoutePage() {
       toast.error(`Failed: ${data.error ?? res.statusText}`);
       return;
     }
-    setVisits((prev) => prev.filter((v) => v.id !== visitId));
+    setVisits((prev) =>
+      prev.map((v) =>
+        v.id === visitId
+          ? { ...v, status: "done", completed_at: new Date().toISOString() }
+          : v
+      )
+    );
     toast.success("Marked done");
   }
 
@@ -400,7 +473,9 @@ export default function MyRoutePage() {
       toast.error(`Failed: ${data.error ?? res.statusText}`);
       return;
     }
-    setVisits((prev) => prev.filter((v) => v.id !== visitId));
+    setVisits((prev) =>
+      prev.map((v) => (v.id === visitId ? { ...v, status: "skipped" } : v))
+    );
     toast.success("Visit skipped");
   }
 
@@ -496,6 +571,7 @@ export default function MyRoutePage() {
             onStart={markStart}
             onDone={markDone}
             onSkip={skipVisit}
+            onReopen={reopenVisit}
           />
           <Section
             label="Today"
@@ -505,6 +581,7 @@ export default function MyRoutePage() {
             onStart={markStart}
             onDone={markDone}
             onSkip={skipVisit}
+            onReopen={reopenVisit}
           />
           <Section
             label="Upcoming"
@@ -514,6 +591,7 @@ export default function MyRoutePage() {
             onStart={markStart}
             onDone={markDone}
             onSkip={skipVisit}
+            onReopen={reopenVisit}
           />
         </>
       )}
