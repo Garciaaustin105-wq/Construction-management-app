@@ -3,10 +3,12 @@
 **For: GLM 5.3 Flash. Written 2026-08-31 by Claude Opus 5.**
 **Base branch: `main` @ `1121e38` or later. Work on `feat/crew-teams`.**
 
-> **STATUS: the migration `crew_teams_and_crew_size` is NOT yet applied.**
-> Claude is waiting on the user to unblock it. Do not start writing queries
-> against these tables until this line says APPLIED. Everything else in this
-> doc is final.
+> **STATUS: APPLIED — 2026-08-31.** The migration `crew_teams_and_crew_size`
+> is live on the production database. Both tables exist with RLS enabled (8
+> policies), both new columns are present and nullable, five indexes are in
+> place, and the org-stamp triggers fire. Verified: the `crew_size >= 1` check
+> rejects 0, membership cascades when a team is deleted, and `(crew_team_id,
+> crew_member_id)` is unique. Nothing for you to apply — start building.
 
 ---
 
