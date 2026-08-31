@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { CheckCircle2, XCircle, DollarSign, Bell, ClipboardList, FileCheck, AlertTriangle, Star, UserPlus } from "lucide-react";
+import { CheckCircle2, XCircle, DollarSign, Bell, ClipboardList, FileCheck, AlertTriangle, Star, UserPlus, Ruler } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export type NotificationItem = {
   id: string;
-  type: string; // estimate_approved | estimate_rejected | invoice_paid | daily_log_submitted | punch_item_completed | change_order_approved | change_order_rejected | submittal_returned
+  type: string; // estimate_approved | estimate_rejected | invoice_paid | invoice_overpaid | missing_lot_sqft | change_order_approved | change_order_rejected | submittal_returned
   title: string;
   body: string | null;
   href: string | null;
@@ -37,6 +37,10 @@ function iconFor(type: string): { Icon: LucideIcon; color: string } {
     // rather than another green "money arrived" row.
     case "invoice_overpaid":
       return { Icon: AlertTriangle, color: "text-amber-600" };
+    // A worked property with no lot size. Not a failure — the time IS recorded —
+    // so it reads as an action to take rather than something broken.
+    case "missing_lot_sqft":
+      return { Icon: Ruler, color: "text-sky-600" };
     case "daily_log_submitted":
       return { Icon: ClipboardList, color: "text-blue-600" };
     case "punch_item_completed":
