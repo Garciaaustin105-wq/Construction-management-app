@@ -6,6 +6,8 @@ import { isLawn } from "@/lib/variant";
 import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
 import { useCrewLocationBroadcast } from "@/lib/useCrewLocationBroadcast";
 import { CLOCK_CHANGED_EVENT } from "@/lib/crewTracking";
+import { toISODate } from "@/lib/weekUtils";
+import type { GeoStop } from "@/lib/geofence";
 
 // Mounts the crew location broadcaster in the PERSISTENT chrome (Providers), so
 // it survives navigation.
@@ -30,16 +32,93 @@ type Props = {
   role: Role | null;
 };
 
+type StopRow = {
+  id: string;
+  route_order: number | null;
+  jobs: {
+    lawn_jobs: { map_lat: number | null; map_lng: number | null } | null;
+  } | null;
+};
+
 // Anyone who can clock in can be tracked — the same union /crew/time admits.
 function canClockIn(role: Role | null): boolean {
   if (!role) return false;
   return FIELD.has(role) || MANAGEMENT.has(role);
 }
 
+// Today's geofenceable stops for this user.
+//
+// SCOPING MIRRORS MY ROUTE ON PURPOSE. A stop the geofence may auto-stamp must
+// be a stop the crew member can see and undo, or an automatic action becomes an
+// action nobody can explain. Crew/superintendent get visits assigned to them; a
+// solo office/admin owner (an org with zero crew_members) also gets unassigned
+// visits, exactly as My Route does. An office/admin who DOES have crew is a
+// dispatcher, not a field worker — they get no stops, so driving past a job
+// never stamps it.
+//
+// Narrower than My Route in two ways, both deliberate:
+//   * TODAY ONLY. My Route shows a 14-day horizon so crews can look ahead;
+//     acting on next week's visit because you happened to drive past it is not
+//     a feature.
+//   * PENDING ONLY. A done or skipped visit is settled. Re-firing on it would
+//     at best be a no-op and at worst reopen a decision a human already made.
+//
+// Visits with no map pin are dropped rather than guessed at — they simply fall
+// back to the manual Start/Done buttons, which is the documented contract in
+// useCrewLocationBroadcast's `stops` option.
+async function loadTodaysStops(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  role: Role | null
+): Promise<GeoStop[]> {
+  const crewLike = role === "crew" || role === "superintendent";
+
+  let solo = false;
+  if (!crewLike) {
+    const { count } = await supabase
+      .from("crew_members")
+      .select("id", { count: "exact", head: true });
+    solo = (count ?? 0) === 0;
+    // Office/admin with a real crew: dispatcher, not field. No stops.
+    if (!solo) return [];
+  }
+
+  // Local date, not toISOString(). due_date is a DATE the office set in their
+  // own calendar terms; taking the UTC date would silently roll over to
+  // tomorrow's route for every crew west of Greenwich each evening.
+  const today = toISODate(new Date());
+
+  let q = supabase
+    .from("lawn_visits")
+    .select("id, route_order, jobs(lawn_jobs(map_lat, map_lng))")
+    .eq("status", "pending")
+    .eq("due_date", today);
+  q = solo
+    ? q.or(`crew_id.eq.${userId},crew_id.is.null`)
+    : q.eq("crew_id", userId);
+
+  const { data } = await q;
+  const rows = (data as unknown as StopRow[] | null) ?? [];
+
+  return rows.flatMap((r) => {
+    const pin = r.jobs?.lawn_jobs;
+    if (!pin || pin.map_lat === null || pin.map_lng === null) return [];
+    return [
+      {
+        id: r.id,
+        lat: pin.map_lat,
+        lng: pin.map_lng,
+        routeOrder: r.route_order,
+      },
+    ];
+  });
+}
+
 export default function CrewTrackingMount({ orgId, role }: Props) {
   const [userId, setUserId] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [clockedIn, setClockedIn] = useState(false);
+  const [stops, setStops] = useState<GeoStop[]>([]);
 
   // Lawn-only, and only for roles that can hold a shift. Construction and
   // office-only roles never even run the effect below.
@@ -64,8 +143,16 @@ export default function CrewTrackingMount({ orgId, role }: Props) {
         .limit(1),
     ]);
     setName((profileRes.data?.full_name as string | null) ?? null);
-    setClockedIn(((openRes.data as { id: string }[] | null) ?? []).length > 0);
-  }, [eligible]);
+
+    const onShift = ((openRes.data as { id: string }[] | null) ?? []).length > 0;
+    setClockedIn(onShift);
+
+    // The route is loaded AT CLOCK-IN, not on a timer. A crew's stops for the
+    // day are settled by the time they start, and this component is explicitly
+    // built to avoid background polling. Clocking out clears them so a phone
+    // left in a truck cannot stamp anything.
+    setStops(onShift ? await loadTodaysStops(supabase, user.id, role) : []);
+  }, [eligible, role]);
 
   useEffect(() => {
     if (!eligible) return;
@@ -93,6 +180,7 @@ export default function CrewTrackingMount({ orgId, role }: Props) {
     orgId,
     userId,
     name,
+    stops,
   });
 
   return null;
