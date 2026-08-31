@@ -81,6 +81,23 @@ export async function POST(request: Request) {
       autoClosed = typeof closed === "number" ? closed : 0;
     }
 
+    // ── Daily digest of work that did not happen ──────────────────────────
+    // One notice per org per day, not one per visit: twelve separate notices is
+    // not an alert, it is a wall the office learns to scroll past. Idempotent
+    // on a per-org-per-day key, so a retry cannot duplicate it.
+    let overdueNotices = 0;
+    const { data: notices, error: noticeErr } = await admin.rpc(
+      "notify_overdue_visits"
+    );
+    if (noticeErr) {
+      captureException(
+        noticeErr instanceof Error ? noticeErr : new Error(String(noticeErr)),
+        { extra: { route: "cron/settle", stage: "overdue_digest" } }
+      );
+    } else {
+      overdueNotices = typeof notices === "number" ? notices : 0;
+    }
+
     // Gates 1-3 live in SQL so this route and the client agree by construction.
     const { data, error } = await admin.rpc("settleable_visits");
     if (error) {
@@ -102,7 +119,7 @@ export async function POST(request: Request) {
     // queue and make it look newer than it is.
     const toQueue = rows.filter((r) => !r.already_queued).map((r) => r.visit_id);
     if (toQueue.length === 0) {
-      return NextResponse.json({ ok: true, examined: rows.length, queued: 0, autoClosed });
+      return NextResponse.json({ ok: true, examined: rows.length, queued: 0, autoClosed, overdueNotices });
     }
 
     const { error: upErr } = await admin
@@ -122,6 +139,7 @@ export async function POST(request: Request) {
       examined: rows.length,
       queued: toQueue.length,
       autoClosed,
+      overdueNotices,
       // Reported so a mode that never completes unattended is visible in the
       // logs rather than silently surprising someone later.
       auto_mode_awaiting_end_shift: rows.filter(

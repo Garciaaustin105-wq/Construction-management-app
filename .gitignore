@@ -49,5 +49,6 @@ next-env.d.ts
 .st-build/
 .fl-build/
 .sr-build/
+.od-build/
 .cl-tsconfig.json
 .local-ai-bundles/
