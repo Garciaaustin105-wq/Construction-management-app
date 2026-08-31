@@ -6,7 +6,7 @@ import { SUPPORT_EMAIL } from "@/lib/legal";
 import TopBar from "@/components/TopBar";
 import SignOutButton from "@/components/SignOutButton";
 import Link from "next/link";
-import { Users, Contact, Briefcase, Tag, CreditCard, Building, LifeBuoy, UserCog } from "lucide-react";
+import { Users, Briefcase, Tag, CreditCard, Building, Building2, LifeBuoy, UserCog } from "lucide-react";
 
 export default async function ManagePage() {
   const me = await getMe();
@@ -21,10 +21,16 @@ export default async function ManagePage() {
   // surface, scoped narrowly per the user's own call rather than opened to
   // every office-like role.
   const showSupport = role === "admin";
+  // /admin/org gates on `role === "admin" || isSuperAdmin`, so match it exactly
+  // rather than approximating — a card that leads to a redirect is worse than
+  // no card. It is surfaced here because its ONLY other link is a button on
+  // /dashboard, and the lawn variant redirects /dashboard away to /lawn — so on
+  // lawn, org settings was unreachable.
+  const showOrgSettings = role === "admin" || me.isSuperAdmin;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
-      <TopBar title="Account" subtitle="People, billing & platform" />
+      <TopBar title="Account" subtitle="Your login, people & billing" />
       <main className="max-w-md lg:max-w-5xl mx-auto p-4 space-y-4">
         <div className="grid grid-cols-2 gap-2">
           <Link href="/account" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
@@ -35,10 +41,10 @@ export default async function ManagePage() {
             <Users className="w-5 h-5" />
             <span>Users</span>
           </Link>
-          {isOfficeOrAdmin && (
-            <Link href="/admin/customers" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Contact className="w-5 h-5" />
-              <span>Customers</span>
+          {showOrgSettings && (
+            <Link href="/admin/org" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Building2 className="w-5 h-5" />
+              <span>Org settings</span>
             </Link>
           )}
           {isOfficeOrAdmin && !isLawn() && (

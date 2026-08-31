@@ -435,6 +435,10 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/lawn/products",
             "/lawn/compliance",
             "/lawn/scheduling",
+            // Customers is an Office-hub card again (it was moved to the
+            // Account hub when its card lived there). The alias must follow the
+            // card or the bottom bar highlights the wrong tab.
+            "/admin/customers",
           ],
         },
         {
@@ -451,7 +455,6 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/admin/billing",
             "/admin/orgs",
             "/admin/org",
-            "/admin/customers",
           ],
         },
       ];
@@ -476,6 +479,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
         Icon: ClipboardList,
         aliases: [
           "/receipts",
+          "/admin/customers",
           "/admin/reports",
           "/admin/insights",
           "/calendar",
@@ -493,7 +497,6 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
         Icon: Settings,
         aliases: [
           "/admin/users",
-          "/admin/customers",
           "/admin/subcontractors",
           "/admin/cost-codes",
           "/admin/billing",

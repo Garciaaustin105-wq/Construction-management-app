@@ -4,7 +4,7 @@ import { OFFICE_LIKE } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 import PageContainer from "@/components/PageContainer";
 import Link from "next/link";
-import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera } from "lucide-react";
+import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera, Contact } from "lucide-react";
 
 export default async function OfficePage() {
   const me = await getMe();
@@ -22,6 +22,16 @@ export default async function OfficePage() {
             <Link href="/estimates" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <FileText className="w-5 h-5" />
               Estimates
+            </Link>
+            {/* Customers lives HERE, not on the Account hub. It is an
+                operational entity, and Account is for your login, your people
+                and your billing. It was previously only reachable from the
+                Account (Manage) hub card — so when that card was removed,
+                mobile lost its only route to Customers entirely: admins get
+                just Home / Office / Account there, and Customers is not a tab. */}
+            <Link href="/admin/customers" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Contact className="w-5 h-5" />
+              Customers
             </Link>
             <Link href="/invoices" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Receipt className="w-5 h-5" />
@@ -63,6 +73,10 @@ export default async function OfficePage() {
           </>
         ) : (
           <>
+            <Link href="/admin/customers" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+              <Contact className="w-5 h-5" />
+              Customers
+            </Link>
             <Link href="/receipts" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Receipt className="w-5 h-5" />
               Receipts
