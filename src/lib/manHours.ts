@@ -20,6 +20,9 @@ export type Measurement = {
   crewSize: number;
   /** Lot area. null or 0 means unknown. */
   lotSqft: number | null;
+  /** Visits sharing a key were on site TOGETHER and must be collapsed into one
+   *  row before any rate is computed. null/undefined means measured alone. */
+  clusterKey?: string | null;
 };
 
 export type BaselineOptions = {
@@ -110,6 +113,64 @@ export function lotSizeBand(sqft: number): string {
 }
 
 /**
+ * Collapse visits that were measured together into one row each.
+ *
+ * THIS IS NOT OPTIONAL, and getting it wrong inflates every price. A crew works
+ * four adjacent houses as one job: one 95-minute window, 34,000 sqft between
+ * them, 4 crew. As a cluster that is 6.33 man-hours over 34 thousand-sqft = 11
+ * man-minutes per 1,000. But the geofence stamps that SAME window onto all four
+ * visits, so computing a rate per visit gives 95 x 4 / 8.5 = 44.7 each — four
+ * times too high, and wrong by exactly the size of the cluster.
+ *
+ * Area SUMS; the window does NOT. That asymmetry is the whole reason this
+ * function exists.
+ *
+ * If ANY member of a cluster is missing its lot size, the cluster's total area
+ * is understated, which would INFLATE the rate rather than merely weaken it. So
+ * the whole cluster becomes unusable (lotSqft null) rather than quietly wrong —
+ * a gap in the data must not masquerade as an expensive job.
+ */
+export function collapseClusters(measurements: Measurement[]): Measurement[] {
+  const solo: Measurement[] = [];
+  const groups = new Map<string, Measurement[]>();
+
+  for (const m of measurements) {
+    const key = m.clusterKey ?? null;
+    if (key === null) {
+      solo.push(m);
+      continue;
+    }
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(m);
+    else groups.set(key, [m]);
+  }
+
+  const collapsed: Measurement[] = [];
+  for (const [key, members] of groups) {
+    if (members.length === 1) {
+      collapsed.push(members[0]);
+      continue;
+    }
+    // Every member carries the same window, so take the longest rather than
+    // assuming they are identical — a retried write could differ by a tick.
+    let onSiteMs: number | null = null;
+    for (const m of members) {
+      if (m.onSiteMs === null) { onSiteMs = null; break; }
+      onSiteMs = onSiteMs === null ? m.onSiteMs : Math.max(onSiteMs, m.onSiteMs);
+    }
+    let lotSqft: number | null = 0;
+    for (const m of members) {
+      if (m.lotSqft === null || m.lotSqft <= 0) { lotSqft = null; break; }
+      lotSqft += m.lotSqft;
+    }
+    const crewSize = members.reduce((a, m) => Math.max(a, m.crewSize), 0);
+    collapsed.push({ visitId: key, onSiteMs, crewSize, lotSqft, clusterKey: key });
+  }
+
+  return [...solo, ...collapsed];
+}
+
+/**
  * The baseline rate, as a MEDIAN rather than a mean.
  *
  * This is the single most important choice in the file. GPS cannot tell a
@@ -128,7 +189,10 @@ export function buildBaseline(
   const included: number[] = [];
   const excluded: { visitId: string; flag: MeasurementFlag }[] = [];
 
-  for (const m of measurements) {
+  // Collapse FIRST. Doing it here rather than asking callers to remember is
+  // deliberate: the failure mode is silent and inflates prices, so the safe
+  // behaviour has to be the default one.
+  for (const m of collapseClusters(measurements)) {
     const flag = classifyMeasurement(m, opts);
     // Narrowed rather than asserted: a null flag already proves onSiteMs is
     // non-null (it would have been "no_departure"), but stating the checks

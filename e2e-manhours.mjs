@@ -3,7 +3,7 @@
 //   node e2e-manhours.mjs
 import {
   manHours, manMinutesPer1000Sqft, classifyMeasurement, median,
-  lotSizeBand, buildBaseline, BASELINE_DEFAULTS,
+  lotSizeBand, buildBaseline, BASELINE_DEFAULTS, collapseClusters,
 } from "./.mh-build/manHours.js";
 
 let pass = 0, fail = 0;
@@ -100,6 +100,62 @@ const mean = rates.reduce((a, c) => a + c, 0) / rates.length;
 t("rob", "the long row is included, not excluded", bl.n === 5);
 t("rob", "median stays near the typical job", near(bl.medianManMinutesPer1000, 5.5, 0.01));
 t("rob", "the mean is dragged well above the median", mean > bl.medianManMinutesPer1000 + 2);
+
+console.log("\n[cluster collapse — the 4x inflation trap]");
+{
+  // The design's worked example: four adjacent houses, 8,500 sqft each,
+  // one 95-minute window, 4 crew. As a CLUSTER that is 11.2 man-min/1000.
+  const window = 95 * 60_000;
+  const cluster = ["a", "b", "c", "d"].map((id) => ({
+    visitId: id, onSiteMs: window, crewSize: 4, lotSqft: 8500, clusterKey: "K",
+  }));
+
+  // What a naive per-visit rate would produce — the bug this guards against.
+  const perVisit = manMinutesPer1000Sqft(window, 4, 8500);
+  t("cluster", "a per-visit rate would read ~44.7 (four times too high)", near(perVisit, 44.7, 0.1));
+
+  const collapsed = collapseClusters(cluster);
+  t("cluster", "four visits collapse to one row", collapsed.length === 1);
+  t("cluster", "area SUMS to 34,000", collapsed[0].lotSqft === 34000);
+  t("cluster", "the window does NOT sum", collapsed[0].onSiteMs === window);
+
+  const b = buildBaseline(cluster);
+  t("cluster", "baseline counts the cluster once, not four times", b.n === 1);
+  t("cluster", "and lands on ~11.2, the figure the design specifies",
+    near(b.medianManMinutesPer1000, 11.18, 0.05),
+    "this is the whole point: one window over summed area");
+}
+
+console.log("\n[cluster with a missing lot size]");
+{
+  // One house in the cluster is unmeasured, so the total area is understated —
+  // which would INFLATE the rate. The cluster must become unusable instead.
+  const rows = [
+    { visitId: "a", onSiteMs: 95 * 60_000, crewSize: 4, lotSqft: 8500, clusterKey: "K" },
+    { visitId: "b", onSiteMs: 95 * 60_000, crewSize: 4, lotSqft: null, clusterKey: "K" },
+  ];
+  const collapsed = collapseClusters(rows);
+  t("cluster", "a partially-measured cluster has NO usable area", collapsed[0].lotSqft === null);
+  const b = buildBaseline(rows);
+  t("cluster", "so it is excluded", b.n === 0);
+  t("cluster", "as MISSING DATA, not as an outlier",
+    b.excluded.length === 1 && b.excluded[0].flag === null,
+    "an unmeasured lot must never look like an expensive job");
+}
+
+console.log("\n[collapse leaves solo rows alone]");
+{
+  const rows = [
+    { visitId: "solo1", onSiteMs: 20 * 60_000, crewSize: 2, lotSqft: 8000 },
+    { visitId: "solo2", onSiteMs: 20 * 60_000, crewSize: 2, lotSqft: 8000, clusterKey: null },
+  ];
+  const before = JSON.stringify(rows);
+  const collapsed = collapseClusters(rows);
+  t("cluster", "rows with no cluster key pass through untouched", collapsed.length === 2);
+  t("cluster", "collapseClusters does not mutate its argument", JSON.stringify(rows) === before);
+  t("cluster", "a cluster of one is not altered",
+    collapseClusters([{ visitId: "x", onSiteMs: 1000, crewSize: 1, lotSqft: 5000, clusterKey: "Z" }])[0].visitId === "x");
+}
 
 console.log(`\n${fail === 0 ? "ALL GREEN" : "FAILURES"} — ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
