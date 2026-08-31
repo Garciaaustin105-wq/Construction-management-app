@@ -147,6 +147,11 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/compliance", label: "Compliance", Icon: ShieldCheck },
       { href: "/admin/crew-members", label: "Team", Icon: UsersRound },
+      // Crew teams (lawn): the teams work is assigned to; the lead confirms
+      // head count at shift start (crew_size) — that is what turns durations
+      // into priced man-hours. Sits next to the roster it draws from. Office
+      // fallthrough block = office/admin only, matching the page gate.
+      { href: "/lawn/crews", label: "Crews", Icon: Users },
       // "Measure & quote" (/estimates/quick) and Templates (/templates) used
       // to be separate top-of-nav tabs, but neither is a distinct top-level
       // concept — both are entry points/config that live inside Estimates
@@ -424,6 +429,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/calendar",
             "/admin/crew-members",
             "/crew/time",
+            "/lawn/crews",
             "/crew/photo",
             "/lawn/insights",
             "/lawn/ai",
