@@ -52,6 +52,7 @@ import {
   UserPlus,
   Star,
   ClipboardCheck,
+  AlarmClock,
   FlaskConical,
   Package,
   Sparkles,
@@ -167,6 +168,11 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // gate (src/app/lawn/ai/page.tsx) bounces super_admin + non-office; this
       // nav entry is in the lawn office/admin fallthrough block so it matches.
       { href: "/lawn/ai", label: "AI admin", Icon: Sparkles },
+      // Overdue backlog (pending visits past their due date) — the office is
+      // meant to feel this one; the /lawn KPI + the daily digest both land
+      // here. Office/admin only — matches the page gate, same fallthrough
+      // block.
+      { href: "/lawn/overdue", label: "Overdue", Icon: AlarmClock },
       // Completion approvals (gate 4 of the settlement gates): finished
       // visits the office signs off before the customer is emailed. Office/
       // admin only — matches the page gate, same fallthrough block.
@@ -438,6 +444,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/crew/photo",
             "/lawn/insights",
             "/lawn/ai",
+            "/lawn/overdue",
             "/lawn/approvals",
             "/lawn/notifications",
             "/admin/email-preview",
