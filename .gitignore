@@ -45,5 +45,6 @@ next-env.d.ts
 .geofence-build/
 .mh-build/
 .cl-build/
+.fr-build/
 .cl-tsconfig.json
 .local-ai-bundles/
