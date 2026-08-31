@@ -107,6 +107,29 @@ export function initialGeofenceState(): GeofenceState {
 }
 
 /**
+ * Which stop the crew is ON SITE at right now, for MEASUREMENT purposes, or
+ * null. Both conditions are required and each rules out a different error:
+ *
+ *   insideStopId === arrivedStopId (arrived)
+ *     A crew driving past a later stop must not stamp it as visited. The arrive
+ *     dwell is far longer than the time it takes to cross the radius at road
+ *     speed, so mere presence is not evidence of working.
+ *
+ *   insideStopId !== null (still inside)
+ *     arrivedStopId deliberately STAYS set through the whole depart dwell, so a
+ *     mark keyed on it alone would keep advancing for minutes after the truck
+ *     had left, inflating every visit by one depart dwell.
+ *
+ * Deliberately NOT the same question as "is this visit started" — measurement
+ * is independent of status. See the crew-model design, §4.
+ */
+export function onSiteStopId(state: GeofenceState): string | null {
+  return state.insideStopId !== null && state.insideStopId === state.arrivedStopId
+    ? state.insideStopId
+    : null;
+}
+
+/**
  * Fold one GPS fix into the state, returning the new state and any events it
  * caused. Never mutates its arguments.
  *

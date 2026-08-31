@@ -188,5 +188,42 @@ console.log("\n[robustness]");
   ok("does not mutate the input state", JSON.stringify(frozen) === copy);
 }
 
+// ── on-site MEASUREMENT gate ────────────────────────────────────────────────
+// A different question from arrive/depart: "is the crew standing on this
+// property right now", used to stamp on_site_first_at / on_site_last_at
+// independently of visit status.
+console.log("\n[on-site measurement gate]");
+{
+  const stops = [
+    { id: "s1", lat: 30.0000, lng: -95.0000, routeOrder: 1 },
+    { id: "s2", lat: 30.0200, lng: -95.0000, routeOrder: 2 },
+  ];
+  let st = G.initialGeofenceState();
+  const step = (fix) => { st = G.stepGeofence(st, fix, stops).state; };
+
+  ok("initial state is not on site", G.onSiteStopId(G.initialGeofenceState()) === null);
+
+  step(at(30.0000, -95.0000, 0));
+  ok("inside but not yet dwelled = NOT on site", G.onSiteStopId(st) === null,
+     "a drive-by must not stamp a property as worked");
+
+  step(at(30.0000, -95.0000, 90 * 1000));
+  ok("once the arrive dwell passes, on site at s1", G.onSiteStopId(st) === "s1");
+
+  step(at(30.0000, -95.0000, 10 * MIN));
+  ok("stays on site while the crew is present", G.onSiteStopId(st) === "s1");
+
+  step(at(30.0200, -95.0000, 11 * MIN));
+  ok("leaving clears the mark IMMEDIATELY, not after the depart dwell",
+     G.onSiteStopId(st) === null,
+     "arrivedStopId stays set through the depart dwell; keying on it alone " +
+     "would inflate every visit by one dwell");
+
+  let st2 = G.initialGeofenceState();
+  st2 = G.stepGeofence(st2, at(30.0200, -95.0000, 0), stops).state;
+  ok("a single fix inside a stop never counts as on site",
+     G.onSiteStopId(st2) === null);
+}
+
 console.log(`\n${fail === 0 ? "ALL GREEN" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

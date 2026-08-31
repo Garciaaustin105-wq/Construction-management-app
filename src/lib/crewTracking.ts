@@ -56,6 +56,17 @@ export const BROADCAST_MS = 30_000;
  *  privacy footprint. */
 export const BREADCRUMB_MS = 300_000; // 5 minutes
 
+/** How often a phone re-stamps the on-site mark for the property it is standing
+ *  on. This is MEASUREMENT, not the live map, so it runs whether or not anyone
+ *  is watching — the pricing dataset has to accumulate unattended.
+ *
+ *  60s is chosen against what the number is used for: on_site_last_at is a
+ *  high-water mark feeding a man-minutes-per-1000-sqft figure, so a minute of
+ *  granularity is already finer than the estimate it produces. Every phone on
+ *  the crew pushes the same mark forward, so a 4-person crew costs 4 writes a
+ *  minute per property at worst, and the RPC is a single UPDATE. */
+export const ON_SITE_PING_MS = 60_000;
+
 /** A pin older than this is treated as stale and dropped from the map. Covers
  *  the case a phone dies, loses signal, or force-quits without sending
  *  EVENT_OFFLINE. Generous relative to BROADCAST_MS so one missed tick does not
