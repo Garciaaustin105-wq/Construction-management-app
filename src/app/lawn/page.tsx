@@ -196,7 +196,13 @@ export default async function LawnPage() {
   // KPI values — derived in JS from rows already fetched (no extra queries).
   // The visits query is already `status=pending AND due_date <= today`, so
   // these two partitions cover it exactly.
-  const todayCount = visitRows.filter((v) => v.due_date === today).length;
+  // The query fetches due_date <= today, so visitRows is today's work PLUS the
+  // whole overdue backlog. Split it: a card titled "Today" that lists visits
+  // from last week is not a today list, and it made a growing backlog look like
+  // a growing day. Overdue has its own page (the KPI tile below links there,
+  // and the daily digest points at it too).
+  const todayVisits = visitRows.filter((v) => v.due_date === today);
+  const todayCount = todayVisits.length;
   const overdueCount = visitRows.filter((v) => v.due_date < today).length;
   const activeScheduleCount = scheduleRows.filter((s) => s.active).length;
 
@@ -283,16 +289,24 @@ export default async function LawnPage() {
             {/* ---- MAIN --------------------------------------------------- */}
             <div className="lg:col-span-2 space-y-6">
               <Card>
-                <CardHeader title="Today" subtitle={`${visitRows.length} due`} />
-                {visitRows.length === 0 ? (
+                <CardHeader title="Today" subtitle={`${todayCount} due`} />
+                {todayCount === 0 ? (
                   <EmptyState
                     icon={CalendarDays}
                     title="Nothing due today"
-                    description="Pending lawn visits due today or overdue will show up here."
+                    // If the day is clear but a backlog exists, say so here
+                    // rather than leaving the page looking finished.
+                    description={
+                      overdueCount > 0
+                        ? `Nothing scheduled for today, but ${overdueCount} ${
+                            overdueCount === 1 ? "visit is" : "visits are"
+                          } past their due date.`
+                        : "Pending lawn visits due today will show up here."
+                    }
                   />
                 ) : (
                   <div className="divide-y divide-gray-100">
-                    {visitRows.map((v) => {
+                    {todayVisits.map((v) => {
                       const jobName = v.jobs?.name ?? "—";
                       const custName = v.jobs?.customers?.name ?? null;
                       return (
