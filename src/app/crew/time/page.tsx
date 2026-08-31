@@ -25,7 +25,9 @@ type CostCode = { id: string; code: string; name: string };
 type Job = { id: string; name: string };
 type TimeEntry = {
   id: string;
-  job_id: string;
+  // Nullable since the shift-clock migration: null = a SHIFT entry covering a
+  // whole lawn route for the day; set = a construction job entry.
+  job_id: string | null;
   cost_code_id: string | null;
   clock_in_at: string;
   clock_out_at: string | null;
@@ -181,7 +183,20 @@ export default function CrewTimePage() {
       toast.error("Not signed in");
       return;
     }
-    if (!jobId) {
+    // LAWN = shift clock. One clock-in covers the whole route for the day, so
+    // there is no job to pick — job_id goes in null and the DB stamps the org
+    // from the worker's profile (set_org_from_job_or_user).
+    //
+    // Per-job punching is wrong for a route: at 20 stops it is 40 taps a day,
+    // which is why there were 4 time entries in the platform and 1 of them was
+    // left open. Per-visit lawn labour comes from lawn_visits.started_at /
+    // completed_at instead — per visit, server-stamped, and already part of the
+    // crew's normal flow on My Route.
+    //
+    // CONSTRUCTION is unchanged: a day on one site against one cost code, so
+    // the job stays required.
+    const shiftMode = isLawn();
+    if (!shiftMode && !jobId) {
       toast.warning("Pick a job");
       return;
     }
@@ -194,7 +209,7 @@ export default function CrewTimePage() {
       .from("time_entries")
       .insert({
         user_id: userId,
-        job_id: jobId,
+        job_id: shiftMode ? null : jobId,
         cost_code_id: costCodeId || null,
         note: note.trim() || null,
         lat: gps?.lat ?? null,
@@ -213,7 +228,7 @@ export default function CrewTimePage() {
     } else if (data) {
       setOpenEntry(data);
       setNow(Date.now());
-      toast.success("Clocked in");
+      toast.success(shiftMode ? "Shift started" : "Clocked in");
       // Wake the persistent broadcaster (CrewTrackingMount) — it is what shares
       // location, not this page, so it has to be told the shift began.
       window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
@@ -237,7 +252,7 @@ export default function CrewTimePage() {
     } else {
       setRecent((prev) => [{ ...openEntry, clock_out_at: new Date().toISOString() }, ...prev].slice(0, 20));
       setOpenEntry(null);
-      toast.success("Clocked out");
+      toast.success(isLawn() ? "Shift ended" : "Clocked out");
       // Tell the persistent broadcaster the shift ended so it stops sharing
       // location immediately, rather than on some later poll.
       window.dispatchEvent(new Event(CLOCK_CHANGED_EVENT));
@@ -275,7 +290,9 @@ export default function CrewTimePage() {
         <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
           <div className="flex items-center gap-2 text-green-700">
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-sm font-semibold uppercase">On the clock</span>
+            <span className="text-sm font-semibold uppercase">
+              {isLawn() ? "On shift" : "On the clock"}
+            </span>
           </div>
 
           {/* Location-sharing disclosure. Deliberately always shown while
@@ -333,7 +350,11 @@ export default function CrewTimePage() {
             </p>
           </div>
           <div className="text-sm text-gray-700 space-y-0.5">
-            <p className="font-medium truncate">{jobNameById[openEntry.job_id] ?? "—"}</p>
+            <p className="font-medium truncate">
+              {openEntry.job_id
+                ? (jobNameById[openEntry.job_id] ?? "—")
+                : "Whole day — all properties on your route"}
+            </p>
             {openEntry.cost_code_id && (
               <p className="text-xs text-gray-500 truncate">
                 {codeLabelById[openEntry.cost_code_id]}
@@ -362,26 +383,37 @@ export default function CrewTimePage() {
             className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold active:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
-            Clock Out
+            {isLawn() ? "End shift" : "Clock Out"}
           </button>
         </div>
       ) : (
         /* ---- Clocked out: clock-in form ---- */
         <form onSubmit={clockIn} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
-          <label className="block">
-            <span className="text-sm font-medium text-gray-700">Job</span>
-            <select
-              value={jobId}
-              onChange={(e) => setJobId(e.target.value)}
-              required
-              className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
-            >
-              <option value="">Select job</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>{j.name}</option>
-              ))}
-            </select>
-          </label>
+          {/* Job picker is CONSTRUCTION only. On lawn this is a shift clock —
+              one start per day for the whole route — so there is nothing to
+              pick. See the note in clockIn(). */}
+          {isLawn() ? (
+            <p className="text-sm text-gray-600">
+              Starts your shift for the whole day. Mark each property done on{" "}
+              <span className="font-medium">My Route</span> as you go — you
+              don&apos;t clock in and out per property.
+            </p>
+          ) : (
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">Job</span>
+              <select
+                value={jobId}
+                onChange={(e) => setJobId(e.target.value)}
+                required
+                className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
+              >
+                <option value="">Select job</option>
+                {jobs.map((j) => (
+                  <option key={j.id} value={j.id}>{j.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {!isLawn() && (
             <label className="block">
@@ -458,7 +490,7 @@ export default function CrewTimePage() {
             className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-base active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-            Clock In
+            {isLawn() ? "Start shift" : "Clock In"}
           </button>
         </form>
       )}
@@ -481,7 +513,7 @@ export default function CrewTimePage() {
                 <div key={e.id} className="p-3 flex items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900 truncate">
-                      {jobNameById[e.job_id] ?? "—"}
+                      {e.job_id ? (jobNameById[e.job_id] ?? "—") : "Shift"}
                     </p>
                     <p className="text-xs text-gray-500">
                       {new Date(e.clock_in_at).toLocaleDateString([], { month: "short", day: "numeric" })} ·{" "}

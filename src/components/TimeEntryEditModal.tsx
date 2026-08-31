@@ -10,7 +10,9 @@ type Job = { id: string; name: string };
 type CostCode = { id: string; code: string; name: string };
 type Entry = {
   id: string;
-  job_id: string;
+  // Nullable since the shift-clock migration — a null job_id is a SHIFT entry
+  // (one clock-in covering a whole lawn route), not a missing value.
+  job_id: string | null;
   cost_code_id: string | null;
   clock_in_at: string;
   clock_out_at: string | null;
@@ -41,7 +43,7 @@ export default function TimeEntryEditModal({
   variant: "construction" | "lawn";
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [jobId, setJobId] = useState(entry.job_id);
+  const [jobId, setJobId] = useState(entry.job_id ?? "");
   const [costCodeId, setCostCodeId] = useState(entry.cost_code_id ?? "");
   const [clockIn, setClockIn] = useState(toLocalInput(entry.clock_in_at));
   const [clockOut, setClockOut] = useState(
@@ -55,7 +57,7 @@ export default function TimeEntryEditModal({
 
   function open() {
     // Re-seed from the entry each open in case the list refreshed underneath.
-    setJobId(entry.job_id);
+    setJobId(entry.job_id ?? "");
     setCostCodeId(entry.cost_code_id ?? "");
     setClockIn(toLocalInput(entry.clock_in_at));
     setClockOut(entry.clock_out_at ? toLocalInput(entry.clock_out_at) : "");
@@ -77,7 +79,7 @@ export default function TimeEntryEditModal({
     const { error } = await supabase
       .from("time_entries")
       .update({
-        job_id: jobId,
+        job_id: jobId || null,
         cost_code_id: costCodeId || null,
         clock_in_at: new Date(clockIn).toISOString(),
         clock_out_at: clockOut ? new Date(clockOut).toISOString() : null,

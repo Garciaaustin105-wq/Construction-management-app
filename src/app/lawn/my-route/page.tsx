@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import PageContainer from "@/components/PageContainer";
 import EmptyState from "@/components/EmptyState";
 import { useToast } from "@/components/Toast";
-import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X } from "lucide-react";
+import { Loader2, Check, CalendarDays, Sprout, Camera, Navigation, X, Play } from "lucide-react";
 import type { RouteStop } from "@/lib/lawnRouting";
 
 // Google Maps touches window — load the map client-only.
@@ -58,6 +58,9 @@ type Visit = {
   due_date: string;
   status: string;
   route_order: number | null;
+  // Set when the crew starts the visit. Paired with completed_at it is what
+  // makes a visit DURATION possible — which is the whole reason Start exists.
+  started_at: string | null;
   // customers reached through jobs (lawn_visits has job_id, no customer_id).
   // lawn_jobs carries the map pin (map_lat/map_lng) set by the office planner.
   jobs: {
@@ -83,14 +86,25 @@ function dueLabel(due: string): string {
   return t.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
+/** "12m" / "1h 05m" since a visit was started. Coarse on purpose — the crew
+ *  needs to see the clock is running, not a stopwatch. */
+function sinceLabel(startedAt: string): string {
+  const ms = Date.now() - new Date(startedAt).getTime();
+  const mins = Math.max(0, Math.floor(ms / 60000));
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+}
+
 function VisitCard({
   v,
   busyId,
+  onStart,
   onDone,
   onSkip,
 }: {
   v: Visit;
   busyId: string | null;
+  onStart: (id: string) => void;
   onDone: (id: string) => void;
   onSkip: (id: string, reason: string) => void;
 }) {
@@ -111,10 +125,12 @@ function VisitCard({
         </Link>
         <span
           className={`text-[10px] font-semibold px-2 py-1 rounded whitespace-nowrap ${
-            STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
+            v.started_at
+              ? "bg-blue-100 text-blue-700"
+              : (STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600")
           }`}
         >
-          {dueLabel(v.due_date)}
+          {v.started_at ? `On site ${sinceLabel(v.started_at)}` : dueLabel(v.due_date)}
         </span>
       </div>
       {showSkip ? (
@@ -125,19 +141,40 @@ function VisitCard({
         />
       ) : (
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onDone(v.id)}
-            disabled={busy}
-            className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
-          >
-            {busy ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Check className="w-4 h-4" />
-            )}
-            Mark done
-          </button>
+          {/* Start, then Done. Two taps per property instead of one, but it is
+              what produces a DURATION — without a start there is only an end
+              timestamp, which is why 0 of 239 visits had one. Once started, the
+              button becomes Mark done and the card shows the running elapsed
+              time so the crew can see it is counting. */}
+          {v.started_at ? (
+            <button
+              type="button"
+              onClick={() => onDone(v.id)}
+              disabled={busy}
+              className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {busy ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Check className="w-4 h-4" />
+              )}
+              Mark done
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onStart(v.id)}
+              disabled={busy}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold text-sm active:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {busy ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              Start
+            </button>
+          )}
           <Link
             href={`/lawn/visits/${v.id}`}
             className="bg-white border border-gray-300 text-gray-900 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-1.5"
@@ -165,6 +202,7 @@ function Section({
   list,
   icon,
   busyId,
+  onStart,
   onDone,
   onSkip,
 }: {
@@ -172,6 +210,7 @@ function Section({
   list: Visit[];
   icon: React.ReactNode;
   busyId: string | null;
+  onStart: (id: string) => void;
   onDone: (id: string) => void;
   onSkip: (id: string, reason: string) => void;
 }) {
@@ -184,7 +223,7 @@ function Section({
       </h2>
       <div className="space-y-2">
         {list.map((v) => (
-          <VisitCard key={v.id} v={v} busyId={busyId} onDone={onDone} onSkip={onSkip} />
+          <VisitCard key={v.id} v={v} busyId={busyId} onStart={onStart} onDone={onDone} onSkip={onSkip} />
         ))}
       </div>
     </section>
@@ -259,7 +298,7 @@ export default function MyRoutePage() {
       let q = supabase
         .from("lawn_visits")
         .select(
-          "id, job_id, due_date, status, route_order, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))"
+          "id, job_id, due_date, status, route_order, started_at, jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))"
         )
         .eq("status", "pending")
         .lte("due_date", horizonDate);
@@ -274,6 +313,41 @@ export default function MyRoutePage() {
       setVisits((rows as unknown as Visit[]) ?? []);
     })();
   }, [router]);
+
+  // PHASE 2 of the time redesign. /api/lawn/visits/[id]/start already existed
+  // and was already server-authoritative — but it was only ever called from the
+  // visit DETAIL page, and crews work from this screen. Result: of 239 visits,
+  // 6 were completed and 0 had a started_at, so not one visit in the system had
+  // a duration. This is the missing caller.
+  //
+  // Idempotent server-side: starting an already-started visit returns the
+  // existing started_at rather than overwriting it, so a double-tap is safe.
+  async function markStart(visitId: string) {
+    setBusyId(visitId);
+    let res: Response;
+    try {
+      res = await fetch(`/api/lawn/visits/${visitId}/start`, { method: "POST" });
+    } catch {
+      setBusyId(null);
+      toast.error("Failed: network error");
+      return;
+    }
+    setBusyId(null);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      toast.error(`Failed: ${data.error ?? res.statusText}`);
+      return;
+    }
+    const data = (await res.json().catch(() => ({}))) as { started_at?: string };
+    setVisits((prev) =>
+      prev.map((v) =>
+        v.id === visitId
+          ? { ...v, started_at: data.started_at ?? new Date().toISOString() }
+          : v
+      )
+    );
+    toast.success("Started");
+  }
 
   async function markDone(visitId: string) {
     setBusyId(visitId);
@@ -419,6 +493,7 @@ export default function MyRoutePage() {
             list={overdue}
             icon={<CalendarDays className="w-3.5 h-3.5" />}
             busyId={busyId}
+            onStart={markStart}
             onDone={markDone}
             onSkip={skipVisit}
           />
@@ -427,6 +502,7 @@ export default function MyRoutePage() {
             list={todays}
             icon={<CalendarDays className="w-3.5 h-3.5" />}
             busyId={busyId}
+            onStart={markStart}
             onDone={markDone}
             onSkip={skipVisit}
           />
@@ -435,6 +511,7 @@ export default function MyRoutePage() {
             list={upcoming}
             icon={<CalendarDays className="w-3.5 h-3.5" />}
             busyId={busyId}
+            onStart={markStart}
             onDone={markDone}
             onSkip={skipVisit}
           />
