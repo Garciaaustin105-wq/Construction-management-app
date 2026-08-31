@@ -12,6 +12,7 @@ import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
 import FieldReadinessBanner from "@/components/FieldReadinessBanner";
 import { getMe } from "@/lib/tenant";
+import { todayInZone, formatDueStamp } from "@/lib/orgDate";
 import Link from "next/link";
 import {
   Plus,
@@ -66,11 +67,12 @@ const STATUS_CHIP: Record<string, string> = {
   paused: "bg-blue-100 text-blue-700",
 };
 
-function dueLabel(dueDate: string): string {
-  const today = new Date().toISOString().slice(0, 10);
+// Bucketed against the ORG's today (passed in) — the old UTC-day version
+// flipped "Today" and "Overdue" every evening from 20:00 Eastern.
+function dueLabel(dueDate: string, today: string): string {
   if (dueDate < today) return "Overdue";
   if (dueDate === today) return "Today";
-  return new Date(`${dueDate}T00:00:00.000Z`).toLocaleDateString();
+  return formatDueStamp(dueDate);
 }
 
 // Overline for a Quick Actions group — matches /dashboard's sidebar.
@@ -114,7 +116,20 @@ export default async function LawnPage() {
   const officeLike = isOfficeLike(role);
   const officeOrPm = OFFICE_OR_PM.has(role as never);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // "Today" where the BUSINESS is, not where the Vercel server is (UTC): the
+  // old toISOString() day shifted every evening from 20:00 Eastern, labelling
+  // today's visits "Overdue" and tomorrow's "Today". One small read before the
+  // parallel block because the visits query below filters on the result.
+  let orgTz: string | null = null;
+  if (me.orgId) {
+    const { data: orgTzRow } = await supabase
+      .from("organizations")
+      .select("timezone")
+      .eq("id", me.orgId)
+      .maybeSingle();
+    orgTz = (orgTzRow as { timezone: string | null } | null)?.timezone ?? null;
+  }
+  const today = todayInZone(orgTz);
 
   // Today's Route + recurring schedules + the office notifications feed. RLS
   // scopes all of them to this user's org. The notifications query mirrors
@@ -226,8 +241,10 @@ export default async function LawnPage() {
                     icon={CalendarDays}
                   />
                 </Link>
+                {/* Overdue is its own backlog page now (/lawn/overdue — the
+                    daily digest links there too), not a calendar filter. */}
                 <Link
-                  href="/lawn/calendar"
+                  href="/lawn/overdue"
                   className="block rounded-lg hover:shadow-md transition-shadow"
                 >
                   <KpiTile
@@ -298,7 +315,7 @@ export default async function LawnPage() {
                               STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
                             } whitespace-nowrap`}
                           >
-                            {dueLabel(v.due_date)}
+                            {dueLabel(v.due_date, today)}
                           </span>
                         </Link>
                       );

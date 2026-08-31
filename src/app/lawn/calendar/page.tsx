@@ -11,6 +11,7 @@ import CalendarFeedCard from "@/app/calendar/CalendarFeedCard";
 import { startOfWeek, addDays, toISODate } from "@/lib/weekUtils";
 import { OFFICE_LIKE } from "@/lib/roles";
 import { getLawnWeatherBoard } from "@/lib/lawnWeather";
+import { todayInZone } from "@/lib/orgDate";
 
 type CalVisit = {
   id: string;
@@ -129,7 +130,20 @@ export default async function LawnCalendarPage({
   const view =
     sp.view === "week" || sp.view === "day" || sp.view === "agenda" ? sp.view : "month";
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // "Today" in the ORG's zone — the UTC-day version shifted the calendar a day
+  // ahead every evening from 20:00 Eastern (today's visits highlighted as
+  // tomorrow's, tomorrow's as today's). The default day view + agenda window
+  // below anchor on this, so it must be right before the query block.
+  let orgTz: string | null = null;
+  if (me.orgId) {
+    const { data: orgTzRow } = await supabase
+      .from("organizations")
+      .select("timezone")
+      .eq("id", me.orgId)
+      .maybeSingle();
+    orgTz = (orgTzRow as { timezone: string | null } | null)?.timezone ?? null;
+  }
+  const todayIso = todayInZone(orgTz);
 
   // Fetch visits and crews
   let gte: string;
