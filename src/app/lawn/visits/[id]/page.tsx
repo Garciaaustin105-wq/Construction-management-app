@@ -139,7 +139,8 @@ export default function VisitDetailPage({
   const router = useRouter();
   // Resolved once here rather than inline in the JSX, so an unknown value falls
   // through to the defaults instead of producing a dead link.
-  const backTarget = BACK_TARGETS[useSearchParams().get("from") ?? ""] ?? null;
+  const fromParam = useSearchParams().get("from") ?? "";
+  const backTarget = BACK_TARGETS[fromParam] ?? null;
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   // Which button opened the picker. A ref, not state: it is read once in the
@@ -1063,7 +1064,12 @@ export default function VisitDetailPage({
 
       {isOffice && (
         <Link
-          href={`/lawn/schedules/${visit.recurring_schedule_id}`}
+          // Forward the origin so the schedule's own back link returns to the
+          // list the user actually started in, rather than dumping them on
+          // Jobs two hops from where they began.
+          href={`/lawn/schedules/${visit.recurring_schedule_id}${
+            fromParam ? `?from=${fromParam}` : ""
+          }`}
           className="block text-center text-sm text-blue-600 font-medium py-2"
         >
           Open schedule →
