@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { signedThumbnail } from "@/lib/storage";
-import PhotoDownloadButton from "@/components/PhotoDownloadButton";
-import { ImageOff, Camera } from "lucide-react";
+import PhotoLightbox from "@/components/PhotoLightbox";
+import { Camera } from "lucide-react";
 
 // Lawn photo gallery, grouped the way the work actually happened: by property,
 // then by visit, then before/after side by side.
@@ -58,39 +58,11 @@ function groupByJobThenVisit(photos: GalleryPhoto[]) {
   return jobs;
 }
 
-function Thumb({
-  photo,
-  url,
-}: {
-  photo: GalleryPhoto;
-  url: string | undefined;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
-        {/* Plain <img>, not next/image: these are signed URLs from a private
-            bucket, so the optimizer cannot fetch them and the host cannot be
-            allow-listed. Same reasoning as SignedPhotoGrid. */}
-        {url ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img src={url} alt={photo.caption ?? "Lawn photo"} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-300">
-            <ImageOff className="w-5 h-5" />
-          </div>
-        )}
-      </div>
-      {photo.caption && (
-        <p className="text-[11px] text-gray-500 truncate">{photo.caption}</p>
-      )}
-      <PhotoDownloadButton
-        storagePath={photo.storage_path}
-        className="text-[11px] text-blue-700 hover:underline"
-        label="Download"
-      />
-    </div>
-  );
-}
+// No bespoke thumbnail component here. PhotoLightbox already renders a grid,
+// mints a full-resolution signed URL on click, and carries PhotoDownloadButton
+// inside the modal — so one instance per column gives click-to-enlarge and
+// download without duplicating any of it. The pre-minted thumbUrls below are
+// handed in so N columns do not each re-mint the same images.
 
 export default function LawnPhotoGallery({ photos }: { photos: GalleryPhoto[] }) {
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -180,11 +152,15 @@ export default function LawnPhotoGallery({ photos }: { photos: GalleryPhoto[] })
                                 none taken
                               </p>
                             ) : (
-                              <div className="grid grid-cols-2 gap-2">
-                                {list.map((p) => (
-                                  <Thumb key={p.id} photo={p} url={urls[p.id]} />
-                                ))}
-                              </div>
+                              <PhotoLightbox
+                                photos={list.map((p) => ({
+                                  id: p.id,
+                                  storage_path: p.storage_path,
+                                  caption: p.caption,
+                                  created_at: p.created_at,
+                                }))}
+                                thumbUrls={urls}
+                              />
                             )}
                           </div>
                         );
@@ -199,11 +175,15 @@ export default function LawnPhotoGallery({ photos }: { photos: GalleryPhoto[] })
                           other photos
                         </p>
                       )}
-                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                        {g.other.map((p) => (
-                          <Thumb key={p.id} photo={p} url={urls[p.id]} />
-                        ))}
-                      </div>
+                      <PhotoLightbox
+                        photos={g.other.map((p) => ({
+                          id: p.id,
+                          storage_path: p.storage_path,
+                          caption: p.caption,
+                          created_at: p.created_at,
+                        }))}
+                        thumbUrls={urls}
+                      />
                     </div>
                   )}
                 </div>

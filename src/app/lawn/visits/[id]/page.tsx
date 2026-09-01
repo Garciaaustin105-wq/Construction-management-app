@@ -16,7 +16,11 @@ import {
   validTransitions,
   type LawnVisitStatus,
 } from "@/lib/lifecycles/lawn-visit";
-import SignedPhotoGrid from "@/components/SignedPhotoGrid";
+// PhotoLightbox rather than SignedPhotoGrid: the grid renders thumbnails with
+// no click handler at all, so a crew member could upload a photo and never see
+// it larger than 240px — no way to check the shot was any good. The lightbox
+// renders the same grid, opens full resolution on tap, and carries a download.
+import PhotoLightbox from "@/components/PhotoLightbox";
 import SendVisitPhotos from "@/components/SendVisitPhotos";
 import dynamic from "next/dynamic";
 import { useToast } from "@/components/Toast";
@@ -100,6 +104,7 @@ type Photo = {
   id: string;
   storage_path: string;
   caption: string | null;
+  created_at: string;
   phase: "before" | "after" | null;
 };
 
@@ -189,7 +194,7 @@ export default function VisitDetailPage({
       await Promise.all([
       supabase
         .from("photos")
-        .select("id, storage_path, caption, phase")
+        .select("id, storage_path, caption, created_at, phase")
         .eq("visit_id", id)
         .order("created_at", { ascending: false }),
       supabase
@@ -995,7 +1000,17 @@ export default function VisitDetailPage({
         )}
         {photos.length > 0 ? (
           <>
-            <SignedPhotoGrid photos={photos} />
+            <PhotoLightbox
+              photos={photos.map((p) => ({
+                id: p.id,
+                storage_path: p.storage_path,
+                caption: p.caption,
+                // The grid never needed this; the lightbox shows when the shot
+                // was taken, which is what a dispute actually turns on.
+                created_at: p.created_at,
+              }))}
+              canDelete
+            />
             {/* Send the visit's photo-portal link + a short note to the
                 customer. Requires at least one photo (enforced here by only
                 rendering when photos.length > 0, and again server-side). */}
