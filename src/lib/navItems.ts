@@ -61,6 +61,7 @@ import {
   ShieldCheck,
   LocateFixed,
   type LucideIcon,
+  CheckCircle2,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
@@ -138,6 +139,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // which is what they actually need on a phone at a property. The gallery
       // links to the uploader, so neither audience loses the other's page.
       { href: "/lawn/photos", label: "Photos", Icon: Camera },
+      // Completed sits beside Overdue on purpose: work that got done and work
+      // that did not are the two questions the office asks about the past, and
+      // neither had a home before today.
+      { href: "/lawn/completed", label: "Completed", Icon: CheckCircle2 },
       { href: "/crew/time", label: "Clock in/out", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
       { href: "/admin/leads", label: "Leads", Icon: UserPlus },
@@ -445,6 +450,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/crew/time",
             "/lawn/crews",
             "/lawn/photos",
+            "/lawn/completed",
             "/crew/photo",
             "/lawn/insights",
             "/lawn/ai",
