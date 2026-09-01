@@ -53,6 +53,7 @@ import {
   Star,
   ClipboardCheck,
   AlarmClock,
+  MapPin,
   FlaskConical,
   Package,
   Sparkles,
@@ -135,6 +136,13 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     const items: NavItem[] = [
       { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
       { href: "/lawn/jobs", label: "Jobs", Icon: CheckSquare },
+      // Property hub (/lawn/customers): one customer's whole history — visits,
+      // photos, schedules, details — master–detail, no page navigation. Sits
+      // next to Jobs, which lists each property's standing schedule; this is
+      // the history those schedules produced. Read-only; editing links out to
+      // /admin/customers. Office/admin only — matches the page gate (FIELD or
+      // MANAGEMENT), this fallthrough block is office/admin.
+      { href: "/lawn/customers", label: "Properties", Icon: MapPin },
       // Office/admin get the GALLERY; field roles keep the uploader below,
       // which is what they actually need on a phone at a property. The gallery
       // links to the uploader, so neither audience loses the other's page.
@@ -448,6 +456,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/calendar",
             "/admin/crew-members",
             "/crew/time",
+            "/lawn/customers",
             "/lawn/crews",
             "/lawn/photos",
             "/lawn/completed",
