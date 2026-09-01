@@ -96,7 +96,12 @@ type Visit = {
   } | null;
 };
 
-type Photo = { id: string; storage_path: string; caption: string | null };
+type Photo = {
+  id: string;
+  storage_path: string;
+  caption: string | null;
+  phase: "before" | "after" | null;
+};
 
 
 
@@ -184,7 +189,7 @@ export default function VisitDetailPage({
       await Promise.all([
       supabase
         .from("photos")
-        .select("id, storage_path, caption")
+        .select("id, storage_path, caption, phase")
         .eq("visit_id", id)
         .order("created_at", { ascending: false }),
       supabase
@@ -954,6 +959,39 @@ export default function VisitDetailPage({
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Uploading…
           </div>
+        )}
+
+        {/* There is no Save button because there is nothing to save — a photo
+            is stored the moment it is picked. Without saying so, the "Send to
+            customer" button below reads as the step that commits it, and a crew
+            member reasonably wonders whether their photos are safe. State the
+            count and the tags: it doubles as confirmation the Before/After
+            button did what they expected. */}
+        {!uploading && photos.length > 0 && (
+          <p className="text-xs text-gray-500">
+            Saved automatically —{" "}
+            <span className="font-medium text-gray-700">
+              {photos.length} photo{photos.length === 1 ? "" : "s"}
+            </span>{" "}
+            on this visit
+            {(() => {
+              const b = photos.filter((p) => p.phase === "before").length;
+              const a = photos.filter((p) => p.phase === "after").length;
+              const o = photos.filter((p) => p.phase === null).length;
+              const parts = [
+                b ? `${b} before` : null,
+                a ? `${a} after` : null,
+                o ? `${o} untagged` : null,
+              ].filter(Boolean);
+              return parts.length ? ` · ${parts.join(", ")}` : "";
+            })()}
+            . Sending is optional.
+          </p>
+        )}
+        {!uploading && photos.length === 0 && (
+          <p className="text-xs text-gray-500">
+            Photos save as soon as you add them — there is no separate save step.
+          </p>
         )}
         {photos.length > 0 ? (
           <>
