@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Plus, Eye, Pencil, UserPlus } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Eye, Pencil, UserPlus, Mail } from "lucide-react";
 import Link from "next/link";
 import { useToast } from "@/components/Toast";
 import EstimateLineItemEditor, {
@@ -25,6 +25,7 @@ import LawnMeasurementMap from "@/components/LawnMeasurementMap";
 import { isLawn } from "@/lib/variant";
 import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
+import EmailPreviewModal from "@/components/EmailPreviewModal";
 import ProposalOfficePanel from "./ProposalOfficePanel";
 import CustomerEstimateActions from "./CustomerEstimateActions";
 import EstimateSendHistory from "@/components/EstimateSendHistory";
@@ -155,6 +156,10 @@ export default function EstimateDetailPage({
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Email preview opened from the EDIT tab, so the office can check what the
+  // customer will receive without switching to Preview & Send and back.
+  const [editPreviewOpen, setEditPreviewOpen] = useState(false);
+  const [preparingPreview, setPreparingPreview] = useState(false);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   // Editable customer picker (office) — lets the office attach or change the
   // customer on an existing estimate, including adding a brand-new customer
@@ -1238,18 +1243,42 @@ export default function EstimateDetailPage({
             )}
 
             {editable && (
-              <button
-                onClick={() => saveEstimate()}
-                disabled={saving}
-                className="w-full bg-white border border-gray-300 text-gray-900 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {saving ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Plus className="w-4 h-4" />
-                )}
-                {saving ? "Saving..." : "Save changes"}
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={() => saveEstimate()}
+                  disabled={saving}
+                  className="w-full bg-white border border-gray-300 text-gray-900 py-3 rounded-lg font-semibold text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {saving ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  {saving ? "Saving..." : "Save changes"}
+                </button>
+
+                {/* Preview WITHOUT leaving the edit tab. The preview is rendered
+                    server-side from the SAVED estimate, so an unsaved edit would
+                    show stale content — silently saving first is what makes the
+                    preview honest rather than merely convenient. */}
+                <button
+                  onClick={async () => {
+                    setPreparingPreview(true);
+                    const ok = await saveEstimate({ silent: true });
+                    setPreparingPreview(false);
+                    if (ok) setEditPreviewOpen(true);
+                  }}
+                  disabled={saving || preparingPreview}
+                  className="w-full bg-white border border-gray-300 text-gray-700 py-2.5 rounded-lg font-medium text-sm active:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {preparingPreview ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Mail className="w-4 h-4" />
+                  )}
+                  {preparingPreview ? "Preparing preview…" : "Preview customer email"}
+                </button>
+              </div>
             )}
 
             {!editable && (
@@ -1330,6 +1359,20 @@ export default function EstimateDetailPage({
                 }),
               }))}
               preview={estimate.status === "draft"}
+            />
+
+            {/* Preview-only: canSend=false, so this cannot email anybody.
+                Sending stays on the Preview & Send tab where the channel and
+                the personal note are chosen deliberately. */}
+            <EmailPreviewModal
+              open={editPreviewOpen}
+              onClose={() => setEditPreviewOpen(false)}
+              kind="estimate"
+              recordId={estimate.id}
+              message={null}
+              sendLabel="Send"
+              canSend={false}
+              onConfirm={async () => true}
             />
 
             <EstimateOfficeActions
