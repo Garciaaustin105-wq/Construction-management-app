@@ -74,7 +74,10 @@ export default function PhotoLightbox({
         const u = thumbUrls[p.id];
         if (u) map[p.id] = u;
       }
-      setUrls(map);
+      // Deferred: this branch is pure derivation from the thumbUrls prop, so
+      // it can safely land one microtask later — the lightbox falls back to a
+      // placeholder for that tick, which is invisible.
+      queueMicrotask(() => setUrls(map));
       return;
     }
     let cancelled = false;

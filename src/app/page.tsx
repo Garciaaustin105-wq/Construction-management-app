@@ -214,10 +214,10 @@ function LawnMarketing() {
               Bid it off the actual property, not a guess
             </h2>
             <p className="mt-2 text-gray-700 max-w-2xl">
-              Draw the property's boundary right on a map and get accurate
+              Draw the property&apos;s boundary right on a map and get accurate
               square footage in seconds — no site visit just to measure, no
               eyeballing it from the curb. That measurement attaches straight
-              to the estimate, so you're pricing the job off real numbers
+              to the estimate, so you&apos;re pricing the job off real numbers
               before you ever set a mower on the lawn.
             </p>
             <ul className="mt-4 space-y-2 text-sm text-gray-700">

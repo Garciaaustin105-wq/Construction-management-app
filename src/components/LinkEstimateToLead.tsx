@@ -7,6 +7,16 @@ import { useToast } from '@/components/Toast';
 import { linkEstimateToLead, type Lead } from '@/lib/leads';
 import { Loader2, FileText, ChevronDown, X } from 'lucide-react';
 
+/** One row of the estimate picker. Matches the select in fetchEstimates —
+ *  both queries share it, so a column added to one and not the other is a
+ *  compile error rather than an undefined at runtime. */
+type EstimateOption = {
+  id: string;
+  estimate_number: string | null;
+  title: string | null;
+  status: string;
+};
+
 export default function LinkEstimateToLead({
   lead,
   onLinked,
@@ -20,9 +30,7 @@ export default function LinkEstimateToLead({
   const [linkedId, setLinkedId] = useState<string | null>(lead.estimate_id);
   const [showPicker, setShowPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [estimates, setEstimates] = useState<
-    Array<{ id: string; estimate_number: string | null; title: string | null; status: string }> | null
-  >(null);
+  const [estimates, setEstimates] = useState<EstimateOption[] | null>(null);
   const [pickedId, setPickedId] = useState('');
 
   const field =
@@ -33,7 +41,10 @@ export default function LinkEstimateToLead({
 
     const fetchEstimates = async () => {
       try {
-        let data: any[] = [];
+        // The select below is the shape; naming it means a column added to
+        // one query and not the other becomes a type error rather than an
+        // undefined at runtime.
+        let data: EstimateOption[] = [];
 
         if (lead.converted_customer_id) {
           const { data: custData, error: custErr } = await supabase
