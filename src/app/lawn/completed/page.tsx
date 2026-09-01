@@ -45,7 +45,7 @@ export default async function LawnCompletedPage({
   let visitQ = supabase
     .from("lawn_visits")
     .select(
-      "id, job_id, due_date, completed_at, started_at, on_site_first_at, on_site_last_at, on_site_user_ids, jobs(name, address, customers(name))"
+      "id, job_id, due_date, completed_at, started_at, on_site_first_at, on_site_last_at, on_site_user_ids, notes, recurring_schedules(service_type), jobs(name, address, customers(name))"
     )
     .eq("status", "done")
     .order("completed_at", { ascending: false, nullsFirst: false })
@@ -66,6 +66,8 @@ export default async function LawnCompletedPage({
     on_site_first_at: string | null;
     on_site_last_at: string | null;
     on_site_user_ids: string[] | null;
+    notes: string | null;
+    recurring_schedules: { service_type: string | null } | null;
     jobs: {
       name: string | null;
       address: string | null;
@@ -127,6 +129,8 @@ export default async function LawnCompletedPage({
             : null,
       minutesSource: measuredMs !== null ? "measured" : tappedMs !== null ? "tapped" : null,
       phones: r.on_site_user_ids?.length ?? 0,
+      notes: r.notes,
+      serviceType: r.recurring_schedules?.service_type ?? null,
       photos: (byVisit.get(r.id) ?? []).map((p) => ({
         id: p.id,
         storage_path: p.storage_path,

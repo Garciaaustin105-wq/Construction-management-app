@@ -31,6 +31,8 @@ export type CompletedVisit = {
    *  such, because one is observed and the other is self-reported. */
   minutesSource: "measured" | "tapped" | null;
   phones: number;
+  notes: string | null;
+  serviceType: string | null;
   photos: CompletedPhoto[];
 };
 
@@ -100,7 +102,25 @@ function Row({ visit }: { visit: CompletedVisit }) {
 
       {open && (
         <div className="px-4 pb-4 pl-11 space-y-3">
-          {visit.address && <p className="text-xs text-gray-500">{visit.address}</p>}
+          {/* Everything the office would otherwise open the visit page for.
+              The link below stays as the escape hatch, but browsing a list of
+              finished work should not cost two page loads and a lost place. */}
+          <div className="space-y-1">
+            {visit.address && <p className="text-xs text-gray-500">{visit.address}</p>}
+            {visit.serviceType && (
+              <p className="text-xs text-gray-500">Service: {visit.serviceType}</p>
+            )}
+            {visit.completedAt && (
+              <p className="text-xs text-gray-500">
+                Marked done {new Date(visit.completedAt).toLocaleString()}
+              </p>
+            )}
+            {visit.notes && (
+              <p className="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre-wrap">
+                {visit.notes}
+              </p>
+            )}
+          </div>
 
           {visit.photos.length === 0 ? (
             <p className="text-xs text-gray-400 italic">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { OFFICE_OR_PM } from "@/lib/roles";
@@ -82,11 +82,22 @@ const STATUS_CHIP: Record<string, string> = {
   paused: "bg-blue-100 text-blue-700",
 };
 
+// Where "back" goes from a schedule, keyed by ?from=. Mirrors the visit page's
+// table rather than inventing a second convention.
+const SCHEDULE_BACK: Record<string, { href: string; label: string }> = {
+  completed: { href: "/lawn/completed", label: "Completed" },
+  overdue: { href: "/lawn/overdue", label: "Overdue" },
+  photos: { href: "/lawn/photos", label: "Photos" },
+  calendar: { href: "/lawn/calendar", label: "Calendar" },
+  jobs: { href: "/lawn/jobs", label: "Jobs" },
+};
+
 export default function ScheduleDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const fromParam = useSearchParams().get("from") ?? "";
   const { id } = use(params);
   const router = useRouter();
   const toast = useToast();
@@ -519,7 +530,15 @@ export default function ScheduleDetailPage({
   });
 
   return (
-    <PageContainer title={jobName} backHref="/lawn/jobs" backLabel="Jobs" maxWidth="list">
+    <PageContainer
+      title={jobName}
+      // Was hardcoded to Jobs, which broke the chain a second time: a visit
+      // opened from Completed sent you here, and here sent you to Jobs. Same
+      // ?from= convention as the visit page; unknown values fall back to Jobs.
+      backHref={SCHEDULE_BACK[fromParam]?.href ?? "/lawn/jobs"}
+      backLabel={SCHEDULE_BACK[fromParam]?.label ?? "Jobs"}
+      maxWidth="list"
+    >
       <div className="bg-white rounded-lg p-4 shadow-sm space-y-2">
         <div className="flex justify-between items-start">
           <div className="min-w-0">
