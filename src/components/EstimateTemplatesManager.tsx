@@ -197,9 +197,12 @@ export default function EstimateTemplatesManager({
       await refresh();
       closeForm();
       toast.success("Template saved");
-    } catch (e: any) {
-      setError(e.message ?? "Error saving template");
-      toast.error(e.message ?? "Error saving template");
+    } catch (e) {
+      // `catch (e: any)` silently allows e.anything. Narrowing to Error keeps
+      // the same message while making a typo a compile error.
+      const msg = e instanceof Error ? e.message : "Error saving template";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -226,8 +229,8 @@ export default function EstimateTemplatesManager({
       if (delTplErr) throw delTplErr;
       await refresh();
       toast.success(`Template "${t.name}" deleted`);
-    } catch (e: any) {
-      toast.error(e.message ?? "Error deleting template");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Error deleting template");
     } finally {
       setBusyId(null);
     }

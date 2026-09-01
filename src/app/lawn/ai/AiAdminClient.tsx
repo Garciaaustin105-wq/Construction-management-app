@@ -91,7 +91,12 @@ export default function AiAdminClient({
 
   useEffect(() => {
     const ac = new AbortController();
-    void loadQuota(ac.signal);
+    // loadQuota setStates before its first await, so calling it straight from
+    // the effect body is a synchronous setState during commit. The microtask
+    // defers that by one tick; the abort controller still cancels it.
+    queueMicrotask(() => {
+      if (!ac.signal.aborted) void loadQuota(ac.signal);
+    });
     return () => ac.abort();
   }, [loadQuota]);
 

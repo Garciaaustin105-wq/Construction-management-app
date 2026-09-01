@@ -66,13 +66,21 @@ export default function EmailPreviewModal({
 
   useEffect(() => {
     if (!open) {
-      // Reset on close so a reopen doesn't flash the previous email.
-      setSubject("");
-      setHtml("");
+      // Reset on close so a reopen doesn't flash the previous email. Deferred:
+      // the modal is already closed at this point, so nothing renders the
+      // cleared values this tick and the visible result is unchanged.
+      queueMicrotask(() => {
+        setSubject("");
+        setHtml("");
+      });
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    // Same deferral as the close path above. A microtask is imperceptible to
+    // the spinner but keeps this out of the commit phase.
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true);
+    });
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       try {

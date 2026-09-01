@@ -139,10 +139,17 @@ export default function EmailPreviewClient({
       debouncedFetchRef.current = null;
     }
     if (!selectedId) return;
-    setDataMode("sample");
-    setRecordId("");
-    setRecords([]);
-    fetchPreview(selectedId, { applyRaw: true });
+    // Deferred to a microtask rather than run in the effect body. These are a
+    // reset-then-load on a changed selection, and running them synchronously
+    // makes React commit, re-render, and commit again for a single user action
+    // — the cascade react-hooks/set-state-in-effect exists to catch. The work
+    // is identical, it just lands after the current commit.
+    queueMicrotask(() => {
+      setDataMode("sample");
+      setRecordId("");
+      setRecords([]);
+      fetchPreview(selectedId, { applyRaw: true });
+    });
   }, [selectedId]);
 
   const kind = KINDS.find((k) => k.id === selectedId) ?? null;
