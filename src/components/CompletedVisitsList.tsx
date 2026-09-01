@@ -138,7 +138,7 @@ function Row({ visit }: { visit: CompletedVisit }) {
           )}
 
           <Link
-            href={`/lawn/visits/${visit.id}`}
+            href={`/lawn/visits/${visit.id}?from=completed`}
             className="inline-block text-xs text-blue-700 hover:underline"
           >
             Open the full visit →

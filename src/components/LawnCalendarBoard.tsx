@@ -1046,7 +1046,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                   {dayVisits.map((v) => (
                     <Link
                       key={v.id}
-                      href={`/lawn/visits/${v.id}`}
+                      href={`/lawn/visits/${v.id}?from=calendar`}
                       className="flex items-center gap-2 px-3 py-2 active:bg-gray-50 hover:bg-gray-50"
                     >
                       <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colorFor(v).dot}`} />

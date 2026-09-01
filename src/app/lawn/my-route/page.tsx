@@ -124,7 +124,7 @@ function VisitCard({
   return (
     <div className="bg-white rounded-lg p-3 shadow-sm space-y-2">
       <div className="flex justify-between items-start gap-2">
-        <Link href={`/lawn/visits/${v.id}`} className="min-w-0 flex-1 active:opacity-70">
+        <Link href={`/lawn/visits/${v.id}?from=route`} className="min-w-0 flex-1 active:opacity-70">
           <p className="font-semibold text-gray-900 truncate">{jobName}</p>
           <p className="text-xs text-gray-500 truncate">
             {custName ? `${custName} · ` : ""}
@@ -208,7 +208,7 @@ function VisitCard({
             </button>
           )}
           <Link
-            href={`/lawn/visits/${v.id}`}
+            href={`/lawn/visits/${v.id}?from=route`}
             className="bg-white border border-gray-300 text-gray-900 py-2 px-3 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-1.5"
           >
             <Camera className="w-4 h-4" />

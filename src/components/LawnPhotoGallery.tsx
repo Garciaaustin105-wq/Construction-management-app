@@ -125,7 +125,7 @@ export default function LawnPhotoGallery({ photos }: { photos: GalleryPhoto[] })
                     </p>
                     {g.visitId && (
                       <Link
-                        href={`/lawn/visits/${g.visitId}`}
+                        href={`/lawn/visits/${g.visitId}?from=photos`}
                         className="text-xs text-blue-700 hover:underline shrink-0"
                       >
                         Open visit
