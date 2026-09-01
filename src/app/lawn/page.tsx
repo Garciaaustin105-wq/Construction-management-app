@@ -12,7 +12,8 @@ import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
 import FieldReadinessBanner from "@/components/FieldReadinessBanner";
 import { getMe } from "@/lib/tenant";
-import { todayInZone, formatDueStamp } from "@/lib/orgDate";
+import { todayInZone } from "@/lib/orgDate";
+import { TodayVisitPeekList } from "@/components/VisitPeekModal";
 import Link from "next/link";
 import {
   Plus,
@@ -59,21 +60,6 @@ type ScheduleRow = {
   active: boolean;
   jobs: { name: string; customers: { name: string | null } | null } | null;
 };
-
-const STATUS_CHIP: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-800",
-  done: "bg-green-100 text-green-800",
-  skipped: "bg-gray-100 text-gray-500",
-  paused: "bg-blue-100 text-blue-700",
-};
-
-// Bucketed against the ORG's today (passed in) — the old UTC-day version
-// flipped "Today" and "Overdue" every evening from 20:00 Eastern.
-function dueLabel(dueDate: string, today: string): string {
-  if (dueDate < today) return "Overdue";
-  if (dueDate === today) return "Today";
-  return formatDueStamp(dueDate);
-}
 
 // Overline for a Quick Actions group — matches /dashboard's sidebar.
 const GROUP_LABEL =
@@ -305,36 +291,25 @@ export default async function LawnPage() {
                     }
                   />
                 ) : (
-                  <div className="divide-y divide-gray-100">
-                    {todayVisits.map((v) => {
-                      const jobName = v.jobs?.name ?? "—";
-                      const custName = v.jobs?.customers?.name ?? null;
-                      return (
-                        <Link
-                          key={v.id}
-                          href={`/lawn/visits/${v.id}?from=home`}
-                          className="flex justify-between items-start gap-2 py-3 active:bg-gray-50"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-gray-900 truncate">
-                              {jobName}
-                            </p>
-                            <p className="text-xs text-gray-500 truncate">
-                              {custName ? `${custName} · ` : ""}
-                              {v.jobs?.address ?? "—"}
-                            </p>
-                          </div>
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-1 rounded ${
-                              STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
-                            } whitespace-nowrap`}
-                          >
-                            {dueLabel(v.due_date, today)}
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </div>
+                  // Rows open the shared peek modal instead of navigating to
+                  // /lawn/visits/[id] — the data is already on the page, so a
+                  // navigation was a Vercel invocation to re-read it. The visit
+                  // page stays reachable from inside the modal for editing.
+                  <TodayVisitPeekList
+                    today={today}
+                    visits={todayVisits.map((v) => ({
+                      id: v.id,
+                      dueDate: v.due_date,
+                      status: v.status,
+                      jobName: v.jobs?.name ?? "—",
+                      customerName: v.jobs?.customers?.name ?? null,
+                      address: v.jobs?.address ?? null,
+                      serviceType: null,
+                      crewName: null,
+                      windowLabel: null,
+                      notes: null,
+                    }))}
+                  />
                 )}
               </Card>
 
