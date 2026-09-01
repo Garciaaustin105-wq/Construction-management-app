@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import PageContainer from "@/components/PageContainer";
@@ -100,6 +100,26 @@ type Visit = {
   } | null;
 };
 
+// Where "back" goes, keyed by the ?from= a caller passes.
+//
+// The back link used to be hardcoded: office → the visit's schedule, crew →
+// My Route, regardless of where you actually came from. Opening a visit from
+// Completed therefore dropped you on the schedule, then Jobs, and there was no
+// route back to the list you started in. Seven different pages link here, so
+// every one of them had the same dead end.
+//
+// A query param rather than router.back(): it survives a refresh, a shared
+// link, and a customer-portal round trip, and it keeps the label honest —
+// "Completed" reads better than a browser arrow that might go anywhere.
+const BACK_TARGETS: Record<string, { href: string; label: string }> = {
+  completed: { href: "/lawn/completed", label: "Completed" },
+  overdue: { href: "/lawn/overdue", label: "Overdue" },
+  photos: { href: "/lawn/photos", label: "Photos" },
+  calendar: { href: "/lawn/calendar", label: "Calendar" },
+  route: { href: "/lawn/my-route", label: "Route" },
+  home: { href: "/lawn", label: "Home" },
+};
+
 type Photo = {
   id: string;
   storage_path: string;
@@ -117,6 +137,9 @@ export default function VisitDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  // Resolved once here rather than inline in the JSX, so an unknown value falls
+  // through to the defaults instead of producing a dead link.
+  const backTarget = BACK_TARGETS[useSearchParams().get("from") ?? ""] ?? null;
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   // Which button opened the picker. A ref, not state: it is read once in the
@@ -623,7 +646,17 @@ export default function VisitDetailPage({
   const canReopen = isOffice && nextStatuses.includes("pending");
 
   return (
-    <PageContainer title={jobName} backHref={ isOffice ? `/lawn/schedules/${visit.recurring_schedule_id}` : "/lawn/my-route" } backLabel={isOffice ? "Schedule" : "Route"} maxWidth="list">
+    <PageContainer
+      title={jobName}
+      // An explicit ?from= wins; otherwise fall back to the old defaults so
+      // callers that have not been updated behave exactly as before.
+      backHref={
+        backTarget?.href ??
+        (isOffice ? `/lawn/schedules/${visit.recurring_schedule_id}` : "/lawn/my-route")
+      }
+      backLabel={backTarget?.label ?? (isOffice ? "Schedule" : "Route")}
+      maxWidth="list"
+    >
       <HighlightsHeader
         title={jobName}
         subtitle={custName ?? undefined}

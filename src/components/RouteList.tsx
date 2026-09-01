@@ -129,7 +129,7 @@ function StopRow({
       </span>
       <div className="min-w-0 flex-1">
         <Link
-          href={`/lawn/visits/${stop.id}`}
+          href={`/lawn/visits/${stop.id}?from=route`}
           className="text-sm font-medium text-gray-900 truncate block hover:underline"
         >
           {stop.jobName}

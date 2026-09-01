@@ -312,7 +312,7 @@ export default async function LawnPage() {
                       return (
                         <Link
                           key={v.id}
-                          href={`/lawn/visits/${v.id}`}
+                          href={`/lawn/visits/${v.id}?from=home`}
                           className="flex justify-between items-start gap-2 py-3 active:bg-gray-50"
                         >
                           <div className="min-w-0 flex-1">
