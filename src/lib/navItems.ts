@@ -134,7 +134,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     const items: NavItem[] = [
       { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
       { href: "/lawn/jobs", label: "Jobs", Icon: CheckSquare },
-      { href: "/crew/photo", label: "Photos", Icon: Camera },
+      // Office/admin get the GALLERY; field roles keep the uploader below,
+      // which is what they actually need on a phone at a property. The gallery
+      // links to the uploader, so neither audience loses the other's page.
+      { href: "/lawn/photos", label: "Photos", Icon: Camera },
       { href: "/crew/time", label: "Clock in/out", Icon: Clock },
       { href: "/admin/customers", label: "Customers", Icon: Contact },
       { href: "/admin/leads", label: "Leads", Icon: UserPlus },
@@ -441,6 +444,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/admin/crew-members",
             "/crew/time",
             "/lawn/crews",
+            "/lawn/photos",
             "/crew/photo",
             "/lawn/insights",
             "/lawn/ai",
