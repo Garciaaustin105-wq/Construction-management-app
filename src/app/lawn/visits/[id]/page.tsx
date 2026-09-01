@@ -109,6 +109,9 @@ export default function VisitDetailPage({
   const router = useRouter();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  // Which button opened the picker. A ref, not state: it is read once in the
+  // change handler and must not re-render the page between tap and capture.
+  const pendingPhase = useRef<"before" | "after" | null>(null);
 
   const [visit, setVisit] = useState<Visit | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -461,7 +464,7 @@ export default function VisitDetailPage({
     setVisit({ ...visit, crew_id: crewId || null });
   }
 
-  async function handleFiles(list: FileList | null) {
+  async function handleFiles(list: FileList | null, phase: "before" | "after" | null = null) {
     if (!list || list.length === 0 || !visit) return;
     const supabase = createClient();
     const {
@@ -495,6 +498,9 @@ export default function VisitDetailPage({
         storage_path: path,
         caption: null,
         visit_id: visit.id,
+        // Set by which button the crew pressed, never inferred. Crews upload in
+        // a batch at the end, so created_at cannot tell a before from an after.
+        phase,
       });
       if (dbErr) fail++;
       else ok++;
@@ -903,14 +909,35 @@ export default function VisitDetailPage({
       {/* Before / after photos */}
       <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
         <h2 className="text-sm font-semibold text-gray-700">Before / after photos</h2>
-        <div className="grid grid-cols-2 gap-2">
+        {/* Three buttons rather than one, because the tag has to be chosen
+            BEFORE the camera opens. Asking afterwards means asking a crew
+            member holding a trimmer to sort a batch, which is how a field app
+            ends up with no tagged photos at all. "Other" stays available for a
+            gate code or a broken sprinkler head, which is neither. */}
+        <div className="grid grid-cols-3 gap-2">
           <button
             type="button"
-            onClick={() => fileRef.current?.click()}
-            className="bg-blue-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-blue-700 flex items-center justify-center gap-2"
+            onClick={() => { pendingPhase.current = "before"; fileRef.current?.click(); }}
+            className="bg-amber-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-amber-700 flex items-center justify-center gap-1.5"
           >
             <Camera className="w-4 h-4" />
-            Take / add photos
+            Before
+          </button>
+          <button
+            type="button"
+            onClick={() => { pendingPhase.current = "after"; fileRef.current?.click(); }}
+            className="bg-green-600 text-white py-2.5 rounded-lg font-semibold text-sm active:bg-green-700 flex items-center justify-center gap-1.5"
+          >
+            <Camera className="w-4 h-4" />
+            After
+          </button>
+          <button
+            type="button"
+            onClick={() => { pendingPhase.current = null; fileRef.current?.click(); }}
+            className="bg-white border border-gray-300 text-gray-800 py-2.5 rounded-lg font-semibold text-sm active:bg-gray-50 flex items-center justify-center gap-1.5"
+          >
+            <Camera className="w-4 h-4" />
+            Other
           </button>
           <input
             ref={fileRef}
@@ -918,7 +945,7 @@ export default function VisitDetailPage({
             accept="image/*"
             multiple
             capture="environment"
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(e) => handleFiles(e.target.files, pendingPhase.current)}
             className="hidden"
           />
         </div>
