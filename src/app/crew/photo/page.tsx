@@ -8,6 +8,7 @@ import { Camera, Loader2, MapPin, AlertCircle, X, Images, Upload } from "lucide-
 import { useToast } from "@/components/Toast";
 import FieldCamera from "@/components/FieldCamera";
 import { validateUpload } from "@/lib/uploadValidate";
+import { isLawn } from "@/lib/variant";
 import { normalizeImage } from "@/lib/normalizeImage";
 import { resolveLocation, type GpsResult, type GpsStatus } from "@/lib/geo";
 import { FIELD, MANAGEMENT, type Role } from "@/lib/roles";
@@ -67,7 +68,18 @@ function PhotoUploadForm() {
         router.push("/dashboard");
         return;
       }
-      const { data } = await supabase.from("jobs").select("id, name").eq("type", "construction");
+      // BUG: this was hardcoded to type="construction", so on the lawn deploy
+      // the dropdown was ALWAYS empty — every lawn job has type "lawn". The
+      // page looked broken because it was: you could not pick anything to
+      // attach a photo to. Filter by the deploy's own variant instead.
+      //
+      // The type filter still matters: the construction org owns one lawn job,
+      // and RLS alone would let it leak into the wrong app's picker.
+      const { data } = await supabase
+        .from("jobs")
+        .select("id, name")
+        .eq("type", isLawn() ? "lawn" : "construction")
+        .order("name");
       setJobs(data ?? []);
       // Auto-grab location the moment the page opens so it's ready by the time
       // the user takes a photo (falls back to IP location if GPS is denied).
@@ -213,7 +225,20 @@ function PhotoUploadForm() {
   const doneCount = queue.filter((q) => q.status === "done").length;
 
   return (
-    <PageContainer title="Upload Photos" backHref={preselectedJob ? `/jobs/${preselectedJob}` : undefined} backLabel={ jobs.find((j) => j.id === preselectedJob)?.name ?? "Back to job" } maxWidth="list">
+    <PageContainer
+      title="Upload Photos"
+      // /jobs is proxy-blocked on the lawn deploy, so the old unconditional
+      // link sent lawn users to a redirect. Lawn jobs live at /lawn/jobs.
+      backHref={
+        preselectedJob
+          ? isLawn()
+            ? `/lawn/jobs`
+            : `/jobs/${preselectedJob}`
+          : undefined
+      }
+      backLabel={jobs.find((j) => j.id === preselectedJob)?.name ?? "Back to job"}
+      maxWidth="list"
+    >
       <form onSubmit={handleUpload} className="bg-white rounded-lg p-4 shadow-sm space-y-4">
         <label className="block">
           <span className="text-sm font-medium text-gray-700">Job</span>
