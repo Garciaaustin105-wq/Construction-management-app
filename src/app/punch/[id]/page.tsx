@@ -55,6 +55,10 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
   const [canEdit, setCanEdit] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Separate from `saving`: attaching a photo and editing the item are
+  // independent actions, and sharing one flag would grey out the status
+  // buttons for reasons the user cannot see.
+  const [attaching, setAttaching] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -176,24 +180,31 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
   }
 
   async function attach(file: File) {
-    if (!item) return;
-    const supabaseMod = await import("@/lib/supabase/client");
-    const supabase = supabaseMod.createClient();
-    const ext = file.name.split(".").pop() || "jpg";
-    const path = `${item.job_id}/${crypto.randomUUID()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from("job-photos").upload(path, file);
-    if (upErr) {
-      toast.error(`Upload failed: ${upErr.message}`);
-      return;
+    if (!item || attaching) return;
+    setAttaching(true);
+    try {
+      const supabaseMod = await import("@/lib/supabase/client");
+      const supabase = supabaseMod.createClient();
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `${item.job_id}/${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("job-photos").upload(path, file);
+      if (upErr) {
+        toast.error(`Upload failed: ${upErr.message}`);
+        return;
+      }
+      await supabase
+        .from("photos")
+        .insert({ job_id: item.job_id, storage_path: path, punch_item_id: item.id, uploaded_by: userId });
+      const { data } = await supabase.storage.from("job-photos").createSignedUrl(path, 3600);
+      if (data?.signedUrl) {
+        setPhotos((prev) => [...prev, { id: crypto.randomUUID(), storage_path: path, caption: null, url: data.signedUrl }]);
+      }
+      toast.success("Photo attached");
+    } finally {
+      // Released on every path, including the upload-failed return above, so a
+      // failure never leaves the picker permanently disabled.
+      setAttaching(false);
     }
-    await supabase
-      .from("photos")
-      .insert({ job_id: item.job_id, storage_path: path, punch_item_id: item.id, uploaded_by: userId });
-    const { data } = await supabase.storage.from("job-photos").createSignedUrl(path, 3600);
-    if (data?.signedUrl) {
-      setPhotos((prev) => [...prev, { id: crypto.randomUUID(), storage_path: path, caption: null, url: data.signedUrl }]);
-    }
-    toast.success("Photo attached");
   }
 
   if (!authorized)
@@ -406,12 +417,24 @@ function PunchItemForm({ params }: { params: Promise<{ id: string }> }) {
             <input
               type="file"
               accept="image/*"
+              disabled={attaching}
               onChange={(e) => {
                 const f = e.target.files?.[0];
+                // Clear the input before uploading. Without this a FAILED
+                // upload cannot be retried with the same photo: re-picking an
+                // identical file fires no change event, so the picker looks
+                // dead. `f` is already captured, so clearing is safe here.
+                e.target.value = "";
                 if (f) attach(f);
               }}
-              className="block w-full text-sm"
+              className="block w-full text-sm disabled:opacity-50"
             />
+            {attaching && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Uploading photo...
+              </p>
+            )}
           </div>
         )}
 
