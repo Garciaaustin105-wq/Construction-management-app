@@ -47,6 +47,7 @@ next-env.d.ts
 .cl-build/
 .fr-build/
 .st-build/
+.br-build/
 .fl-build/
 .sr-build/
 .od-build/
