@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, type CSSProperties } from "react";
+import { useMemo, useState, useEffect, useCallback, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle, CloudRain, X } from "lucide-react";
 import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
+import VisitPeekModal, { type VisitPeekVisit } from "@/components/VisitPeekModal";
 import { lateLabel } from "@/lib/orgDate";
 
 export type BoardVisit = {
@@ -157,6 +158,31 @@ const STATUS_BADGE: Record<BoardVisit["status"], string> = {
   pending: "bg-amber-100 text-amber-700",
   paused: "bg-blue-100 text-blue-700",
 };
+
+// BoardVisit -> the shared peek modal's shape. Everything comes from the row
+// the board already holds, so opening a peek fetches nothing. The crew name is
+// passed in preformatted (nameFor already resolves "Unassigned"); the window
+// reuses this file's formatWindowTime, so the HH:MM:SS formatting stays in
+// exactly one place.
+function toPeekVisit(v: BoardVisit, crewName: string): VisitPeekVisit {
+  return {
+    id: v.id,
+    dueDate: v.due_date,
+    status: v.status,
+    jobName: v.job_name,
+    customerName: v.customer_name,
+    address: v.address,
+    serviceType: v.service_type,
+    crewName,
+    windowLabel:
+      [formatWindowTime(v.scheduled_window_start), formatWindowTime(v.scheduled_window_end)]
+        .filter(Boolean)
+        .join(" – ") || null,
+    // The board's query doesn't carry visit notes; none of its surfaces showed
+    // them before, so the modal omits the line rather than widening the fetch.
+    notes: null,
+  };
+}
 
 // A day cell (month) or day×crew cell (week) that visits can be dropped onto.
 // One useDroppable call per mounted cell, at this component's own top level —
@@ -300,6 +326,17 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalVisits(visits);
   }, [visits]);
+
+  // Visit peek modal — opened from the Agenda list. Chips in Month/Week/Day
+  // keep opening the SCHEDULE editor (they are schedule-level affordances);
+  // the agenda rows are the visit-level surface here. Resolved against
+  // localVisits (not filteredVisits) so a filter change under an open modal
+  // can't blank it out.
+  const [peekVisitId, setPeekVisitId] = useState<string | null>(null);
+  const closePeek = useCallback(() => setPeekVisitId(null), []);
+  const peekVisit = peekVisitId
+    ? localVisits.find((v) => v.id === peekVisitId) ?? null
+    : null;
 
   const crewColorIdx = useMemo(() => {
     const map = new Map<string, number>();
@@ -1044,10 +1081,14 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                     </p>
                   </div>
                   {dayVisits.map((v) => (
-                    <Link
+                    <button
                       key={v.id}
-                      href={`/lawn/visits/${v.id}?from=calendar`}
-                      className="flex items-center gap-2 px-3 py-2 active:bg-gray-50 hover:bg-gray-50"
+                      type="button"
+                      // Peek, don't navigate — the row's data is already in the
+                      // board's memory. The full visit page stays reachable from
+                      // inside the modal for editing.
+                      onClick={() => setPeekVisitId(v.id)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left active:bg-gray-50 hover:bg-gray-50"
                     >
                       <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colorFor(v).dot}`} />
                       <span className="text-sm text-gray-900 truncate flex-1 min-w-0">
@@ -1060,7 +1101,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded capitalize shrink-0 ${STATUS_BADGE[v.status]}`}>
                         {v.status}
                       </span>
-                    </Link>
+                    </button>
                   ))}
                 </div>
               );
@@ -1100,6 +1141,17 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
             })()}
           </div>
         </section>
+      )}
+
+      {/* Visit peek modal — Agenda rows only. Rendered outside the view
+          conditionals so it survives an open modal across a re-render. */}
+      {peekVisit && (
+        <VisitPeekModal
+          visit={toPeekVisit(peekVisit, nameFor(peekVisit))}
+          today={todayIso}
+          from="calendar"
+          onClose={closePeek}
+        />
       )}
 
       {/* Inline schedule editor modal — item #8. Opened by clicking a chip in
