@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import AddressInput from "@/components/AddressInput";
 import { isOfficeLike, isSuperAdmin } from "@/lib/roles";
 import { generateDueDates } from "@/lib/lawnRecurrence";
+import { loadGoogleMaps } from "@/lib/googleMaps";
 
 // Dedicated lawn-job creator — lives INSIDE the Lawn tab. A lawn job is a
 // `jobs` row with type='lawn' (so every existing jobs FK — photos, invoices,
@@ -213,6 +214,42 @@ export default function NewLawnJobPage() {
     return { scheduleId: sched.id, visitCount: dueDates.length };
   }
 
+  // Resolve the property's map pin at save time.
+  //
+  // Three built features need coordinates and ALL THREE fail silently without
+  // them: route optimization has no matrix to build, the man-hours model cannot
+  // collapse clusters, and the geofence never registers an arrival. Nothing
+  // errors — they just quietly do nothing. Until now a pin only appeared if
+  // somebody happened to open the route planner and press Geocode, so
+  // properties were routinely created without one and stayed that way.
+  //
+  // A typed pin always wins: if the office placed it deliberately, geocoding
+  // must not overwrite it. Both halves are required — a lat without a lng is
+  // not a location.
+  //
+  // Best-effort by design. This runs AFTER the job row exists, so a geocoding
+  // failure must never block creation; it degrades to no pin, which is exactly
+  // where every property was before.
+  async function resolvePin(): Promise<{ lat: number; lng: number } | null> {
+    const typedLat = numOrNull(mapLat);
+    const typedLng = numOrNull(mapLng);
+    if (typedLat !== null && typedLng !== null)
+      return { lat: typedLat, lng: typedLng };
+    const addr = address.trim();
+    if (!addr) return null;
+    try {
+      const gmaps = await loadGoogleMaps();
+      const res = await new gmaps.maps.Geocoder().geocode({
+        address: addr,
+        region: "us",
+      });
+      const loc = res.results?.[0]?.geometry?.location;
+      return loc ? { lat: loc.lat(), lng: loc.lng() } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const vErr = validate();
@@ -254,6 +291,11 @@ export default function NewLawnJobPage() {
     //    as null when blank. A failure here does NOT roll back the job — the
     //    job exists and the schedule can still be created; the office can edit
     //    the profile from the schedule detail page.
+    // Geocode the address now if no pin was typed — see resolvePin. Awaited
+    // before the profile insert so the pin lands in the same row rather than
+    // needing a second write.
+    const pin = await resolvePin();
+
     const { error: profileErr } = await supabase.from("lawn_jobs").insert({
       id: data.id,
       organization_id: orgId,
@@ -263,8 +305,8 @@ export default function NewLawnJobPage() {
       access_notes: accessNotes.trim() || null,
       obstacles: obstacles.trim() || null,
       sprinkler,
-      map_lat: numOrNull(mapLat),
-      map_lng: numOrNull(mapLng),
+      map_lat: pin?.lat ?? null,
+      map_lng: pin?.lng ?? null,
       sensitive_site_tags: sensitiveTags,
     });
     if (profileErr) {

@@ -137,6 +137,36 @@ export async function POST(
   // re-plans the target day; until then moved visits sort after planned ones.
   if (body.due_date && body.due_date !== cur.due_date) patch.route_order = null;
 
+  // Solo-owner attribution. An office/admin running the work alone IS the field
+  // worker — /lawn/my-route already treats every unassigned visit as theirs —
+  // but nothing ever wrote crew_id, so completed work recorded NOBODY as having
+  // done it. "Who cut this lawn" came back blank forever, and every chip on the
+  // calendar read "Unassigned" permanently.
+  //
+  // Three guards, and each one matters:
+  //   - `done` only. A skip is a decision, not work performed.
+  //   - `cur.crew_id === null` only. Never overwrite a real assignment.
+  //   - solo orgs only. In a staffed company a dispatcher marking a crew's
+  //     visit done would otherwise be recorded as having done the work — the
+  //     exact false attribution this is meant to fix.
+  //
+  // The solo test is deliberately IDENTICAL to my-route's: count crew_members
+  // with a LINKED LOGIN. A row with a null user_id is a name on a list that
+  // nobody can sign in as, so it cannot be the worker. Diverging here would let
+  // the two disagree about who the field worker is. RLS scopes the count to the
+  // caller's org. Only reached when we would actually stamp, so a staffed org
+  // pays for it at most once per unassigned completion.
+  //
+  // crew/superintendent callers need none of this: the guard above already
+  // proved cur.crew_id === user.id.
+  if (body.status === "done" && cur.crew_id === null && officeLike) {
+    const { count } = await supabase
+      .from("crew_members")
+      .select("id", { count: "exact", head: true })
+      .not("user_id", "is", null);
+    if ((count ?? 0) === 0) patch.crew_id = user.id;
+  }
+
   const { error: updateError } = await supabase
     .from("lawn_visits")
     .update(patch)
