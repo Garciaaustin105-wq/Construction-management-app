@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback, type CSSProperties } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -14,9 +14,18 @@ import {
   useSensor,
   useSensors,
   closestCenter,
+  useDndContext,
   type DragEndEvent,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
 } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS, type Transform } from "@dnd-kit/utilities";
 import { Search, CalendarDays, ChevronLeft, ChevronRight, AlertTriangle, CloudRain, X } from "lucide-react";
 import RecurringScheduleEditor from "@/components/RecurringScheduleEditor";
 import VisitPeekModal, { type VisitPeekVisit } from "@/components/VisitPeekModal";
@@ -39,6 +48,9 @@ export type BoardVisit = {
   // don't have one set -- those sort last and show no time label.
   scheduled_window_start: string | null;
   scheduled_window_end: string | null;
+  // Previously-saved per-crew route position (null = never explicitly
+  // ordered). The week view's phone day rows sort on it before the window.
+  route_order: number | null;
   // The first service_zones circle (of the org's active zones) whose
   // center+radius contains the job's map pin, computed server-side — null
   // when the job has no pin or falls outside every zone.
@@ -150,6 +162,28 @@ function formatWindowTime(t: string | null): string | null {
   return `${h}:${min} ${ampm}`;
 }
 
+// A phone week-view day row's visible order: the saved route sequence first
+// (route_order, nulls last), then the scheduled window (nulls last) for
+// anything never explicitly ordered. Replaces the window-only sort the day
+// rows used — the saved sequence becomes the visible order.
+function byRouteThenWindow(a: BoardVisit, b: BoardVisit): number {
+  const ao = a.route_order ?? null;
+  const bo = b.route_order ?? null;
+  if (ao !== null && bo !== null) {
+    if (ao !== bo) return ao - bo;
+  } else if (ao !== null) {
+    return -1;
+  } else if (bo !== null) {
+    return 1;
+  }
+  const at = a.scheduled_window_start ?? "";
+  const bt = b.scheduled_window_start ?? "";
+  if (!at && !bt) return 0;
+  if (!at) return 1;
+  if (!bt) return -1;
+  return at.localeCompare(bt);
+}
+
 const STATUS_BADGE: Record<BoardVisit["status"], string> = {
   done: "bg-gray-100 text-gray-500",
   // Distinct from "done" on purpose — a skipped visit needs a human decision
@@ -205,9 +239,12 @@ function DroppableCell({
   );
 }
 
-// A draggable visit chip. One useDraggable call per mounted chip, at this
-// component's own top level — same reasoning as DroppableCell above.
-function DraggableChip({
+// The visual chip body, shared by DraggableChip (month / week matrix / day)
+// and SortableDayChip (phone week rows). "compact" is the original sizing;
+// "comfortable" is the phone day-row sizing — full-width, ~44px touch height,
+// honest padding. The drag hook lives in the caller; the face just renders.
+function VisitChipFace({
+  variant,
   visit,
   crewName,
   today,
@@ -215,21 +252,32 @@ function DraggableChip({
   extraClassName,
   showTime,
   onClick,
+  setNodeRef,
+  transform,
+  isDragging,
+  attributes,
+  listeners,
 }: {
+  variant: "compact" | "comfortable";
   visit: BoardVisit;
   crewName: string;
   /** The organisation's today, so "late" means late where the work happens. */
   today: string;
   color: { dot: string; chip: string };
   extraClassName?: string;
-  // Day view only — prefixes the chip with its scheduled window, if set.
+  // Day view / phone rows — prefixes the chip with its scheduled window, if set.
   showTime?: boolean;
   // Opens the schedule editor modal. A plain click (no drag movement) still
   // fires this — dnd-kit's PointerSensor only starts a drag past its 6px
   // activation distance, so a tap-and-release passes through as a click.
   onClick?: () => void;
+  setNodeRef?: (node: HTMLElement | null) => void;
+  transform?: Transform | null;
+  isDragging?: boolean;
+  attributes?: DraggableAttributes;
+  listeners?: DraggableSyntheticListeners;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: visit.id });
+  const comfortable = variant === "comfortable";
   const style: CSSProperties = {
     transform: transform ? CSS.Translate.toString(transform) : undefined,
   };
@@ -260,7 +308,11 @@ function DraggableChip({
               ? "Click to edit this schedule"
               : undefined
       }
-      className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing ${
+      className={`${
+        comfortable
+          ? "flex items-center gap-2 rounded-lg px-2.5 py-2 min-h-[44px] text-xs leading-snug truncate cursor-grab active:cursor-grabbing"
+          : "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing"
+      } ${
         skipped
           ? "bg-red-50 text-red-700 border border-red-200 line-through"
           : overdue
@@ -269,22 +321,119 @@ function DraggableChip({
       } ${isDragging ? "opacity-60" : ""} ${extraClassName ?? ""}`}
     >
       {skipped ? (
-        <AlertTriangle className="inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0" />
+        <AlertTriangle className={comfortable ? "inline-block w-3.5 h-3.5 mr-1 align-middle shrink-0" : "inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0"} />
       ) : overdue ? (
-        <AlertTriangle className="inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0 text-orange-600" />
+        <AlertTriangle className={comfortable ? "inline-block w-3.5 h-3.5 mr-1 align-middle shrink-0 text-orange-600" : "inline-block w-2.5 h-2.5 mr-1 align-middle shrink-0 text-orange-600"} />
       ) : (
-        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${color.dot}`} />
+        <span className={`inline-block ${comfortable ? "w-2 h-2" : "w-1.5 h-1.5"} rounded-full mr-1 align-middle ${color.dot}`} />
       )}
-      {timeLabel && <span className="font-mono text-[9px] text-gray-500 align-middle mr-1">{timeLabel}</span>}
+      {timeLabel && (
+        <span className={`font-mono text-gray-500 align-middle mr-1 ${comfortable ? "text-[10px]" : "text-[9px]"}`}>
+          {timeLabel}
+        </span>
+      )}
       {/* Customer leads. Crew and service follow, muted — they are context, not
           identity, and putting the crew first made every unassigned day read as
           a column of "Unassigned". */}
-      <span className="font-semibold align-middle truncate">{primary}</span>
+      <span className={`font-semibold align-middle truncate ${comfortable ? "text-sm" : ""}`}>{primary}</span>
       {late && <span className="align-middle ml-1 font-semibold shrink-0">· {late}</span>}
-      <span className="align-middle ml-1 opacity-70 truncate">
+      <span className={`align-middle opacity-70 truncate ${comfortable ? "ml-auto pl-1 text-[11px]" : "ml-1"}`}>
         {crewName}
         {visit.service_type ? ` · ${visit.service_type}` : ""}
       </span>
+    </div>
+  );
+}
+
+// A draggable visit chip. One useDraggable call per mounted chip, at this
+// component's own top level — same reasoning as DroppableCell above.
+function DraggableChip(props: {
+  visit: BoardVisit;
+  crewName: string;
+  today: string;
+  color: { dot: string; chip: string };
+  extraClassName?: string;
+  showTime?: boolean;
+  onClick?: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: props.visit.id });
+  return <VisitChipFace variant="compact" {...props} attributes={attributes} listeners={listeners} setNodeRef={setNodeRef} transform={transform} isDragging={isDragging} />;
+}
+
+// The sortable chip variant — phone week-view day rows only. useSortable (not
+// useDraggable) is what makes a drag reorder the row via SortableContext: the
+// neighbouring chips shift to open a real gap at the insertion point, and a
+// drop lands the visit at that position. Month, week-matrix and day chips keep
+// the plain useDraggable behaviour above.
+function SortableDayChip({
+  visit,
+  crewName,
+  today,
+  color,
+  onClick,
+}: {
+  visit: BoardVisit;
+  crewName: string;
+  today: string;
+  color: { dot: string; chip: string };
+  onClick?: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id: visit.id });
+  return (
+    <VisitChipFace
+      variant="comfortable"
+      visit={visit}
+      crewName={crewName}
+      today={today}
+      color={color}
+      extraClassName="w-full"
+      onClick={onClick}
+      attributes={attributes}
+      listeners={listeners}
+      setNodeRef={setNodeRef}
+      transform={transform}
+      isDragging={isDragging}
+    />
+  );
+}
+
+// One phone day row in the week view. Its own droppable (bare-date id, the
+// convention handleDragEnd expects) rather than DroppableCell, because the
+// drop highlight needs to cover the row's chips too: sortable chips register
+// as droppables of their own and would otherwise steal the highlight from the
+// row they sit in. The drag-over treatment is deliberately louder than — and
+// distinct from — the today treatment, because the day being dropped onto is
+// very often today: solid blue-200 fill plus a dashed blue-500 outline vs
+// today's faint blue-50 wash with a thin blue-300 ring.
+function MobileDayRow({
+  id,
+  isToday,
+  visitDateById,
+  className,
+  children,
+}: {
+  id: string;
+  isToday: boolean;
+  visitDateById: Map<string, string>;
+  className: string;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  const { over } = useDndContext();
+  const overId = over ? String(over.id) : null;
+  const isDragOver = isOver || (overId !== null && visitDateById.get(overId) === id);
+  return (
+    <div
+      ref={setNodeRef}
+      className={`${className} ${
+        isDragOver
+          ? "bg-blue-200 outline-2 outline-dashed outline-blue-500"
+          : isToday
+            ? "bg-blue-50 ring-1 ring-blue-300"
+            : "bg-white"
+      }`}
+    >
+      {children}
     </div>
   );
 }
@@ -470,6 +619,15 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     });
   }, [localVisits, crewFilter, statusFilter, serviceFilter, zoneFilter, query]);
 
+  // Visit id -> due date, for the phone day rows' drop highlight: a sortable
+  // chip registers as its own droppable, so "is the row the target?" has to
+  // resolve chip ids back to their day.
+  const visitDateById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const v of filteredVisits) map.set(v.id, v.due_date);
+    return map;
+  }, [filteredVisits]);
+
   // Agenda grouping — computed unconditionally (cheap) so the hook always
   // runs, rather than only when view === "agenda".
   const agendaGroups = useMemo(() => {
@@ -590,6 +748,129 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
       toast.error("Could not save — try again");
       setLocalVisits((prev) => prev.map((v) => (v.id === visitId ? original : v)));
     }
+  }
+
+  // Phone week-view day-row reorder: staged route_order writes. Mirrors
+  // RouteMapPlanner's auto-save — each reorder walks the day row's new visual
+  // order and assigns per-crew 1..n counters keyed by crew_id (moving a visit
+  // past another crew's visit leaves both crews' sequences intact); a visit
+  // with no crew gets null. The walk happens on drop; the write is debounced
+  // ~800ms and the effect skips mount, so the initial render never persists an
+  // order nobody asked for. Plain lawn_visits updates in Promise.all, no
+  // router.refresh() — local state is the truth and a refresh mid-drag is
+  // jarring. crew_id is never written from this surface
+  // (guard_lawn_visit_crew_update restricts it, and crew assignment on a phone
+  // is out of scope here).
+  const [routeDrafts, setRouteDrafts] = useState<
+    Record<string, { id: string; route_order: number | null }[]>
+  >({});
+  const routeSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const routeSavesMounted = useRef(false);
+  useEffect(() => {
+    if (!routeSavesMounted.current) {
+      routeSavesMounted.current = true;
+      return;
+    }
+    if (routeSaveTimer.current) clearTimeout(routeSaveTimer.current);
+    routeSaveTimer.current = setTimeout(() => {
+      void (async () => {
+        // A visit reordered and then immediately dragged to another day gets
+        // route_order nulled by the reschedule endpoint; pin each write to the
+        // day it was staged for so a follow-up move can't resurrect an order.
+        const supabase = createClient();
+        const targets: { id: string; route_order: number | null; date: string }[] = [];
+        for (const [date, items] of Object.entries(routeDrafts)) {
+          for (const item of items) targets.push({ ...item, date });
+        }
+        if (targets.length === 0) return;
+        const results = await Promise.all(
+          targets.map((t) =>
+            supabase
+              .from("lawn_visits")
+              .update({ route_order: t.route_order })
+              .eq("id", t.id)
+              .eq("due_date", t.date)
+          )
+        );
+        if (results.some((r) => r.error)) {
+          toast.error("Could not save the new order — try again");
+        }
+      })();
+    }, 800);
+    return () => {
+      if (routeSaveTimer.current) clearTimeout(routeSaveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeDrafts]);
+
+  // Optimistically applies a day row's new sequence and stages its per-crew
+  // route_order for the debounced write above.
+  function commitRowOrder(date: string, next: BoardVisit[]) {
+    const counters = new Map<string, number>();
+    const staged = next.map((v) => {
+      if (!v.crew_id) return { id: v.id, route_order: null };
+      const n = (counters.get(v.crew_id) ?? 0) + 1;
+      counters.set(v.crew_id, n);
+      return { id: v.id, route_order: n };
+    });
+    const orderById = new Map(staged.map((s) => [s.id, s.route_order]));
+    setLocalVisits((prev) =>
+      prev.map((v) => (orderById.has(v.id) ? { ...v, route_order: orderById.get(v.id) ?? null } : v))
+    );
+    setRouteDrafts((prev) => ({ ...prev, [date]: staged }));
+  }
+
+  // Reorders one day row: `overId` chip → land at that chip's position; null
+  // → dropped on the row's empty space → last position.
+  function reorderDayRow(date: string, activeId: string, overId: string | null) {
+    const dayList = localVisits
+      .filter((v) => v.due_date === date)
+      .sort(byRouteThenWindow);
+    const from = dayList.findIndex((v) => v.id === activeId);
+    if (from === -1) return;
+    let next: BoardVisit[];
+    if (overId === null) {
+      next = [...dayList.filter((v) => v.id !== activeId), dayList[from]];
+    } else {
+      const to = dayList.findIndex((v) => v.id === overId);
+      if (to === -1 || to === from) return;
+      next = arrayMove(dayList, from, to);
+    }
+    commitRowOrder(date, next);
+  }
+
+  // Phone day rows' drag end. Same-day chip drops reorder the row; everything
+  // else — including a drop on another day's chip or on its empty space — is a
+  // cross-day reschedule through the untouched shared handleDragEnd via the
+  // bare-date id convention (a chip maps to that chip's day; the crew is
+  // unchanged, so its capacity confirms can't fire).
+  function handleDayRowDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over) return;
+    const visitId = String(active.id);
+    const overId = String(over.id);
+    const visit = localVisits.find((v) => v.id === visitId);
+    if (!visit) return;
+    const overVisit = localVisits.find((v) => v.id === overId);
+
+    if (overVisit && overVisit.id !== visitId && overVisit.due_date === visit.due_date) {
+      reorderDayRow(visit.due_date, visitId, overId);
+      return;
+    }
+    if (!overVisit && overId === visit.due_date) {
+      // Own row's empty space → last in the row.
+      reorderDayRow(visit.due_date, visitId, null);
+      return;
+    }
+
+    const targetDate = overVisit ? overVisit.due_date : overId;
+    if (week && !week.days.includes(targetDate)) return;
+    if (overVisit) {
+      // The reschedule endpoint nulls route_order on a date change — mirror
+      // that locally so the visit joins the target day's unsorted tail.
+      setLocalVisits((prev) => prev.map((v) => (v.id === visitId ? { ...v, route_order: null } : v)));
+    }
+    handleDragEnd({ ...e, over: { ...over, id: targetDate } });
   }
 
   return (
@@ -866,75 +1147,81 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
             </Link>
           </div>
 
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            {/* Phone (< lg): the week as a vertical list of day rows. Seven
+          {/* Phone (< lg): the week as a vertical list of day rows. Seven
                 columns on a 375px screen are ~45px per cell — too narrow for a
                 customer name no matter how the cell is styled — so portrait
                 phones get a deliberate list layout instead of the matrix.
                 Full width is the feature: no indentation, no side-by-side.
                 Pure CSS breakpoint (lg:hidden / hidden lg:block), no JS
-                viewport check. */}
-            <div className="lg:hidden space-y-2">
-              {week.days.map((d) => {
-                const dayVisits = filteredVisits
-                  .filter((v) => v.due_date === d)
-                  // Same window-start sort (nulls last) as Day view.
-                  .sort((a, b) => {
-                    const at = a.scheduled_window_start ?? "";
-                    const bt = b.scheduled_window_start ?? "";
-                    if (!at && !bt) return 0;
-                    if (!at) return 1;
-                    if (!bt) return -1;
-                    return at.localeCompare(bt);
-                  });
-                const isToday = d === todayIso;
-                return (
-                  <DroppableCell
-                    key={d}
-                    // Bare date id (no ::crew) — handleDragEnd treats an id
-                    // without "::" as date-only, so a drop onto a day row
-                    // reschedules the visit and keeps whoever was assigned.
-                    id={d}
-                    className={`min-h-[44px] rounded-lg p-2 flex flex-col gap-1.5 ${
-                      isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
-                    }`}
-                  >
-                    {/* Plain header, not a link/button — the row header must
-                        not compete with the chips for taps or keyboard focus. */}
-                    <div className="flex items-center gap-1.5 leading-none">
-                      <span className={`text-xs font-semibold ${isToday ? "text-blue-700" : "text-gray-500"}`}>
-                        {new Date(d + "T00:00:00").toLocaleDateString(undefined, {
-                          weekday: "short",
-                          month: "numeric",
-                          day: "numeric",
-                        })}
-                      </span>
-                      {rainRiskSet.has(d) && <CloudRain className="w-3 h-3 text-blue-400" aria-label="Rain risk" />}
-                      <span className="ml-auto text-[10px] font-medium text-gray-400">
-                        {dayVisits.length} visit{dayVisits.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    {dayVisits.length === 0 ? (
-                      // Kept in the flow rather than collapsed — an empty day
-                      // is still a valid drop target for rescheduling.
-                      <span className="text-xs text-gray-300 py-0.5">No visits</span>
-                    ) : (
-                      dayVisits.map((v) => (
-                        <DraggableChip
-                          today={todayIso}
-                          key={v.id}
-                          visit={v}
-                          crewName={nameFor(v)}
-                          color={colorFor(v)}
-                          extraClassName="w-full"
-                          onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
-                        />
-                      ))
-                    )}
-                  </DroppableCell>
-                );
-              })}
-            </div>
+                viewport check.
+
+                Own DndContext: the chips are @dnd-kit/sortable items, so
+                holding and dragging within a row reorders it — the
+                neighbouring chips shift to open a real gap at the insertion
+                point, and the drop persists per-crew route_order. Cross-day
+                drops (another day's row or chip) go through
+                handleDayRowDragEnd to the untouched shared handleDragEnd via
+                the bare-date id convention. */}
+          <div className="lg:hidden">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDayRowDragEnd}>
+              <div className="space-y-2">
+                {week.days.map((d) => {
+                  const dayVisits = filteredVisits
+                    .filter((v) => v.due_date === d)
+                    .sort(byRouteThenWindow);
+                  const isToday = d === todayIso;
+                  return (
+                    <MobileDayRow
+                      key={d}
+                      id={d}
+                      isToday={isToday}
+                      visitDateById={visitDateById}
+                      className="min-h-[56px] rounded-lg p-3 flex flex-col gap-2"
+                    >
+                      {/* Plain header, not a link/button — the row header must
+                          not compete with the chips for taps or keyboard focus. */}
+                      <div className="flex items-center gap-1.5 leading-none">
+                        <span className={`text-xs font-semibold ${isToday ? "text-blue-700" : "text-gray-500"}`}>
+                          {new Date(d + "T00:00:00").toLocaleDateString(undefined, {
+                            weekday: "short",
+                            month: "numeric",
+                            day: "numeric",
+                          })}
+                        </span>
+                        {rainRiskSet.has(d) && <CloudRain className="w-3 h-3 text-blue-400" aria-label="Rain risk" />}
+                        <span className="ml-auto text-[10px] font-medium text-gray-400">
+                          {dayVisits.length} visit{dayVisits.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      {dayVisits.length === 0 ? (
+                        // Kept in the flow rather than collapsed — an empty day
+                        // is still a valid drop target for rescheduling.
+                        <span className="text-xs text-gray-300 py-0.5">No visits</span>
+                      ) : (
+                        <SortableContext
+                          items={dayVisits.map((v) => v.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {dayVisits.map((v) => (
+                            <SortableDayChip
+                              today={todayIso}
+                              key={v.id}
+                              visit={v}
+                              crewName={nameFor(v)}
+                              color={colorFor(v)}
+                              onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
+                            />
+                          ))}
+                        </SortableContext>
+                      )}
+                    </MobileDayRow>
+                  );
+                })}
+              </div>
+            </DndContext>
+          </div>
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
 
             {/* lg+: the crew × day matrix. Unchanged except `hidden lg:block`
                 on its scroll wrapper, which hides it below lg in favour of the

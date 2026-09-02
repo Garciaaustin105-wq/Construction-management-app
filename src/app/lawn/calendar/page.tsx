@@ -21,6 +21,9 @@ type CalVisit = {
   recurring_schedule_id: string;
   scheduled_window_start: string | null;
   scheduled_window_end: string | null;
+  // Previously-saved per-crew route position (null = never explicitly ordered);
+  // the week view's phone day rows sort on it before the window time.
+  route_order: number | null;
   recurring_schedules: { service_type: string | null } | null;
   jobs: {
     name: string | null;
@@ -199,7 +202,7 @@ export default async function LawnCalendarPage({
           // customers(name) and address are a LEFT join on purpose: 4 of the test org's
           // 8 overdue visits have no customer at all, and !inner would silently drop
           // exactly the rows the office is looking for.
-          "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, recurring_schedules(service_type), jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))",
+          "id, due_date, status, crew_id, recurring_schedule_id, scheduled_window_start, scheduled_window_end, route_order, recurring_schedules(service_type), jobs(name, address, customers(name), lawn_jobs(map_lat, map_lng))",
         )
         .gte("due_date", gte)
         .lte("due_date", lte)
@@ -234,6 +237,7 @@ export default async function LawnCalendarPage({
       recurring_schedule_id: v.recurring_schedule_id,
       scheduled_window_start: v.scheduled_window_start,
       scheduled_window_end: v.scheduled_window_end,
+      route_order: v.route_order,
       job_name: v.jobs?.name ?? "Untitled",
       // A crew knows "the Hendersons", not "job 4c1". Null is normal — a job
       // can exist without a customer record — so the board falls back to the
