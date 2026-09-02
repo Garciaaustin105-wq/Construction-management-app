@@ -867,7 +867,79 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
           </div>
 
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <div className="overflow-x-auto">
+            {/* Phone (< lg): the week as a vertical list of day rows. Seven
+                columns on a 375px screen are ~45px per cell — too narrow for a
+                customer name no matter how the cell is styled — so portrait
+                phones get a deliberate list layout instead of the matrix.
+                Full width is the feature: no indentation, no side-by-side.
+                Pure CSS breakpoint (lg:hidden / hidden lg:block), no JS
+                viewport check. */}
+            <div className="lg:hidden space-y-2">
+              {week.days.map((d) => {
+                const dayVisits = filteredVisits
+                  .filter((v) => v.due_date === d)
+                  // Same window-start sort (nulls last) as Day view.
+                  .sort((a, b) => {
+                    const at = a.scheduled_window_start ?? "";
+                    const bt = b.scheduled_window_start ?? "";
+                    if (!at && !bt) return 0;
+                    if (!at) return 1;
+                    if (!bt) return -1;
+                    return at.localeCompare(bt);
+                  });
+                const isToday = d === todayIso;
+                return (
+                  <DroppableCell
+                    key={d}
+                    // Bare date id (no ::crew) — handleDragEnd treats an id
+                    // without "::" as date-only, so a drop onto a day row
+                    // reschedules the visit and keeps whoever was assigned.
+                    id={d}
+                    className={`min-h-[44px] rounded-lg p-2 flex flex-col gap-1.5 ${
+                      isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
+                    }`}
+                  >
+                    {/* Plain header, not a link/button — the row header must
+                        not compete with the chips for taps or keyboard focus. */}
+                    <div className="flex items-center gap-1.5 leading-none">
+                      <span className={`text-xs font-semibold ${isToday ? "text-blue-700" : "text-gray-500"}`}>
+                        {new Date(d + "T00:00:00").toLocaleDateString(undefined, {
+                          weekday: "short",
+                          month: "numeric",
+                          day: "numeric",
+                        })}
+                      </span>
+                      {rainRiskSet.has(d) && <CloudRain className="w-3 h-3 text-blue-400" aria-label="Rain risk" />}
+                      <span className="ml-auto text-[10px] font-medium text-gray-400">
+                        {dayVisits.length} visit{dayVisits.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    {dayVisits.length === 0 ? (
+                      // Kept in the flow rather than collapsed — an empty day
+                      // is still a valid drop target for rescheduling.
+                      <span className="text-xs text-gray-300 py-0.5">No visits</span>
+                    ) : (
+                      dayVisits.map((v) => (
+                        <DraggableChip
+                          today={todayIso}
+                          key={v.id}
+                          visit={v}
+                          crewName={nameFor(v)}
+                          color={colorFor(v)}
+                          extraClassName="w-full"
+                          onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
+                        />
+                      ))
+                    )}
+                  </DroppableCell>
+                );
+              })}
+            </div>
+
+            {/* lg+: the crew × day matrix. Unchanged except `hidden lg:block`
+                on its scroll wrapper, which hides it below lg in favour of the
+                day list above. */}
+            <div className="overflow-x-auto hidden lg:block">
               <div className="min-w-[900px]">
                 <div className="grid grid-cols-[140px_repeat(7,1fr)] gap-1">
                   <div />
