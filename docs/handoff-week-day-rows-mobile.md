@@ -24,10 +24,40 @@ scroll down instead of showing it all."*
 
 Seven columns on a 375px screen is ~45px per cell. **No amount of cell styling
 fits a customer name in 45px** — I tried density (coloured bars) and the correct
-complaint was that the names were gone. The established mobile-calendar pattern
-is a vertical agenda/list as the primary working view, with grids reserved for
-screens that have room; a full-width day row is the first layout with space for
-a real name.
+complaint was that the names were gone.
+
+## The researched pattern — build to this, not to my earlier attempts
+
+Three findings from mobile-calendar UX guidance (sources at the end), because
+they explain *why* this shape and should inform the details you choose:
+
+1. **Agenda/list is the primary mode on a phone; grids are not.** "Mobile
+   calendar design typically favors agenda view (chronological list) over grid
+   view as the primary mode — grids become too small to be actionable below
+   360px width." Our cells are ~45px. This is not a styling problem to solve; it
+   is a layout that does not belong on a phone.
+
+2. **The right architecture is LAYERED, not one view stretched.** "A compressed
+   monthly overview for navigation context, a detailed week or day view for
+   active planning, and clear visual differentiation between today, selected
+   dates, and event-occupied days." **This lane builds the middle layer** — the
+   week as the active-planning view. The month becomes navigation context later
+   (see "Not in this lane"), which is why you must not touch it here.
+
+3. **A deliberate mobile layout, not smaller text.** "Responsive behavior usually
+   needs a deliberate mobile fallback, not just smaller text." Do not attempt to
+   shrink the matrix to fit. Build the day list as its own layout and let the
+   breakpoint choose between them.
+
+The practical consequence for your work: **full width is the feature.** A day row
+exists so a customer name has room. Anything that eats horizontal space —
+indentation, avatars, a crew column, side-by-side layout — works against the one
+thing this change is for. Keep the row's content left-aligned and let the chip
+have the width.
+
+Point 2 also tells you what "clear visual differentiation" means concretely:
+today, and days that have work, must read differently from empty days at a
+glance — see the day row spec below.
 
 ## What to build
 
@@ -103,6 +133,14 @@ The desktop matrix keeps its `${date}::${crewId}` ids. Both forms already work.
 
 ## Not in this lane
 
-The **month** view is still cramped on a phone. The plan is for it to become a
-compressed navigation aid — dots for density, tap a day to jump — rather than a
-working view. That is a separate change; do not attempt it here.
+The **month** view is still cramped on a phone. It becomes the *navigation
+context* layer from finding 2 — a compressed overview with dots for density and
+tap-a-day-to-jump, not a working view. Dots are correct THERE, where the job is
+"which days have work"; they were wrong in a working view, where the job is
+"whose lawn is this". That is a separate change; do not attempt it here.
+
+## Sources
+
+- Calendar design best practices — https://bootcamp.uxdesign.cc/best-practices-for-calendar-design-fix-ux-dc57b62d9bb7
+- Calendar UI examples and UX tips — https://www.eleken.co/blog-posts/calendar-ui
+- Calendar view pattern — https://uxpatterns.dev/patterns/data-display/calendar
