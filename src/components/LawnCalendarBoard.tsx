@@ -128,8 +128,12 @@ const CREW_COLORS = [
 ];
 const UNASSIGNED_COLOR = { dot: "bg-gray-400", chip: "bg-gray-50 text-gray-600 border border-gray-200" };
 
-const MAX_CHIPS_PER_CELL = 3;
 const MAX_CHIPS_PER_CELL_DESKTOP = 6;
+// Month cells are ~48px wide on a 375px phone — far too narrow for a chip
+// carrying a customer name. Below `lg` each visit renders as a compact colour
+// BAR (see DraggableChip's `dense`): readable as density, and still draggable,
+// because it is the same element that carries the useDraggable id.
+const MAX_BARS_PER_CELL_MOBILE = 4;
 
 const FILTER_PILL = "inline-flex rounded-lg border border-gray-200 bg-white p-0.5 self-start";
 const FILTER_BTN = (active: boolean) =>
@@ -214,6 +218,7 @@ function DraggableChip({
   color,
   extraClassName,
   showTime,
+  dense,
   onClick,
 }: {
   visit: BoardVisit;
@@ -222,6 +227,14 @@ function DraggableChip({
   today: string;
   color: { dot: string; chip: string };
   extraClassName?: string;
+  /** Month-cell mode. A month cell is ~48px wide on a 375px phone, where the
+   *  label truncates to about four characters — unreadable. Below `lg` the
+   *  chip collapses to a colour bar carrying the crew colour and the overdue/
+   *  skipped icon: density you can actually read, and STILL DRAGGABLE, because
+   *  it is the same element with the same useDraggable id. Rendering separate
+   *  dots alongside the chip would mean two nodes sharing one draggable id,
+   *  which is why the label is hidden rather than replaced. Desktop unchanged. */
+  dense?: boolean;
   // Day view only — prefixes the chip with its scheduled window, if set.
   showTime?: boolean;
   // Opens the schedule editor modal. A plain click (no drag movement) still
@@ -244,6 +257,9 @@ function DraggableChip({
   // which is why an unassigned day read as a wall of "Unassigned".
   const primary = visit.customer_name ?? visit.job_name;
   const timeLabel = showTime ? formatWindowTime(visit.scheduled_window_start) : null;
+  // In dense (month-cell) mode the text is hidden below `lg` — the chip itself
+  // stays, so the drag target and its listeners are untouched.
+  const denseHide = dense ? "hidden lg:inline" : "";
   return (
     <div
       ref={setNodeRef}
@@ -261,6 +277,11 @@ function DraggableChip({
               : undefined
       }
       className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing ${
+        // With the label hidden a dense chip would collapse to icon height, too
+        // small to grab. Give it a real touch target on the phone and centre the
+        // marker in the bar; desktop keeps its natural size and left alignment.
+        dense ? "min-h-[18px] justify-center lg:justify-start lg:min-h-0" : ""
+      } ${
         skipped
           ? "bg-red-50 text-red-700 border border-red-200 line-through"
           : overdue
@@ -275,13 +296,19 @@ function DraggableChip({
       ) : (
         <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 align-middle ${color.dot}`} />
       )}
-      {timeLabel && <span className="font-mono text-[9px] text-gray-500 align-middle mr-1">{timeLabel}</span>}
+      {timeLabel && (
+        <span className={`font-mono text-[9px] text-gray-500 align-middle mr-1 ${denseHide}`}>
+          {timeLabel}
+        </span>
+      )}
       {/* Customer leads. Crew and service follow, muted — they are context, not
           identity, and putting the crew first made every unassigned day read as
           a column of "Unassigned". */}
-      <span className="font-semibold align-middle truncate">{primary}</span>
-      {late && <span className="align-middle ml-1 font-semibold shrink-0">· {late}</span>}
-      <span className="align-middle ml-1 opacity-70 truncate">
+      <span className={`font-semibold align-middle truncate ${denseHide}`}>{primary}</span>
+      {late && (
+        <span className={`align-middle ml-1 font-semibold shrink-0 ${denseHide}`}>· {late}</span>
+      )}
+      <span className={`align-middle ml-1 opacity-70 truncate ${denseHide}`}>
         {crewName}
         {visit.service_type ? ` · ${visit.service_type}` : ""}
       </span>
@@ -795,17 +822,21 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <div className="grid grid-cols-7 gap-1">
               {month.cells.map((dateStr, i) => {
-                if (dateStr === null) return <div key={`b-${i}`} className="min-h-[64px] lg:min-h-[110px]" />;
+                if (dateStr === null) return <div key={`b-${i}`} className="min-h-[104px] lg:min-h-[110px]" />;
                 const dayVisits = filteredVisits.filter((v) => v.due_date === dateStr);
                 const isToday = dateStr === todayIso;
                 const shown = dayVisits.slice(0, MAX_CHIPS_PER_CELL_DESKTOP);
-                const mobileExtra = dayVisits.length - Math.min(dayVisits.length, MAX_CHIPS_PER_CELL);
+                // Mobile overflow counts past the DOTS, not past the old chip
+                // cap — four visits render four dots, so "+1 more" beside them
+                // would be double-counting.
+                const barOverflow =
+                  dayVisits.length - Math.min(dayVisits.length, MAX_BARS_PER_CELL_MOBILE);
                 const desktopExtra = dayVisits.length - shown.length;
                 return (
                   <DroppableCell
                     key={dateStr}
                     id={dateStr}
-                    className={`min-h-[64px] lg:min-h-[110px] rounded-lg p-1 lg:p-1.5 flex flex-col gap-1 ${
+                    className={`min-h-[104px] lg:min-h-[110px] rounded-lg p-1 lg:p-1.5 flex flex-col gap-1 ${
                       isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
                     }`}
                   >
@@ -821,6 +852,12 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                         {Number(dateStr.slice(-2))}
                       </span>
                     </span>
+                    {/* One chip per visit on BOTH breakpoints — direct children
+                        of the cell so they keep its gap-1. `dense` collapses
+                        each to a draggable colour bar below `lg`. Deliberately
+                        not dots: dots would be a second node per visit and only
+                        one can own the useDraggable id, so dragging a visit onto
+                        a day would stop working on a phone. */}
                     {shown.map((v, idx) => (
                       <DraggableChip
                         today={todayIso}
@@ -828,13 +865,20 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                         visit={v}
                         crewName={nameFor(v)}
                         color={colorFor(v)}
-                        extraClassName={idx >= MAX_CHIPS_PER_CELL ? "hidden lg:block" : ""}
+                        dense
+                        extraClassName={idx >= MAX_BARS_PER_CELL_MOBILE ? "hidden lg:block" : ""}
                         onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
                       />
                     ))}
-                    {mobileExtra > 0 && <span className="text-[9px] text-gray-400 px-1 lg:hidden">+{mobileExtra} more</span>}
+                    {barOverflow > 0 && (
+                      <span className="text-[9px] leading-none text-gray-400 px-1 lg:hidden">
+                        +{barOverflow} more
+                      </span>
+                    )}
                     {desktopExtra > 0 && (
-                      <span className="hidden lg:block text-[9px] text-gray-400 px-1">+{desktopExtra} more</span>
+                      <span className="hidden lg:block text-[9px] text-gray-400 px-1">
+                        +{desktopExtra} more
+                      </span>
                     )}
                   </DroppableCell>
                 );
