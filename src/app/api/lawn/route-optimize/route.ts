@@ -128,10 +128,17 @@ export async function POST(request: Request) {
     await admin.rpc("check_route_opt_quota", { p_org: orgId }).maybeSingle()
   ).data as { allowed: boolean; used: number; max: number | null } | null;
   if (!quota || !quota.allowed) {
+    // max === 0 means the plan never had real-drive-time routing at all, so
+    // "limit reached" would be a lie — nothing was used. Say which it is: a
+    // crew told they hit a cap they never had goes looking for a counter that
+    // does not exist. The free plan still optimizes, just on straight-line
+    // distance, so the message must not imply routing is unavailable either.
+    const notOnPlan = quota?.max === 0;
     return NextResponse.json(
       {
-        error:
-          "Daily route-optimization limit reached on the Free plan. Upgrade for unlimited optimizations.",
+        error: notOnPlan
+          ? "Real drive-time routing is on the paid plans. Your route is still optimized by distance."
+          : "Daily drive-time optimization limit reached. It resets tomorrow.",
         upgrade: true,
         used: quota?.used ?? null,
         max: quota?.max ?? null,
