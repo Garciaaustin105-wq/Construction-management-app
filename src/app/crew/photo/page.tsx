@@ -31,6 +31,12 @@ function PhotoUploadForm() {
   const [gps, setGps] = useState<GpsResult | null>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("getting");
   const [showInPageCamera, setShowInPageCamera] = useState(false);
+  // Synchronous double-submit guard. `loading` disables the button, but state
+  // updates are async: between the click and the re-render that disables it
+  // there is a real window, and handleUpload awaits auth BEFORE setLoading, so
+  // on a slow connection the button stays live for the whole round trip. A ref
+  // flips immediately, in the same tick as the click, and closes it.
+  const inFlight = useRef(false);
   const supabase = createClient();
   const toast = useToast();
 
@@ -133,6 +139,9 @@ function PhotoUploadForm() {
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
+    // Claimed before any await, so a second tap during the auth round trip
+    // returns here instead of starting a second pass over the same queue.
+    if (inFlight.current) return;
     const pending = queue.filter((q) => q.status === "pending");
     if (!jobId) {
       toast.warning("Pick a job");
@@ -143,81 +152,86 @@ function PhotoUploadForm() {
       return;
     }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      toast.error("Not signed in");
-      return;
-    }
-
+    inFlight.current = true;
     setLoading(true);
-    let ok = 0;
-    let fail = 0;
-
-    // Upload sequentially so progress is predictable and we don't hammer the
-    // bucket. Per-item status drives the thumbnails' spinner/check.
-    for (const item of pending) {
-      setQueue((prev) =>
-        prev.map((q) => (q.id === item.id ? { ...q, status: "uploading" } : q))
-      );
-      // Normalize before upload: apply EXIF orientation and re-encode as JPEG so
-      // the stored bytes are upright and renderable everywhere (incl. desktop
-      // Chrome, which can't display HEIC). Falls back to the original file if
-      // this browser can't decode it (rare), so a batch never stalls.
-      const blob = await normalizeImage(item.file).catch(() => item.file);
-      // timestamp + queue id guarantees uniqueness within a batch
-      const path = `${jobId}/${Date.now()}-${item.id}.jpg`;
-      const { error: uploadError } = await supabase.storage
-        .from("job-photos")
-        .upload(path, blob, { contentType: "image/jpeg" });
-      if (uploadError) {
-        fail++;
-        setQueue((prev) =>
-          prev.map((q) => (q.id === item.id ? { ...q, status: "error" } : q))
-        );
-        continue;
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        toast.error("Not signed in");
+        return;
       }
-      const { error: dbError } = await supabase.from("photos").insert({
-        job_id: jobId,
-        uploaded_by: user.id,
-        storage_path: path,
-        caption: caption || null,
-        lat: gps?.lat ?? null,
-        lng: gps?.lng ?? null,
-        location_source: gps?.source ?? null,
-        location_accuracy: gps?.accuracy ?? null,
-      });
-      if (dbError) {
-        fail++;
+
+      let ok = 0;
+      let fail = 0;
+
+      // Upload sequentially so progress is predictable and we don't hammer the
+      // bucket. Per-item status drives the thumbnails' spinner/check.
+      for (const item of pending) {
         setQueue((prev) =>
-          prev.map((q) => (q.id === item.id ? { ...q, status: "error" } : q))
+          prev.map((q) => (q.id === item.id ? { ...q, status: "uploading" } : q))
         );
-      } else {
-        ok++;
-        setQueue((prev) =>
-          prev.map((q) => (q.id === item.id ? { ...q, status: "done" } : q))
-        );
+        // Normalize before upload: apply EXIF orientation and re-encode as JPEG so
+        // the stored bytes are upright and renderable everywhere (incl. desktop
+        // Chrome, which can't display HEIC). Falls back to the original file if
+        // this browser can't decode it (rare), so a batch never stalls.
+        const blob = await normalizeImage(item.file).catch(() => item.file);
+        // timestamp + queue id guarantees uniqueness within a batch
+        const path = `${jobId}/${Date.now()}-${item.id}.jpg`;
+        const { error: uploadError } = await supabase.storage
+          .from("job-photos")
+          .upload(path, blob, { contentType: "image/jpeg" });
+        if (uploadError) {
+          fail++;
+          setQueue((prev) =>
+            prev.map((q) => (q.id === item.id ? { ...q, status: "error" } : q))
+          );
+          continue;
+        }
+        const { error: dbError } = await supabase.from("photos").insert({
+          job_id: jobId,
+          uploaded_by: user.id,
+          storage_path: path,
+          caption: caption || null,
+          lat: gps?.lat ?? null,
+          lng: gps?.lng ?? null,
+          location_source: gps?.source ?? null,
+          location_accuracy: gps?.accuracy ?? null,
+        });
+        if (dbError) {
+          fail++;
+          setQueue((prev) =>
+            prev.map((q) => (q.id === item.id ? { ...q, status: "error" } : q))
+          );
+        } else {
+          ok++;
+          setQueue((prev) =>
+            prev.map((q) => (q.id === item.id ? { ...q, status: "done" } : q))
+          );
+        }
       }
-    }
 
-    setLoading(false);
-
-    if (ok > 0) {
-      toast.success(
-        `Uploaded ${ok} photo${ok > 1 ? "s" : ""}${fail > 0 ? ` · ${fail} failed` : ""}`
-      );
-      // Auto-clear the screen + refresh so the user is ready for the next batch
-      // without having to leave and come back.
-      setCaption("");
-      clearQueue();
-      // re-resolve location for the next batch (in case they moved)
-      setGps(null);
-      setGpsStatus("getting");
-      getLocation();
-      router.refresh();
-    } else if (fail > 0) {
-      toast.error(`Upload failed for ${fail} photo${fail > 1 ? "s" : ""}`);
+      if (ok > 0) {
+        toast.success(
+          `Uploaded ${ok} photo${ok > 1 ? "s" : ""}${fail > 0 ? ` · ${fail} failed` : ""}`
+        );
+        // Auto-clear the screen + refresh so the user is ready for the next batch
+        // without having to leave and come back.
+        setCaption("");
+        clearQueue();
+        // re-resolve location for the next batch (in case they moved)
+        setGps(null);
+        setGpsStatus("getting");
+        getLocation();
+        router.refresh();
+      } else if (fail > 0) {
+        toast.error(`Upload failed for ${fail} photo${fail > 1 ? "s" : ""}`);
+      }
+    } finally {
+      // Always released, so a throw mid-batch cannot leave the button dead.
+      inFlight.current = false;
+      setLoading(false);
     }
   }
 
