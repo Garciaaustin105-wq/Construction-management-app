@@ -34,6 +34,7 @@ import {
   nearestNeighborRoute,
   nearestNeighborByMatrix,
   refineRouteHaversine,
+  refineRouteMatrix,
   clusterZones,
   routeMiles,
   estDriveMinutes,
@@ -488,7 +489,17 @@ export default function RouteMapPlanner({
         travel.set(mapped[i].id, inner);
       }
       setRouteMatrix({ travel, service });
-      const optimized = nearestNeighborByMatrix(mapped, matrix);
+      // 2-opt the drive-time tour, exactly as the free haversine path already
+      // does. Without this the PAID path ran bare nearest-neighbour while the
+      // free one got NN + 2-opt — so paying for real drive times could hand you
+      // a worse tour than not paying, because refinement usually beats matrix
+      // accuracy on dense suburban stops. refineRouteMatrix was written for
+      // this and was never called from anywhere.
+      const optimized = refineRouteMatrix(
+        nearestNeighborByMatrix(mapped, matrix),
+        mapped,
+        matrix
+      );
       const unmapped = ordered.filter((s) => !s.pos);
       setOrdered([...optimized, ...unmapped]);
       toast.success("Reordered by real drive time.");
