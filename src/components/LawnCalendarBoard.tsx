@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import {
   DndContext,
+  DragOverlay,
   useDraggable,
   useDroppable,
   PointerSensor,
@@ -284,6 +285,12 @@ function VisitChipFace({
   listeners?: DraggableSyntheticListeners;
 }) {
   const comfortable = variant === "comfortable";
+  // touch-pan-y on the phone chips: with the default touch-action the browser
+  // claims a held touch the moment it drifts (scroll intent), fires
+  // touchcancel, and dnd-kit's TouchSensor hold timer dies — press-and-hold
+  // then feels like a coin flip. pan-y keeps vertical scrolling working (a
+  // swipe on the list still scrolls) while a small drift during the hold no
+  // longer aborts the drag.
   const style: CSSProperties = {
     transform: transform ? CSS.Translate.toString(transform) : undefined,
   };
@@ -316,7 +323,7 @@ function VisitChipFace({
       }
       className={`${
         comfortable
-          ? "flex items-center gap-2 rounded-lg px-2.5 py-2 min-h-[44px] text-xs leading-snug truncate cursor-grab active:cursor-grabbing"
+          ? "flex items-center gap-2 rounded-lg px-2.5 py-2 min-h-[44px] text-xs leading-snug truncate cursor-grab active:cursor-grabbing touch-pan-y"
           : "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing"
       } ${
         skipped
@@ -407,10 +414,11 @@ function SortableDayChip({
 // convention handleDragEnd expects) rather than DroppableCell, because the
 // drop highlight needs to cover the row's chips too: sortable chips register
 // as droppables of their own and would otherwise steal the highlight from the
-// row they sit in. The drag-over treatment is deliberately louder than — and
-// distinct from — the today treatment, because the day being dropped onto is
-// very often today: solid blue-200 fill plus a dashed blue-500 outline vs
-// today's faint blue-50 wash with a thin blue-300 ring.
+// row they sit in. Blue is reserved for the transient drag-over state
+// (bg-blue-200 + dashed outline) — today wears NEUTRAL grey instead. Both
+// used to be blue, and the permanent blue wash read as a stuck drop target
+// (reported as a bug). The principle: state is blue and temporary; identity
+// is not blue. Desktop and the month view keep their existing today styling.
 function MobileDayRow({
   id,
   isToday,
@@ -435,7 +443,7 @@ function MobileDayRow({
         isDragOver
           ? "bg-blue-200 outline-2 outline-dashed outline-blue-500"
           : isToday
-            ? "bg-blue-50 ring-1 ring-blue-300"
+            ? "bg-gray-100 ring-1 ring-gray-300"
             : "bg-white"
       }`}
     >
@@ -481,6 +489,14 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalVisits(visits);
   }, [visits]);
+
+  // The visit being carried by the phone day-row DragOverlay (below). Tracked
+  // at the day-row DndContext level — set on drag start, cleared on end or
+  // cancel — so the overlay renders a real chip face that follows the pointer.
+  const [activeDayChipId, setActiveDayChipId] = useState<string | null>(null);
+  const activeDayChip = activeDayChipId
+    ? (localVisits.find((v) => v.id === activeDayChipId) ?? null)
+    : null;
 
   // Visit peek modal — opened from the Agenda list. Chips in Month/Week/Day
   // keep opening the SCHEDULE editor (they are schedule-level affordances);
@@ -661,7 +677,14 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(pointer: coarse)").matches;
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
-  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } });
+  // Touch hold: an 8px tolerance during the 200ms hold demanded a fingertip sit
+  // almost perfectly still — ordinary tremor blew past it and the press turned
+  // into a scroll instead ("finicky with pressing and holding"). 25px still
+  // excludes a real scroll (a swipe travels far more than 25px inside 200ms)
+  // but forgives a resting finger's drift. Delay unchanged — tolerance was the
+  // binding constraint. PointerSensor untouched: mouse drag was not reported,
+  // and the 6px distance is what lets a plain tap still open the editor.
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 25 } });
   const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
 
   async function handleDragEnd(e: DragEndEvent) {
@@ -1242,7 +1265,16 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                 handleDayRowDragEnd to the untouched shared handleDragEnd via
                 the bare-date id convention. */}
           <div className="lg:hidden">
-            <DndContext sensors={sensors} collisionDetection={dayRowCollision} onDragEnd={handleDayRowDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={dayRowCollision}
+              onDragStart={(e) => setActiveDayChipId(String(e.active.id))}
+              onDragEnd={(e) => {
+                setActiveDayChipId(null);
+                handleDayRowDragEnd(e);
+              }}
+              onDragCancel={() => setActiveDayChipId(null)}
+            >
               <div className="space-y-2">
                 {week.days.map((d) => {
                   const dayVisits = filteredVisits
@@ -1260,13 +1292,20 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                       {/* Plain header, not a link/button — the row header must
                           not compete with the chips for taps or keyboard focus. */}
                       <div className="flex items-center gap-1.5 leading-none">
-                        <span className={`text-xs font-semibold ${isToday ? "text-blue-700" : "text-gray-500"}`}>
+                        <span className={`text-xs font-semibold ${isToday ? "text-gray-900" : "text-gray-500"}`}>
                           {new Date(d + "T00:00:00").toLocaleDateString(undefined, {
                             weekday: "short",
                             month: "numeric",
                             day: "numeric",
                           })}
                         </span>
+                        {/* Identity, not state: the pill says "today", the row's
+                            neutral grey says it is not a drop target. */}
+                        {isToday && (
+                          <span className="rounded-full bg-gray-900 text-white text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5">
+                            Today
+                          </span>
+                        )}
                         {rainRiskSet.has(d) && <CloudRain className="w-3 h-3 text-blue-400" aria-label="Rain risk" />}
                         <span className="ml-auto text-[10px] font-medium text-gray-400">
                           {dayVisits.length} visit{dayVisits.length === 1 ? "" : "s"}
@@ -1297,6 +1336,25 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                   );
                 })}
               </div>
+              {/* The dragged chip rendered OUT of the list, fixed to the
+                  pointer: without it dnd-kit translates the source chip in
+                  place, which lags and clips at the row boundary on a
+                  scrolling touch list — "doesn't follow my finger". The face
+                  is the shared VisitChipFace (no drag hook, no id of its
+                  own); the source chip stays in the row, dimmed via its
+                  isDragging opacity, so the row doesn't collapse. */}
+              <DragOverlay>
+                {activeDayChip && (
+                  <VisitChipFace
+                    variant="comfortable"
+                    visit={activeDayChip}
+                    crewName={nameFor(activeDayChip)}
+                    today={todayIso}
+                    color={colorFor(activeDayChip)}
+                    extraClassName="min-w-[240px] max-w-[300px]"
+                  />
+                )}
+              </DragOverlay>
             </DndContext>
           </div>
 
