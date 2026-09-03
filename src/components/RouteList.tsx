@@ -239,15 +239,19 @@ export default function RouteList({
   // reliable mobile path. Both useSensor calls run unconditionally (hooks rules);
   // only the matching one is passed to useSensors. On touch a press-and-hold
   // (200ms, ≤8px drift) activates the drag so a quick tap still scrolls/selects.
+  // any-pointer: coarse, not pointer: coarse — a touchscreen laptop's PRIMARY
+  // pointer is fine, so pointer: coarse handed touch users the instant-grab
+  // PointerSensor (drag followed a scrolling finger). Any touch input on the
+  // device should get hold-to-drag; mouse-only keeps PointerSensor.
   const isCoarse =
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
-    window.matchMedia("(pointer: coarse)").matches;
+    window.matchMedia("(any-pointer: coarse)").matches;
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 6 },
   });
   const touchSensor = useSensor(TouchSensor, {
-    activationConstraint: { delay: 200, tolerance: 8 },
+    activationConstraint: { delay: 200, tolerance: 25 },
   });
   const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
 
