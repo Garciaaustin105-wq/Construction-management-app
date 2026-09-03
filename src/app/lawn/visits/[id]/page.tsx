@@ -118,6 +118,11 @@ const BACK_TARGETS: Record<string, { href: string; label: string }> = {
   calendar: { href: "/lawn/calendar", label: "Calendar" },
   route: { href: "/lawn/my-route", label: "Route" },
   home: { href: "/lawn", label: "Home" },
+  // The property hub links here as ?from=hub. Without this entry the lookup
+  // returns null and the office fallback below sends you to the visit's
+  // SCHEDULE page — whose own back goes to /lawn/jobs — so opening a visit
+  // from a customer stranded you two pages away from where you started.
+  hub: { href: "/lawn/customers", label: "Properties" },
 };
 
 type Photo = {
