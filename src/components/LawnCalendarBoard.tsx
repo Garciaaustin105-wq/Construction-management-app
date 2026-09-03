@@ -14,7 +14,10 @@ import {
   useSensor,
   useSensors,
   closestCenter,
+  pointerWithin,
+  rectIntersection,
   useDndContext,
+  type CollisionDetection,
   type DragEndEvent,
   type DraggableAttributes,
   type DraggableSyntheticListeners,
@@ -844,6 +847,26 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
   // cross-day reschedule through the untouched shared handleDragEnd via the
   // bare-date id convention (a chip maps to that chip's day; the crew is
   // unchanged, so its capacity confirms can't fire).
+  // Phone day rows drop where the FINGER is, not where the chip's centre is.
+  //
+  // closestCenter measures the dragged element's centre against each row's
+  // centre. Day rows are tall, so the chip had to travel most of the way into
+  // the target before it won — the user had to "drag my finger about 2 inches
+  // below the day" to drop on it. pointerWithin resolves against the pointer
+  // instead, so the row under your fingertip is the row you get.
+  //
+  // rectIntersection is the fallback for the moment the pointer is outside
+  // every row (between rows, or past the last one) — pointerWithin returns
+  // nothing there, and with no fallback the drop would be silently cancelled.
+  //
+  // Scoped to this DndContext on purpose. Month, the week matrix and day view
+  // keep closestCenter: they are mouse-first grids where it behaves well, and
+  // changing them would risk a regression for no reported problem.
+  const dayRowCollision: CollisionDetection = (args) => {
+    const hits = pointerWithin(args);
+    return hits.length > 0 ? hits : rectIntersection(args);
+  };
+
   function handleDayRowDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     if (!over) return;
@@ -1163,7 +1186,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                 handleDayRowDragEnd to the untouched shared handleDragEnd via
                 the bare-date id convention. */}
           <div className="lg:hidden">
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDayRowDragEnd}>
+            <DndContext sensors={sensors} collisionDetection={dayRowCollision} onDragEnd={handleDayRowDragEnd}>
               <div className="space-y-2">
                 {week.days.map((d) => {
                   const dayVisits = filteredVisits
