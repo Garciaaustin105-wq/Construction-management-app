@@ -251,7 +251,10 @@ export default function RouteList({
     activationConstraint: { distance: 6 },
   });
   const touchSensor = useSensor(TouchSensor, {
-    activationConstraint: { delay: 200, tolerance: 25 },
+    // 400ms hold (matching LawnCalendarBoard): a slow scroll start moves
+    // <25px inside 200ms and would still activate the drag; a real scroll
+    // always breaks the 25px tolerance well inside 400ms.
+    activationConstraint: { delay: 400, tolerance: 25 },
   });
   const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
 

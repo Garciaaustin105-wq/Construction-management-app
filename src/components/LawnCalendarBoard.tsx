@@ -685,14 +685,18 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(any-pointer: coarse)").matches;
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
-  // Touch hold: an 8px tolerance during the 200ms hold demanded a fingertip sit
+  // Touch hold: an 8px tolerance during the hold demanded a fingertip sit
   // almost perfectly still — ordinary tremor blew past it and the press turned
   // into a scroll instead ("finicky with pressing and holding"). 25px still
-  // excludes a real scroll (a swipe travels far more than 25px inside 200ms)
-  // but forgives a resting finger's drift. Delay unchanged — tolerance was the
-  // binding constraint. PointerSensor untouched: mouse drag was not reported,
-  // and the 6px distance is what lets a plain tap still open the editor.
-  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 25 } });
+  // excludes a fast scroll (a swipe travels far more than 25px) but forgives a
+  // resting finger's drift. At a 200ms delay a SLOW scroll start (finger eases
+  // down <25px inside the hold window) still activated the drag and the chip
+  // then followed the scrolling finger — so the hold is now 400ms (iOS
+  // long-press territory): any real scroll gesture exceeds 25px well inside
+  // 400ms, while a deliberate press-and-hold to move a visit stays comfortable.
+  // PointerSensor untouched: the 6px distance is what lets a plain tap still
+  // open the editor.
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 400, tolerance: 25 } });
   const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
 
   async function handleDragEnd(e: DragEndEvent) {
