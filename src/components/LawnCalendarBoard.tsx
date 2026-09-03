@@ -140,7 +140,10 @@ const CREW_COLORS = [
 ];
 const UNASSIGNED_COLOR = { dot: "bg-gray-400", chip: "bg-gray-50 text-gray-600 border border-gray-200" };
 
-const MAX_CHIPS_PER_CELL = 3;
+// Below lg a month cell is navigation, not a working view: it renders one
+// dot per visit up to this cap (plus a "+N"), and the whole cell links to the
+// week containing that day — where the real phone working view lives.
+const MAX_DOTS_PER_MOBILE_CELL = 3;
 const MAX_CHIPS_PER_CELL_DESKTOP = 6;
 
 const FILTER_PILL = "inline-flex rounded-lg border border-gray-200 bg-white p-0.5 self-start";
@@ -1080,43 +1083,96 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                 const dayVisits = filteredVisits.filter((v) => v.due_date === dateStr);
                 const isToday = dateStr === todayIso;
                 const shown = dayVisits.slice(0, MAX_CHIPS_PER_CELL_DESKTOP);
-                const mobileExtra = dayVisits.length - Math.min(dayVisits.length, MAX_CHIPS_PER_CELL);
                 const desktopExtra = dayVisits.length - shown.length;
+                const dots = dayVisits.slice(0, MAX_DOTS_PER_MOBILE_CELL);
+                const mobileExtra = dayVisits.length - dots.length;
+                // The accessible name is the date plus the visit count — this
+                // is a navigation control now, not a day's contents.
+                const cellLabel = new Date(dateStr + "T00:00:00").toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                });
                 return (
                   <DroppableCell
                     key={dateStr}
                     id={dateStr}
-                    className={`min-h-[64px] lg:min-h-[110px] rounded-lg p-1 lg:p-1.5 flex flex-col gap-1 ${
+                    /* p-0 below lg: the phone link below fills the whole cell
+                       (its own p-1.5 keeps the original inset), so the tap
+                       target is the entire cell. lg restores the working inset. */
+                    className={`min-h-[64px] lg:min-h-[110px] rounded-lg p-0 lg:p-1.5 flex flex-col ${
                       isToday ? "bg-blue-50 ring-1 ring-blue-300" : "bg-white"
                     }`}
                   >
-                    <span className="flex items-center justify-end gap-1 self-end leading-none">
-                      {rainRiskSet.has(dateStr) && (
-                        <CloudRain className="w-2.5 h-2.5 text-blue-400" aria-label="Rain risk" />
-                      )}
-                      <span
-                        className={`text-[10px] lg:text-xs font-semibold ${
-                          isToday ? "text-blue-700" : "text-gray-400"
-                        }`}
-                      >
-                        {Number(dateStr.slice(-2))}
+                    {/* Phone (< lg): navigation only. ~45px of width cannot
+                        carry a customer name, so no chips and nothing to drag —
+                        the week view's day rows are the phone working view.
+                        Up to 3 dots (one per visit, crew-coloured) say WHICH
+                        days have work; the whole cell links to that week. */}
+                    <Link
+                      href={`/lawn/calendar?view=week&date=${dateStr}`}
+                      aria-label={`${cellLabel}${
+                        dayVisits.length
+                          ? `, ${dayVisits.length} visit${dayVisits.length === 1 ? "" : "s"}`
+                          : ", no visits"
+                      }${rainRiskSet.has(dateStr) ? ", rain risk" : ""}`}
+                      className="lg:hidden flex-1 flex flex-col justify-between gap-1.5 p-1.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40 active:bg-blue-100"
+                    >
+                      <span className="flex items-center justify-between leading-none">
+                        {rainRiskSet.has(dateStr) && (
+                          <CloudRain className="w-3 h-3 text-blue-400" aria-hidden="true" />
+                        )}
+                        <span
+                          className={`text-xs font-semibold ${
+                            isToday ? "text-blue-700" : "text-gray-500"
+                          }`}
+                        >
+                          {Number(dateStr.slice(-2))}
+                        </span>
                       </span>
-                    </span>
-                    {shown.map((v, idx) => (
-                      <DraggableChip
-                        today={todayIso}
-                        key={v.id}
-                        visit={v}
-                        crewName={nameFor(v)}
-                        color={colorFor(v)}
-                        extraClassName={idx >= MAX_CHIPS_PER_CELL ? "hidden lg:block" : ""}
-                        onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
-                      />
-                    ))}
-                    {mobileExtra > 0 && <span className="text-[9px] text-gray-400 px-1 lg:hidden">+{mobileExtra} more</span>}
-                    {desktopExtra > 0 && (
-                      <span className="hidden lg:block text-[9px] text-gray-400 px-1">+{desktopExtra} more</span>
-                    )}
+                      {dayVisits.length > 0 && (
+                        <span className="flex items-center gap-1 leading-none">
+                          {dots.map((v) => (
+                            <span
+                              key={v.id}
+                              className={`inline-block w-1.5 h-1.5 rounded-full ${colorFor(v).dot}`}
+                            />
+                          ))}
+                          {mobileExtra > 0 && (
+                            <span className="text-[9px] font-medium text-gray-400">+{mobileExtra}</span>
+                          )}
+                        </span>
+                      )}
+                    </Link>
+                    {/* Desktop (lg+): the working month — chips, drag, +N more.
+                        Unchanged from the pre-navigation layout. */}
+                    <div className="hidden lg:flex flex-col gap-1">
+                      <span className="flex items-center justify-end gap-1 self-end leading-none">
+                        {rainRiskSet.has(dateStr) && (
+                          <CloudRain className="w-2.5 h-2.5 text-blue-400" aria-label="Rain risk" />
+                        )}
+                        <span
+                          className={`text-[10px] lg:text-xs font-semibold ${
+                            isToday ? "text-blue-700" : "text-gray-400"
+                          }`}
+                        >
+                          {Number(dateStr.slice(-2))}
+                        </span>
+                      </span>
+                      {shown.map((v) => (
+                        <DraggableChip
+                          today={todayIso}
+                          key={v.id}
+                          visit={v}
+                          crewName={nameFor(v)}
+                          color={colorFor(v)}
+                          onClick={openSchedule ? () => openSchedule(v.recurring_schedule_id) : undefined}
+                        />
+                      ))}
+                      {desktopExtra > 0 && (
+                        <span className="text-[9px] text-gray-400 px-1">+{desktopExtra} more</span>
+                      )}
+                    </div>
                   </DroppableCell>
                 );
               })}
