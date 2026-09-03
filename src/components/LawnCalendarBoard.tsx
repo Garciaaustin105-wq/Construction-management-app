@@ -327,7 +327,7 @@ function VisitChipFace({
       className={`${
         comfortable
           ? "flex items-center gap-2 rounded-lg px-2.5 py-2 min-h-[44px] text-xs leading-snug truncate cursor-grab active:cursor-grabbing touch-pan-y"
-          : "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing"
+          : "flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate cursor-grab active:cursor-grabbing touch-pan-y"
       } ${
         skipped
           ? "bg-red-50 text-red-700 border border-red-200 line-through"
@@ -674,11 +674,16 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     });
   }, [filteredVisits, todayIso]);
 
-  // DnD sensors — device-aware, matching RouteList.tsx's setup.
+  // DnD sensors — device-aware. Use any-pointer: coarse, NOT pointer: coarse:
+  // a touchscreen laptop reports its PRIMARY pointer as fine, so pointer:
+  // coarse is false and the chip got PointerSensor (6px distance = instant
+  // grab that followed a scrolling finger). any-pointer is true for ANY touch
+  // input on the device, so every touch screen gets hold-to-drag; mouse-only
+  // devices keep the instant PointerSensor drag.
   const isCoarse =
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
-    window.matchMedia("(pointer: coarse)").matches;
+    window.matchMedia("(any-pointer: coarse)").matches;
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
   // Touch hold: an 8px tolerance during the 200ms hold demanded a fingertip sit
   // almost perfectly still — ordinary tremor blew past it and the press turned
