@@ -144,8 +144,11 @@ const CREW_COLORS = [
 const UNASSIGNED_COLOR = { dot: "bg-gray-400", chip: "bg-gray-50 text-gray-600 border border-gray-200" };
 
 // Below lg a month cell is navigation, not a working view: it renders one
-// dot per visit up to this cap (plus a "+N"), and the whole cell links to the
-// week containing that day — where the real phone working view lives.
+// dot per visit up to this cap (plus a "+N"), and the whole cell links to that
+// DAY. It pointed at the week first, on the reasoning that the week carries the
+// phone working layout — but tapping a specific day and landing on a whole week
+// is not what the tap promises. The day view is a vertical crew list, so it
+// reads fine on a phone; the week is one tap further if that is what you wanted.
 const MAX_DOTS_PER_MOBILE_CELL = 3;
 const MAX_CHIPS_PER_CELL_DESKTOP = 6;
 
@@ -1133,7 +1136,7 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
                         Up to 3 dots (one per visit, crew-coloured) say WHICH
                         days have work; the whole cell links to that week. */}
                     <Link
-                      href={`/lawn/calendar?view=week&date=${dateStr}`}
+                      href={`/lawn/calendar?view=day&date=${dateStr}`}
                       aria-label={`${cellLabel}${
                         dayVisits.length
                           ? `, ${dayVisits.length} visit${dayVisits.length === 1 ? "" : "s"}`
