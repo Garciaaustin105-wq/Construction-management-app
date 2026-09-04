@@ -10,7 +10,7 @@ import {
   DragOverlay,
   useDraggable,
   useDroppable,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
@@ -674,17 +674,15 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
     });
   }, [filteredVisits, todayIso]);
 
-  // DnD sensors — device-aware. Use any-pointer: coarse, NOT pointer: coarse:
-  // a touchscreen laptop reports its PRIMARY pointer as fine, so pointer:
-  // coarse is false and the chip got PointerSensor (6px distance = instant
-  // grab that followed a scrolling finger). any-pointer is true for ANY touch
-  // input on the device, so every touch screen gets hold-to-drag; mouse-only
-  // devices keep the instant PointerSensor drag.
-  const isCoarse =
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(any-pointer: coarse)").matches;
-  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
+  // DnD sensors — run BOTH, never pick one. PointerSensor-style single-sensor
+  // choice by media query cannot work on a touchscreen laptop: its PRIMARY
+  // pointer is fine, but any-pointer: coarse is true for ANY touch input, so
+  // one-at-a-time always strands one of its two pointers. MouseSensor binds
+  // mousedown only and TouchSensor binds touchstart only — disjoint event
+  // types, no conflict — so a hybrid device simply gets whichever gesture it
+  // makes. Mouse keeps the instant 6px grab (a plain tap still opens the
+  // editor); touch keeps hold-to-drag.
+  const mouseSensor = useSensor(MouseSensor, { activationConstraint: { distance: 6 } });
   // Touch hold: an 8px tolerance during the hold demanded a fingertip sit
   // almost perfectly still — ordinary tremor blew past it and the press turned
   // into a scroll instead ("finicky with pressing and holding"). 25px still
@@ -694,10 +692,8 @@ export default function LawnCalendarBoard(props: LawnCalendarBoardProps) {
   // then followed the scrolling finger — so the hold is now 400ms (iOS
   // long-press territory): any real scroll gesture exceeds 25px well inside
   // 400ms, while a deliberate press-and-hold to move a visit stays comfortable.
-  // PointerSensor untouched: the 6px distance is what lets a plain tap still
-  // open the editor.
   const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 400, tolerance: 25 } });
-  const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
+  const sensors = useSensors(mouseSensor, touchSensor);
 
   async function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e;
