@@ -12,7 +12,7 @@
 import Link from "next/link";
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   useSensor,
   useSensors,
@@ -229,25 +229,24 @@ export default function RouteList({
   onGeocode,
   onSetOnMap,
 }: Props) {
-  // Touch device → TouchSensor; mouse → PointerSensor. Only ONE is active per
-  // device, so they never double-bind the same gesture (the old "register both"
-  // setup let PointerSensor's distance constraint win on the initial touch slide,
-  // routing touch through pointer events — unreliable in the Capacitor WebView,
-  // where the browser steals touchmove for scroll before dnd-kit can track it).
-  // TouchSensor binds native touchstart/touchmove/touchend with NON-passive
-  // listeners and preventDefault()s to actually claim the gesture — the
-  // reliable mobile path. Both useSensor calls run unconditionally (hooks rules);
-  // only the matching one is passed to useSensors. On touch a press-and-hold
-  // (200ms, ≤8px drift) activates the drag so a quick tap still scrolls/selects.
-  // any-pointer: coarse, not pointer: coarse — a touchscreen laptop's PRIMARY
-  // pointer is fine, so pointer: coarse handed touch users the instant-grab
-  // PointerSensor (drag followed a scrolling finger). Any touch input on the
-  // device should get hold-to-drag; mouse-only keeps PointerSensor.
+  // Run BOTH sensors, never pick one by media query. A touchscreen laptop's
+  // PRIMARY pointer is fine but any-pointer: coarse is true for ANY touch
+  // input, so one-at-a-time strands one of its two pointers — most recently
+  // mouse drag died entirely (TouchSensor-only binds touchstart, which a mouse
+  // never fires). The old "register PointerSensor for both" failure was a
+  // POINTER-events problem: PointerSensor routed touch through pointer events,
+  // unreliable in the Capacitor WebView where the browser steals touchmove for
+  // scroll before dnd-kit can track it. MouseSensor is mouse-only (mousedown)
+  // and TouchSensor binds native touchstart/touchmove/touchend with
+  // NON-passive listeners and preventDefault()s to actually claim the gesture —
+  // disjoint event types, so both can stay active with no conflict.
+  // TouchSensor untouched: on touch a press-and-hold (400ms, ≤25px drift)
+  // activates the drag so a quick tap still scrolls/selects.
   const isCoarse =
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
     window.matchMedia("(any-pointer: coarse)").matches;
-  const pointerSensor = useSensor(PointerSensor, {
+  const mouseSensor = useSensor(MouseSensor, {
     activationConstraint: { distance: 6 },
   });
   const touchSensor = useSensor(TouchSensor, {
@@ -256,7 +255,7 @@ export default function RouteList({
     // always breaks the 25px tolerance well inside 400ms.
     activationConstraint: { delay: 400, tolerance: 25 },
   });
-  const sensors = useSensors(isCoarse ? touchSensor : pointerSensor);
+  const sensors = useSensors(mouseSensor, touchSensor);
 
   // Lock body scroll for the duration of a TOUCH drag. In the Capacitor WebView
   // the browser steals touchmove to scroll the page mid-drag, which cancels the
