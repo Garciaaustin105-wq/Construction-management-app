@@ -223,7 +223,17 @@ try {
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    // Cloudflare Turnstile on the LOGIN page emits its own anti-debugging
+    // noise — `%c%d` styled font-size:0;color:transparent, i.e. deliberately
+    // invisible in a real console. It is third-party and unrelated to this
+    // app, and it is caught here only because these listeners attach BEFORE
+    // login. Filter by origin rather than relaxing the check, so a genuine
+    // error from our own code still fails the run.
+    if ((m.location().url || "").includes("challenges.cloudflare.com")) return;
+    errors.push("console: " + m.text());
+  });
   page.on("dialog", (d) => d.accept().catch(() => {}));
   await page.addInitScript(MAP_STUB);
   await login(page, OFFICE_EMAIL);
