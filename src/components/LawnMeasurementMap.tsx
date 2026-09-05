@@ -584,7 +584,7 @@ export default function LawnMeasurementMap({
         )}
 
         {draft && (
-          <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-2">
+          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
             <div className="text-sm font-medium text-gray-900">
               {draftSqft.toLocaleString()} sq ft
             </div>
@@ -735,7 +735,7 @@ export default function LawnMeasurementMap({
 
         {/* Price an area panel */}
         {areas.length > 0 && pricedServices.length > 0 && (
-          <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-2">
+          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
             <p className="text-xs font-medium text-gray-700">Price an area</p>
             <select
               value={selectedAreaId}
@@ -831,7 +831,7 @@ export default function LawnMeasurementMap({
       {/* Desktop docked column floating over the map's left edge. The map
           runs underneath it — the panel does not displace the canvas. */}
       {isDesktop && panelOpen && (
-        <aside className="absolute bottom-3 left-3 top-3 z-10 flex w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+        <aside className="absolute bottom-3 left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-white/60 bg-white/85 shadow-lg ring-1 ring-black/5 backdrop-blur-md">
           <div className="flex items-start justify-between gap-2 border-b border-gray-100 p-3">
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
@@ -850,7 +850,7 @@ export default function LawnMeasurementMap({
               <ChevronDown className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 space-y-3 overflow-y-auto p-3">{panelBody}</div>
+          <div className="min-h-0 space-y-3 overflow-y-auto p-3">{panelBody}</div>
         </aside>
       )}
 
@@ -858,7 +858,7 @@ export default function LawnMeasurementMap({
           Folds to the pill above so the map owns the screen; only this sheet
           scrolls internally. */}
       {!isDesktop && panelOpen && (
-        <aside className="absolute inset-x-2 bottom-2 z-10 flex max-h-[62dvh] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+        <aside className="absolute inset-x-2 bottom-2 z-10 flex max-h-[62dvh] flex-col overflow-hidden rounded-xl border border-white/60 bg-white/85 shadow-xl ring-1 ring-black/5 backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
             <p className="text-sm font-semibold tabular-nums text-gray-900">
               {totalSqft.toLocaleString()} sq ft
@@ -875,7 +875,7 @@ export default function LawnMeasurementMap({
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 space-y-3 overflow-y-auto p-3">{panelBody}</div>
+          <div className="min-h-0 space-y-3 overflow-y-auto p-3">{panelBody}</div>
         </aside>
       )}
     </div>
