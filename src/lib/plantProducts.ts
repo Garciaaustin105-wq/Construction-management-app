@@ -20,14 +20,24 @@
 // so "which catalogue entry was this" is still answerable — they are just not
 // the source of truth for price.
 //
-// WHAT `cost` MEANS — read this before using the margin numbers
+// MATERIAL AND LABOR ARE SEPARATE — read this before using any margin number
 //
-// `cost` is what the NURSERY charges you. It is material only. Install labor
-// is deliberately not in it and must not be faked into it: labor actuals come
-// from crew time entries against the job's labor_rate, which is how every
-// other job in this app already works. So `plantLegendMargin` is MATERIAL
-// margin, and any UI showing it has to say so — a business owner reading
-// "72% margin" on a tree that took two people an hour is being misled.
+// `cost` is what the NURSERY charges you: material only. Labor is NOT in it
+// and must never be faked into it.
+//
+// Lawn maintenance and landscape installs price labor differently, and only
+// the first was modelled before. Maintenance prices the PROPERTY ($/sq ft) and
+// crew size drives scheduling, not the quote. An install is a project priced
+// in MAN-HOURS — two people for six hours is twelve — and a 30 gal tree is
+// ~1.5 man-hours against five minutes for a 1 gal shrub. You cannot quote an
+// install without estimating that up front, which is why `install_minutes`
+// lives on the size.
+//
+// So there are two margins and they are not interchangeable:
+//   plantLegendMargin  — MATERIAL only. Overstates profit worst on big trees,
+//                        which is exactly where labor dominates.
+//   estimateMargin     — material AND labor. The real number.
+// Any UI showing the first has to label it material margin.
 //
 // Contract-first per the Claude-direct/local-AI split: the catalogue manager,
 // the importer, the map's plant mode, and the legend all build against these
@@ -85,6 +95,11 @@ export type PlantSize = {
   cost: number;
   // What the customer pays per plant, installed.
   unit_price: number;
+  // MAN-minutes to install one, not clock-minutes: two people for ten
+  // minutes is 20. Per size because a 30 gal tree and a 1 gal shrub are not
+  // remotely the same job. 0 means NOT ESTIMATED — render it as unset, never
+  // as free.
+  install_minutes: number;
   // Sizes have a real order that alphabetical sorting destroys ("15 gal"
   // sorts before "3 gal"). Ascending, smallest first.
   sort_order: number;
@@ -97,8 +112,11 @@ export type PlantWithSizes = PlantProduct & { sizes: PlantSize[] };
 const PRODUCT_COLUMNS =
   "id, organization_id, name, botanical_name, category, color, notes, active, created_at";
 
+// Must list every field on `PlantSize`. A column missing here arrives as
+// undefined while the type still claims it is present — the exact silent bug
+// that AREA_COLUMNS had with kind/length_ft/meta.
 const SIZE_COLUMNS =
-  "id, organization_id, plant_product_id, size, cost, unit_price, sort_order, active, created_at";
+  "id, organization_id, plant_product_id, size, cost, unit_price, install_minutes, sort_order, active, created_at";
 
 export type NewPlantProduct = {
   organization_id: string;
@@ -115,6 +133,7 @@ export type NewPlantSize = {
   size: string;
   cost: number;
   unit_price: number;
+  install_minutes?: number;
   sort_order?: number;
 };
 
@@ -205,7 +224,12 @@ export async function createPlantSize(
 export async function updatePlantSize(
   supabase: SupabaseClient,
   id: string,
-  patch: Partial<Pick<PlantSize, "size" | "cost" | "unit_price" | "sort_order" | "active">>
+  patch: Partial<
+    Pick<
+      PlantSize,
+      "size" | "cost" | "unit_price" | "install_minutes" | "sort_order" | "active"
+    >
+  >
 ): Promise<string | null> {
   const { error } = await supabase.from("plant_product_sizes").update(patch).eq("id", id);
   return error?.message ?? null;
@@ -255,6 +279,10 @@ export type PlantSnapshot = {
   size: string;
   cost: number;
   unit_price: number;
+  // Snapshotted like the money is, and for the same reason: re-estimating the
+  // install time next season must not change the man-hours on a quote already
+  // sent.
+  install_minutes: number;
   // Per-placement note ("specimen, face the street"), distinct from the
   // species' own notes. Blank on drop.
   note?: string;
@@ -270,6 +298,7 @@ export function plantSnapshot(product: PlantProduct, size: PlantSize): PlantSnap
     size: size.size,
     cost: size.cost,
     unit_price: size.unit_price,
+    install_minutes: size.install_minutes,
   };
 }
 
@@ -301,6 +330,7 @@ export function readPlantSnapshot(
     size: typeof m.size === "string" ? m.size : "",
     cost: num(m.cost),
     unit_price: num(m.unit_price),
+    install_minutes: num(m.install_minutes),
     note: typeof m.note === "string" ? m.note : undefined,
   };
 }
@@ -326,10 +356,14 @@ export type PlantLegendRow = {
   size: string;
   cost: number;
   unit_price: number;
+  install_minutes: number;
   color: string;
   count: number;
   total: number;
   total_cost: number;
+  // count x install_minutes. MAN-minutes, so this is directly summable across
+  // rows regardless of how many people are on the crew.
+  total_minutes: number;
 };
 
 export function buildPlantLegend(
@@ -345,6 +379,7 @@ export function buildPlantLegend(
       existing.count += 1;
       existing.total = existing.count * existing.unit_price;
       existing.total_cost = existing.count * existing.cost;
+      existing.total_minutes = existing.count * existing.install_minutes;
       continue;
     }
     rows.set(key, {
@@ -355,10 +390,12 @@ export function buildPlantLegend(
       size: snap.size,
       cost: snap.cost,
       unit_price: snap.unit_price,
+      install_minutes: snap.install_minutes,
       color: area.color,
       count: 1,
       total: snap.unit_price,
       total_cost: snap.cost,
+      total_minutes: snap.install_minutes,
     });
   }
   // Trees first, then by name: a legend reads the way a planting plan does,
@@ -384,6 +421,98 @@ export function plantLegendCost(rows: PlantLegendRow[]): number {
 // this to anyone. Null when there is no price to divide by.
 export function plantLegendMargin(rows: PlantLegendRow[]): number | null {
   return marginPct(plantLegendCost(rows), plantLegendTotal(rows));
+}
+
+// ---------------------------------------------------------------------------
+// Install labor
+// ---------------------------------------------------------------------------
+
+// Total MAN-hours to install everything placed. Man-hours, not clock-hours:
+// how many people you send changes how long the day is, not how much labor the
+// job contains, and the quote is priced on the latter.
+export function plantLegendManHours(rows: PlantLegendRow[]): number {
+  const minutes = rows.reduce((s, r) => s + r.total_minutes, 0);
+  return Math.round((minutes / 60) * 100) / 100;
+}
+
+// True when nothing placed carries an install estimate. The caller must not
+// render "0 hours" for this — it means nobody has filled in install_minutes,
+// not that the work is free, and quoting labor at zero is how you lose the
+// margin this whole feature exists to protect.
+export function installTimeUnset(rows: PlantLegendRow[]): boolean {
+  return rows.length > 0 && rows.every((r) => r.install_minutes <= 0);
+}
+
+// The customer-facing labor line. Separate from the plants by design: plants
+// quote at their installed price, labor gets its own line so the customer sees
+// what they are paying for.
+//
+// quantity = man-hours, unit_price = billed rate, internal_cost = burdened cost
+// rate. That pairing is what makes jobProfitability compute labor margin with
+// no new machinery — it already sums quantity x internal_cost.
+//
+// Returns null when there is nothing to bill, so a caller cannot accidentally
+// put a $0 labor line on a quote.
+export function laborLineItem(
+  manHours: number,
+  billRate: number | null,
+  costRate: number | null
+): { description: string; quantity: number; unit: string; unit_price: number; internal_cost: number } | null {
+  if (!Number.isFinite(manHours) || manHours <= 0) return null;
+  if (billRate == null || !Number.isFinite(billRate) || billRate <= 0) return null;
+  const cost = costRate != null && Number.isFinite(costRate) && costRate > 0 ? costRate : 0;
+  return {
+    description: `Installation labor — ${manHours} man-hours`,
+    quantity: manHours,
+    unit: "HR",
+    unit_price: billRate,
+    internal_cost: cost,
+  };
+}
+
+// The number that actually matters: margin across material AND labor.
+//
+// Deliberately returns the parts too. A single percentage hides which side is
+// thin, and "your trees are underpriced" is the useful answer, not "62%".
+export function estimateMargin(
+  rows: PlantLegendRow[],
+  billRate: number | null,
+  costRate: number | null
+): {
+  revenue: number;
+  cost: number;
+  materialRevenue: number;
+  materialCost: number;
+  laborRevenue: number;
+  laborCost: number;
+  manHours: number;
+  margin: number | null;
+  laborPriced: boolean;
+} {
+  const materialRevenue = plantLegendTotal(rows);
+  const materialCost = plantLegendCost(rows);
+  const manHours = plantLegendManHours(rows);
+  const laborPriced = billRate != null && billRate > 0 && manHours > 0;
+  const laborRevenue = laborPriced ? Math.round(manHours * billRate * 100) / 100 : 0;
+  const laborCost =
+    costRate != null && costRate > 0 && manHours > 0
+      ? Math.round(manHours * costRate * 100) / 100
+      : 0;
+  const revenue = materialRevenue + laborRevenue;
+  const cost = materialCost + laborCost;
+  return {
+    revenue,
+    cost,
+    materialRevenue,
+    materialCost,
+    laborRevenue,
+    laborCost,
+    manHours,
+    margin: marginPct(cost, revenue),
+    // False means the margin above is material-only and must be labelled as
+    // such — either no rate is set or nothing carries an install estimate.
+    laborPriced,
+  };
 }
 
 // One line item per legend row, not per plant: a quote reading "Live Oak
