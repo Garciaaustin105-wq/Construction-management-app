@@ -35,6 +35,7 @@ import {
 import { loadGoogleMaps } from "@/lib/googleMaps";
 import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
 import {
+  isPlantArea,
   listPlantCatalogue,
   plantSnapshot,
   readPlantSnapshot,
@@ -482,7 +483,11 @@ export default function LawnMeasurementMap({
 
     const markers: google.maps.Marker[] = [];
     areas
-      .filter((a) => a.kind === "point")
+      // NOT `kind === "point"`. A sprinkler head is a point too, so filtering
+      // on geometry alone would draw heads as plants and open the plant card
+      // on them. `kind` says what SHAPE a row is; `meta` says what it IS, and
+      // isPlantArea reads the meta.
+      .filter((a) => isPlantArea(a))
       .forEach((area) => {
         const at = Array.isArray(area.polygon) ? area.polygon[0] : null;
         if (!at) return;
