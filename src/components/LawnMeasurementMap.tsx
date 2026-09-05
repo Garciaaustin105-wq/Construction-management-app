@@ -78,6 +78,10 @@ export default function LawnMeasurementMap({
   const [pricedServices, setPricedServices] = useState<PricedService[]>([]);
   const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+  const [mapReady, setMapReady] = useState(false);
+  // Centre the map once per mount. A ref, not state: flipping it must not
+  // re-run the effect that sets it.
+  const centeredRef = useRef(false);
 
   /* ---------- Floating panel ---------- */
   // The map fills its whole container and every control floats over it. Two
@@ -139,6 +143,50 @@ export default function LawnMeasurementMap({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estimateId]);
+  /* ---------- Centre the map, geocoding only as a last resort ----------
+     A geocode is a BILLED request and this component mounts every time the
+     estimator is opened, so geocoding on mount charged for the same answer
+     over and over — "if a person keeps going in and out of the estimator".
+
+     Areas already drawn are the better source anyway: their coordinates come
+     from our own database, they are already loaded, and they frame the actual
+     work rather than the postal address. After the first measurement that is
+     always the path taken, so a revisit costs nothing.
+
+     Waits for `loadingAreas` to settle. Without that the areas query could
+     still be in flight, this would see an empty list and geocode a property
+     that is already measured — the exact charge it exists to avoid. */
+  useEffect(() => {
+    if (!mapReady || centeredRef.current || loadingAreas) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const pts = areas.flatMap((a) => (Array.isArray(a.polygon) ? a.polygon : []));
+    if (pts.length > 0) {
+      const bounds = new google.maps.LatLngBounds();
+      pts.forEach((p) => bounds.extend(p));
+      map.fitBounds(bounds);
+      centeredRef.current = true;
+      return;
+    }
+
+    // Nothing measured yet: this is the one case worth paying for.
+    if (!address) return;
+    centeredRef.current = true; // set BEFORE the async call so a re-render
+                                // mid-flight cannot fire a second geocode
+    new google.maps.Geocoder().geocode({ address }, (results, status) => {
+      if (status === "OK" && results && results[0]) {
+        map.setCenter(results[0].geometry.location);
+        new google.maps.Marker({
+          position: results[0].geometry.location,
+          map,
+          title: address ?? undefined,
+        });
+      }
+    });
+  }, [mapReady, loadingAreas, areas, address]);
+
+
 
   /* ---------- Load priced services ---------- */
   useEffect(() => {
@@ -167,20 +215,10 @@ export default function LawnMeasurementMap({
         });
         mapRef.current = map;
 
-        if (address) {
-          const geocoder = new g.maps.Geocoder();
-          geocoder.geocode({ address }, (results, status) => {
-            if (status === "OK" && results && results[0]) {
-              map.setCenter(results[0].geometry.location);
-              // Drop address marker
-              new g.maps.Marker({
-                position: results[0].geometry.location,
-                map,
-                title: address ?? undefined,
-              });
-            }
-          });
-        }
+        // Centring is NOT done here — see the effect below. Geocoding is a
+        // billed request, and this effect runs on every mount, so geocoding
+        // from here charged for an answer we usually already have.
+        setMapReady(true);
 
         // Registered once — reads the LATEST draft via draftRef, so it never
         // goes stale and the map never needs to be recreated when the user
