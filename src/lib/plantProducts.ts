@@ -427,6 +427,62 @@ export function plantLegendMargin(rows: PlantLegendRow[]): number | null {
 // Install labor
 // ---------------------------------------------------------------------------
 
+// The three numbers a landscape estimate needs beyond the catalogue. Nothing
+// here is computed — a person types them, and the org default exists only so
+// they are typed once instead of once per quote.
+export type LaborSettings = {
+  // Billed per man-hour. Customer-facing.
+  labor_rate: number | null;
+  // Burdened cost per man-hour. Internal only.
+  labor_cost_rate: number | null;
+  // Fixed man-hours per job: drive both ways, unload, setup, cleanup,
+  // haul-off. Null = not estimated (warn); 0 = genuinely none.
+  mobilization_hours: number | null;
+};
+
+export type OrgLaborDefaults = {
+  default_labor_rate: number | null;
+  default_labor_cost_rate: number | null;
+  default_mobilization_hours: number | null;
+};
+
+// Seed a NEW estimate from the org defaults.
+//
+// PREFILL, NOT REFERENCE — the caller writes the result onto the estimate's
+// own columns, so changing the org default later never reprices a quote that
+// already went out. Same snapshot rule the plant catalogue follows, and for
+// the same reason: a customer's signed number must not move.
+//
+// Only for estimate CREATION. Calling it on an existing estimate would
+// overwrite deliberate per-job overrides with the org default, which is the
+// one way this could destroy real work.
+export function laborSettingsFromDefaults(org: OrgLaborDefaults | null): LaborSettings {
+  return {
+    labor_rate: org?.default_labor_rate ?? null,
+    labor_cost_rate: org?.default_labor_cost_rate ?? null,
+    mobilization_hours: org?.default_mobilization_hours ?? null,
+  };
+}
+
+// True when this estimate's numbers differ from the org default, i.e. the
+// estimator deliberately changed something for this job. Drives the "save as
+// my default" affordance — offering it when nothing changed is noise.
+//
+// Defaults are never auto-updated from the last estimate: one three-day
+// out-of-town install would silently become the starting point for the next
+// mow-and-go quote. Saving a default is a deliberate act.
+export function laborDiffersFromDefaults(
+  settings: LaborSettings,
+  org: OrgLaborDefaults | null
+): boolean {
+  const d = laborSettingsFromDefaults(org);
+  return (
+    settings.labor_rate !== d.labor_rate ||
+    settings.labor_cost_rate !== d.labor_cost_rate ||
+    settings.mobilization_hours !== d.mobilization_hours
+  );
+}
+
 // MAN-hours of planting alone, excluding mobilization. Man-hours, not
 // clock-hours: how many people you send changes how long the day is, not how
 // much labor the job contains, and the quote is priced on the latter.
