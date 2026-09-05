@@ -335,15 +335,28 @@ export default function LawnEstimateWorkspace({
             sits top-right, clear of the docked panel. */}
         <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex justify-end lg:inset-x-auto lg:right-3 lg:top-3">
           <div className="pointer-events-auto flex max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur lg:px-3">
+            {/* Below sm the label is hidden, so without padding the whole tap
+                target was the 16px icon — you had to hit a box the size of the
+                arrow itself. -m-1.5 keeps the bar's height unchanged while the
+                hit area grows past 40px. */}
             <Link
               href={`/estimates/${estimate.id}`}
-              className="flex items-center gap-1 text-sm text-blue-600"
+              aria-label="Back to the estimate"
+              className="-m-1.5 flex shrink-0 items-center gap-1 rounded p-1.5 text-sm text-blue-600 hover:bg-blue-50 active:bg-blue-100"
             >
-              <ArrowLeft className="h-4 w-4 shrink-0" />
-              <span className="hidden sm:inline">Estimate</span>
+              <ArrowLeft className="h-5 w-5 shrink-0 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">Back</span>
             </Link>
+            {/* The property, not the word "Estimate". `title` is usually empty,
+                so this read "Estimate  Estimate" beside the back link — the
+                same word twice, naming nothing. The customer or property is
+                what tells you which job you are measuring. */}
             <h1 className="min-w-0 flex-1 truncate text-sm font-bold text-gray-900">
-              {estimate.title || "Estimate"}
+              {estimate.title ||
+                estimate.customers?.name ||
+                estimate.jobs?.name ||
+                address ||
+                "Untitled estimate"}
             </h1>
             {persisting && (
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
