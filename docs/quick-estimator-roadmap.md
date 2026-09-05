@@ -129,11 +129,20 @@ Two lines, in that order. The first is what the tool does for them; the second
 is what an estimator needs to know to trust the number. Never open with the
 caveat.
 
-**Do not add this to `LawnMeasurementMap.tsx` while the placement lane is
-open** — that file is being edited by another lane right now, and a one-line
-copy change is not worth a merge conflict in a 949-line component. Queue it
-with the irrigation work, or take it in a lane of its own once placement
-lands.
+**DONE for measurement 2026-09-05.** The accuracy half now sits as a footnote
+at the bottom of the estimator's floating panel, under the areas, plants and
+labor it applies to.
+
+It was added to `LawnEstimateWorkspace.tsx`, NOT to `LawnMeasurementMap.tsx`.
+The workspace injects that section into the map's own panel through
+`panelSlot`, so the note renders exactly where it belongs without editing a
+949-line component that the placement lane is actively changing. Worth
+remembering as a general move: `panelSlot` is the seam for adding to that
+panel without touching the map.
+
+Still to do: the coverage half of the note ("gaps and overlaps are easy to
+spot — spacing, pressure and zoning stay your call"), which ships with the
+irrigation work since there is no coverage view to caption yet.
 
 ## Open questions — these need your answers, not my guesses
 

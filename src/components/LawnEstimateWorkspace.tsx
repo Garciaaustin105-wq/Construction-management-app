@@ -370,6 +370,22 @@ export default function LawnEstimateWorkspace({
         Open the estimate document
       </Link>
     </div>
+      {/* Measurement accuracy, footnoted under everything it applies to:
+          areas, plants and labor all derive from the same satellite imagery.
+
+          It lives HERE rather than in LawnMeasurementMap because this section
+          is injected into the map's own floating panel through `panelSlot`, so
+          it renders in the right place without editing a 949-line component
+          that another lane is actively changing.
+
+          Slope is the one worth stating plainly: the math is planar
+          (areaSqftFromPoints, lengthFtFromPoints), so sloped ground always
+          measures LOW — an error in one direction, which a pro can pad for
+          only if they know about it. */}
+      <p className="px-1 text-[11px] leading-snug text-gray-500">
+        Measured from satellite imagery — expect a few feet of variance. Slope
+        is not included, so sloped ground measures low.
+      </p>
     </div>
   );
 
