@@ -299,7 +299,13 @@ export default function LawnMeasurementMap({
     const editingId = draft && draft.areaId !== "new" ? draft.areaId : null;
     const newPolygons: google.maps.Polygon[] = [];
     areas
-      .filter((a) => a.id !== editingId && Array.isArray(a.polygon) && a.polygon.length >= 3)
+      .filter(
+        (a) =>
+          a.kind === "area" &&
+          a.id !== editingId &&
+          Array.isArray(a.polygon) &&
+          a.polygon.length >= 3
+      )
       .forEach((area) => {
         const path = area.polygon.map((p) => new g.maps.LatLng(p.lat, p.lng));
         const poly = new g.maps.Polygon({
@@ -342,7 +348,7 @@ export default function LawnMeasurementMap({
     const draftColor =
       draft.areaId !== "new"
         ? areas.find((a) => a.id === draft.areaId)?.color ?? nextAreaColor([])
-        : nextAreaColor(areas.map((a) => a.color));
+        : nextAreaColor(areas.filter((a) => a.kind === "area").map((a) => a.color));
 
     const verts = draft.vertices;
     if (verts.length >= 2) {
@@ -482,8 +488,8 @@ export default function LawnMeasurementMap({
       const { error } = await createEstimateArea(supabase, {
         estimate_id: estimateId,
         organization_id: orgId,
-        name: `Area ${areas.length + 1}`,
-        color: nextAreaColor(areas.map((a) => a.color)),
+        name: `Area ${areas.filter((a) => a.kind === "area").length + 1}`,
+        color: nextAreaColor(areas.filter((a) => a.kind === "area").map((a) => a.color)),
         polygon: draft.vertices,
         area_sqft,
         access_tags: draft.tags,
@@ -619,6 +625,11 @@ export default function LawnMeasurementMap({
   // from the running total so the live draft figure replaces it instead of
   // being added on top of it.
   const editingId = draft && draft.areaId !== "new" ? draft.areaId : null;
+  // `areas` holds TWO geometries now. Everything that meant "a measured
+  // polygon" has to say so: a placed plant is a kind="point" row in the same
+  // table, and counting it as an area makes the sqft list, the area numbering
+  // and the colour palette all wrong.
+  const polygonAreas = areas.filter((a) => a.kind === "area");
   const savedSqft = totalAreaSqft(editingId ? areas.filter((a) => a.id !== editingId) : areas);
   const draftSqft = draft ? areaSqftFromPoints(draft.vertices) : 0;
   const totalSqft = savedSqft + draftSqft;
@@ -627,7 +638,7 @@ export default function LawnMeasurementMap({
   // desktop docked column or the phone bottom sheet.
   const panelBody = (
     <>
-        {loadingAreas && areas.length === 0 && (
+        {loadingAreas && polygonAreas.length === 0 && (
           <p className="text-sm text-gray-500">Loading areas…</p>
         )}
         {errorMsg && <p className="text-sm text-red-600">{errorMsg}</p>}
@@ -709,15 +720,15 @@ export default function LawnMeasurementMap({
           </div>
         )}
 
-        {!loadingAreas && areas.length === 0 && !draft && (
+        {!loadingAreas && polygonAreas.length === 0 && !draft && (
           <p className="text-sm text-gray-500">
             No areas yet. Tap &ldquo;+ New area&rdquo;, then tap the map to trace the lawn.
           </p>
         )}
 
-        {areas.length > 0 && (
+        {polygonAreas.length > 0 && (
           <ul className="divide-y divide-gray-100">
-            {areas.map((area) => (
+            {polygonAreas.map((area) => (
               <li key={area.id} className="flex flex-wrap items-center gap-2 py-2">
                 <button
                   type="button"
@@ -840,7 +851,7 @@ export default function LawnMeasurementMap({
             vanished, with no way to tell whether area pricing did not exist,
             was broken, or was hidden. The rate is an optional field on each
             service, which is not somewhere you would think to look. */}
-        {areas.length > 0 && pricedServices.length === 0 && (
+        {polygonAreas.length > 0 && pricedServices.length === 0 && (
           <div className="space-y-1 rounded border border-amber-200 bg-amber-50 p-2">
             <p className="text-xs font-medium text-amber-900">
               No service has a $/sq ft rate yet
@@ -887,7 +898,7 @@ export default function LawnMeasurementMap({
             {totalSqft.toLocaleString()} sq ft
           </span>
           <span className="whitespace-nowrap text-xs text-gray-500">
-            {areas.length} {areas.length === 1 ? "area" : "areas"}
+            {polygonAreas.length} {polygonAreas.length === 1 ? "area" : "areas"}
           </span>
           {panelBadge}
           <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" />
@@ -904,7 +915,7 @@ export default function LawnMeasurementMap({
                 {totalSqft.toLocaleString()} sq ft
               </h2>
               <p className="text-xs text-gray-500">
-                {areas.length} {areas.length === 1 ? "area" : "areas"} measured
+                {polygonAreas.length} {polygonAreas.length === 1 ? "area" : "areas"} measured
               </p>
             </div>
             <button
@@ -929,7 +940,7 @@ export default function LawnMeasurementMap({
             <p className="text-sm font-semibold tabular-nums text-gray-900">
               {totalSqft.toLocaleString()} sq ft
               <span className="ml-1.5 text-xs font-normal text-gray-500">
-                · {areas.length} {areas.length === 1 ? "area" : "areas"}
+                · {polygonAreas.length} {polygonAreas.length === 1 ? "area" : "areas"}
               </span>
             </p>
             <button

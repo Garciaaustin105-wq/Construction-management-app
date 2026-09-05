@@ -21,31 +21,26 @@ is nothing to place until a catalogue exists.
 `meta`. It is not a new table and `createEstimateArea` already accepts it
 unchanged. That was the entire point of the phase-1 migration.
 
-## THE CORE PROBLEM
+## THE CORE PROBLEM — already solved for you, do not redo it
 
-`areas` is one array that will now hold two different things. Today every use
-of it assumes polygons. **These nine sites are wrong the moment a point
-appears** — fix all of them, and do not add a tenth:
+`areas` is one array holding two geometries. Twelve sites in this file assumed
+polygons and every one of them was wrong the moment a point appeared: the
+static-polygon render dropped points via `polygon.length >= 3`, the colour
+palette and `Area N` numbering counted plants, the area list rendered them as
+rows reading "0 sq ft", and three separate "N areas measured" counters
+included them.
 
-| Line (approx) | What breaks |
-|---|---|
-| 289 `.filter(... polygon.length >= 3)` | silently drops points — this is *why* plants do not render today |
-| 332, 473 `nextAreaColor(areas.map(...))` | plants consume the area colour palette |
-| 472 `` `Area ${areas.length + 1}` `` | area numbering counts plants |
-| 617, 699, 705, 707 | the area list renders plants as rows reading "0 sq ft" |
-| 830 | pricing empty state counts plants |
-| 877, 894 | "N areas measured" counts plants |
+**All twelve are already fixed and committed.** `const polygonAreas =
+areas.filter((a) => a.kind === "area")` sits with the other derived state, and
+every site that meant "a measured polygon" now reads from it. `tsc` and
+`eslint` are clean.
 
-Add one derived value near the other derived state (~line 608) and use it
-everywhere the old meaning was intended:
+Two rules that follow, and they matter:
 
-```tsx
-const polygonAreas = areas.filter((a) => a.kind === "area");
-const plantPoints  = areas.filter((a) => a.kind === "point");
-```
-
-`totalAreaSqft` is safe either way (points carry 0), but read from
-`polygonAreas` anyway so the intent is on the page.
+- **Anything about measured areas reads `polygonAreas`.** If you add a
+  thirteenth such site using bare `areas`, you reintroduce the bug.
+- **The plant work reads `areas`.** Points live there, and `onAreasChange`
+  deliberately publishes the WHOLE array upward — the legend needs the points.
 
 ## EDIT 1 — render the plants
 
@@ -75,6 +70,33 @@ incidental:
 ```tsx
 .filter((a) => a.kind === "area" && a.id !== editingId && Array.isArray(a.polygon) && a.polygon.length >= 3)
 ```
+
+## EDIT 1b — the plant picker (the spec originally omitted this)
+
+Placement needs a way to choose WHAT to place. Load the catalogue once, on
+mount, next to how `pricedServices` is already loaded:
+
+```tsx
+const { data } = await listPlantCatalogue(supabase, orgId);
+```
+
+It returns `PlantWithSizes[]` — species with their sizes nested and already
+ordered. Do not sort sizes yourself; `"15 gal"` sorts before `"3 gal"`
+alphabetically, which is the bug `sort_order` exists to prevent.
+
+In the floating panel, a compact picker: choose a species, then a size. Show
+each size as `3 gal — $38`. Selecting a size enters placement mode with that
+`{ product, size }` pair.
+
+**The empty state matters more than the picker.** A brand-new org has no
+plants, and the catalogue starts empty for everyone. When
+`listPlantCatalogue` returns nothing, show an amber note linking to
+`/lawn/plants` — the same shape as the existing "No service has a $/sq ft rate
+yet" state a few lines away in this file. Copy that pattern rather than
+inventing one.
+
+A species with NO sizes cannot be placed (there is no price and no install
+time). Either hide it or show it disabled with "no sizes yet".
 
 ## EDIT 2 — placement mode, and its conflict with drawing
 
@@ -148,18 +170,26 @@ size, price, install time, and a per-placement note (`meta.note`), plus Delete.
   accepts `meta`. **Read-modify-write the whole `meta` object**; do not
   construct a fresh one, or you will drop the snapshot fields.
 
-## EDIT 5 — the Legend
+## EDIT 5 — the Legend: DO NOT BUILD IT IN THIS FILE
 
-`buildPlantLegend(areas)` does all of it. Pass the whole `areas` array — it
-ignores polygons and sprinkler heads by itself.
+This changed after the spec was first written. The legend and the labor
+breakdown now live in the WORKSPACE, not the map:
 
-Render one row per species+size with the colour swatch, count, unit price, and
-extended total. Sorted for you: trees down to groundcover.
+- `LawnMeasurementMap` takes an `onAreasChange?: (areas: EstimateArea[]) => void`
+  prop and calls it after every `loadAreas`, publishing the whole array upward.
+  It is held in a ref so an inline arrow from the parent cannot change
+  `loadAreas`' identity and re-fire its effects.
+- `LawnEstimateWorkspace` holds those areas, runs `buildPlantLegend(areas)`,
+  and renders `LandscapeLaborPanel` inside the map's `panelSlot`.
 
-**Add to estimate** uses `plantLineItem(row)` — one line per legend row, not
-per plant. "Live Oak 30 gal, qty 4 @ $450" is what a customer expects; forty
-identical rows is not. It returns `internal_cost`, and `onAddLineItem` now
-accepts it.
+**So the moment your `placePlant` reloads areas, the legend and the whole
+labor breakdown update by themselves.** You do not wire them, you do not build
+a legend component, and you must not add a second `buildPlantLegend` call in
+this file. If the legend does not move after placing a plant, the bug is that
+`loadAreas` was not called — not a missing legend.
+
+`LandscapeLaborPanel` already handles the empty case ("Place plants on the map
+to price install labor"), so an estimate with no plants is already correct.
 
 ## Rules
 
@@ -186,9 +216,11 @@ Convention is `e2e-*.mjs` at the root (`e2e-chemicals-test.mjs`,
 3. an estimate holding both polygons and plants: the area list shows **only**
    the polygons, and "N areas" does not count plants
 4. placing a plant does not disturb existing polygon `area_sqft`
-5. the legend groups by species+size with correct counts and totals
-6. Add to estimate creates **one** line item with `quantity = count` and a
-   non-null `internal_cost`
+5. the legend updates WITHOUT any legend code in this file — place a plant,
+   then assert `LandscapeLaborPanel` shows the new count. If it does not move,
+   `loadAreas` was not called.
+6. the picker's empty state appears when the org has no plants, and links to
+   `/lawn/plants`
 7. delete a plant → marker and legend row both go
 8. **the double-place guard:** two rapid clicks in the same spot create one
    plant, not two
