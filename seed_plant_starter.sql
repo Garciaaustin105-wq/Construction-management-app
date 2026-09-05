@@ -35,7 +35,7 @@
 -- Norway and Colorado spruce, arborvitae, prairie grasses and native
 -- perennials) plus a `vine` category that did not exist before. 161 species
 -- and 484 sizes now. The machine-readable list of the expansion lives in
--- git history at tmp-seed-plants2.mjs; this file documents the convention and
+-- seed_plant_expansion.mjs; this file documents the convention and
 -- the first pass.
 --
 -- Re-runnable: a species already present is skipped, so an org's edits survive.
