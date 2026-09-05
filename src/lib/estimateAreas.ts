@@ -178,3 +178,67 @@ export async function syncEstimateTotals(
     .eq("id", estimateId);
   return error?.message ?? null;
 }
+
+/**
+ * Which outline edge does a click land on, and where exactly?
+ *
+ * Clicking the map used to APPEND a vertex to the end of the outline. So once
+ * a shape was roughly drawn, adding detail to a run you had already passed
+ * threw a point onto the end instead — the outline shot across the yard to
+ * reach it, which reads as "it generated another area". The midpoint handles
+ * only ever insert at the exact middle of an edge, so refining a long run
+ * meant halving it repeatedly.
+ *
+ * Returns the index to splice at and the point ON the edge (perpendicular
+ * foot, not the raw click), so an inserted dot sits exactly on the line rather
+ * than a few feet off it.
+ *
+ * Geometry is planar in metres: over a single property the error from ignoring
+ * the earth's curvature is far below a pixel. Longitude is scaled by cos(lat)
+ * because a degree of longitude narrows as you leave the equator — without it
+ * the hit test is skewed east-west and gets worse the further from the equator
+ * the job is.
+ */
+const M_PER_DEG_LAT = 111_320;
+
+export function edgeHitAt(
+  click: LatLng,
+  verts: LatLng[],
+  tolMeters: number
+): { index: number; point: LatLng } | null {
+  if (verts.length < 2) return null;
+  const kLng = Math.cos((click.lat * Math.PI) / 180) * M_PER_DEG_LAT;
+  const toM = (p: LatLng) => ({ x: p.lng * kLng, y: p.lat * M_PER_DEG_LAT });
+  const c = toM(click);
+
+  // A 2-vertex draft is a single open line; 3+ is a closed ring, so the
+  // last->first edge is real and must be testable too.
+  const edgeCount = verts.length >= 3 ? verts.length : 1;
+  let best: { index: number; point: LatLng; d: number } | null = null;
+
+  for (let i = 0; i < edgeCount; i++) {
+    const a = toM(verts[i]);
+    const b = toM(verts[(i + 1) % verts.length]);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) continue; // duplicate vertices — no edge to hit
+    // Clamped projection: t outside [0,1] means the nearest point is an
+    // endpoint, and a click near a CORNER should not silently insert a
+    // duplicate vertex on top of one that already exists.
+    const t = Math.max(0, Math.min(1, ((c.x - a.x) * dx + (c.y - a.y) * dy) / len2));
+    const px = a.x + t * dx;
+    const py = a.y + t * dy;
+    const d = Math.hypot(c.x - px, c.y - py);
+    if (d > tolMeters) continue;
+    if (t <= 0.02 || t >= 0.98) continue; // too close to an existing vertex
+    if (!best || d < best.d) {
+      best = {
+        index: i + 1,
+        point: { lat: py / M_PER_DEG_LAT, lng: px / kLng },
+        d,
+      };
+    }
+  }
+  return best ? { index: best.index, point: best.point } : null;
+}
