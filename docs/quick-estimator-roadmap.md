@@ -86,10 +86,18 @@ circles stay — they are how a professional sees gaps and overlaps at a glance,
 and that is exactly the speed-up the tool exists to give. What changes is that
 the screen says what it is, so nobody mistakes a drawing for a design.
 
+**Voice matters here.** This is a tool that ASSISTS the professional doing the
+work — it is not a replacement for one, and the copy should not read like a
+disclaimer apologising for what the app cannot do. Lead with what it gives
+them (draw it, price it, fast) and let the caveats follow as practical facts
+an estimator needs, not as liability hedging. The person using this IS the
+professional; talk to them as one.
+
 The note has two halves, and the second is the one people forget:
 
-1. **Whose job this is.** The tool helps a licensed professional produce an
-   estimate faster. It does not size a system.
+1. **Whose job this is.** The tool draws and prices what the professional
+   places. The design decisions stay theirs — that is not a limitation, it is
+   the division of labour.
 2. **Why the numbers move.** Every measurement here comes off satellite
    imagery, and that carries real error:
    - georeferencing offset — imagery can sit several feet off true ground
@@ -110,10 +118,16 @@ buried in an irrigation tab that most estimates never open.
 
 Draft copy, to be placed once and reused:
 
-> Measured from satellite imagery to speed up estimating — expect a few feet
-> of variance, and note that slope is not included, so sloped ground measures
-> low. Coverage shown is what you placed, not an irrigation design; spacing,
-> pressure and zoning stay with your licensed professional.
+> Draw what you are installing and price it in minutes. Coverage shows what
+> you placed, so gaps and overlaps are easy to spot — spacing, pressure and
+> zoning stay your call.
+>
+> Measurements come off satellite imagery: expect a few feet of variance, and
+> slope is not included, so sloped ground measures low.
+
+Two lines, in that order. The first is what the tool does for them; the second
+is what an estimator needs to know to trust the number. Never open with the
+caveat.
 
 **Do not add this to `LawnMeasurementMap.tsx` while the placement lane is
 open** — that file is being edited by another lane right now, and a one-line
