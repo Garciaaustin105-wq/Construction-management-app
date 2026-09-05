@@ -427,12 +427,54 @@ export function plantLegendMargin(rows: PlantLegendRow[]): number | null {
 // Install labor
 // ---------------------------------------------------------------------------
 
-// Total MAN-hours to install everything placed. Man-hours, not clock-hours:
-// how many people you send changes how long the day is, not how much labor the
-// job contains, and the quote is priced on the latter.
+// MAN-hours of planting alone, excluding mobilization. Man-hours, not
+// clock-hours: how many people you send changes how long the day is, not how
+// much labor the job contains, and the quote is priced on the latter.
+//
+// This is NOT the number to bill. See totalManHours.
 export function plantLegendManHours(rows: PlantLegendRow[]): number {
   const minutes = rows.reduce((s, r) => s + r.total_minutes, 0);
   return Math.round((minutes / 60) * 100) / 100;
+}
+
+// The number to bill: planting PLUS mobilization.
+//
+// Mobilization is the fixed labor a job costs before anyone plants anything —
+// drive out, unload, set up, clean up, haul off, drive back. Per-plant time
+// alone quoted a one-shrub job at eight minutes, which is the failure this
+// exists to close. At 200 shrubs the overhead vanishes into the noise; at one
+// shrub it IS the job, and no per-item rate can express that.
+export function totalManHours(
+  rows: PlantLegendRow[],
+  mobilizationHours: number | null
+): number {
+  const mob =
+    mobilizationHours != null && Number.isFinite(mobilizationHours) && mobilizationHours > 0
+      ? mobilizationHours
+      : 0;
+  return Math.round((plantLegendManHours(rows) + mob) * 100) / 100;
+}
+
+// Null mobilization means nobody estimated it — NOT that the job has none.
+// Zero is a real answer (a crew already on site for another job); null is a
+// missing one. Collapsing the two is how the small-job under-quote returns, so
+// the UI must warn on this rather than coalescing silently.
+export function mobilizationUnset(mobilizationHours: number | null): boolean {
+  return mobilizationHours == null;
+}
+
+// How much of the billed labor is fixed overhead. Above ~50% the job is mostly
+// driving and setup, which is the signal that a minimum charge should apply
+// rather than an hourly quote — the classic "drove across town to plant one
+// shrub" job. Null when there are no hours to divide by.
+export function mobilizationShare(
+  rows: PlantLegendRow[],
+  mobilizationHours: number | null
+): number | null {
+  const total = totalManHours(rows, mobilizationHours);
+  if (total <= 0) return null;
+  const mob = mobilizationHours != null && mobilizationHours > 0 ? mobilizationHours : 0;
+  return mob / total;
 }
 
 // True when nothing placed carries an install estimate. The caller must not
@@ -474,10 +516,14 @@ export function laborLineItem(
 //
 // Deliberately returns the parts too. A single percentage hides which side is
 // thin, and "your trees are underpriced" is the useful answer, not "62%".
+// `mobilizationHours` is REQUIRED, not defaulted to 0. A caller that forgets
+// it should fail to compile rather than silently under-quote every small job —
+// which is exactly the bug this parameter was added to fix.
 export function estimateMargin(
   rows: PlantLegendRow[],
   billRate: number | null,
-  costRate: number | null
+  costRate: number | null,
+  mobilizationHours: number | null
 ): {
   revenue: number;
   cost: number;
@@ -486,12 +532,20 @@ export function estimateMargin(
   laborRevenue: number;
   laborCost: number;
   manHours: number;
+  plantManHours: number;
+  mobilizationHours: number;
+  mobilizationUnset: boolean;
   margin: number | null;
   laborPriced: boolean;
 } {
   const materialRevenue = plantLegendTotal(rows);
   const materialCost = plantLegendCost(rows);
-  const manHours = plantLegendManHours(rows);
+  const plantHours = plantLegendManHours(rows);
+  const mob =
+    mobilizationHours != null && Number.isFinite(mobilizationHours) && mobilizationHours > 0
+      ? mobilizationHours
+      : 0;
+  const manHours = Math.round((plantHours + mob) * 100) / 100;
   const laborPriced = billRate != null && billRate > 0 && manHours > 0;
   const laborRevenue = laborPriced ? Math.round(manHours * billRate * 100) / 100 : 0;
   const laborCost =
@@ -508,6 +562,10 @@ export function estimateMargin(
     laborRevenue,
     laborCost,
     manHours,
+    plantManHours: plantHours,
+    mobilizationHours: mob,
+    // Surfaced so the UI can warn. Null is "not estimated", not "none".
+    mobilizationUnset: mobilizationHours == null,
     margin: marginPct(cost, revenue),
     // False means the margin above is material-only and must be labelled as
     // such — either no rate is set or nothing carries an install estimate.
