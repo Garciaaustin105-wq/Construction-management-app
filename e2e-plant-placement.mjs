@@ -417,14 +417,21 @@ try {
   check("no page errors during the run", errors.length === 0, errors.join(" | "));
 
   await browser.close();
-  console.log(`\n${pass} pass, ${fail} fail`);
-  process.exit(fail ? 1 : 0);
 } finally {
   // Cleanup: test org only. estimate_areas first (belt), then the estimate.
+  //
+  // process.exit MUST come after this block, not before it. It used to sit up
+  // in the try, which kills the process outright — the awaits below never
+  // resolved, so every run left its estimate, its points and its catalogue
+  // behind. That residue then broke the NEXT run's very first assertion, which
+  // needs an EMPTY catalogue to prove the picker's empty state.
   if (estimateId) {
     await admin.from("estimate_areas").delete().eq("estimate_id", estimateId);
     await admin.from("estimates").delete().eq("id", estimateId);
   }
+  await admin.from("plant_product_sizes").delete().eq("organization_id", ORG);
   await admin.from("plant_products").delete().eq("organization_id", ORG);
   console.log("\ncleanup: estimate + areas + catalogue wiped for the test org");
+  console.log(`\n${pass} pass, ${fail} fail`);
+  process.exit(fail ? 1 : 0);
 }
