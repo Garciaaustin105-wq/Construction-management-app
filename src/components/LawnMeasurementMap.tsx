@@ -831,7 +831,7 @@ export default function LawnMeasurementMap({
       {/* Desktop docked column floating over the map's left edge. The map
           runs underneath it — the panel does not displace the canvas. */}
       {isDesktop && panelOpen && (
-        <aside className="absolute bottom-3 left-3 top-3 z-10 flex w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+        <aside className="absolute bottom-3 left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
           <div className="flex items-start justify-between gap-2 border-b border-gray-100 p-3">
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
@@ -850,7 +850,7 @@ export default function LawnMeasurementMap({
               <ChevronDown className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 space-y-3 overflow-y-auto p-3">{panelBody}</div>
+          <div className="min-h-0 space-y-3 overflow-y-auto p-3">{panelBody}</div>
         </aside>
       )}
 
@@ -875,7 +875,7 @@ export default function LawnMeasurementMap({
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 space-y-3 overflow-y-auto p-3">{panelBody}</div>
+          <div className="min-h-0 space-y-3 overflow-y-auto p-3">{panelBody}</div>
         </aside>
       )}
     </div>
