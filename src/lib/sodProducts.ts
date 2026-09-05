@@ -11,6 +11,7 @@
 // and the difference between them is leftover the org has already paid for.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { EstimateArea } from "@/lib/estimateAreas";
 
 export const GRASS_TYPES = [
   "st_augustine",
@@ -199,4 +200,107 @@ export function sodLineItem(
     unit_price: Math.round(unitPrice * 10000) / 10000,
     internal_cost: costPerSqft,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sod on an estimate
+// ---------------------------------------------------------------------------
+
+// Sod is attached to a MEASURED AREA — the polygon already drawn on the map —
+// rather than placed as a point. The snapshot lives in that area's meta, same
+// rule as plants and heads: re-pricing the catalogue must not move a quote
+// already sent.
+//
+// sqft_per_pallet is COPIED here rather than read from the catalogue every
+// time, and that is the point of this type. The catalogue holds what the org
+// usually buys; the snapshot holds what THIS delivery actually was. A farm
+// that ships 500 one week and 400 the next changes the order by two pallets on
+// a 4,600 sq ft job, so the estimator has to be able to correct it per job
+// without editing the catalogue for every future estimate.
+export type SodSnapshot = {
+  sod_product_id: string;
+  name: string;
+  grass_type: GrassType;
+  // The assumption in force FOR THIS JOB. Seeded from the catalogue, editable.
+  sqft_per_pallet: number;
+  cost_per_sqft: number;
+  price_per_sqft: number;
+  install_minutes_per_1000_sqft: number;
+  waste_pct: number;
+};
+
+export function sodSnapshot(
+  product: SodProduct,
+  wastePct = 0,
+  sqftPerPalletOverride?: number
+): SodSnapshot {
+  const override =
+    typeof sqftPerPalletOverride === "number" &&
+    Number.isFinite(sqftPerPalletOverride) &&
+    sqftPerPalletOverride > 0
+      ? sqftPerPalletOverride
+      : product.sqft_per_pallet;
+  return {
+    sod_product_id: product.id,
+    name: product.name,
+    grass_type: product.grass_type,
+    sqft_per_pallet: override,
+    cost_per_sqft: product.cost_per_sqft,
+    price_per_sqft: product.price_per_sqft,
+    install_minutes_per_1000_sqft: product.install_minutes_per_1000_sqft,
+    waste_pct: Number.isFinite(wastePct) && wastePct > 0 ? wastePct : 0,
+  };
+}
+
+function num(v: unknown): number {
+  const n = typeof v === "string" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) ? n : 0;
+}
+
+// Narrow, do not cast. A plant point, a bare measured area or a row written
+// before this shape existed must read as "no sod", never as sod priced NaN.
+export function readSodSnapshot(
+  area: Pick<EstimateArea, "kind" | "meta">
+): SodSnapshot | null {
+  if (area.kind !== "area") return null;
+  const m = area.meta as Record<string, unknown> | null | undefined;
+  if (!m || typeof m !== "object") return null;
+  const id = m.sod_product_id;
+  const name = m.name;
+  if (typeof id !== "string" || typeof name !== "string") return null;
+  return {
+    sod_product_id: id,
+    name,
+    grass_type: isGrassType(m.grass_type) ? m.grass_type : "other",
+    sqft_per_pallet: num(m.sqft_per_pallet),
+    cost_per_sqft: num(m.cost_per_sqft),
+    price_per_sqft: num(m.price_per_sqft),
+    install_minutes_per_1000_sqft: num(m.install_minutes_per_1000_sqft),
+    waste_pct: num(m.waste_pct),
+  };
+}
+
+export function isSodArea(area: Pick<EstimateArea, "kind" | "meta">): boolean {
+  return readSodSnapshot(area) !== null;
+}
+
+// The calculator for an area that already carries sod, using the pallet size
+// recorded on THAT job rather than whatever the catalogue says today.
+export function sodEstimateForArea(
+  area: Pick<EstimateArea, "kind" | "meta" | "area_sqft">
+): { snapshot: SodSnapshot; estimate: SodEstimate } | null {
+  const snap = readSodSnapshot(area);
+  if (!snap) return null;
+  return { snapshot: snap, estimate: sodEstimate(area.area_sqft, snap, snap.waste_pct) };
+}
+
+// Says the assumption out loud. The pallet count is the number an estimator
+// acts on, and it is only as good as this figure — so the UI shows this
+// beside the count rather than leaving it implied.
+//
+// Never returns "0 sq ft per pallet": an unrecorded size is a missing answer,
+// not a pallet that holds nothing.
+export function describePallet(sqftPerPallet: number): string {
+  if (!(sqftPerPallet > 0)) return "pallet size not set — enter what your farm ships";
+  return `assuming ${Math.round(sqftPerPallet).toLocaleString()} sq ft per pallet`;
 }

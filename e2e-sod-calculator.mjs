@@ -8,7 +8,8 @@
 // Pure math, no database. The case that matters is the one everybody gets
 // wrong by hand: sod is measured in square feet and BOUGHT in whole pallets,
 // so the order always rounds up and always leaves paid-for surplus.
-const { sodEstimate, palletSizeUnset, sodLineItem } = await import("./.sod-build/sodProducts.js");
+const { sodEstimate, palletSizeUnset, sodLineItem, describePallet, sodSnapshot,
+        sodEstimateForArea } = await import("./.sod-build/sodProducts.js");
 let pass=0,fail=0;
 const t=(n,c,d="")=>{c?(pass++,console.log("  PASS "+n)):(fail++,console.log(`  FAIL ${n}${d?" — "+d:""}`))};
 const near=(a,b,e=0.01)=>Math.abs(a-b)<e;
@@ -56,4 +57,39 @@ t("internal cost is per square foot", li.internal_cost===0.35);
 t("description states the cutting allowance", li.description.includes("10% cutting waste"), li.description);
 t("no area -> null, so no $0 sod line", sodLineItem("x",sodEstimate(0,P,0),0.35)===null);
 t("no price -> null", sodLineItem("x",sodEstimate(1000,{...P,price_per_sqft:0},0),0.35)===null);
+
+console.log("\n[the pallet assumption is visible and changeable]");
+t("the assumption is spelled out, not implied",
+  describePallet(450)==="assuming 450 sq ft per pallet", describePallet(450));
+t("an unset size asks for the real number instead of saying 0",
+  describePallet(0)==="pallet size not set — enter what your farm ships", describePallet(0));
+t("the estimate carries the size it used, so the count is checkable",
+  sodEstimate(4200,P,10).sqftPerPallet===450);
+
+const prod={id:"s1",organization_id:"o",name:"Floratam St. Augustine",grass_type:"st_augustine",
+  sqft_per_pallet:450,cost_per_sqft:0.35,price_per_sqft:0.85,install_minutes_per_1000_sqft:90,
+  notes:null,active:true,created_at:"2026-01-01"};
+const fromCat=sodSnapshot(prod,10);
+t("a job seeds its pallet size from the catalogue", fromCat.sqft_per_pallet===450);
+const thisDelivery=sodSnapshot(prod,10,400);
+t("...and the estimator can override it for THIS purchase", thisDelivery.sqft_per_pallet===400);
+t("a bad override falls back to the catalogue rather than to zero",
+  sodSnapshot(prod,10,0).sqft_per_pallet===450);
+t("the override changes the order: 400/pallet needs 12, not 11",
+  sodEstimate(4200,thisDelivery,10).pallets===12, `got ${sodEstimate(4200,thisDelivery,10).pallets}`);
+t("overriding the job does NOT touch the catalogue", prod.sqft_per_pallet===450);
+
+console.log("\n[sod on a measured area]");
+const sodArea={kind:"area",area_sqft:4200,meta:{...thisDelivery}};
+const forArea=sodEstimateForArea(sodArea);
+t("reads the snapshot off the area", forArea.snapshot.name==="Floratam St. Augustine");
+t("uses the area's own measured sqft", forArea.estimate.netSqft===4200);
+t("uses the pallet size recorded on THAT job", forArea.estimate.pallets===12);
+t("uses the waste recorded on that job", forArea.estimate.wastePct===10);
+t("a plain measured area is not sod", sodEstimateForArea({kind:"area",area_sqft:1000,meta:{}})===null);
+t("a plant point is not sod",
+  sodEstimateForArea({kind:"point",area_sqft:0,meta:{plant_product_id:"p",name:"Holly"}})===null);
+t("garbage in meta reads as no sod, not NaN",
+  sodEstimateForArea({kind:"area",area_sqft:1000,meta:{sod_product_id:5}})===null);
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
