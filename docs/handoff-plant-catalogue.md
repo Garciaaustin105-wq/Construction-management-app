@@ -70,7 +70,9 @@ same shape:
   the role-gate-mismatch pattern; keep them aligned.
 - Same lawn-variant gate: `if (me.appVariant !== "lawn") redirect("/dashboard")`.
   The estimator is lawn-only.
-- Seed the client component with the org's plants via RLS, ordered by name.
+- Seed the client component via RLS with species AND their nested sizes
+  (`plant_products` + `plant_product_sizes(...)`), ordered by name — the same
+  select `listPlantCatalogue` uses, so the shapes match.
 - `TopBar title="Plants & Trees" subtitle="Catalog"`.
 - Keep `export const dynamic = "force-dynamic"` to match the neighbouring page.
   (It is redundant — `cookies()` already forces dynamic rendering — but every
@@ -80,7 +82,8 @@ same shape:
 ### 2. `src/components/PlantCatalogueManager.tsx`
 
 Client component, `"use client"`, CRUD straight through RLS via
-`src/lib/plantProducts.ts`. Props: `{ initial: PlantProduct[]; orgId: string }`.
+`src/lib/plantProducts.ts`. Props: `{ initial: PlantWithSizes[]; orgId: string }` — species with their
+sizes already nested, straight from `listPlantCatalogue`.
 
 **Fields in the form**, in this order:
 
@@ -112,8 +115,9 @@ rows visible but dimmed.
 
 **List display:** group or sort so trees read above shrubs. `PLANT_CATEGORIES`
 is already in planting-plan order (canopy → groundcover); use its index, the
-way `buildPlantLegend` does. Show the colour swatch, name, size, and price per
-row.
+way `buildPlantLegend` does. A species row shows the colour swatch, name,
+category and a size count ("4 sizes, $16-$140"); expanding it reveals the
+size rows with cost, price and margin.
 
 **Empty state:** this catalogue starts empty for every org, so the empty state
 is the first thing every user sees. It must explain what the screen is for in
