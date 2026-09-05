@@ -81,6 +81,46 @@ whether the system will actually work. Crossing that line means owning
 liability for someone's system, and the user has one real customer, not a
 hydraulics department.
 
+**DECIDED 2026-09-05: keep the coverage drawing, and carry a note.** The
+circles stay — they are how a professional sees gaps and overlaps at a glance,
+and that is exactly the speed-up the tool exists to give. What changes is that
+the screen says what it is, so nobody mistakes a drawing for a design.
+
+The note has two halves, and the second is the one people forget:
+
+1. **Whose job this is.** The tool helps a licensed professional produce an
+   estimate faster. It does not size a system.
+2. **Why the numbers move.** Every measurement here comes off satellite
+   imagery, and that carries real error:
+   - georeferencing offset — imagery can sit several feet off true ground
+     position, so a click is not exactly where you think
+   - imagery age — the picture may be months or years old, and the yard has
+     changed since
+   - resolution — roughly 15-30 cm per pixel at best, so a tap is +/- a foot
+     or two before anyone's hand shakes
+   - **slope is not counted** — the math here is planar (see
+     `areaSqftFromPoints`, `lengthFtFromPoints`), so a sloped yard has more
+     real surface than its map footprint. This under-measures, always in the
+     same direction.
+
+**THIS APPLIES TO EVERYTHING ALREADY SHIPPED, not just irrigation.** Lawn
+sqft, mulch beds, sod and pipe runs all come off the same imagery with the
+same planar math. The note belongs on the measurement surface generally, not
+buried in an irrigation tab that most estimates never open.
+
+Draft copy, to be placed once and reused:
+
+> Measured from satellite imagery to speed up estimating — expect a few feet
+> of variance, and note that slope is not included, so sloped ground measures
+> low. Coverage shown is what you placed, not an irrigation design; spacing,
+> pressure and zoning stay with your licensed professional.
+
+**Do not add this to `LawnMeasurementMap.tsx` while the placement lane is
+open** — that file is being edited by another lane right now, and a one-line
+copy change is not worth a merge conflict in a 949-line component. Queue it
+with the irrigation work, or take it in a lane of its own once placement
+lands.
+
 ## Open questions — these need your answers, not my guesses
 
 1. **Where do plant prices come from?** A catalogue in the app that an org
