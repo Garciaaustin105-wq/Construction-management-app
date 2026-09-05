@@ -35,12 +35,20 @@ import {
 import { loadGoogleMaps } from "@/lib/googleMaps";
 import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
 import { formatMoney } from "@/lib/money";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { useIsDesktop } from "@/lib/useIsDesktop";
+import { ChevronDown, ChevronUp, Ruler, X } from "lucide-react";
 
 type Props = {
   estimateId: string;
   address: string | null;
   onAddLineItem: (line: { description: string; quantity: number; unit: string; unit_price: number }) => void;
+  // Workspace content rendered INSIDE the floating panel (below the area
+  // controls) so line items are reachable without navigating away from the
+  // map — the workspace hands its line-item section through this slot.
+  panelSlot?: React.ReactNode;
+  // Optional live summary shown on the collapsed pill (item count + running
+  // total) so the number still moves while the panel is folded away.
+  panelBadge?: React.ReactNode;
 };
 
 type Draft = { areaId: string | "new"; vertices: LatLng[]; tags: string[] } | null;
@@ -55,6 +63,8 @@ export default function LawnMeasurementMap({
   estimateId,
   address,
   onAddLineItem,
+  panelSlot,
+  panelBadge,
 }: Props): React.ReactElement {
   /* ---------- State ---------- */
   const [areas, setAreas] = useState<EstimateArea[]>([]);
@@ -68,7 +78,20 @@ export default function LawnMeasurementMap({
   const [pricedServices, setPricedServices] = useState<PricedService[]>([]);
   const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
-  const [fullscreen, setFullscreen] = useState(false);
+
+  /* ---------- Floating panel ---------- */
+  // The map fills its whole container and every control floats over it. Two
+  // states because the two surfaces behave differently: on desktop (lg+) the
+  // panel is a docked column that starts open; on a phone it is a bottom
+  // sheet that starts COLLAPSED to one pill, so the map owns the screen on
+  // load and the user taps the pill to pick out areas or items. Either way
+  // the panel folds away completely — it must never cover so much map that
+  // drawing becomes awkward.
+  const isDesktop = useIsDesktop();
+  const [dockOpen, setDockOpen] = useState(true); // lg+ docked column
+  const [sheetOpen, setSheetOpen] = useState(false); // phone bottom sheet
+  const panelOpen = isDesktop ? dockOpen : sheetOpen;
+  const setPanelOpen = isDesktop ? setDockOpen : setSheetOpen;
 
   /* ---------- Toast ---------- */
   const toast = useToast();
@@ -136,6 +159,11 @@ export default function LawnMeasurementMap({
           center: FALLBACK_CENTER,
           zoom: 18,
           mapTypeId: "hybrid",
+          // The workspace itself is the fullscreen surface now, and the map's
+          // own type/fullscreen controls sit exactly where the floating bar
+          // does. Off with both; zoom + street view keep their defaults.
+          fullscreenControl: false,
+          mapTypeControl: false,
         });
         mapRef.current = map;
 
@@ -514,23 +542,18 @@ export default function LawnMeasurementMap({
     await loadAreas();
   };
 
-  /* ---------- Escape key closes fullscreen ---------- */
+  /* ---------- Escape key folds the floating panel away ---------- */
+  // The ONLY Escape behaviour on this surface: if the panel is open, fold it.
+  // (The old fullscreen toggle is gone — the workspace itself is full-bleed —
+  // so there is exactly one predictable Escape action.)
   useEffect(() => {
-    if (!fullscreen) return;
+    if (!panelOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setFullscreen(false);
+      if (e.key === "Escape") setPanelOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
-
-  /* ---------- Google Maps must be told its container resized ---------- */
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const center = mapRef.current.getCenter();
-    google.maps.event.trigger(mapRef.current, "resize");
-    if (center) mapRef.current.setCenter(center);
-  }, [fullscreen]);
+  }, [panelOpen, setPanelOpen]);
 
   /* ---------- Render ---------- */
   // While editing an existing (already-saved) area, drop its stored sqft
@@ -541,41 +564,10 @@ export default function LawnMeasurementMap({
   const draftSqft = draft ? areaSqftFromPoints(draft.vertices) : 0;
   const totalSqft = savedSqft + draftSqft;
 
-  return (
-    <div
-      className={
-        fullscreen
-          ? "fixed inset-0 z-50 flex flex-col gap-3 bg-white p-3 lg:flex-row"
-          : "flex flex-col gap-3 lg:h-[42rem] lg:flex-row"
-      }
-    >
-      {/* Sidebar sits ABOVE the map on mobile (DOM order + flex-col): this is
-          used standing in a driveway on a phone. */}
-      <aside
-        className={
-          "w-full space-y-3 rounded border border-gray-200 bg-white p-3 lg:w-96 lg:flex-shrink-0 lg:overflow-y-auto" +
-          (fullscreen ? " lg:h-full" : "")
-        }
-      >
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              {totalSqft.toLocaleString()} sq ft
-            </h2>
-            <p className="text-xs text-gray-500">
-              {areas.length} {areas.length === 1 ? "area" : "areas"} measured
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFullscreen((f) => !f)}
-            title={fullscreen ? "Exit fullscreen" : "Expand to fullscreen"}
-            className="shrink-0 rounded border border-gray-300 p-2 text-gray-600 hover:bg-gray-50"
-          >
-            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </button>
-        </div>
-
+  // Shared panel body — identical content whether the panel renders as the
+  // desktop docked column or the phone bottom sheet.
+  const panelBody = (
+    <>
         {loadingAreas && areas.length === 0 && (
           <p className="text-sm text-gray-500">Loading areas…</p>
         )}
@@ -800,17 +792,92 @@ export default function LawnMeasurementMap({
             })()}
           </div>
         )}
-      </aside>
 
-      <div
-        className={
-          fullscreen
-            ? "h-[60vh] w-full flex-1 rounded shadow lg:h-full"
-            : "h-96 w-full rounded shadow lg:h-auto lg:flex-1"
-        }
-      >
-        <div ref={mapDivRef} className="h-full w-full rounded" />
+      {panelSlot}
+    </>
+  );
+
+  return (
+    <div className="relative h-full w-full">
+      {/* The canvas IS the surface: the map fills the whole container and
+          every control floats over it — nothing stacked above, nothing
+          beside. The parent must give this a definite height (the workspace
+          shell is h-dvh). */}
+      <div className="absolute inset-0">
+        <div ref={mapDivRef} className="h-full w-full" />
       </div>
+
+      {/* Folded-away pill — the floating tab. Phone: bottom-centre over the
+          map. Desktop: the dock's home position, top-left. Tapping it opens
+          the panel; the map stays full behind it either way. */}
+      {!panelOpen && (
+        <button
+          type="button"
+          onClick={() => setPanelOpen(true)}
+          className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-gray-200 bg-white/95 py-2 pl-3 shadow-lg backdrop-blur lg:bottom-auto lg:left-3 lg:top-3 lg:translate-x-0"
+        >
+          <Ruler className="h-4 w-4 shrink-0 text-green-700" />
+          <span className="whitespace-nowrap text-sm font-semibold tabular-nums text-gray-900">
+            {totalSqft.toLocaleString()} sq ft
+          </span>
+          <span className="whitespace-nowrap text-xs text-gray-500">
+            {areas.length} {areas.length === 1 ? "area" : "areas"}
+          </span>
+          {panelBadge}
+          <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" />
+        </button>
+      )}
+
+      {/* Desktop docked column floating over the map's left edge. The map
+          runs underneath it — the panel does not displace the canvas. */}
+      {isDesktop && panelOpen && (
+        <aside className="absolute bottom-3 left-3 top-3 z-10 flex w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+          <div className="flex items-start justify-between gap-2 border-b border-gray-100 p-3">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">
+                {totalSqft.toLocaleString()} sq ft
+              </h2>
+              <p className="text-xs text-gray-500">
+                {areas.length} {areas.length === 1 ? "area" : "areas"} measured
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPanelOpen(false)}
+              title="Hide panel"
+              className="shrink-0 rounded border border-gray-300 p-2 text-gray-600 hover:bg-gray-50"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 space-y-3 overflow-y-auto p-3">{panelBody}</div>
+        </aside>
+      )}
+
+      {/* Phone bottom sheet — overlays the map instead of displacing it.
+          Folds to the pill above so the map owns the screen; only this sheet
+          scrolls internally. */}
+      {!isDesktop && panelOpen && (
+        <aside className="absolute inset-x-2 bottom-2 z-10 flex max-h-[62dvh] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
+            <p className="text-sm font-semibold tabular-nums text-gray-900">
+              {totalSqft.toLocaleString()} sq ft
+              <span className="ml-1.5 text-xs font-normal text-gray-500">
+                · {areas.length} {areas.length === 1 ? "area" : "areas"}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setPanelOpen(false)}
+              title="Hide panel"
+              className="shrink-0 rounded p-1.5 text-gray-500 hover:bg-gray-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 space-y-3 overflow-y-auto p-3">{panelBody}</div>
+        </aside>
+      )}
     </div>
   );
 }
