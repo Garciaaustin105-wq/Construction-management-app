@@ -1,11 +1,12 @@
 "use client";
 
-// Lawn estimating workspace (client). One estimate, two tabs:
-//   Measure — LawnMeasurementMap full width (it has its own internal sidebar
-//             and needs the room the shared ~600px estimate column can't give)
-//   Items   — the line-item strip, full size
-// plus a compact always-visible strip on the Measure tab so the running total
-// moves as areas are priced, not after you leave.
+// Lawn estimating workspace (client). A map application, not a page with a
+// map in it: the shell fills the viewport (h-dvh, never h-screen — mobile
+// browser chrome makes 100vh taller than the visible area) and never scrolls;
+// the map canvas fills the shell and everything else floats over it — a
+// compact bar (back, title, save state) and the map's own floating panel,
+// which carries BOTH the area controls and the line items, so nothing is ever
+// reached by switching pages or tabs.
 //
 // Line-item persistence FOLLOWS the shared page's save path
 // (/estimates/[id]/page.tsx saveEstimate): read all rows, append, delete the
@@ -16,7 +17,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronUp, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, FileText, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import LawnMeasurementMap from "@/components/LawnMeasurementMap";
@@ -76,8 +77,6 @@ export default function LawnEstimateWorkspace({
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [items, setItems] = useState<LineRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"measure" | "items">("measure");
-  const [stripOpen, setStripOpen] = useState(false);
   const [persisting, setPersisting] = useState(false);
 
   const toast = useToast();
@@ -208,8 +207,8 @@ export default function LawnEstimateWorkspace({
 
   if (loading || !estimate) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-gray-500">
-        <Loader2 className="h-5 w-5 animate-spin" />
+      <div className="fixed inset-x-0 top-0 z-[60] flex h-dvh items-center justify-center bg-gray-50 lg:left-64">
+        <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
       </div>
     );
   }
@@ -285,131 +284,81 @@ export default function LawnEstimateWorkspace({
     </div>
   );
 
+  // Injected into the map's floating panel (LawnMeasurementMap panelSlot):
+  // the line-item section, so items are reachable WITHOUT leaving the map.
+  // Includes the document hand-off — customer, terms, sending, the PDF and
+  // the email preview all live on the shared page.
+  const lineItemsSection = (
+    <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-2">
+      <p className="text-xs font-medium text-gray-700">Line items</p>
+      {stripLines}
+      {totalsRows}
+      {!editable && (
+        <p className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+          Only draft estimates accept edits — pricing areas will not be saved.
+          Use Revise on the estimate document first.
+        </p>
+      )}
+      <Link
+        href={`/estimates/${estimate.id}`}
+        className="flex items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-blue-700 shadow-sm hover:bg-gray-50"
+      >
+        <FileText className="h-3.5 w-3.5" />
+        Open the estimate document
+      </Link>
+    </div>
+  );
+
   return (
-    <div className="flex min-h-screen flex-col bg-gray-50">
-      <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-2.5">
-        <Link
-          href={`/estimates/${estimate.id}`}
-          className="flex items-center gap-1 px-2 py-1 text-sm text-blue-600 -ml-2"
-        >
-          <ArrowLeft className="h-4 w-4 flex-shrink-0" />
-          <span className="truncate">Estimate</span>
-        </Link>
-        <h1 className="min-w-0 flex-1 truncate text-center text-sm font-bold text-gray-900">
-          {estimate.title || "Estimate"}
-        </h1>
-        <span className="flex-shrink-0">
-          <StatusBadge
-            tone={ESTIMATE_STATUS_TONE[estimate.status as EstimateStatus] ?? "neutral"}
-            size="sm"
-          >
-            {ESTIMATE_STATUS_LABEL[estimate.status as EstimateStatus] ?? estimate.status}
-          </StatusBadge>
-        </span>
-      </header>
+    // Full-viewport shell: the page never scrolls — h-dvh (not h-screen, which
+    // overshoots under mobile browser chrome), overflow hidden, and only the
+    // map's panel scrolls internally. z-[60] sits over the mobile BottomNav
+    // (z-50) so the canvas owns the whole phone; the desktop Sidebar (z-30)
+    // stays visible via lg:left-64, matching Providers' lg:pl-64 offset.
+    <div className="fixed inset-x-0 top-0 z-[60] h-dvh overflow-hidden bg-gray-50 lg:left-64">
+      <div className="relative h-full w-full">
+        <LawnMeasurementMap
+          estimateId={estimate.id}
+          address={address}
+          onAddLineItem={addMeasuredLine}
+          panelSlot={lineItemsSection}
+          panelBadge={
+            <span className="whitespace-nowrap text-xs font-semibold text-green-700">
+              {items.length} {items.length === 1 ? "item" : "items"} ·{" "}
+              {formatMoney(totals.grandTotal)}
+            </span>
+          }
+        />
 
-      {/* Tab bar — able to take more tabs later (Landscape and Legend are
-          roadmap, not this lane: they need point/line geometry that
-          estimate_areas doesn't model yet, so no empty tabs shipped). */}
-      <div className="sticky top-[49px] z-30 border-b border-gray-200 bg-white">
-        <div className="mx-auto flex lg:max-w-3xl">
-          {(
-            [
-              ["measure", "Measure"],
-              ["items", "Items"],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`flex-1 py-2.5 text-sm font-semibold ${
-                tab === key
-                  ? "border-b-2 border-blue-700 text-blue-700"
-                  : "text-gray-500"
-              }`}
-            >
-              {label}
-              {key === "items" && items.length > 0 && (
-                <span className="ml-1 text-xs font-normal text-gray-400">
-                  ({items.length})
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <main className="flex-1">
-        {tab === "measure" ? (
-          // The map takes the screen: full width, no max-w column — its
-          // internal sidebar (lg:w-96) and map panel need the room the shared
-          // estimate page could never give it. On a phone it stays usable:
-          // the map's own sidebar stacks above the map and the fullscreen
-          // toggle takes over the whole screen while drawing.
-          <div className="w-full p-3 lg:p-4">
-            <LawnMeasurementMap
-              estimateId={estimate.id}
-              address={address}
-              onAddLineItem={addMeasuredLine}
-            />
-          </div>
-        ) : (
-          <div className="mx-auto max-w-3xl space-y-4 p-4">
-            <div className="rounded-lg bg-white shadow-sm">
-              <div className="border-b border-gray-100 px-4 py-3 text-sm font-semibold text-gray-900">
-                Line items
-              </div>
-              <div className="px-4 py-2">{stripLines}</div>
-              <div className="px-4 pb-4">{totalsRows}</div>
-            </div>
-            {!editable && (
-              <p className="rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                Only draft estimates accept edits. Pricing areas on the map will
-                not be saved to this estimate — use Revise on the estimate
-                document first.
-              </p>
-            )}
-            {/* Hand the document side back — customer, terms, sending, the
-                PDF and the email preview all live on the shared page. */}
+        {/* Compact bar floating OVER the canvas — back, title, save state.
+            Auto-width (it must not block map taps on a phone); on desktop it
+            sits top-right, clear of the docked panel. */}
+        <div className="pointer-events-none absolute inset-x-2 top-2 z-20 flex justify-end lg:inset-x-auto lg:right-3 lg:top-3">
+          <div className="pointer-events-auto flex max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white/95 px-2 py-1.5 shadow-sm backdrop-blur lg:px-3">
             <Link
               href={`/estimates/${estimate.id}`}
-              className="flex items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-semibold text-blue-700 shadow-sm hover:bg-gray-50"
+              className="flex items-center gap-1 text-sm text-blue-600"
             >
-              <FileText className="h-4 w-4" />
-              Open the estimate document
+              <ArrowLeft className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline">Estimate</span>
             </Link>
-          </div>
-        )}
-      </main>
-
-      {/* Running strip — visible while measuring so the number moves as areas
-          are priced. Collapsed to one line on a phone (the map keeps the
-          screen); expands to the full strip on demand. */}
-      {tab === "measure" && (
-        <div className="sticky bottom-0 z-30 border-t border-gray-200 bg-white shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
-          {stripOpen && <div className="max-h-64 overflow-y-auto px-4 pt-2">{stripLines}</div>}
-          {stripOpen && <div className="px-4 pb-2">{totalsRows}</div>}
-          <button
-            type="button"
-            onClick={() => setStripOpen((o) => !o)}
-            className="flex w-full items-center justify-between px-4 py-2.5 text-left"
-          >
-            <span className="text-sm font-semibold text-gray-900">
-              {items.length} {items.length === 1 ? "item" : "items"}
-              <span className="ml-2 font-bold text-green-700">
-                {formatMoney(totals.grandTotal)}
-              </span>
-            </span>
-            {persisting ? (
-              <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-            ) : stripOpen ? (
-              <ChevronDown className="h-4 w-4 text-gray-500" />
-            ) : (
-              <ChevronUp className="h-4 w-4 text-gray-500" />
+            <h1 className="min-w-0 flex-1 truncate text-sm font-bold text-gray-900">
+              {estimate.title || "Estimate"}
+            </h1>
+            {persisting && (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
             )}
-          </button>
+            <span className="shrink-0">
+              <StatusBadge
+                tone={ESTIMATE_STATUS_TONE[estimate.status as EstimateStatus] ?? "neutral"}
+                size="sm"
+              >
+                {ESTIMATE_STATUS_LABEL[estimate.status as EstimateStatus] ?? estimate.status}
+              </StatusBadge>
+            </span>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
