@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Plus, Eye, Pencil, UserPlus, Mail } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Plus, Eye, Pencil, UserPlus, Mail } from "lucide-react";
 import Link from "next/link";
 import { useToast } from "@/components/Toast";
 import EstimateLineItemEditor, {
@@ -21,7 +21,6 @@ import {
   type EstimateStatus,
 } from "@/lib/lifecycles/estimate";
 import { summarizeLineSchedule, type ScheduleFrequency } from "@/lib/lawnEstimate";
-import LawnMeasurementMap from "@/components/LawnMeasurementMap";
 import { isLawn } from "@/lib/variant";
 import NumberInput from "@/components/NumberInput";
 import EstimateOfficeActions from "./EstimateOfficeActions";
@@ -789,47 +788,21 @@ export default function EstimateDetailPage({
       <main className="max-w-md lg:max-w-7xl mx-auto p-4 space-y-4">
         {tab === "edit" ? (
           <>
-            {/* Lawn only: draw the lawn's boundary → measured_sqft on the
-                estimate. Full-width, above the two-column form -- this is the
-                biggest, most interactive tool on the page and was unusable
-                squeezed into the ~600px main column alongside the pricing
-                sidebar (its own internal sidebar + map need real width).
-                Self-gating via isLawn() so construction renders nothing. */}
+            {/* Lawn only: measuring happens in its own full-width workspace
+                (/lawn/estimate/[id]) now — the map has its own internal
+                sidebar and was unusable squeezed into the ~600px main column
+                alongside the pricing sidebar. This page keeps the document
+                side (customer, terms, sending, PDF, email preview) and links
+                to the workspace for measuring + pricing. Self-gating via
+                isLawn() so construction renders nothing. */}
             {isLawn() && (
-              <div>
-                <span className="text-sm font-medium text-gray-700">
-                  Lawn measurement
-                </span>
-                <div className="mt-2">
-                  <LawnMeasurementMap
-                    estimateId={estimate.id}
-                    address={
-                      estimate.customers?.address ?? estimate.jobs?.address ?? null
-                    }
-                    onAddLineItem={(line) =>
-                      setItems((prev) => [
-                        ...prev,
-                        {
-                          cost_code_id: null,
-                          description: line.description,
-                          quantity: line.quantity,
-                          unit: line.unit,
-                          unit_price: line.unit_price,
-                          section: "",
-                          internal_cost: null,
-                          schedule_frequency: null,
-                          schedule_interval_weeks: 1,
-                          schedule_days_of_week: [],
-                          schedule_day_of_month: null,
-                          schedule_start_date: null,
-                          schedule_end_date: null,
-                          recurring_schedule_id: null,
-                        },
-                      ])
-                    }
-                  />
-                </div>
-              </div>
+              <Link
+                href={`/lawn/estimate/${estimate.id}`}
+                className="flex items-center justify-between rounded-lg bg-green-50 px-4 py-3 text-sm font-semibold text-green-800 hover:bg-green-100"
+              >
+                <span>Measure this property</span>
+                <ArrowRight className="h-4 w-4" />
+              </Link>
             )}
 
             <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
