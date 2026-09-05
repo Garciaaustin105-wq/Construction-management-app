@@ -718,6 +718,29 @@ export default function LawnMeasurementMap({
           </ul>
         )}
 
+        {/* No service carries a $/sq ft rate, so there is nothing to price
+            against. This used to render NOTHING — the pricing panel simply
+            vanished, with no way to tell whether area pricing did not exist,
+            was broken, or was hidden. The rate is an optional field on each
+            service, which is not somewhere you would think to look. */}
+        {areas.length > 0 && pricedServices.length === 0 && (
+          <div className="space-y-1 rounded border border-amber-200 bg-amber-50 p-2">
+            <p className="text-xs font-medium text-amber-900">
+              No service has a $/sq ft rate yet
+            </p>
+            <p className="text-xs text-amber-800">
+              Measured areas can only be priced against a service that has one.
+              Open a service and fill in &ldquo;$ per sq ft&rdquo;.
+            </p>
+            <a
+              href="/lawn/services"
+              className="inline-block text-xs font-medium text-amber-900 underline"
+            >
+              Go to Services
+            </a>
+          </div>
+        )}
+
         {/* Price an area panel */}
         {areas.length > 0 && pricedServices.length > 0 && (
           <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-2">
