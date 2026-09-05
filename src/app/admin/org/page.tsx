@@ -34,7 +34,9 @@ export default async function OrgSettingsPage({
 
   const { data: orgRow } = await supabase
     .from("organizations")
-    .select("id, name, address, phone, email, logo_path")
+    .select(
+      "id, name, address, phone, email, logo_path, default_labor_rate, default_labor_cost_rate, default_mobilization_hours"
+    )
     .eq("id", targetOrgId)
     .single();
 
@@ -44,5 +46,13 @@ export default async function OrgSettingsPage({
   // (platform overview; org identity is not super_admin-mutable).
   const canEdit = tenant.role === "admin";
 
-  return <OrgSettingsForm org={orgRow} canEdit={canEdit} />;
+  // Landscape labor defaults are lawn-only. Resolved here from the cached
+  // tenant read rather than looked up in the client.
+  return (
+    <OrgSettingsForm
+      org={orgRow}
+      canEdit={canEdit}
+      isLawn={tenant.appVariant === "lawn"}
+    />
+  );
 }
