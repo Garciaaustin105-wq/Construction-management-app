@@ -20,6 +20,8 @@ import { polygonAreaSqft } from "@/lib/lawnMeasurement";
 
 export type LatLng = { lat: number; lng: number };
 
+export type AreaKind = "area" | "line" | "point";
+
 export type EstimateArea = {
   id: string;
   estimate_id: string;
@@ -27,6 +29,20 @@ export type EstimateArea = {
   color: string;
   polygon: LatLng[];
   area_sqft: number;
+  // How to read `polygon`. Phase 1 of the estimator roadmap made this table
+  // hold more than rings: a sprinkler head is a POINT, a pipe run is a LINE,
+  // a mulch bed is still an AREA. `polygon` keeps its name and means "the
+  // coordinate list" — one entry for a point, an open path for a line, a
+  // closed ring for an area. App-validated on purpose (no CHECK), so a new
+  // item type never needs a migration.
+  kind: AreaKind;
+  // Run length for kind="line". An area has no length and a point has
+  // neither, so both stay 0 rather than null — the column is NOT NULL and
+  // summing a column of nulls is a nuisance every caller would repeat.
+  length_ft: number;
+  // Per-kind detail with no column of its own: coverage radius for a head,
+  // species and size for a plant, diameter for a pipe.
+  meta: Record<string, unknown>;
   service_type: string | null;
   notes: string | null;
   // Access/obstacle chips picked while drawing (narrow gate, steep slope,
@@ -119,6 +135,11 @@ export type NewEstimateArea = {
   color: string;
   polygon: LatLng[];
   area_sqft: number;
+  // Omitted means an area: the columns carry DB defaults, so existing
+  // callers that only ever drew polygons keep working untouched.
+  kind?: AreaKind;
+  length_ft?: number;
+  meta?: Record<string, unknown>;
   service_type?: string | null;
   notes?: string | null;
   access_tags?: string[];
@@ -241,4 +262,32 @@ export function edgeHitAt(
     }
   }
   return best ? { index: best.index, point: best.point } : null;
+}
+
+/**
+ * Run length of an open path, in feet.
+ *
+ * The counterpart to areaSqftFromPoints for kind="line" — pipe runs, edging,
+ * fence. Open, not closed: unlike an area, the last point does NOT join back
+ * to the first, because a pipe that ran back to where it started would be
+ * billed for a leg nobody laid.
+ *
+ * Planar in metres with longitude scaled by cos(lat), same as edgeHitAt above.
+ * Over one property the curvature error is far below the accuracy of clicking
+ * a satellite tile; dropping the latitude term, though, would skew every
+ * east-west run and get worse the further from the equator the job is.
+ */
+export function lengthFtFromPoints(points: LatLng[]): number {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  const M_PER_FT = 0.3048;
+  let metres = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const kLng = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180) * M_PER_DEG_LAT;
+    const dx = (b.lng - a.lng) * kLng;
+    const dy = (b.lat - a.lat) * M_PER_DEG_LAT;
+    metres += Math.hypot(dx, dy);
+  }
+  return Math.round((metres / M_PER_FT) * 10) / 10;
 }
