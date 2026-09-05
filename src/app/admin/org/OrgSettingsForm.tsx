@@ -17,14 +17,21 @@ type Org = {
   phone: string | null;
   email: string | null;
   logo_path: string | null;
+  default_labor_rate: number | null;
+  default_labor_cost_rate: number | null;
+  default_mobilization_hours: number | null;
 };
 
 export default function OrgSettingsForm({
   org,
   canEdit,
+  isLawn,
 }: {
   org: Org;
   canEdit: boolean;
+  // Landscape labor defaults are lawn-only; a construction org has no use for
+  // them. Passed from the page rather than looked up here.
+  isLawn: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -32,12 +39,29 @@ export default function OrgSettingsForm({
   const [address, setAddress] = useState(org.address ?? "");
   const [phone, setPhone] = useState(org.phone ?? "");
   const [email, setEmail] = useState(org.email ?? "");
+  // Held as STRINGS: an empty box must mean "not set", which a number-typed
+  // state cannot express distinctly from 0.
+  const [laborRate, setLaborRate] = useState(org.default_labor_rate?.toString() ?? "");
+  const [laborCostRate, setLaborCostRate] = useState(org.default_labor_cost_rate?.toString() ?? "");
+  const [mobilizationHours, setMobilizationHours] = useState(
+    org.default_mobilization_hours?.toString() ?? ""
+  );
   const [logoPath, setLogoPath] = useState<string | null>(org.logo_path);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const logoRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
   const logoUrl = logoPath ? supabase.storage.from("org-logos").getPublicUrl(logoPath).data.publicUrl : null;
+
+  // The API takes numbers or null, never numeric strings — a "65" is a 400.
+  // An empty box means "not set" (null), which is different from 0: zero
+  // mobilization hours is a real answer, null means nobody estimated it.
+  const numOrNull = (v: string): number | null => {
+    const t = v.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +75,9 @@ export default function OrgSettingsForm({
         address: address || null,
         phone: phone || null,
         email: email || null,
+        default_labor_rate: numOrNull(laborRate),
+        default_labor_cost_rate: numOrNull(laborCostRate),
+        default_mobilization_hours: numOrNull(mobilizationHours),
       }),
     });
     const data = await res.json();
@@ -216,6 +243,57 @@ export default function OrgSettingsForm({
                 className="mt-1 block w-full px-3 py-3 border border-gray-300 rounded-lg text-base"
               />
             </label>
+            {isLawn && (
+              <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                <span className="text-sm font-medium text-gray-700">Landscape labor defaults</span>
+                <p className="text-xs text-gray-500">These prefill a new estimate. You can change them per job.</p>
+
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700">Billed rate</span>
+                  <span className="block text-xs text-gray-500">per man-hour, what the customer pays</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Not set"
+                    value={laborRate}
+                    onChange={(e) => setLaborRate(e.target.value)}
+                    className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700">Your cost</span>
+                  <span className="block text-xs text-gray-500">per man-hour, burdened. Internal only, never shown to a customer</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Not set"
+                    value={laborCostRate}
+                    onChange={(e) => setLaborCostRate(e.target.value)}
+                    className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700">Mobilization</span>
+                  <span className="block text-xs text-gray-500">MAN-hours per job: drive both ways, unload, setup, cleanup, haul-off. Two people driving 30 min each way is 2 man-hours.</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Not set"
+                    value={mobilizationHours}
+                    onChange={(e) => setMobilizationHours(e.target.value)}
+                    className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2"
+                  />
+                </label>
+              </div>
+            )}
             <button
               type="submit"
               disabled={saving}

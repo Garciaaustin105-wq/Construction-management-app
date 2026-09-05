@@ -32,6 +32,9 @@ import {
   computeTotal,
   formatMoney,
 } from "@/lib/money";
+import type { EstimateArea } from "@/lib/estimateAreas";
+import { buildPlantLegend } from "@/lib/plantProducts";
+import LandscapeLaborPanel from "@/components/LandscapeLaborPanel";
 
 // Same office line-item columns the shared page reads so a rewrite here
 // round-trips exactly what saveEstimate would have written back.
@@ -65,6 +68,11 @@ type Estimate = {
   tax_pct: number;
   deposit_pct: number;
   deposit_amount: number;
+  // Landscape install labor. Each is nullable and null means "not estimated",
+  // which is NOT the same as 0 — see LandscapeLaborPanel.
+  labor_rate: number | null;
+  labor_cost_rate: number | null;
+  mobilization_hours: number | null;
   jobs: { name: string; address: string | null } | null;
   customers: { name: string | null; address: string | null } | null;
 };
@@ -78,6 +86,10 @@ export default function LawnEstimateWorkspace({
   const [items, setItems] = useState<LineRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [persisting, setPersisting] = useState(false);
+  // The MAP owns areas; it publishes them up so the labor panel can build the
+  // plant legend without a second fetch of the same rows.
+  const [areas, setAreas] = useState<EstimateArea[]>([]);
+  const [savingLabor, setSavingLabor] = useState(false);
 
   const toast = useToast();
 
@@ -90,7 +102,7 @@ export default function LawnEstimateWorkspace({
         supabase
           .from("estimates")
           .select(
-            "id, title, status, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, jobs(name, address), customers(name, address)"
+            "id, title, status, markup_pct, contingency_pct, tax_pct, deposit_pct, deposit_amount, labor_rate, labor_cost_rate, mobilization_hours, jobs(name, address), customers(name, address)"
           )
           .eq("id", estimateId)
           .maybeSingle(),
@@ -121,6 +133,11 @@ export default function LawnEstimateWorkspace({
     quantity: number;
     unit: string;
     unit_price: number;
+    // What the item costs US. Optional because measured lawn areas priced by
+    // $/sq ft have no cost side; a plant placed from the catalogue does, and
+    // it must reach estimate_line_items.internal_cost or jobProfitability
+    // reports the whole sale as margin.
+    internal_cost?: number | null;
   }) {
     if (!estimate || persisting) return;
     // Same guards as the shared page's saveEstimate — a converted estimate is
@@ -158,7 +175,7 @@ export default function LawnEstimateWorkspace({
         quantity: line.quantity,
         unit: line.unit,
         unit_price: line.unit_price,
-        internal_cost: null,
+        internal_cost: line.internal_cost ?? null,
         section: "",
       },
     ];
@@ -284,11 +301,57 @@ export default function LawnEstimateWorkspace({
     </div>
   );
 
+  // The first estimate-LEVEL write in this component (line items go through
+  // the delete-and-reinsert path above). A plain scoped update: RLS confirms
+  // the estimate is ours, and only draft estimates accept writes, matching
+  // every other save here.
+  async function saveLaborSettings(patch: {
+    labor_rate?: number | null;
+    labor_cost_rate?: number | null;
+    mobilization_hours?: number | null;
+  }) {
+    if (!estimate || savingLabor) return;
+    if (estimate.status !== "draft") {
+      toast.warning("Only draft estimates can be edited.");
+      return;
+    }
+    setSavingLabor(true);
+    // Optimistic: the panel's numbers should move as soon as the field blurs,
+    // not after the round trip. Rolled back below if the write fails.
+    const previous = estimate;
+    setEstimate({ ...estimate, ...patch });
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("estimates")
+      .update(patch)
+      .eq("id", estimate.id);
+    if (error) {
+      setEstimate(previous);
+      toast.error(`Save failed: ${error.message}`);
+    }
+    setSavingLabor(false);
+  }
+
+  // Derived from what is actually placed on the map — never stored. Polygons
+  // and any non-plant points are ignored by buildPlantLegend itself.
+  const plantLegend = buildPlantLegend(areas);
+
   // Injected into the map's floating panel (LawnMeasurementMap panelSlot):
   // the line-item section, so items are reachable WITHOUT leaving the map.
   // Includes the document hand-off — customer, terms, sending, the PDF and
   // the email preview all live on the shared page.
   const lineItemsSection = (
+    <div className="space-y-2">
+      <LandscapeLaborPanel
+        rows={plantLegend}
+        laborRate={estimate?.labor_rate ?? null}
+        laborCostRate={estimate?.labor_cost_rate ?? null}
+        mobilizationHours={estimate?.mobilization_hours ?? null}
+        onChange={saveLaborSettings}
+        saving={savingLabor}
+        onAddLaborLine={addMeasuredLine}
+        canEdit={estimate?.status === "draft"}
+      />
     <div className="space-y-2 rounded border border-gray-200 bg-gray-50 p-2">
       <p className="text-xs font-medium text-gray-700">Line items</p>
       {stripLines}
@@ -307,6 +370,23 @@ export default function LawnEstimateWorkspace({
         Open the estimate document
       </Link>
     </div>
+      {/* Measurement accuracy, footnoted under everything it applies to:
+          areas, plants and labor all derive from the same satellite imagery.
+
+          It lives HERE rather than in LawnMeasurementMap because this section
+          is injected into the map's own floating panel through `panelSlot`, so
+          it renders in the right place without editing a 949-line component
+          that another lane is actively changing.
+
+          Slope is the one worth stating plainly: the math is planar
+          (areaSqftFromPoints, lengthFtFromPoints), so sloped ground always
+          measures LOW — an error in one direction, which a pro can pad for
+          only if they know about it. */}
+      <p className="px-1 text-[11px] leading-snug text-gray-500">
+        Measured from satellite imagery — expect a few feet of variance. Slope
+        is not included, so sloped ground measures low.
+      </p>
+    </div>
   );
 
   return (
@@ -321,6 +401,7 @@ export default function LawnEstimateWorkspace({
           estimateId={estimate.id}
           address={address}
           onAddLineItem={addMeasuredLine}
+          onAreasChange={setAreas}
           panelSlot={lineItemsSection}
           panelBadge={
             <span className="whitespace-nowrap text-xs font-semibold text-green-700">

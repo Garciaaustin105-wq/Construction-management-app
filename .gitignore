@@ -53,3 +53,4 @@ next-env.d.ts
 .od-build/
 .cl-tsconfig.json
 .local-ai-bundles/
+.labor-build/

@@ -81,6 +81,69 @@ whether the system will actually work. Crossing that line means owning
 liability for someone's system, and the user has one real customer, not a
 hydraulics department.
 
+**DECIDED 2026-09-05: keep the coverage drawing, and carry a note.** The
+circles stay — they are how a professional sees gaps and overlaps at a glance,
+and that is exactly the speed-up the tool exists to give. What changes is that
+the screen says what it is, so nobody mistakes a drawing for a design.
+
+**Voice matters here.** This is a tool that ASSISTS the professional doing the
+work — it is not a replacement for one, and the copy should not read like a
+disclaimer apologising for what the app cannot do. Lead with what it gives
+them (draw it, price it, fast) and let the caveats follow as practical facts
+an estimator needs, not as liability hedging. The person using this IS the
+professional; talk to them as one.
+
+The note has two halves, and the second is the one people forget:
+
+1. **Whose job this is.** The tool draws and prices what the professional
+   places. The design decisions stay theirs — that is not a limitation, it is
+   the division of labour.
+2. **Why the numbers move.** Every measurement here comes off satellite
+   imagery, and that carries real error:
+   - georeferencing offset — imagery can sit several feet off true ground
+     position, so a click is not exactly where you think
+   - imagery age — the picture may be months or years old, and the yard has
+     changed since
+   - resolution — roughly 15-30 cm per pixel at best, so a tap is +/- a foot
+     or two before anyone's hand shakes
+   - **slope is not counted** — the math here is planar (see
+     `areaSqftFromPoints`, `lengthFtFromPoints`), so a sloped yard has more
+     real surface than its map footprint. This under-measures, always in the
+     same direction.
+
+**THIS APPLIES TO EVERYTHING ALREADY SHIPPED, not just irrigation.** Lawn
+sqft, mulch beds, sod and pipe runs all come off the same imagery with the
+same planar math. The note belongs on the measurement surface generally, not
+buried in an irrigation tab that most estimates never open.
+
+Draft copy, to be placed once and reused:
+
+> Draw what you are installing and price it in minutes. Coverage shows what
+> you placed, so gaps and overlaps are easy to spot — spacing, pressure and
+> zoning stay your call.
+>
+> Measurements come off satellite imagery: expect a few feet of variance, and
+> slope is not included, so sloped ground measures low.
+
+Two lines, in that order. The first is what the tool does for them; the second
+is what an estimator needs to know to trust the number. Never open with the
+caveat.
+
+**DONE for measurement 2026-09-05.** The accuracy half now sits as a footnote
+at the bottom of the estimator's floating panel, under the areas, plants and
+labor it applies to.
+
+It was added to `LawnEstimateWorkspace.tsx`, NOT to `LawnMeasurementMap.tsx`.
+The workspace injects that section into the map's own panel through
+`panelSlot`, so the note renders exactly where it belongs without editing a
+949-line component that the placement lane is actively changing. Worth
+remembering as a general move: `panelSlot` is the seam for adding to that
+panel without touching the map.
+
+Still to do: the coverage half of the note ("gaps and overlaps are easy to
+spot — spacing, pressure and zoning stay your call"), which ships with the
+irrigation work since there is no coverage view to caption yet.
+
 ## Open questions — these need your answers, not my guesses
 
 1. **Where do plant prices come from?** A catalogue in the app that an org

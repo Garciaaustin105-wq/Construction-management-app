@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type React from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
@@ -34,6 +34,14 @@ import {
 } from "@/lib/estimateAreas";
 import { loadGoogleMaps } from "@/lib/googleMaps";
 import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
+import {
+  listPlantCatalogue,
+  plantSnapshot,
+  readPlantSnapshot,
+  type PlantProduct,
+  type PlantSize,
+  type PlantWithSizes,
+} from "@/lib/plantProducts";
 import { formatMoney } from "@/lib/money";
 import { useIsDesktop } from "@/lib/useIsDesktop";
 import { ChevronDown, ChevronUp, Ruler, X } from "lucide-react";
@@ -41,7 +49,15 @@ import { ChevronDown, ChevronUp, Ruler, X } from "lucide-react";
 type Props = {
   estimateId: string;
   address: string | null;
-  onAddLineItem: (line: { description: string; quantity: number; unit: string; unit_price: number }) => void;
+  onAddLineItem: (line: {
+    description: string;
+    quantity: number;
+    unit: string;
+    unit_price: number;
+    // Set by catalogue-priced items (plants); omitted by $/sq ft area pricing,
+    // which has no cost side.
+    internal_cost?: number | null;
+  }) => void;
   // Workspace content rendered INSIDE the floating panel (below the area
   // controls) so line items are reachable without navigating away from the
   // map — the workspace hands its line-item section through this slot.
@@ -49,6 +65,10 @@ type Props = {
   // Optional live summary shown on the collapsed pill (item count + running
   // total) so the number still moves while the panel is folded away.
   panelBadge?: React.ReactNode;
+  // Areas are loaded and owned HERE, not by the workspace. The labor panel
+  // needs them to build the plant legend, so the map publishes them upward
+  // after every load rather than the workspace fetching them a second time.
+  onAreasChange?: (areas: EstimateArea[]) => void;
 };
 
 type Draft = { areaId: string | "new"; vertices: LatLng[]; tags: string[] } | null;
@@ -65,6 +85,7 @@ export default function LawnMeasurementMap({
   onAddLineItem,
   panelSlot,
   panelBadge,
+  onAreasChange,
 }: Props): React.ReactElement {
   /* ---------- State ---------- */
   const [areas, setAreas] = useState<EstimateArea[]>([]);
@@ -76,6 +97,21 @@ export default function LawnMeasurementMap({
   const [loadingAreas, setLoadingAreas] = useState<boolean>(true);
   const [editName, setEditName] = useState<{ [id: string]: string }>({});
   const [pricedServices, setPricedServices] = useState<PricedService[]>([]);
+  // The plant catalogue, loaded once per org for the placement picker.
+  // listPlantCatalogue already orders species by name and sizes by sort_order
+  // — re-sorting sizes here would put "15 gal" before "3 gal" alphabetically,
+  // the exact bug sort_order exists to prevent.
+  const [plantCatalogue, setPlantCatalogue] = useState<PlantWithSizes[]>([]);
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
+  // Placement mode: armed with a species+size pair, a map click then plants
+  // one. Mutually exclusive with the draft — see startPlacement below.
+  const [placing, setPlacing] = useState<{ product: PlantProduct; size: PlantSize } | null>(null);
+  const [pickerProductId, setPickerProductId] = useState<string>("");
+  const [pickerSizeId, setPickerSizeId] = useState<string>("");
+  // The selected placed plant (for the inspect card). Empty string = none.
+  const [selectedPlantId, setSelectedPlantId] = useState<string>("");
+  // Per-placement note drafts, keyed by area id — mirrors editName.
+  const [plantNote, setPlantNote] = useState<{ [id: string]: string }>({});
   const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
   const [mapReady, setMapReady] = useState(false);
@@ -104,6 +140,10 @@ export default function LawnMeasurementMap({
   const mapRef = useRef<google.maps.Map | null>(null);
   const mapDivRef = useRef<HTMLDivElement | null>(null);
   const staticPolygonsRef = useRef<google.maps.Polygon[]>([]);
+  // Placed plants (kind="point"). Rebuilt wholesale on every areas change —
+  // always tear down before rebuild, or a 200-plant estimate leaks markers
+  // until the map melts.
+  const plantMarkersRef = useRef<google.maps.Marker[]>([]);
   const draftPolygonRef = useRef<google.maps.Polygon | null>(null);
   const vertexMarkersRef = useRef<google.maps.Marker[]>([]);
   const midMarkersRef = useRef<google.maps.Marker[]>([]);
@@ -113,8 +153,32 @@ export default function LawnMeasurementMap({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+  // Same treatment for placement mode: the map click listener is registered
+  // once and reads this ref, so it never sees a stale closure.
+  const placingRef = useRef(placing);
+  useEffect(() => {
+    placingRef.current = placing;
+  }, [placing]);
+  // In-flight guard for placePlant. A ref, not state: state updates are async
+  // and an impatient second tap can beat the re-render — this repo has
+  // already shipped a double-submit bug from exactly that (crew/photo).
+  const placingSaveRef = useRef(false);
+  // placePlant is called from the once-registered map click listener, so it
+  // must never read state that could be stale — orgId arrives AFTER the map
+  // is created, and a closure over the state would hold `null` forever.
+  const orgIdRef = useRef(orgId);
+  useEffect(() => {
+    orgIdRef.current = orgId;
+  }, [orgId]);
 
   /* ---------- Supabase client ---------- */
+  // Held in a ref so an inline arrow from the parent does not change
+  // loadAreas' identity on every render, which would re-fire its effects.
+  const onAreasChangeRef = useRef(onAreasChange);
+  useEffect(() => {
+    onAreasChangeRef.current = onAreasChange;
+  }, [onAreasChange]);
+
   const supabase = createClient();
 
   /* ---------- Load organization id + areas ---------- */
@@ -122,10 +186,88 @@ export default function LawnMeasurementMap({
     setLoadingAreas(true);
     const { data, error } = await listEstimateAreas(supabase, estimateId);
     setAreas(data);
+    onAreasChangeRef.current?.(data);
     if (error) setErrorMsg(`Load areas: ${error}`);
     setLoadingAreas(false);
     return data;
   };
+  // placePlant (defined below, called from the once-registered map listener)
+  // reaches the LATEST loadAreas through this ref so placePlant's identity
+  // can stay stable via useCallback.
+  const loadAreasRef = useRef(loadAreas);
+  useEffect(() => {
+    loadAreasRef.current = loadAreas;
+  });
+
+  /* ---------- Place a plant (kind="point") ---------- */
+  // Defined BEFORE the map-init effect on purpose: the once-registered click
+  // listener calls it, so its identity must already exist here and every
+  // value it reads must be stable — hence orgIdRef instead of the orgId
+  // state (which is still null when the map is created) and loadAreasRef.
+  //
+  // Unlike finishArea, a plant saves on the SINGLE click: no finish step, no
+  // minimum vertex count. The saved row is an estimate_areas row with
+  // kind="point", a ONE-coordinate polygon, area_sqft 0, and a snapshot of
+  // the chosen size in meta — createEstimateArea accepts it unchanged, which
+  // was the entire point of the phase-1 migration.
+  //
+  // NOT in the undo stack: history/future hold draft vertex arrays, and a
+  // saved plant is not a draft. Deleting the plant is the undo.
+  const placePlant = useCallback(
+    async (sel: { product: PlantProduct; size: PlantSize }, at: LatLng): Promise<void> => {
+      // Double-place guard: a slow save plus an impatient second tap must not
+      // create two plants. placingSaveRef is a useRef for exactly the reason in
+      // its declaration — state would lose the race.
+      if (placingSaveRef.current) return;
+      placingSaveRef.current = true;
+      try {
+        if (!orgIdRef.current) {
+          setErrorMsg("Still loading this estimate — try again in a moment.");
+          return;
+        }
+        const { error } = await createEstimateArea(supabase, {
+          estimate_id: estimateId,
+          organization_id: orgIdRef.current,
+          name: sel.product.name,
+          color: sel.product.color,
+          polygon: [at], // ONE coordinate — this is what makes it a point
+          area_sqft: 0,
+          kind: "point",
+          // Snapshot, not just ids: re-pricing the catalogue must not silently
+          // change what a customer was quoted (see plantProducts.ts).
+          meta: plantSnapshot(sel.product, sel.size) as unknown as Record<string, unknown>,
+        });
+        // Release the guard BEFORE the reload+sync: the guard exists for the
+        // write, and the marker for this plant is already visible once
+        // loadAreas resolves. Holding it through syncEstimateTotals would
+        // silently swallow the next tap while totals were still syncing —
+        // exactly the back-to-back tapping placement mode is for.
+        placingSaveRef.current = false;
+        if (error) {
+          setErrorMsg(`Place plant: ${error}`);
+          return;
+        }
+        setErrorMsg(null);
+        toast.success(`${sel.product.name} placed`);
+        // Reload + sync exactly as finishArea does — loadAreas publishes the
+        // whole array upward via onAreasChange, which is what makes the legend
+        // and the labor panel update with NO legend code in this file.
+        const fresh = await loadAreasRef.current();
+        const syncErr = await syncEstimateTotals(supabase, estimateId, fresh);
+        if (syncErr) setErrorMsg(syncErr);
+      } finally {
+        placingSaveRef.current = false;
+      }
+    },
+    [estimateId, supabase, toast]
+  );
+  // The listener reads the LATEST placePlant through this ref — same pattern
+  // as draftRef/placingRef, and it keeps the listener from capturing the
+  // first render's closure.
+  const placePlantRef = useRef(placePlant);
+  useEffect(() => {
+    placePlantRef.current = placePlant;
+  }, [placePlant]);
 
   useEffect(() => {
     (async () => {
@@ -194,6 +336,17 @@ export default function LawnMeasurementMap({
     listPricedServices(supabase, orgId).then(({ data }) => setPricedServices(data));
   }, [orgId, supabase]);
 
+  /* ---------- Load the plant catalogue (once per org) ---------- */
+  // Same shape as pricedServices above. Sizes arrive already ordered by
+  // sort_order — do NOT re-sort them.
+  useEffect(() => {
+    if (!orgId) return;
+    listPlantCatalogue(supabase, orgId).then(({ data }) => {
+      setPlantCatalogue(data);
+      setCatalogueLoaded(true);
+    });
+  }, [orgId, supabase]);
+
   /* ---------- Load Google Maps + create the map ONCE ---------- */
   useEffect(() => {
     if (mapRef.current) return;
@@ -225,6 +378,16 @@ export default function LawnMeasurementMap({
         // draws (recreating it on every vertex change was the previous bug:
         // it flickered the map and re-geocoded on every click).
         map.addListener("click", (e: google.maps.MapMouseEvent) => {
+          // PLACEMENT branches first and returns: while a species+size is
+          // armed, a map click places a plant and must never also touch the
+          // draft. placingRef mirrors the state for the same reason draftRef
+          // does — this listener is registered once and must never read a
+          // stale closure.
+          const place = placingRef.current;
+          if (place && e.latLng) {
+            void placePlantRef.current(place, { lat: e.latLng.lat(), lng: e.latLng.lng() });
+            return;
+          }
           const cur = draftRef.current;
           if (!cur || !e.latLng) return;
           const clicked: LatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
@@ -278,7 +441,13 @@ export default function LawnMeasurementMap({
     const editingId = draft && draft.areaId !== "new" ? draft.areaId : null;
     const newPolygons: google.maps.Polygon[] = [];
     areas
-      .filter((a) => a.id !== editingId && Array.isArray(a.polygon) && a.polygon.length >= 3)
+      .filter(
+        (a) =>
+          a.kind === "area" &&
+          a.id !== editingId &&
+          Array.isArray(a.polygon) &&
+          a.polygon.length >= 3
+      )
       .forEach((area) => {
         const path = area.polygon.map((p) => new g.maps.LatLng(p.lat, p.lng));
         const poly = new g.maps.Polygon({
@@ -295,6 +464,50 @@ export default function LawnMeasurementMap({
       });
     staticPolygonsRef.current = newPolygons;
   }, [areas, draft]);
+
+  /* ---------- Render plant markers (kind="point") ---------- */
+  // A placed plant is a one-coordinate estimate_areas row; its marker is how
+  // the plant gets inspected and deleted, so unlike the polygons it MUST be
+  // clickable. Selected plants scale up slightly. Teardown-then-rebuild, same
+  // shape as the static-polygon effect above — plants reload wholesale after
+  // every place/edit/delete, and rebuilding beats diffing.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const g = google;
+    plantMarkersRef.current.forEach((m) => {
+      g.maps.event.clearInstanceListeners(m);
+      m.setMap(null);
+    });
+    plantMarkersRef.current = [];
+
+    const markers: google.maps.Marker[] = [];
+    areas
+      .filter((a) => a.kind === "point")
+      .forEach((area) => {
+        const at = Array.isArray(area.polygon) ? area.polygon[0] : null;
+        if (!at) return;
+        const selected = area.id === selectedPlantId;
+        const marker = new g.maps.Marker({
+          position: new g.maps.LatLng(at.lat, at.lng),
+          map: mapRef.current,
+          clickable: true,
+          cursor: "pointer",
+          zIndex: 1200, // above the vertex handles so a plant on a vertex still wins
+          title: area.name,
+          icon: {
+            path: g.maps.SymbolPath.CIRCLE,
+            scale: selected ? 11 : 8,
+            fillColor: area.color,
+            fillOpacity: 1,
+            strokeColor: "#ffffff", // reads on satellite imagery
+            strokeWeight: 2,
+          },
+        });
+        marker.addListener("click", () => setSelectedPlantId(area.id));
+        markers.push(marker);
+      });
+    plantMarkersRef.current = markers;
+  }, [areas, selectedPlantId]);
 
   /* ---------- Render draft polygon and markers ---------- */
   useEffect(() => {
@@ -321,7 +534,7 @@ export default function LawnMeasurementMap({
     const draftColor =
       draft.areaId !== "new"
         ? areas.find((a) => a.id === draft.areaId)?.color ?? nextAreaColor([])
-        : nextAreaColor(areas.map((a) => a.color));
+        : nextAreaColor(areas.filter((a) => a.kind === "area").map((a) => a.color));
 
     const verts = draft.vertices;
     if (verts.length >= 2) {
@@ -461,8 +674,8 @@ export default function LawnMeasurementMap({
       const { error } = await createEstimateArea(supabase, {
         estimate_id: estimateId,
         organization_id: orgId,
-        name: `Area ${areas.length + 1}`,
-        color: nextAreaColor(areas.map((a) => a.color)),
+        name: `Area ${areas.filter((a) => a.kind === "area").length + 1}`,
+        color: nextAreaColor(areas.filter((a) => a.kind === "area").map((a) => a.color)),
         polygon: draft.vertices,
         area_sqft,
         access_tags: draft.tags,
@@ -503,6 +716,7 @@ export default function LawnMeasurementMap({
   };
 
   const startNewArea = () => {
+    setPlacing(null); // the two modes are mutually exclusive — see startPlacement
     if (!discardDraftOk()) return;
     setDraft({ areaId: "new", vertices: [], tags: [] });
     setHistory([]);
@@ -511,6 +725,7 @@ export default function LawnMeasurementMap({
 
   /* ---------- Edit existing area ---------- */
   const editArea = (area: EstimateArea) => {
+    setPlacing(null); // the two modes are mutually exclusive — see startPlacement
     if (!discardDraftOk()) return;
     const polygon = Array.isArray(area.polygon) ? area.polygon : [];
     setDraft({ areaId: area.id, vertices: polygon, tags: area.access_tags ?? [] });
@@ -523,6 +738,45 @@ export default function LawnMeasurementMap({
       mapRef.current.fitBounds(bounds);
     }
   };
+
+  /* ---------- Plant placement mode ---------- */
+  // Entering placement while an unsaved draft exists would let one click mean
+  // two things, so the same discardDraftOk() guard that protects "new area"
+  // protects this too. And the reverse edge is handled in startNewArea /
+  // editArea above: placing must never be non-null while a draft is.
+  const startPlacement = (product: PlantProduct, size: PlantSize) => {
+    if (!discardDraftOk()) return;
+    setDraft(null);
+    setHistory([]);
+    setFuture([]);
+    setSelectedPlantId("");
+    setPlacing({ product, size });
+  };
+
+  // STICKY by design: the real job is "put in twenty hollies", and a mode
+  // that exits after each plant makes that twenty round trips. Exit is
+  // explicit — Done button, Escape, or arming a different size.
+  const stopPlacing = () => setPlacing(null);
+
+  /* ---------- Per-placement note ---------- */
+  // Read-modify-write the WHOLE meta object: constructing a fresh one here
+  // would drop the snapshot fields (price, size, ids) the legend and the
+  // labor math read. Only `note` changes.
+  async function savePlantNote(area: EstimateArea, raw: string) {
+    const note = raw.trim();
+    const current = (area.meta ?? {}) as Record<string, unknown>;
+    if (note === (typeof current.note === "string" ? current.note : "")) return;
+    const meta: Record<string, unknown> = { ...current };
+    if (note) meta.note = note;
+    else delete meta.note;
+    const error = await updateEstimateArea(supabase, area.id, { meta });
+    if (error) {
+      setErrorMsg(`Note update: ${error}`);
+      return;
+    }
+    setErrorMsg(null);
+    await loadAreas();
+  }
 
   /* ---------- Delete area ---------- */
   const deleteArea = async (area: EstimateArea) => {
@@ -542,6 +796,7 @@ export default function LawnMeasurementMap({
       setHistory([]);
       setFuture([]);
     }
+    if (selectedPlantId === area.id) setSelectedPlantId("");
   };
 
   /* ---------- Color cycle ---------- */
@@ -580,14 +835,20 @@ export default function LawnMeasurementMap({
     await loadAreas();
   };
 
-  /* ---------- Escape key folds the floating panel away ---------- */
-  // The ONLY Escape behaviour on this surface: if the panel is open, fold it.
-  // (The old fullscreen toggle is gone — the workspace itself is full-bleed —
-  // so there is exactly one predictable Escape action.)
+  /* ---------- Escape key ---------- */
+  // TWO Escape behaviours, in priority order: if placement mode is armed,
+  // Escape ends it (placement is sticky, so it needs an explicit exit — see
+  // stopPlacing). Otherwise, if the panel is open, fold it. The listener is
+  // registered even when the panel is closed because placement can be armed
+  // with the panel folded away.
   useEffect(() => {
-    if (!panelOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPanelOpen(false);
+      if (e.key !== "Escape") return;
+      if (placingRef.current) {
+        setPlacing(null);
+        return;
+      }
+      if (panelOpen) setPanelOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -598,7 +859,18 @@ export default function LawnMeasurementMap({
   // from the running total so the live draft figure replaces it instead of
   // being added on top of it.
   const editingId = draft && draft.areaId !== "new" ? draft.areaId : null;
-  const savedSqft = totalAreaSqft(editingId ? areas.filter((a) => a.id !== editingId) : areas);
+  // `areas` holds TWO geometries now. Everything that meant "a measured
+  // polygon" has to say so: a placed plant is a kind="point" row in the same
+  // table, and counting it as an area makes the sqft list, the area numbering
+  // and the colour palette all wrong.
+  const polygonAreas = areas.filter((a) => a.kind === "area");
+  // Anything that means "a measured polygon" reads polygonAreas — a placed
+  // plant is kind="point" in this same array and must never be counted here.
+  const savedSqft = totalAreaSqft(polygonAreas.filter((a) => a.id !== editingId));
+  const selectedPlant = selectedPlantId
+    ? areas.find((a) => a.id === selectedPlantId) ?? null
+    : null;
+  const selectedSnapshot = selectedPlant ? readPlantSnapshot(selectedPlant) : null;
   const draftSqft = draft ? areaSqftFromPoints(draft.vertices) : 0;
   const totalSqft = savedSqft + draftSqft;
 
@@ -606,7 +878,7 @@ export default function LawnMeasurementMap({
   // desktop docked column or the phone bottom sheet.
   const panelBody = (
     <>
-        {loadingAreas && areas.length === 0 && (
+        {loadingAreas && polygonAreas.length === 0 && (
           <p className="text-sm text-gray-500">Loading areas…</p>
         )}
         {errorMsg && <p className="text-sm text-red-600">{errorMsg}</p>}
@@ -619,6 +891,95 @@ export default function LawnMeasurementMap({
           >
             + New area
           </button>
+        )}
+
+        {/* ---- Plant placement (species → size → tap the map) ---- */}
+        {/* The empty state matters more than the picker: a brand-new org has
+            no plants and the catalogue starts empty for everyone. Same shape
+            as the "No service has a $/sq ft rate yet" note below. */}
+        {catalogueLoaded && plantCatalogue.length === 0 && !draft && (
+          <div className="space-y-1 rounded border border-amber-200 bg-amber-50 p-2">
+            <p className="text-xs font-medium text-amber-900">
+              No plants in the catalogue yet
+            </p>
+            <p className="text-xs text-amber-800">
+              Plants are placed on the map straight from your catalogue. Add the
+              species and sizes you sell first.
+            </p>
+            <a
+              href="/lawn/plants"
+              className="inline-block text-xs font-medium text-amber-900 underline"
+            >
+              Go to Plants
+            </a>
+          </div>
+        )}
+
+        {catalogueLoaded && plantCatalogue.length > 0 && !draft && (
+          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
+            <p className="text-xs font-medium text-gray-700">Plants</p>
+            {placing ? (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-600">
+                  Placing{" "}
+                  <span className="font-medium text-gray-900">{placing.product.name}</span>{" "}
+                  ({placing.size.size}) at {formatMoney(placing.size.unit_price)} each. Tap the
+                  map to place one — the mode stays armed for the next.
+                </p>
+                <button
+                  type="button"
+                  onClick={stopPlacing}
+                  className="w-full rounded bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700"
+                >
+                  Done placing
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={pickerProductId}
+                  onChange={(e) => {
+                    setPickerProductId(e.target.value);
+                    setPickerSizeId("");
+                  }}
+                  aria-label="Plant species"
+                  className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+                >
+                  <option value="">Species…</option>
+                  {plantCatalogue.map((p) => (
+                    // A species with NO sizes cannot be placed — no price, no
+                    // install time. Disabled with why, not hidden.
+                    <option key={p.id} value={p.id} disabled={p.sizes.length === 0}>
+                      {p.name}
+                      {p.sizes.length === 0 ? " (no sizes yet)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={pickerSizeId}
+                  onChange={(e) => {
+                    const sizeId = e.target.value;
+                    setPickerSizeId(sizeId);
+                    const product = plantCatalogue.find((p) => p.id === pickerProductId);
+                    const size = product?.sizes.find((s) => s.id === sizeId);
+                    if (product && size) startPlacement(product, size);
+                  }}
+                  disabled={!pickerProductId}
+                  aria-label="Plant size"
+                  className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-40"
+                >
+                  <option value="">Size…</option>
+                  {(plantCatalogue.find((p) => p.id === pickerProductId)?.sizes ?? []).map(
+                    (s) => (
+                      <option key={s.id} value={s.id}>
+                        {`${s.size} — ${formatMoney(s.unit_price)}`}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+            )}
+          </div>
         )}
 
         {draft && (
@@ -688,15 +1049,15 @@ export default function LawnMeasurementMap({
           </div>
         )}
 
-        {!loadingAreas && areas.length === 0 && !draft && (
+        {!loadingAreas && polygonAreas.length === 0 && !draft && (
           <p className="text-sm text-gray-500">
             No areas yet. Tap &ldquo;+ New area&rdquo;, then tap the map to trace the lawn.
           </p>
         )}
 
-        {areas.length > 0 && (
+        {polygonAreas.length > 0 && (
           <ul className="divide-y divide-gray-100">
-            {areas.map((area) => (
+            {polygonAreas.map((area) => (
               <li key={area.id} className="flex flex-wrap items-center gap-2 py-2">
                 <button
                   type="button"
@@ -814,12 +1175,69 @@ export default function LawnMeasurementMap({
           </ul>
         )}
 
+        {/* ---- Selected placed plant: inspect / note / delete ---- */}
+        {/* Clicking a marker sets selectedPlantId; this card is the whole
+            inspection surface. Deleting is the plant's undo — saved plants
+            are deliberately not in the draft undo stack. */}
+        {selectedPlant && (
+          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-gray-900">
+                  {selectedPlant.name}
+                </p>
+                {selectedSnapshot ? (
+                  <p className="text-xs text-gray-500">
+                    {selectedSnapshot.size} · {formatMoney(selectedSnapshot.unit_price)} each ·{" "}
+                    {selectedSnapshot.install_minutes > 0
+                      ? `${selectedSnapshot.install_minutes} man-min install`
+                      : "install time not estimated"}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500">Placed point</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPlantId("")}
+                title="Close"
+                aria-label="Close plant card"
+                className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {selectedSnapshot && (
+              <input
+                type="text"
+                // Per-placement note ("specimen, face the street"), distinct
+                // from the species' own notes. Saved on blur.
+                value={plantNote[selectedPlant.id] ?? selectedSnapshot.note ?? ""}
+                onChange={(e) =>
+                  setPlantNote((n) => ({ ...n, [selectedPlant.id]: e.target.value }))
+                }
+                onBlur={(e) => void savePlantNote(selectedPlant, e.target.value)}
+                placeholder="Note for this placement (optional)"
+                aria-label="Placement note"
+                className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => void deleteArea(selectedPlant)}
+              className="w-full rounded border border-red-200 px-2 py-1 text-sm text-red-600"
+            >
+              Delete plant
+            </button>
+          </div>
+        )}
+
         {/* No service carries a $/sq ft rate, so there is nothing to price
             against. This used to render NOTHING — the pricing panel simply
             vanished, with no way to tell whether area pricing did not exist,
             was broken, or was hidden. The rate is an optional field on each
             service, which is not somewhere you would think to look. */}
-        {areas.length > 0 && pricedServices.length === 0 && (
+        {polygonAreas.length > 0 && pricedServices.length === 0 && (
           <div className="space-y-1 rounded border border-amber-200 bg-amber-50 p-2">
             <p className="text-xs font-medium text-amber-900">
               No service has a $/sq ft rate yet
@@ -866,7 +1284,7 @@ export default function LawnMeasurementMap({
             {totalSqft.toLocaleString()} sq ft
           </span>
           <span className="whitespace-nowrap text-xs text-gray-500">
-            {areas.length} {areas.length === 1 ? "area" : "areas"}
+            {polygonAreas.length} {polygonAreas.length === 1 ? "area" : "areas"}
           </span>
           {panelBadge}
           <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" />
@@ -883,7 +1301,7 @@ export default function LawnMeasurementMap({
                 {totalSqft.toLocaleString()} sq ft
               </h2>
               <p className="text-xs text-gray-500">
-                {areas.length} {areas.length === 1 ? "area" : "areas"} measured
+                {polygonAreas.length} {polygonAreas.length === 1 ? "area" : "areas"} measured
               </p>
             </div>
             <button
@@ -908,7 +1326,7 @@ export default function LawnMeasurementMap({
             <p className="text-sm font-semibold tabular-nums text-gray-900">
               {totalSqft.toLocaleString()} sq ft
               <span className="ml-1.5 text-xs font-normal text-gray-500">
-                · {areas.length} {areas.length === 1 ? "area" : "areas"}
+                · {polygonAreas.length} {polygonAreas.length === 1 ? "area" : "areas"}
               </span>
             </p>
             <button
