@@ -44,7 +44,11 @@ export function isHeadCategory(v: unknown): v is HeadCategory {
 
 // The arcs a head is actually specified at. Free-form degrees would imply a
 // precision this tool does not have and invite it to look like a design.
-export const HEAD_ARCS = [90, 180, 270, 360] as const;
+//
+// 120 is here because it is real hardware, not a rounding: Rain Bird MPR rotor
+// nozzle trees ship Q/T/H/F = 90/120/180/360, so a "T" nozzle has nowhere else
+// to go. 270 stays for adjustable nozzles (R-VAN adjusts 45-270).
+export const HEAD_ARCS = [90, 120, 180, 270, 360] as const;
 export type HeadArc = (typeof HEAD_ARCS)[number];
 
 export function isHeadArc(v: unknown): v is HeadArc {
@@ -455,6 +459,15 @@ export function headLegendManHours(rows: HeadLegendRow[]): number {
 // than silently showing bare markers.
 export function radiusUnset(rows: HeadLegendRow[]): boolean {
   return rows.length > 0 && rows.every((r) => r.radius_ft <= 0);
+}
+
+// Heads placed at a price of zero. A starter catalogue ships with real
+// manufacturer radii but NO prices — those are per-distributor and per-region,
+// and inventing them would quote a job at nothing while looking complete.
+// Unlike radius, a price of 0 is indistinguishable from a genuine freebie, so
+// the UI has to surface this rather than the data model encoding it.
+export function unpricedHeads(rows: HeadLegendRow[]): HeadLegendRow[] {
+  return rows.filter((r) => r.unit_price <= 0);
 }
 
 // One line per legend row. internal_cost is PER-UNIT, matching how
