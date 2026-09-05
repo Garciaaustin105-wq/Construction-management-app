@@ -79,4 +79,40 @@ t("a plant is NOT a head", buildHeadLegend([{kind:"point",color:"#16a34a",
   meta:{plant_product_id:"p1",name:"Holly",unit_price:38}}]).length===0);
 t("radiusUnset true only when nothing has a radius", radiusUnset(buildHeadLegend([mk(360,28,9,12,"3.0",0)]))===true);
 t("radiusUnset false when a radius exists", radiusUnset(legend)===false);
+const { pipeEstimate, distanceFt, headPoints } = M;
+console.log("[distance]");
+t("30 ft north measures 30 ft back", near(distanceFt(C, pointAtBearing(C,30,0)), 30, 0.05));
+t("30 ft east measures 30 ft back (cos lat applied)", near(distanceFt(C, pointAtBearing(C,30,90)), 30, 0.05));
+t("distance is symmetric", near(distanceFt(C,pointAtBearing(C,30,45)), distanceFt(pointAtBearing(C,30,45),C), 1e-9));
+
+console.log("\n[minimum spanning tree]");
+// Four heads on a 30 ft square: the cheapest way to link all four is three
+// sides = 90 ft. Never the diagonal (42.4) and never all four sides (120).
+const sq=[C, pointAtBearing(C,30,0), pointAtBearing(C,30,90), pointAtBearing(pointAtBearing(C,30,0),30,90)];
+const e=pipeEstimate(sq,0);
+t("30 ft square links with 90 ft of pipe", near(e.straightLineFt,90,0.2), `got ${e.straightLineFt}`);
+t("uses n-1 segments", e.segments.length===3, `got ${e.segments.length}`);
+t("no segment is the diagonal", e.segments.every(s=>s.ft<35), JSON.stringify(e.segments.map(s=>s.ft)));
+
+console.log("\n[waste]");
+const w=pipeEstimate(sq,10);
+t("10% waste adds 10%", near(w.totalFt, 99, 0.2), `got ${w.totalFt}`);
+t("straight line is unchanged by waste", near(w.straightLineFt,90,0.2));
+t("0% waste leaves the total equal to the straight line",
+  near(pipeEstimate(sq,0).totalFt, 90, 0.2));
+t("negative waste is ignored, not subtracted", near(pipeEstimate(sq,-20).totalFt, 90, 0.2));
+
+console.log("\n[degenerate]");
+t("one head needs no pipe", pipeEstimate([C],10).straightLineFt===0);
+t("no heads needs no pipe", pipeEstimate([],10).straightLineFt===0);
+t("two heads is just the gap", near(pipeEstimate([C,pointAtBearing(C,25,0)],0).straightLineFt,25,0.05));
+
+console.log("\n[reading heads off an estimate]");
+const head=(lat,lng)=>({kind:"point",polygon:[{lat,lng}],meta:{irrigation_product_id:"h",name:"RB",radius_ft:25}});
+const plant={kind:"point",polygon:[{lat:28,lng:-82.5}],meta:{plant_product_id:"p",name:"Holly"}};
+const poly={kind:"area",polygon:[{lat:28,lng:-82.5}],meta:{}};
+t("plants and polygons are not heads",
+  headPoints([head(28,-82.5),plant,poly,head(28.0001,-82.5)]).length===2);
+console.log(`\n  ${pass} passed, ${fail} failed`);
+
 console.log(`\n  ${pass} passed, ${fail} failed`);

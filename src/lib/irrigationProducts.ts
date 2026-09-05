@@ -475,3 +475,101 @@ export function headLineItem(row: HeadLegendRow): {
     internal_cost: row.cost,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Pipe
+// ---------------------------------------------------------------------------
+
+// Straight-line ground distance between two points, in feet. Same planar model
+// as the rest of this app's geometry (lengthFtFromPoints, areaSqftFromPoints):
+// metres with a cos(lat) term on longitude.
+export function distanceFt(a: LatLng, b: LatLng): number {
+  const dLatM = ((b.lat - a.lat) * Math.PI / 180) * EARTH_R_M;
+  const dLngM =
+    ((b.lng - a.lng) * Math.PI / 180) * EARTH_R_M * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180);
+  return Math.hypot(dLatM, dLngM) / M_PER_FT;
+}
+
+export type PipeEstimate = {
+  // Shortest total length that connects every head to the network, straight
+  // line, no obstacles. A FLOOR, not a prediction — see below.
+  straightLineFt: number;
+  // straightLineFt increased by the allowance the estimator chose.
+  totalFt: number;
+  wastePct: number;
+  headCount: number;
+  // The connections chosen, so the map can draw exactly what was measured
+  // rather than leaving the number unexplained.
+  segments: { from: LatLng; to: LatLng; ft: number }[];
+};
+
+// Connects every head with the least total pipe (Prim's minimum spanning
+// tree over straight-line distances).
+//
+// WHAT THIS IS AND IS NOT — the UI must carry this, not just the code:
+//
+// It is the SHORTEST POSSIBLE pipe to link the heads placed. Real trench
+// follows beds, skirts drives and hardscape, and splits into zones from a
+// manifold, so the installed length is always LONGER. This is a floor to
+// estimate from, never a claim about how the system will be plumbed.
+//
+// It also does NOT include the mainline from the point of connection, the
+// backflow, or any run to the controller — none of those are placed on the
+// map, so none of them are in this number.
+//
+// wastePct is the estimator's allowance on top. Worth saying plainly in the
+// UI: the usual 5-10% "waste" figure covers cut-offs and breakage, NOT the
+// difference between a straight line and a real trench route, which is often
+// 20-40% on its own. An estimator who enters 10 here because that is their
+// normal waste number will under-buy.
+export function pipeEstimate(heads: LatLng[], wastePct = 0): PipeEstimate {
+  const pct = Number.isFinite(wastePct) && wastePct > 0 ? wastePct : 0;
+  const empty: PipeEstimate = {
+    straightLineFt: 0, totalFt: 0, wastePct: pct, headCount: heads.length, segments: [],
+  };
+  if (heads.length < 2) return empty;
+
+  const inTree = new Array(heads.length).fill(false);
+  const segments: PipeEstimate["segments"] = [];
+  inTree[0] = true;
+  let total = 0;
+
+  for (let added = 1; added < heads.length; added++) {
+    let best = { from: -1, to: -1, ft: Infinity };
+    for (let i = 0; i < heads.length; i++) {
+      if (!inTree[i]) continue;
+      for (let j = 0; j < heads.length; j++) {
+        if (inTree[j]) continue;
+        const ft = distanceFt(heads[i], heads[j]);
+        if (ft < best.ft) best = { from: i, to: j, ft };
+      }
+    }
+    if (best.to === -1) break;
+    inTree[best.to] = true;
+    total += best.ft;
+    segments.push({ from: heads[best.from], to: heads[best.to], ft: Math.round(best.ft * 10) / 10 });
+  }
+
+  const straight = Math.round(total * 10) / 10;
+  return {
+    straightLineFt: straight,
+    totalFt: Math.round(straight * (1 + pct / 100) * 10) / 10,
+    wastePct: pct,
+    headCount: heads.length,
+    segments,
+  };
+}
+
+// The head coordinates on an estimate, in placement order, ready for
+// pipeEstimate. Ignores plants and polygons by reading the meta.
+export function headPoints(
+  areas: Pick<EstimateArea, "kind" | "meta" | "polygon">[]
+): LatLng[] {
+  const pts: LatLng[] = [];
+  for (const a of areas) {
+    if (!readHeadSnapshot(a)) continue;
+    const p = Array.isArray(a.polygon) ? a.polygon[0] : null;
+    if (p) pts.push(p);
+  }
+  return pts;
+}
