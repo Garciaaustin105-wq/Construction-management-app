@@ -78,6 +78,10 @@ export default function LawnMeasurementMap({
   const [pricedServices, setPricedServices] = useState<PricedService[]>([]);
   const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+  const [mapReady, setMapReady] = useState(false);
+  // Centre the map once per mount. A ref, not state: flipping it must not
+  // re-run the effect that sets it.
+  const centeredRef = useRef(false);
 
   /* ---------- Floating panel ---------- */
   // The map fills its whole container and every control floats over it. Two
@@ -139,6 +143,50 @@ export default function LawnMeasurementMap({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estimateId]);
+  /* ---------- Centre the map, geocoding only as a last resort ----------
+     A geocode is a BILLED request and this component mounts every time the
+     estimator is opened, so geocoding on mount charged for the same answer
+     over and over — "if a person keeps going in and out of the estimator".
+
+     Areas already drawn are the better source anyway: their coordinates come
+     from our own database, they are already loaded, and they frame the actual
+     work rather than the postal address. After the first measurement that is
+     always the path taken, so a revisit costs nothing.
+
+     Waits for `loadingAreas` to settle. Without that the areas query could
+     still be in flight, this would see an empty list and geocode a property
+     that is already measured — the exact charge it exists to avoid. */
+  useEffect(() => {
+    if (!mapReady || centeredRef.current || loadingAreas) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const pts = areas.flatMap((a) => (Array.isArray(a.polygon) ? a.polygon : []));
+    if (pts.length > 0) {
+      const bounds = new google.maps.LatLngBounds();
+      pts.forEach((p) => bounds.extend(p));
+      map.fitBounds(bounds);
+      centeredRef.current = true;
+      return;
+    }
+
+    // Nothing measured yet: this is the one case worth paying for.
+    if (!address) return;
+    centeredRef.current = true; // set BEFORE the async call so a re-render
+                                // mid-flight cannot fire a second geocode
+    new google.maps.Geocoder().geocode({ address }, (results, status) => {
+      if (status === "OK" && results && results[0]) {
+        map.setCenter(results[0].geometry.location);
+        new google.maps.Marker({
+          position: results[0].geometry.location,
+          map,
+          title: address ?? undefined,
+        });
+      }
+    });
+  }, [mapReady, loadingAreas, areas, address]);
+
+
 
   /* ---------- Load priced services ---------- */
   useEffect(() => {
@@ -167,20 +215,10 @@ export default function LawnMeasurementMap({
         });
         mapRef.current = map;
 
-        if (address) {
-          const geocoder = new g.maps.Geocoder();
-          geocoder.geocode({ address }, (results, status) => {
-            if (status === "OK" && results && results[0]) {
-              map.setCenter(results[0].geometry.location);
-              // Drop address marker
-              new g.maps.Marker({
-                position: results[0].geometry.location,
-                map,
-                title: address ?? undefined,
-              });
-            }
-          });
-        }
+        // Centring is NOT done here — see the effect below. Geocoding is a
+        // billed request, and this effect runs on every mount, so geocoding
+        // from here charged for an answer we usually already have.
+        setMapReady(true);
 
         // Registered once — reads the LATEST draft via draftRef, so it never
         // goes stale and the map never needs to be recreated when the user
@@ -693,6 +731,72 @@ export default function LawnMeasurementMap({
                 >
                   Delete
                 </button>
+                {/* Pricing lives ON the area, not in a panel with an area
+                    dropdown. With several areas that dropdown was a way to
+                    price the wrong one by accident: you finished a shape, then
+                    had to find it again in a list. Starting from the row means
+                    the area is never ambiguous. selectedAreaId now means
+                    "which row is open" — one at a time, by construction. */}
+                {pricedServices.length > 0 &&
+                  (selectedAreaId === area.id ? (
+                    <div className="flex w-full flex-col gap-2 pl-9">
+                      <select
+                        value={selectedServiceId}
+                        onChange={(e) => setSelectedServiceId(e.target.value)}
+                        aria-label={`Service for ${area.name}`}
+                        className="rounded border border-gray-300 px-2 py-1 text-sm"
+                      >
+                        <option value="">Select service…</option>
+                        {pricedServices.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {`${s.name} ($${s.price_per_sqft}/sq ft)`}
+                          </option>
+                        ))}
+                      </select>
+                      {(() => {
+                        // Resolved once: the price shown and the price added
+                        // must come from the same lookup or they could drift.
+                        const svc = pricedServices.find((x) => x.id === selectedServiceId);
+                        if (!svc) return null;
+                        const price = sqftPrice(area.area_sqft, svc.price_per_sqft);
+                        return (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium tabular-nums text-gray-900">
+                              {formatMoney(price)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onAddLineItem({
+                                  description: `${svc.name} — ${area.name}`,
+                                  quantity: 1,
+                                  unit: "LOT",
+                                  unit_price: price,
+                                });
+                                toast.success("Line item added");
+                                setSelectedAreaId("");
+                                setSelectedServiceId("");
+                              }}
+                              className="shrink-0 rounded bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700"
+                            >
+                              Add to estimate
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAreaId(area.id);
+                        setSelectedServiceId("");
+                      }}
+                      className="shrink-0 rounded border border-gray-300 px-2 py-1 text-sm text-gray-700"
+                    >
+                      Price
+                    </button>
+                  ))}
                 {area.access_tags.length > 0 && (
                   <div className="flex w-full flex-wrap gap-1 pl-9">
                     {area.access_tags.map((tag) => (
@@ -733,65 +837,6 @@ export default function LawnMeasurementMap({
           </div>
         )}
 
-        {/* Price an area panel */}
-        {areas.length > 0 && pricedServices.length > 0 && (
-          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
-            <p className="text-xs font-medium text-gray-700">Price an area</p>
-            <select
-              value={selectedAreaId}
-              onChange={(e) => setSelectedAreaId(e.target.value)}
-              className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              <option value="">Select area…</option>
-              {areas.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.area_sqft.toLocaleString()} sq ft)
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedServiceId}
-              onChange={(e) => setSelectedServiceId(e.target.value)}
-              className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              <option value="">Select service…</option>
-              {pricedServices.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} (${s.price_per_sqft}/sq ft)
-                </option>
-              ))}
-            </select>
-            {(() => {
-              const selectedArea = areas.find((a) => a.id === selectedAreaId);
-              const selectedSvc = pricedServices.find((s) => s.id === selectedServiceId);
-              if (!selectedArea || !selectedSvc) return null;
-              return (
-                <>
-                  <p className="text-sm font-medium text-gray-900">
-                    {formatMoney(sqftPrice(selectedArea.area_sqft, selectedSvc.price_per_sqft))}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onAddLineItem({
-                        description: `${selectedSvc.name} — ${selectedArea.name}`,
-                        quantity: 1,
-                        unit: "LOT",
-                        unit_price: sqftPrice(selectedArea.area_sqft, selectedSvc.price_per_sqft),
-                      });
-                      toast.success("Line item added");
-                      setSelectedAreaId("");
-                      setSelectedServiceId("");
-                    }}
-                    className="w-full rounded bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700"
-                  >
-                    Add to estimate
-                  </button>
-                </>
-              );
-            })()}
-          </div>
-        )}
 
       {panelSlot}
     </>
