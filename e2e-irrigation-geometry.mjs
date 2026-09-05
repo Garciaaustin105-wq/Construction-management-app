@@ -126,6 +126,77 @@ const plant={kind:"point",polygon:[{lat:28,lng:-82.5}],meta:{plant_product_id:"p
 const poly={kind:"area",polygon:[{lat:28,lng:-82.5}],meta:{}};
 t("plants and polygons are not heads",
   headPoints([head(28,-82.5),plant,poly,head(28.0001,-82.5)]).length===2);
-console.log(`\n  ${pass} passed, ${fail} failed`);
+
+// ---------------------------------------------------------------------------
+// Drip at plants
+// ---------------------------------------------------------------------------
+const { readDripConfig, dripTally, dripLineItem, plantsInHeadCoverage } = M;
+const dplant=(id,cat,at,extra={})=>({id,kind:"point",color:"#16a34a",polygon:[at],
+  meta:{plant_product_id:"p_"+cat,plant_size_id:"s",name:cat,category:cat,size:"3 gal",cost:9.5,unit_price:38,install_minutes:8,...extra}});
+const dhead=(id,at,arc,heading,radius=25)=>({id,kind:"point",color:"#0ea5e9",polygon:[at],
+  meta:{irrigation_product_id:"rb",irrigation_nozzle_id:"n",name:"Rain Bird 5000",category:"rotor",
+    nozzle:"3.0",radius_ft:radius,arc_deg:arc,heading_deg:heading,cost:9,unit_price:28,install_minutes:12}});
+
+console.log("\n[drip config]");
+const cfg = readDripConfig({emitter:{irrigation_product_id:"e",irrigation_nozzle_id:"en",name:"Netafim",nozzle:"2 GPH",cost:0.45,unit_price:1.75,install_minutes:2},per_category:{tree:4,shrub:1,grass:0}});
+t("emitter parsed", cfg.emitter?.name==="Netafim");
+t("per-category parsed", cfg.perCategory.tree===4 && cfg.perCategory.shrub===1);
+t("a zero count is the same as no drip for that category", cfg.perCategory.grass===undefined);
+t("no drip on this job reads as no emitter", readDripConfig({}).emitter===null);
+t("garbage reads as no drip, not NaN", readDripConfig("nonsense").emitter===null);
+
+console.log("\n[emitters counted from placed plants]");
+const pAreas=[dplant("t1","tree",C),dplant("t2","tree",pointAtBearing(C,100,0)),
+  dplant("s1","shrub",pointAtBearing(C,120,0)),dplant("s2","shrub",pointAtBearing(C,140,0)),
+  dplant("g1","grass",pointAtBearing(C,160,0))];
+const tal=dripTally(pAreas,cfg);
+t("2 trees x4 + 2 shrubs x1 = 10 emitters", tal.emitters===10, `got ${tal.emitters}`);
+t("a category with no rule gets none", !tal.byCategory.some(c=>c.category==="grass"));
+t("revenue is emitters x price", near(tal.revenue,17.5,0.01));
+t("man-hours from PER-EMITTER minutes", near(tal.manHours,10*2/60,0.01));
+
+console.log("\n[per-plant override]");
+const ov=dripTally([...pAreas, dplant("t3","tree",pointAtBearing(C,180,0),{emitter_count:8})],cfg);
+t("a specimen override wins over the rule", ov.emitters===18, `got ${ov.emitters}`);
+t("overrides are surfaced, not hidden", ov.overriddenPlants===1);
+t("an override of 0 removes that plant's drip",
+  dripTally([dplant("x","tree",C,{emitter_count:0})],cfg).emitters===0);
+
+console.log("\n[plants inside a head's throw]");
+const near10=pointAtBearing(C,10,0), east10=pointAtBearing(C,10,90);
+const south10=pointAtBearing(C,10,180), west10=pointAtBearing(C,10,270);
+const cov=plantsInHeadCoverage([dhead("h1",C,360,0),dplant("in","shrub",near10),dplant("out","shrub",pointAtBearing(C,40,0))]);
+t("a plant inside a 360 head is flagged", cov.some(c=>c.plantAreaId==="in"));
+t("a plant beyond the throw is not", !cov.some(c=>c.plantAreaId==="out"));
+t("the head is named so the UI can explain WHY", cov[0].headName==="Rain Bird 5000");
+// heading is where the arc STARTS, sweeping clockwise — matches coverageRing.
+const q=plantsInHeadCoverage([dhead("h2",C,90,0),dplant("n","shrub",near10),dplant("e","shrub",east10),
+  dplant("s","shrub",south10),dplant("w","shrub",west10)]).map(c=>c.plantAreaId);
+t("a 90 starting north covers due north", q.includes("n"));
+t("east is the closing edge of a 0-to-90 sweep, so it IS covered", q.includes("e"));
+t("due south is outside the sweep", !q.includes("s"));
+t("due west is outside the sweep", !q.includes("w"));
+const q2=plantsInHeadCoverage([dhead("h6",C,90,180),dplant("n","shrub",near10),
+  dplant("s","shrub",south10),dplant("w","shrub",west10)]).map(c=>c.plantAreaId);
+t("rotating the start bearing rotates the wedge", q2.includes("s")&&q2.includes("w")&&!q2.includes("n"));
+t("a head with no recorded radius covers nothing",
+  plantsInHeadCoverage([dhead("h3",C,360,0,0),dplant("p","shrub",near10)]).length===0);
+t("heads never flag other heads", plantsInHeadCoverage([dhead("h4",C,360,0),dhead("h5",near10,360,0)]).length===0);
+
+console.log("\n[dropping a covered plant is the ESTIMATOR's choice]");
+const covAreas=[dhead("h1",C,360,0),dplant("in","tree",near10),dplant("out","tree",pointAtBearing(C,40,0))];
+t("by default NOTHING is dropped — both trees still counted",
+  dripTally(covAreas,cfg).emitters===8, `got ${dripTally(covAreas,cfg).emitters}`);
+const drop=new Set(plantsInHeadCoverage(covAreas).map(c=>c.plantAreaId));
+t("applying the suggestion drops only the covered tree",
+  dripTally(covAreas,cfg,drop).emitters===4, `got ${dripTally(covAreas,cfg,drop).emitters}`);
+
+console.log("\n[drip line item]");
+const dli=dripLineItem(tal,cfg);
+t("one line for all emitters", dli.quantity===10 && dli.unit==="EA");
+t("names the emitter", dli.description==="Netafim 2 GPH drip emitters", dli.description);
+t("cost is per unit", dli.internal_cost===0.45);
+t("no emitters -> null, so no $0 drip line", dripLineItem(dripTally([],cfg),cfg)===null);
+t("no drip configured -> null", dripLineItem(tal,readDripConfig({}))===null);
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

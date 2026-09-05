@@ -25,6 +25,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EstimateArea, LatLng } from "@/lib/estimateAreas";
+import { readPlantSnapshot, type PlantCategory } from "@/lib/plantProducts";
 
 export const HEAD_CATEGORIES = [
   "rotor",
@@ -600,4 +601,216 @@ export function headPoints(
     if (p) pts.push(p);
   }
   return pts;
+}
+
+// ---------------------------------------------------------------------------
+// Drip at plants
+// ---------------------------------------------------------------------------
+
+// Drip is not a head with a small radius. It wets a basin, not an arc, so it
+// draws NO coverage — and it is counted per plant rather than placed, because
+// nobody is going to click four emitters around each of forty trees.
+//
+// The rule is per plant CATEGORY ("every tree gets 4, every shrub 1"), applied
+// to what is already on the map. Placing a tree therefore prices its drip with
+// no extra clicks, which is the whole point of a quick estimator. A specimen
+// that needs more carries meta.emitter_count and overrides the rule.
+
+export type DripEmitter = {
+  irrigation_product_id: string;
+  irrigation_nozzle_id: string;
+  name: string;
+  nozzle: string;
+  cost: number;
+  unit_price: number;
+  // MAN-minutes per EMITTER, not per plant.
+  install_minutes: number;
+};
+
+export type DripConfig = {
+  emitter: DripEmitter | null;
+  perCategory: Partial<Record<PlantCategory, number>>;
+};
+
+// estimates.drip_config is jsonb, so narrow it rather than casting. A job with
+// no drip is the empty object and must read as "no drip", never as an emitter
+// priced NaN.
+export function readDripConfig(raw: unknown): DripConfig {
+  const none: DripConfig = { emitter: null, perCategory: {} };
+  if (!raw || typeof raw !== "object") return none;
+  const o = raw as Record<string, unknown>;
+  const e = o.emitter as Record<string, unknown> | undefined;
+  const emitter: DripEmitter | null =
+    e && typeof e === "object" && typeof e.irrigation_nozzle_id === "string"
+      ? {
+          irrigation_product_id:
+            typeof e.irrigation_product_id === "string" ? e.irrigation_product_id : "",
+          irrigation_nozzle_id: e.irrigation_nozzle_id,
+          name: typeof e.name === "string" ? e.name : "Emitter",
+          nozzle: typeof e.nozzle === "string" ? e.nozzle : "",
+          cost: num(e.cost),
+          unit_price: num(e.unit_price),
+          install_minutes: num(e.install_minutes),
+        }
+      : null;
+  const per: Partial<Record<PlantCategory, number>> = {};
+  const rawPer = o.per_category as Record<string, unknown> | undefined;
+  if (rawPer && typeof rawPer === "object") {
+    for (const [k, v] of Object.entries(rawPer)) {
+      const n = num(v);
+      // A zero or negative count is "no drip on this category", which is the
+      // same as absent. Storing it as 0 is fine; acting on it is not.
+      if (n > 0) per[k as PlantCategory] = Math.round(n);
+    }
+  }
+  return { emitter, perCategory: per };
+}
+
+export type DripTally = {
+  emitters: number;
+  // Plants that carried their own meta.emitter_count. Surfaced so the UI can
+  // say the number is not purely the rule.
+  overriddenPlants: number;
+  plantsWithDrip: number;
+  revenue: number;
+  cost: number;
+  manHours: number;
+  byCategory: { category: PlantCategory; plants: number; emitters: number }[];
+};
+
+// Counts emitters from the plants ALREADY on the map. Reads the raw areas, not
+// the plant legend: an override lives on one placed plant, and the legend has
+// already grouped that plant in with its identical siblings.
+export function dripTally(
+  areas: Pick<EstimateArea, "id" | "kind" | "meta">[],
+  config: DripConfig,
+  // Plant area ids the estimator has chosen to drop, typically because
+  // plantsInHeadCoverage showed them inside a head's throw. Passed in rather
+  // than computed here: dropping an emitter is the estimator's decision, and
+  // this function must not make it on its own.
+  excludePlantIds?: ReadonlySet<string>
+): DripTally {
+  const empty: DripTally = {
+    emitters: 0, overriddenPlants: 0, plantsWithDrip: 0,
+    revenue: 0, cost: 0, manHours: 0, byCategory: [],
+  };
+  if (!config.emitter) return empty;
+
+  const byCat = new Map<PlantCategory, { plants: number; emitters: number }>();
+  let emitters = 0, overridden = 0, plants = 0;
+
+  for (const area of areas) {
+    const plant = readPlantSnapshot(area);
+    if (!plant) continue;
+    if (excludePlantIds?.has(area.id)) continue;
+    const meta = area.meta as Record<string, unknown> | null | undefined;
+    const rawOverride = meta && typeof meta === "object" ? meta.emitter_count : undefined;
+    const hasOverride = typeof rawOverride === "number" || typeof rawOverride === "string";
+    const n = hasOverride
+      ? Math.max(0, Math.round(num(rawOverride)))
+      : config.perCategory[plant.category] ?? 0;
+    if (hasOverride) overridden += 1;
+    if (n <= 0) continue;
+    emitters += n;
+    plants += 1;
+    const c = byCat.get(plant.category) ?? { plants: 0, emitters: 0 };
+    c.plants += 1;
+    c.emitters += n;
+    byCat.set(plant.category, c);
+  }
+
+  const em = config.emitter;
+  return {
+    emitters,
+    overriddenPlants: overridden,
+    plantsWithDrip: plants,
+    revenue: Math.round(emitters * em.unit_price * 100) / 100,
+    cost: Math.round(emitters * em.cost * 100) / 100,
+    manHours: Math.round((emitters * em.install_minutes / 60) * 100) / 100,
+    byCategory: [...byCat.entries()]
+      .map(([category, v]) => ({ category, ...v }))
+      .sort((a, b) => b.emitters - a.emitters),
+  };
+}
+
+// One line for all the emitters. Returns null when there is nothing to bill,
+// so a $0 drip line cannot reach a customer quote.
+export function dripLineItem(
+  tally: DripTally,
+  config: DripConfig
+): { description: string; quantity: number; unit: string; unit_price: number; internal_cost: number } | null {
+  if (!config.emitter || tally.emitters <= 0) return null;
+  const em = config.emitter;
+  const label = [em.name, em.nozzle].filter(Boolean).join(" ");
+  return {
+    description: `${label} drip emitters`.replace(/\s+/g, " ").trim(),
+    quantity: tally.emitters,
+    unit: "EA",
+    unit_price: em.unit_price,
+    internal_cost: em.cost,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Plants already inside a head's throw
+// ---------------------------------------------------------------------------
+
+// Compass bearing from `a` to `b`, degrees clockwise from north. Inverse of
+// pointAtBearing, same planar model.
+export function bearingDeg(a: LatLng, b: LatLng): number {
+  const dNorth = (b.lat - a.lat) * Math.PI / 180 * EARTH_R_M;
+  const dEast =
+    (b.lng - a.lng) * Math.PI / 180 * EARTH_R_M * Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180);
+  const deg = (Math.atan2(dEast, dNorth) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
+// Is `point` inside the wedge this head throws?
+export function isWithinThrow(
+  head: LatLng,
+  snap: Pick<HeadSnapshot, "radius_ft" | "arc_deg" | "heading_deg">,
+  point: LatLng
+): boolean {
+  if (!(snap.radius_ft > 0)) return false;
+  if (distanceFt(head, point) > snap.radius_ft) return false;
+  if (snap.arc_deg >= 360) return true;
+  const sweep = (bearingDeg(head, point) - snap.heading_deg + 360) % 360;
+  return sweep <= snap.arc_deg;
+}
+
+export type CoveredPlant = { plantAreaId: string; headName: string };
+
+// Which placed PLANTS fall inside the throw of a placed HEAD.
+//
+// This is a MEASUREMENT, not a recommendation, and the difference matters. The
+// app can say "this shrub is inside a rotor's arc" because that is geometry.
+// It cannot say the shrub is therefore adequately watered — root zone, soil,
+// species, run time and pressure all decide that, and they are the designer's
+// call, not this tool's.
+//
+// So callers must SHOW this and let the estimator choose to drop those
+// emitters. Nothing here may silently remove them: a tree that reads as
+// covered but sits under a canopy the spray never reaches would quietly lose
+// its drip, and nobody would see it happen.
+export function plantsInHeadCoverage(
+  areas: Pick<EstimateArea, "id" | "kind" | "meta" | "polygon">[]
+): CoveredPlant[] {
+  const heads: { at: LatLng; snap: HeadSnapshot }[] = [];
+  for (const a of areas) {
+    const snap = readHeadSnapshot(a);
+    if (!snap) continue;
+    const at = Array.isArray(a.polygon) ? a.polygon[0] : null;
+    if (at) heads.push({ at, snap });
+  }
+  if (heads.length === 0) return [];
+
+  const out: CoveredPlant[] = [];
+  for (const a of areas) {
+    if (!readPlantSnapshot(a)) continue;
+    const at = Array.isArray(a.polygon) ? a.polygon[0] : null;
+    if (!at) continue;
+    const hit = heads.find((h) => isWithinThrow(h.at, h.snap, at));
+    if (hit) out.push({ plantAreaId: a.id, headName: hit.snap.name });
+  }
+  return out;
 }
