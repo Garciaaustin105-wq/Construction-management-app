@@ -57,6 +57,10 @@ type Props = {
   // Optional live summary shown on the collapsed pill (item count + running
   // total) so the number still moves while the panel is folded away.
   panelBadge?: React.ReactNode;
+  // Areas are loaded and owned HERE, not by the workspace. The labor panel
+  // needs them to build the plant legend, so the map publishes them upward
+  // after every load rather than the workspace fetching them a second time.
+  onAreasChange?: (areas: EstimateArea[]) => void;
 };
 
 type Draft = { areaId: string | "new"; vertices: LatLng[]; tags: string[] } | null;
@@ -73,6 +77,7 @@ export default function LawnMeasurementMap({
   onAddLineItem,
   panelSlot,
   panelBadge,
+  onAreasChange,
 }: Props): React.ReactElement {
   /* ---------- State ---------- */
   const [areas, setAreas] = useState<EstimateArea[]>([]);
@@ -123,6 +128,13 @@ export default function LawnMeasurementMap({
   }, [draft]);
 
   /* ---------- Supabase client ---------- */
+  // Held in a ref so an inline arrow from the parent does not change
+  // loadAreas' identity on every render, which would re-fire its effects.
+  const onAreasChangeRef = useRef(onAreasChange);
+  useEffect(() => {
+    onAreasChangeRef.current = onAreasChange;
+  }, [onAreasChange]);
+
   const supabase = createClient();
 
   /* ---------- Load organization id + areas ---------- */
@@ -130,6 +142,7 @@ export default function LawnMeasurementMap({
     setLoadingAreas(true);
     const { data, error } = await listEstimateAreas(supabase, estimateId);
     setAreas(data);
+    onAreasChangeRef.current?.(data);
     if (error) setErrorMsg(`Load areas: ${error}`);
     setLoadingAreas(false);
     return data;
