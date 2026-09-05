@@ -8,18 +8,45 @@ handoff — do not build map code here.
 
 | Thing | Where | Status |
 |---|---|---|
-| `plant_products` table + RLS | `plant_products.sql` | written; **apply before testing** |
+| `plant_products` (species) | `plant_products.sql` | applied to prod |
+| `plant_product_sizes` (sizes, cost, price) | `plant_product_sizes.sql` | **awaiting approval — confirm it is applied before testing** |
 | Types, CRUD, legend math | `src/lib/plantProducts.ts` | done, typechecked, tested |
 | The pattern to copy | `src/app/lawn/products/page.tsx` + `src/components/ChemicalProductsManager.tsx` | shipped and working |
 
 `src/lib/plantProducts.ts` is the contract. **Import from it. Do not write
 Supabase queries inline and do not re-derive any of its math** — that is the
 whole reason it exists. You need `PLANT_CATEGORIES`, `PlantProduct`,
-`NewPlantProduct`, `listPlantProducts`, `createPlantProduct`,
-`updatePlantProduct`, `deactivatePlantProduct`.
+`PlantSize`, `PlantWithSizes`, `NewPlantProduct`, `NewPlantSize`,
+`listPlantCatalogue`, `createPlantProduct`, `updatePlantProduct`,
+`deactivatePlantProduct`, `createPlantSize`, `updatePlantSize`,
+`deletePlantSize`, `sortSizes`, `priceFromCost`, `marginPct`.
 
 Everything below `// Placement` in that file is for the *next* handoff. Ignore
 it here.
+
+## THE SHAPE CHANGED — read this even if you read an earlier copy
+
+A species and a size are different rows now. `plant_products` is the SPECIES
+and **has no price**; `plant_product_sizes` holds size + `cost` + `unit_price`.
+One Dwarf Yaupon Holly, four sizes, four prices.
+
+So this screen is a **two-level editor**: a list of species, each expanding to
+its sizes. `listPlantCatalogue` returns species with `sizes` already nested and
+already ordered — do not sort sizes yourself, and never sort them
+alphabetically ("15 gal" sorts before "3 gal"; that is exactly what
+`sort_order` and `sortSizes` exist to prevent).
+
+`cost` is what the nursery charges the org; `unit_price` is what the customer
+pays. Show margin per size with `marginPct(cost, unit_price)` and **label it
+material margin** — install labor is deliberately not in `cost`, and an
+unqualified "72%" on a 30 gal tree is a misleading number to put in front of a
+business owner. `marginPct` returns `null` when there is no price: render that
+as "—", never as "0%".
+
+A bulk importer will fill this catalogue from a nursery file
+(`docs/plant-list-import.md`), and its preview grid is this same grid. Build
+the size editor so it could be reused there — but do not build any import UI
+in this handoff.
 
 ## Read this first
 
@@ -61,11 +88,20 @@ Client component, `"use client"`, CRUD straight through RLS via
 |---|---|---|
 | `name` | text | required — refuse to save empty, `toast.warning` like the chemical form does |
 | `category` | select over `PLANT_CATEGORIES` | default `"shrub"` |
-| `size` | text | free text. Placeholder: `30 gal, #5, 2in cal, B&B` |
-| `unit_price` | `NumberInput` | installed price per plant, in dollars |
+| `botanical_name` | text | optional. Placeholder: `Quercus virginiana` |
 | `color` | swatch picker | reuse `AREA_COLORS` from `@/lib/estimateAreas` — the map already cycles that palette, and a plant's legend swatch must be able to sit next to an area's |
 | `notes` | textarea | optional |
 | `active` | checkbox | same deactivate-not-delete semantics |
+
+**Per size** (the nested editor), all required except `sort_order`:
+
+| Field | Control | Notes |
+|---|---|---|
+| `size` | text | free text. Placeholder: `3 gal, #5, 2in cal, B&B` |
+| `cost` | `NumberInput` | what the nursery charges you, per plant |
+| `unit_price` | `NumberInput` | what the customer pays, installed |
+| margin | derived, read-only | `marginPct(cost, unit_price)`, labelled material margin |
+| `sort_order` | implicit | assign by position; do not make the user type it |
 
 **Deactivate rather than delete**, for the same reason the chemical manager
 does, and say so in the UI copy: a placed plant snapshots its own name, size
