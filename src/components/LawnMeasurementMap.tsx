@@ -693,6 +693,72 @@ export default function LawnMeasurementMap({
                 >
                   Delete
                 </button>
+                {/* Pricing lives ON the area, not in a panel with an area
+                    dropdown. With several areas that dropdown was a way to
+                    price the wrong one by accident: you finished a shape, then
+                    had to find it again in a list. Starting from the row means
+                    the area is never ambiguous. selectedAreaId now means
+                    "which row is open" — one at a time, by construction. */}
+                {pricedServices.length > 0 &&
+                  (selectedAreaId === area.id ? (
+                    <div className="flex w-full flex-col gap-2 pl-9">
+                      <select
+                        value={selectedServiceId}
+                        onChange={(e) => setSelectedServiceId(e.target.value)}
+                        aria-label={`Service for ${area.name}`}
+                        className="rounded border border-gray-300 px-2 py-1 text-sm"
+                      >
+                        <option value="">Select service…</option>
+                        {pricedServices.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {`${s.name} ($${s.price_per_sqft}/sq ft)`}
+                          </option>
+                        ))}
+                      </select>
+                      {(() => {
+                        // Resolved once: the price shown and the price added
+                        // must come from the same lookup or they could drift.
+                        const svc = pricedServices.find((x) => x.id === selectedServiceId);
+                        if (!svc) return null;
+                        const price = sqftPrice(area.area_sqft, svc.price_per_sqft);
+                        return (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium tabular-nums text-gray-900">
+                              {formatMoney(price)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onAddLineItem({
+                                  description: `${svc.name} — ${area.name}`,
+                                  quantity: 1,
+                                  unit: "LOT",
+                                  unit_price: price,
+                                });
+                                toast.success("Line item added");
+                                setSelectedAreaId("");
+                                setSelectedServiceId("");
+                              }}
+                              className="shrink-0 rounded bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700"
+                            >
+                              Add to estimate
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAreaId(area.id);
+                        setSelectedServiceId("");
+                      }}
+                      className="shrink-0 rounded border border-gray-300 px-2 py-1 text-sm text-gray-700"
+                    >
+                      Price
+                    </button>
+                  ))}
                 {area.access_tags.length > 0 && (
                   <div className="flex w-full flex-wrap gap-1 pl-9">
                     {area.access_tags.map((tag) => (
@@ -733,65 +799,6 @@ export default function LawnMeasurementMap({
           </div>
         )}
 
-        {/* Price an area panel */}
-        {areas.length > 0 && pricedServices.length > 0 && (
-          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
-            <p className="text-xs font-medium text-gray-700">Price an area</p>
-            <select
-              value={selectedAreaId}
-              onChange={(e) => setSelectedAreaId(e.target.value)}
-              className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              <option value="">Select area…</option>
-              {areas.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.area_sqft.toLocaleString()} sq ft)
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedServiceId}
-              onChange={(e) => setSelectedServiceId(e.target.value)}
-              className="block w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              <option value="">Select service…</option>
-              {pricedServices.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} (${s.price_per_sqft}/sq ft)
-                </option>
-              ))}
-            </select>
-            {(() => {
-              const selectedArea = areas.find((a) => a.id === selectedAreaId);
-              const selectedSvc = pricedServices.find((s) => s.id === selectedServiceId);
-              if (!selectedArea || !selectedSvc) return null;
-              return (
-                <>
-                  <p className="text-sm font-medium text-gray-900">
-                    {formatMoney(sqftPrice(selectedArea.area_sqft, selectedSvc.price_per_sqft))}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onAddLineItem({
-                        description: `${selectedSvc.name} — ${selectedArea.name}`,
-                        quantity: 1,
-                        unit: "LOT",
-                        unit_price: sqftPrice(selectedArea.area_sqft, selectedSvc.price_per_sqft),
-                      });
-                      toast.success("Line item added");
-                      setSelectedAreaId("");
-                      setSelectedServiceId("");
-                    }}
-                    className="w-full rounded bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700"
-                  >
-                    Add to estimate
-                  </button>
-                </>
-              );
-            })()}
-          </div>
-        )}
 
       {panelSlot}
     </>
