@@ -30,6 +30,7 @@ import {
   type EstimateArea,
   type LatLng,
   ACCESS_TAG_PRESETS,
+  edgeHitAt,
 } from "@/lib/estimateAreas";
 import { loadGoogleMaps } from "@/lib/googleMaps";
 import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
@@ -160,10 +161,36 @@ export default function LawnMeasurementMap({
         map.addListener("click", (e: google.maps.MapMouseEvent) => {
           const cur = draftRef.current;
           if (!cur || !e.latLng) return;
-          const newVertex: LatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+          const clicked: LatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
           setHistory((h) => [...h, cur.vertices]);
           setFuture([]);
-          setDraft({ ...cur, vertices: [...cur.vertices, newVertex] });
+
+          // Clicking ON the outline inserts a point there; clicking away from
+          // it extends the run. Appending unconditionally is what made going
+          // back to add detail throw the point onto the end of the path, so the
+          // outline shot across the yard to reach it.
+          //
+          // Tolerance is ~14 screen pixels converted to metres for the current
+          // zoom, so the grab feels the same close in as zoomed out. The Web
+          // Mercator ground resolution narrows by cos(lat), which is why the
+          // latitude term is here as well as inside edgeHitAt.
+          const zoom = mapRef.current?.getZoom() ?? 20;
+          const mPerPx =
+            (156543.03392 * Math.cos((clicked.lat * Math.PI) / 180)) / Math.pow(2, zoom);
+          const hit = edgeHitAt(clicked, cur.vertices, 14 * mPerPx);
+
+          setDraft(
+            hit
+              ? {
+                  ...cur,
+                  vertices: [
+                    ...cur.vertices.slice(0, hit.index),
+                    hit.point,
+                    ...cur.vertices.slice(hit.index),
+                  ],
+                }
+              : { ...cur, vertices: [...cur.vertices, clicked] }
+          );
         });
       } catch (err) {
         if (!cancelled) setErrorMsg(`Google Maps load: ${errMessage(err)}`);
