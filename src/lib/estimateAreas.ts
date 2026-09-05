@@ -113,8 +113,12 @@ export function totalAreaSqft(areas: Pick<EstimateArea, "area_sqft">[]): number 
   return areas.reduce((sum, a) => sum + (a.area_sqft || 0), 0);
 }
 
+// Must list every field on `EstimateArea`. Supabase returns exactly what is
+// selected, so a column missing here arrives as undefined while the type
+// still claims it is present — which is silent, and exactly what happened to
+// kind/length_ft/meta between adding them and reading them back.
 const AREA_COLUMNS =
-  "id, estimate_id, name, color, polygon, area_sqft, service_type, notes, access_tags, created_at";
+  "id, estimate_id, name, color, polygon, area_sqft, kind, length_ft, meta, service_type, notes, access_tags, created_at";
 
 export async function listEstimateAreas(
   supabase: SupabaseClient,
@@ -160,7 +164,23 @@ export async function createEstimateArea(
 export async function updateEstimateArea(
   supabase: SupabaseClient,
   id: string,
-  patch: Partial<Pick<EstimateArea, "name" | "color" | "polygon" | "area_sqft" | "service_type" | "notes" | "access_tags">>
+  // kind/length_ft/meta are patchable too: re-dragging a pipe changes its
+  // length, and editing a placed plant's species or size writes to meta.
+  patch: Partial<
+    Pick<
+      EstimateArea,
+      | "name"
+      | "color"
+      | "polygon"
+      | "area_sqft"
+      | "kind"
+      | "length_ft"
+      | "meta"
+      | "service_type"
+      | "notes"
+      | "access_tags"
+    >
+  >
 ): Promise<string | null> {
   const { error } = await supabase.from("estimate_areas").update(patch).eq("id", id);
   return error?.message ?? null;
