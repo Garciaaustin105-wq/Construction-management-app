@@ -9,11 +9,13 @@ changed after your lane had branched, and you were not told.
 
 ## Step 0 — rebase
 
-Your branch is based on `caec1d2`. Rebase onto `feat/plant-catalogue`
-(`bfad298` or later). The only conflicts should be in the two files you own.
+Your branch is based on `caec1d2`. Rebase onto `feat/plant-catalogue`, which
+is now pushed — fetch it rather than relying on a local copy. The only
+conflicts should be in the two files you own.
 
 ```
-git rebase feat/plant-catalogue
+git fetch origin
+git rebase origin/feat/plant-catalogue
 ```
 
 ## What broke, exactly
