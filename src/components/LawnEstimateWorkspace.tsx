@@ -128,7 +128,24 @@ export default function LawnEstimateWorkspace({
   // The shared page's write (saveEstimate): delete + reinsert everything with
   // fresh positions. We read fresh from the DB first so a line priced here
   // never clobbers rows the office added on the document page.
-  async function addMeasuredLine(line: {
+  type NewLine = {
+    description: string;
+    quantity: number;
+    unit: string;
+    unit_price: number;
+    internal_cost?: number | null;
+  };
+
+  // Adds ONE line. Kept for the map's per-area pricing, which adds one at a
+  // time; it just delegates.
+  async function addMeasuredLine(line: NewLine) {
+    return addMeasuredLines([line]);
+  }
+
+  // Adds MANY in a single read-delete-reinsert. Calling addMeasuredLine in a
+  // loop cannot work: `persisting` makes the second call return early, so all
+  // but the first plant line would vanish without an error.
+  async function addMeasuredLines(lines: {
     description: string;
     quantity: number;
     unit: string;
@@ -138,8 +155,8 @@ export default function LawnEstimateWorkspace({
     // it must reach estimate_line_items.internal_cost or jobProfitability
     // reports the whole sale as margin.
     internal_cost?: number | null;
-  }) {
-    if (!estimate || persisting) return;
+  }[]) {
+    if (!estimate || persisting || lines.length === 0) return;
     // Same guards as the shared page's saveEstimate — a converted estimate is
     // locked (the delete+reinsert would wipe the line→schedule stamp), and
     // only drafts accept writes.
@@ -168,8 +185,8 @@ export default function LawnEstimateWorkspace({
     const existing = (rows as LineRow[] | null) ?? [];
     const all: LineRow[] = [
       ...existing,
-      {
-        id: `pending-${Date.now()}`,
+      ...lines.map((line, i) => ({
+        id: `pending-${Date.now()}-${i}`,
         cost_code_id: null,
         description: line.description,
         quantity: line.quantity,
@@ -177,7 +194,7 @@ export default function LawnEstimateWorkspace({
         unit_price: line.unit_price,
         internal_cost: line.internal_cost ?? null,
         section: "",
-      },
+      })),
     ];
 
     const { error: deleteError } = await supabase
@@ -349,6 +366,7 @@ export default function LawnEstimateWorkspace({
         mobilizationHours={estimate?.mobilization_hours ?? null}
         onChange={saveLaborSettings}
         saving={savingLabor}
+        onAddPlantLines={addMeasuredLines}
         onAddLaborLine={addMeasuredLine}
         canEdit={estimate?.status === "draft"}
       />
