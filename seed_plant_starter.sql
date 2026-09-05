@@ -29,6 +29,15 @@
 -- commercial landscaping, Arbor Day nursery popularity, Capitol Wholesale best
 -- sellers) cross-checked against standard landscape practice.
 --
+--
+-- EXPANSION PASS 2026-09-05: the first list skewed southern/Gulf. A second
+-- pass added northern and transition-zone stock (bur/swamp white/willow oak,
+-- Norway and Colorado spruce, arborvitae, prairie grasses and native
+-- perennials) plus a `vine` category that did not exist before. 161 species
+-- and 484 sizes now. The machine-readable list of the expansion lives in
+-- git history at tmp-seed-plants2.mjs; this file documents the convention and
+-- the first pass.
+--
 -- Re-runnable: a species already present is skipped, so an org's edits survive.
 
 do $$
