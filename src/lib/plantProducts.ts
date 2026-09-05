@@ -303,8 +303,11 @@ export function plantSnapshot(product: PlantProduct, size: PlantSize): PlantSnap
 }
 
 function num(v: unknown): number {
-  // Supabase returns `numeric` as a string. Accept both, and refuse anything
-  // that is not a real number rather than letting NaN into a price.
+  // `meta` is jsonb, so a number can arrive in either form: supabase-js hands
+  // back a real number for a numeric COLUMN (verified in e2e-labor-settings),
+  // but a value written into meta from a form field can land as a string.
+  // Accept both, and refuse anything that is not a real number rather than
+  // letting NaN into a price.
   const n = typeof v === "string" ? Number(v) : v;
   return typeof n === "number" && Number.isFinite(n) ? n : 0;
 }
