@@ -24,6 +24,23 @@ whole reason it exists. You need `PLANT_CATEGORIES`, `PlantProduct`,
 Everything below `// Placement` in that file is for the *next* handoff. Ignore
 it here.
 
+## IF YOU ALREADY BUILT THIS — read this first
+
+Work exists on `feat/plant-catalogue-ui` (commit `2c8aece`) that was built
+against the OLD flat schema and no longer compiles: it calls
+`listPlantProducts` (deleted) and puts `size` and `unit_price` on the species
+(both columns DROPPED from the database). That was not the agent's mistake —
+the schema was restructured underneath a lane that had already branched.
+
+**Rebase onto `feat/plant-catalogue` (`62c430e` or later) and rework, do not
+restart.** Everything structural survives and is worth keeping: the drawer
+form, optimistic toggle with rollback, mobile cards vs desktop table,
+deactivate-not-delete, the category-order sort, and the E2E harness — including
+its two findings (the desktop context needs its own `page.on('dialog')`, and
+mobile cards carry no delete button so that phase must run at 1440px).
+
+What changes is that the form becomes two-level, per the sections below.
+
 ## THE SHAPE CHANGED — read this even if you read an earlier copy
 
 A species and a size are different rows now. `plant_products` is the SPECIES
@@ -103,6 +120,7 @@ sizes already nested, straight from `listPlantCatalogue`.
 | `size` | text | free text. Placeholder: `3 gal, #5, 2in cal, B&B` |
 | `cost` | `NumberInput` | what the nursery charges you, per plant |
 | `unit_price` | `NumberInput` | what the customer pays, installed |
+| `install_minutes` | `NumberInput` | MAN-minutes to plant one (two people x 10 min = 20). Label it man-minutes; 0 must read as "not set", never as free |
 | margin | derived, read-only | `marginPct(cost, unit_price)`, labelled material margin |
 | `sort_order` | implicit | assign by position; do not make the user type it |
 
