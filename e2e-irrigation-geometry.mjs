@@ -56,6 +56,12 @@ t("half arc wets half", near(coverageSqft(25,180), Math.PI*625/2, 0.05));
 t("quarter arc wets a quarter", near(coverageSqft(25,90), Math.PI*625/4, 0.05));
 t("no radius wets nothing", coverageSqft(0,360)===0);
 
+console.log("\n[throw wording - the diameter mistake]");
+t("says both numbers so a diameter entry is visible",
+  M.describeThrow(30)==="30 ft from the head \u00b7 60 ft across", M.describeThrow(30));
+t("a 30 ft head really does wet 60 ft across", near(2*30, 60, 0.001));
+t("unrecorded throw says so rather than showing 0", M.describeThrow(0)==="throw not recorded");
+
 console.log("\n[legend]");
 const mk=(arc,price=28,cost=9,mins=12,noz="3.0",r=25)=>({kind:"point",color:"#0ea5e9",
   meta:{irrigation_product_id:"rb5000",irrigation_nozzle_id:"n1",name:"Rain Bird 5000",category:"rotor",

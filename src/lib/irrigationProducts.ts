@@ -70,8 +70,14 @@ export type IrrigationNozzle = {
   organization_id: string;
   irrigation_product_id: string;
   nozzle: string;
-  // Manufacturer throw radius in FEET. 0 means NOT RECORDED — render it as
-  // unset and draw no coverage, never a zero-radius circle.
+  // THROW DISTANCE from the head outward, in feet — the number the
+  // manufacturer's chart calls "radius". A 30 ft head wets a circle 60 ft
+  // ACROSS. Entering the diameter here draws twice the real coverage and
+  // nothing downstream can detect it, so the field label must say "from the
+  // head", not just "radius".
+  //
+  // 0 means NOT RECORDED — render as unset and draw no coverage, never a
+  // zero-radius circle.
   radius_ft: number;
   cost: number;
   unit_price: number;
@@ -294,6 +300,7 @@ const M_PER_FT = 0.3048;
 // the error against a great-circle solution is far below the accuracy of a
 // finger tap on satellite imagery, and mixing two earth models across the same
 // map would be worse than either.
+// `radiusFt` is throw distance from the head, matching the manufacturer chart.
 export function pointAtBearing(center: LatLng, radiusFt: number, bearingDeg: number): LatLng {
   const d = radiusFt * M_PER_FT;
   const br = (bearingDeg * Math.PI) / 180;
@@ -335,6 +342,16 @@ export function coverageRing(
     pts.push(pointAtBearing(center, radiusFt, headingDeg + (arc * i) / n));
   }
   return pts;
+}
+
+// Spells out both numbers so the commonest data-entry error is visible at the
+// moment of entry: "30 ft from the head - 60 ft across". Someone who meant the
+// diameter sees 60 and corrects themselves. No validation can catch this,
+// because 30 and 60 are both perfectly plausible radii.
+export function describeThrow(radiusFt: number): string {
+  if (!Number.isFinite(radiusFt) || radiusFt <= 0) return "throw not recorded";
+  const r = Math.round(radiusFt * 10) / 10;
+  return `${r} ft from the head · ${Math.round(r * 2 * 10) / 10} ft across`;
 }
 
 // Ground area a head covers, in square feet. A wedge of a circle.

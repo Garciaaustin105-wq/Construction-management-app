@@ -64,7 +64,7 @@ comment on column public.irrigation_product_nozzles.nozzle is
   'As the manufacturer labels it: "3.0", "MP2000", "15-VAN", "#4". Free text, same reasoning as plant size.';
 
 comment on column public.irrigation_product_nozzles.radius_ft is
-  'Manufacturer throw radius in FEET at the pressure the org designs for. Drawn as coverage on the map. 0 means not recorded, and the UI must show that as unset rather than drawing a zero-radius circle.';
+  'THROW DISTANCE from the head outward, in feet - the number the manufacturer chart calls "radius", measured at the pressure the org designs for. A 30 ft head wets a circle 60 ft ACROSS. Entering the diameter here draws twice the real coverage and nothing downstream can detect it, so the UI label must say "from the head", not just "radius". 0 means not recorded: render as unset and draw no coverage.';
 
 comment on column public.irrigation_product_nozzles.install_minutes is
   'MAN-minutes to install one head. Feeds the same labor math as plant install time — trenching and mainline are separate line items, not this.';
