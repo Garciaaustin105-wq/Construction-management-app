@@ -89,23 +89,36 @@ console.log("\n[minimum spanning tree]");
 // Four heads on a 30 ft square: the cheapest way to link all four is three
 // sides = 90 ft. Never the diagonal (42.4) and never all four sides (120).
 const sq=[C, pointAtBearing(C,30,0), pointAtBearing(C,30,90), pointAtBearing(pointAtBearing(C,30,0),30,90)];
-const e=pipeEstimate(sq,0);
+const e=pipeEstimate(sq,{});
 t("30 ft square links with 90 ft of pipe", near(e.straightLineFt,90,0.2), `got ${e.straightLineFt}`);
 t("uses n-1 segments", e.segments.length===3, `got ${e.segments.length}`);
 t("no segment is the diagonal", e.segments.every(s=>s.ft<35), JSON.stringify(e.segments.map(s=>s.ft)));
 
 console.log("\n[waste]");
-const w=pipeEstimate(sq,10);
-t("10% waste adds 10%", near(w.totalFt, 99, 0.2), `got ${w.totalFt}`);
-t("straight line is unchanged by waste", near(w.straightLineFt,90,0.2));
-t("0% waste leaves the total equal to the straight line",
-  near(pipeEstimate(sq,0).totalFt, 90, 0.2));
-t("negative waste is ignored, not subtracted", near(pipeEstimate(sq,-20).totalFt, 90, 0.2));
+const w=pipeEstimate(sq,{wastePct:10});
+t("10% waste alone adds 10%", near(w.totalFt, 99, 0.2), `got ${w.totalFt}`);
+t("straight line is unchanged by an allowance", near(w.straightLineFt,90,0.2));
+const rt=pipeEstimate(sq,{routingPct:30});
+t("30% routing gives a routed trench of 117 ft", near(rt.routedFt,117,0.2), `got ${rt.routedFt}`);
+const both=pipeEstimate(sq,{routingPct:30,wastePct:10});
+t("the two COMPOUND: 90 -> 117 -> 128.7, not 126",
+  near(both.totalFt,128.7,0.3), `got ${both.totalFt}`);
+t("additive would have under-bought by ~2.7 ft here",
+  near(90*1.40, 126, 0.1) && both.totalFt > 126);
+t("routed is reported separately so the trench length is visible",
+  near(both.routedFt,117,0.2));
+t("no allowances leaves the total at the straight line",
+  near(pipeEstimate(sq,{}).totalFt, 90, 0.2));
+t("negative allowances are ignored, not subtracted",
+  near(pipeEstimate(sq,{routingPct:-20,wastePct:-5}).totalFt, 90, 0.2));
+t("swapping the two is NOT silently equivalent",
+  Math.abs(pipeEstimate(sq,{routingPct:30,wastePct:10}).routedFt
+         - pipeEstimate(sq,{routingPct:10,wastePct:30}).routedFt) > 15);
 
 console.log("\n[degenerate]");
-t("one head needs no pipe", pipeEstimate([C],10).straightLineFt===0);
-t("no heads needs no pipe", pipeEstimate([],10).straightLineFt===0);
-t("two heads is just the gap", near(pipeEstimate([C,pointAtBearing(C,25,0)],0).straightLineFt,25,0.05));
+t("one head needs no pipe", pipeEstimate([C],{wastePct:10}).straightLineFt===0);
+t("no heads needs no pipe", pipeEstimate([],{wastePct:10}).straightLineFt===0);
+t("two heads is just the gap", near(pipeEstimate([C,pointAtBearing(C,25,0)],{}).straightLineFt,25,0.05));
 
 console.log("\n[reading heads off an estimate]");
 const head=(lat,lng)=>({kind:"point",polygon:[{lat,lng}],meta:{irrigation_product_id:"h",name:"RB",radius_ft:25}});

@@ -490,12 +490,25 @@ export function distanceFt(a: LatLng, b: LatLng): number {
   return Math.hypot(dLatM, dLngM) / M_PER_FT;
 }
 
+export type PipeAllowances = {
+  // How much longer the real trench is than a straight line: following beds,
+  // skirting drives and hardscape, splitting into zones off a manifold.
+  // Typically the LARGER of the two and the one people forget.
+  routingPct?: number;
+  // Cut-offs, breakage, mistakes — the ordinary material allowance.
+  wastePct?: number;
+};
+
 export type PipeEstimate = {
-  // Shortest total length that connects every head to the network, straight
-  // line, no obstacles. A FLOOR, not a prediction — see below.
+  // Shortest total length that connects every head, straight line, no
+  // obstacles. A FLOOR, not a prediction — see below.
   straightLineFt: number;
-  // straightLineFt increased by the allowance the estimator chose.
+  // The straight line after the routing allowance: an estimate of the trench
+  // that will actually be dug.
+  routedFt: number;
+  // routedFt after the waste allowance: the pipe to actually buy.
   totalFt: number;
+  routingPct: number;
   wastePct: number;
   headCount: number;
   // The connections chosen, so the map can draw exactly what was measured
@@ -517,15 +530,27 @@ export type PipeEstimate = {
 // backflow, or any run to the controller — none of those are placed on the
 // map, so none of them are in this number.
 //
-// wastePct is the estimator's allowance on top. Worth saying plainly in the
-// UI: the usual 5-10% "waste" figure covers cut-offs and breakage, NOT the
-// difference between a straight line and a real trench route, which is often
-// 20-40% on its own. An estimator who enters 10 here because that is their
-// normal waste number will under-buy.
-export function pipeEstimate(heads: LatLng[], wastePct = 0): PipeEstimate {
-  const pct = Number.isFinite(wastePct) && wastePct > 0 ? wastePct : 0;
+// TWO allowances, kept apart on purpose. They are different quantities and
+// folding them into one number is how pipe gets under-bought:
+//
+//   routingPct — how much longer the real trench is than the straight line.
+//                Often 20-40%, and the one estimators forget.
+//   wastePct   — cut-offs and breakage. The familiar 5-10% figure.
+//
+// They COMPOUND rather than add: routing lengthens the run that actually gets
+// dug, and waste is then the over-buy on that longer run. 30% and 10% is
+// 1.30 x 1.10 = 1.43, not 1.40.
+//
+// Passed as an object, not two numbers, because (30, 10) and (10, 30) are
+// both plausible and swapping them silently under-buys by a third.
+export function pipeEstimate(heads: LatLng[], allowances: PipeAllowances = {}): PipeEstimate {
+  const clean = (v: number | undefined) =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+  const routingPct = clean(allowances.routingPct);
+  const wastePct = clean(allowances.wastePct);
   const empty: PipeEstimate = {
-    straightLineFt: 0, totalFt: 0, wastePct: pct, headCount: heads.length, segments: [],
+    straightLineFt: 0, routedFt: 0, totalFt: 0, routingPct, wastePct,
+    headCount: heads.length, segments: [],
   };
   if (heads.length < 2) return empty;
 
@@ -551,10 +576,13 @@ export function pipeEstimate(heads: LatLng[], wastePct = 0): PipeEstimate {
   }
 
   const straight = Math.round(total * 10) / 10;
+  const routed = straight * (1 + routingPct / 100);
   return {
     straightLineFt: straight,
-    totalFt: Math.round(straight * (1 + pct / 100) * 10) / 10,
-    wastePct: pct,
+    routedFt: Math.round(routed * 10) / 10,
+    totalFt: Math.round(routed * (1 + wastePct / 100) * 10) / 10,
+    routingPct,
+    wastePct,
     headCount: heads.length,
     segments,
   };
