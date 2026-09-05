@@ -831,7 +831,7 @@ export default function LawnMeasurementMap({
       {/* Desktop docked column floating over the map's left edge. The map
           runs underneath it — the panel does not displace the canvas. */}
       {isDesktop && panelOpen && (
-        <aside className="absolute bottom-3 left-3 z-10 flex max-h-[calc(100%-1.5rem)] w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-white/60 bg-white/85 shadow-lg ring-1 ring-black/5 backdrop-blur-md">
+        <aside className="absolute left-3 top-3 z-10 flex max-h-[calc(100%-1.5rem)] w-96 max-w-[calc(100%-1.5rem)] flex-col overflow-hidden rounded-xl border border-white/60 bg-white/85 shadow-lg ring-1 ring-black/5 backdrop-blur-md">
           <div className="flex items-start justify-between gap-2 border-b border-gray-100 p-3">
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
