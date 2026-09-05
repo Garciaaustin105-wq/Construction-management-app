@@ -9,6 +9,7 @@ import {
   mobilizationUnset,
   mobilizationShare,
   laborLineItem,
+  plantLineItem,
   type PlantLegendRow,
 } from "@/lib/plantProducts";
 
@@ -23,6 +24,16 @@ type Props = {
     mobilization_hours?: number | null;
   }) => void;
   saving: boolean;
+  // Adds the PLANTS to the quote — one line per legend row, all in one call.
+  // Without this the material total is visible but never reaches the customer's
+  // estimate, which is exactly the gap this panel shipped with.
+  onAddPlantLines: (lines: {
+    description: string;
+    quantity: number;
+    unit: string;
+    unit_price: number;
+    internal_cost: number;
+  }[]) => void;
   onAddLaborLine: (line: {
     description: string;
     quantity: number;
@@ -36,6 +47,7 @@ type Props = {
 export default function LandscapeLaborPanel({
   rows,
   laborRate,
+  onAddPlantLines,
   laborCostRate,
   mobilizationHours,
   onChange,
@@ -86,6 +98,39 @@ export default function LandscapeLaborPanel({
         </p>
       ) : (
         <>
+          {/* The legend: what is actually placed, grouped. Derived, never
+              stored — buildPlantLegend does the grouping and the ordering. */}
+          <ul className="divide-y divide-gray-200/70 text-xs">
+            {rows.map((r) => (
+              <li key={r.key} className="flex items-center gap-2 py-1">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-white"
+                  style={{ backgroundColor: r.color }}
+                />
+                <span className="min-w-0 flex-1 truncate text-gray-700">
+                  {r.name}
+                  {r.size ? ` ${r.size}` : ""}
+                </span>
+                <span className="shrink-0 tabular-nums text-gray-500">x{r.count}</span>
+                <span className="shrink-0 tabular-nums font-medium text-gray-800">
+                  {formatMoney(r.total)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            disabled={!canEdit || saving}
+            onClick={() => onAddPlantLines(rows.map(plantLineItem))}
+            className="w-full rounded bg-green-600 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2 className="mx-auto h-3 w-3 animate-spin" />
+            ) : (
+              `Add plants to estimate (${formatMoney(m.materialRevenue)})`
+            )}
+          </button>
+
           {/* Breakdown */}
           <dl className="text-xs text-gray-700">
             <div className="flex items-center gap-1">
