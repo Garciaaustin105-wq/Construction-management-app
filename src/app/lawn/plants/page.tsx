@@ -4,14 +4,15 @@ import { requireRole } from "@/lib/server-gate";
 import { OFFICE_OR_PM } from "@/lib/roles";
 import TopBar from "@/components/TopBar";
 import PlantCatalogueManager from "@/components/PlantCatalogueManager";
-import { listPlantProducts } from "@/lib/plantProducts";
+import { listPlantCatalogue } from "@/lib/plantProducts";
 
 export const dynamic = "force-dynamic";
 
 // Office plant & tree catalog (lawn variant), phase 2 of the quick-estimator
-// roadmap. The office/PM builds the org's plant list once — name, category,
-// size, installed price, legend colour, notes, active flag. Placing plants on
-// the map is a LATER handoff; this screen is the catalogue only.
+// roadmap. The office/PM builds the org's species list once — name, botanical
+// name, category, legend colour, notes, active flag — and attaches sizes
+// (cost, installed price, install minutes) to each. Placing plants on the map
+// is a LATER handoff; this screen is the catalogue only.
 //
 // Gate: requireRole(OFFICE_OR_PM) — matches the plant_product_office_all RLS
 // policy (tier_office_or_pm) exactly (role-gate-mismatch pattern). Then a
@@ -31,7 +32,9 @@ export default async function PlantCataloguePage() {
   }
 
   const supabase = await createClient();
-  const { data } = await listPlantProducts(supabase, me.orgId ?? "");
+  // activeOnly=false: the manager dims retired rows, so it needs them — and
+  // with the species/size split this also keeps retired SIZES visible.
+  const { data } = await listPlantCatalogue(supabase, me.orgId ?? "", false);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 lg:pb-10">
