@@ -1,5 +1,7 @@
 -- Phase 2 of the estimator roadmap: a plant and tree catalogue.
--- See docs/quick-estimator-roadmap.md §3.
+-- Applied to prod 2026-09-05. See docs/quick-estimator-roadmap.md §3.
+-- Verified after applying: 10 columns, 2 policies, RLS on, 2 indexes, and a
+-- round-tripped insert on the test org taking the intended defaults.
 --
 -- Roadmap open question 1 was "catalogue, or typed per estimate?". Catalogue:
 -- it is the thing that makes the second estimate faster than the first, and
