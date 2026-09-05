@@ -1,24 +1,37 @@
 // Plants and trees for the quick estimator — phase 2 of
 // docs/quick-estimator-roadmap.md.
 //
-// Two things live here and they are deliberately separate:
+// THREE things live here and they are deliberately separate:
 //
-//   1. The CATALOGUE (`plant_products`) — an org-maintained list the office
-//      edits once: "Live Oak, 30 gal, $450". Modeled on `chemical_products`,
-//      down to the RLS policy shape.
-//   2. PLACEMENT — dropping a plant on the map. A placed plant is NOT a row
-//      here; it is an `estimate_areas` row with kind="point", a one-coordinate
-//      `polygon`, and a snapshot of the catalogue entry in `meta`.
+//   1. The SPECIES (`plant_products`) — "Dwarf Yaupon Holly". Identity only:
+//      name, category, colour. No price.
+//   2. The SIZES (`plant_product_sizes`) — "3 gal, costs me $9.50, I charge
+//      $38". A species has several; each has its own cost and price, because a
+//      30 gal tree is not a 1 gal shrub with a bigger number.
+//   3. PLACEMENT — dropping a plant on the map. A placed plant is NOT a row in
+//      either table; it is an `estimate_areas` row with kind="point", a
+//      one-coordinate `polygon`, and a snapshot of the chosen size in `meta`.
 //
-// Why a snapshot instead of just the id: re-pricing the catalogue in March
-// must not silently change what a customer was quoted in January. This is the
-// same call the chemical log makes when it denormalizes a product at log time.
-// The id is kept alongside it, so "which catalogue entry was this" is still
-// answerable — it just is not the source of truth for price.
+// WHY A SNAPSHOT, NOT JUST IDS
+//
+// Re-pricing the catalogue in March must not silently change what a customer
+// was quoted in January. This is the same call the chemical log makes when it
+// denormalizes a product at log time. The ids are kept alongside the snapshot,
+// so "which catalogue entry was this" is still answerable — they are just not
+// the source of truth for price.
+//
+// WHAT `cost` MEANS — read this before using the margin numbers
+//
+// `cost` is what the NURSERY charges you. It is material only. Install labor
+// is deliberately not in it and must not be faked into it: labor actuals come
+// from crew time entries against the job's labor_rate, which is how every
+// other job in this app already works. So `plantLegendMargin` is MATERIAL
+// margin, and any UI showing it has to say so — a business owner reading
+// "72% margin" on a tree that took two people an hour is being misled.
 //
 // Contract-first per the Claude-direct/local-AI split: the catalogue manager,
-// the map's plant mode, and the legend all build against these exports rather
-// than reaching into Supabase or re-deriving the grouping math.
+// the importer, the map's plant mode, and the legend all build against these
+// exports rather than reaching into Supabase or re-deriving the math.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EstimateArea } from "@/lib/estimateAreas";
@@ -42,50 +55,103 @@ export function isPlantCategory(v: unknown): v is PlantCategory {
   return typeof v === "string" && (PLANT_CATEGORIES as readonly string[]).includes(v);
 }
 
+// ---------------------------------------------------------------------------
+// The catalogue
+// ---------------------------------------------------------------------------
+
 export type PlantProduct = {
   id: string;
   organization_id: string;
   name: string;
+  // Latin name. Optional — a landscape architect specs botanically, a
+  // homeowner does not. Also the reliable key when importing a nursery list,
+  // where common names vary by region.
+  botanical_name: string | null;
   category: PlantCategory;
-  // Free text on purpose: nurseries quote "30 gal", "#5", "2in cal", "B&B",
-  // and there is no closed set worth fighting over.
-  size: string | null;
-  // Installed price per plant. One number, not material + labor — this is a
-  // quick estimator, not a cost-accounting system.
-  unit_price: number;
   color: string;
   notes: string | null;
   active: boolean;
   created_at: string;
 };
 
-const PLANT_COLUMNS =
-  "id, organization_id, name, category, size, unit_price, color, notes, active, created_at";
+export type PlantSize = {
+  id: string;
+  organization_id: string;
+  plant_product_id: string;
+  // As the nursery quotes it: "1 gal", "3 gal", "#5", "2in cal", "B&B".
+  // Free text on purpose.
+  size: string;
+  // What you pay the nursery, per plant. Material only — see the header.
+  cost: number;
+  // What the customer pays per plant, installed.
+  unit_price: number;
+  // Sizes have a real order that alphabetical sorting destroys ("15 gal"
+  // sorts before "3 gal"). Ascending, smallest first.
+  sort_order: number;
+  active: boolean;
+  created_at: string;
+};
+
+export type PlantWithSizes = PlantProduct & { sizes: PlantSize[] };
+
+const PRODUCT_COLUMNS =
+  "id, organization_id, name, botanical_name, category, color, notes, active, created_at";
+
+const SIZE_COLUMNS =
+  "id, organization_id, plant_product_id, size, cost, unit_price, sort_order, active, created_at";
 
 export type NewPlantProduct = {
   organization_id: string;
   name: string;
   category: PlantCategory;
-  size?: string | null;
-  unit_price: number;
+  botanical_name?: string | null;
   color?: string;
   notes?: string | null;
 };
 
-// `activeOnly` is the default because every UI that picks a plant wants the
-// live catalogue; only the manager screen wants to see retired entries.
-export async function listPlantProducts(
+export type NewPlantSize = {
+  organization_id: string;
+  plant_product_id: string;
+  size: string;
+  cost: number;
+  unit_price: number;
+  sort_order?: number;
+};
+
+// One round trip, not one-per-species: the picker needs the whole catalogue
+// and an N+1 here would be a query per plant on every estimate open.
+export async function listPlantCatalogue(
   supabase: SupabaseClient,
   organizationId: string,
   activeOnly = true
-): Promise<{ data: PlantProduct[]; error: string | null }> {
+): Promise<{ data: PlantWithSizes[]; error: string | null }> {
   let q = supabase
     .from("plant_products")
-    .select(PLANT_COLUMNS)
+    .select(`${PRODUCT_COLUMNS}, plant_product_sizes(${SIZE_COLUMNS})`)
     .eq("organization_id", organizationId);
   if (activeOnly) q = q.eq("active", true);
   const { data, error } = await q.order("name", { ascending: true });
-  return { data: (data as unknown as PlantProduct[]) ?? [], error: error?.message ?? null };
+  if (error) return { data: [], error: error.message };
+
+  const rows = (data ?? []) as unknown as (PlantProduct & {
+    plant_product_sizes: PlantSize[] | null;
+  })[];
+
+  return {
+    data: rows.map(({ plant_product_sizes, ...product }) => ({
+      ...product,
+      sizes: sortSizes((plant_product_sizes ?? []).filter((s) => !activeOnly || s.active)),
+    })),
+    error: null,
+  };
+}
+
+// sort_order first, then insertion order. Deliberately NOT alphabetical by
+// size — that is the bug this exists to avoid.
+export function sortSizes(sizes: PlantSize[]): PlantSize[] {
+  return [...sizes].sort(
+    (a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at)
+  );
 }
 
 export async function createPlantProduct(
@@ -95,7 +161,7 @@ export async function createPlantProduct(
   const { data, error } = await supabase
     .from("plant_products")
     .insert(product)
-    .select(PLANT_COLUMNS)
+    .select(PRODUCT_COLUMNS)
     .single();
   return { data: (data as unknown as PlantProduct) ?? null, error: error?.message ?? null };
 }
@@ -106,7 +172,7 @@ export async function updatePlantProduct(
   patch: Partial<
     Pick<
       PlantProduct,
-      "name" | "category" | "size" | "unit_price" | "color" | "notes" | "active"
+      "name" | "botanical_name" | "category" | "color" | "notes" | "active"
     >
   >
 ): Promise<string | null> {
@@ -124,32 +190,94 @@ export async function deactivatePlantProduct(
   return updatePlantProduct(supabase, id, { active: false });
 }
 
+export async function createPlantSize(
+  supabase: SupabaseClient,
+  size: NewPlantSize
+): Promise<{ data: PlantSize | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from("plant_product_sizes")
+    .insert(size)
+    .select(SIZE_COLUMNS)
+    .single();
+  return { data: (data as unknown as PlantSize) ?? null, error: error?.message ?? null };
+}
+
+export async function updatePlantSize(
+  supabase: SupabaseClient,
+  id: string,
+  patch: Partial<Pick<PlantSize, "size" | "cost" | "unit_price" | "sort_order" | "active">>
+): Promise<string | null> {
+  const { error } = await supabase.from("plant_product_sizes").update(patch).eq("id", id);
+  return error?.message ?? null;
+}
+
+export async function deletePlantSize(
+  supabase: SupabaseClient,
+  id: string
+): Promise<string | null> {
+  const { error } = await supabase.from("plant_product_sizes").delete().eq("id", id);
+  return error?.message ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Pricing helpers
+// ---------------------------------------------------------------------------
+
+// A nursery list gives you COST. Price is your markup on it. This is the
+// multiplier form (2.5 = "two and a half times cost") because that is how the
+// trade actually talks about it, not a percentage.
+export function priceFromCost(cost: number, markupMultiple: number): number {
+  if (!Number.isFinite(cost) || !Number.isFinite(markupMultiple)) return 0;
+  return Math.round(cost * markupMultiple * 100) / 100;
+}
+
+// Material margin as a fraction of price. Returns null rather than 0 when
+// there is no price to divide by — a caller must not render "0% margin" for
+// "we do not know".
+export function marginPct(cost: number, price: number): number | null {
+  if (!Number.isFinite(price) || price <= 0) return null;
+  return (price - cost) / price;
+}
+
 // ---------------------------------------------------------------------------
 // Placement
 // ---------------------------------------------------------------------------
 
-// What gets written into `estimate_areas.meta` when a plant is dropped. Every
-// field needed to price and label the plant is here, so rendering a saved
+// What gets written into `estimate_areas.meta` when a plant is dropped.
+// Everything needed to price and label the plant is here, so rendering a saved
 // estimate never has to join back to the catalogue.
 export type PlantSnapshot = {
   plant_product_id: string;
+  plant_size_id: string;
   name: string;
+  botanical_name: string | null;
   category: PlantCategory;
-  size: string | null;
+  size: string;
+  cost: number;
   unit_price: number;
   // Per-placement note ("specimen, face the street"), distinct from the
-  // catalogue's own notes. Blank on drop.
+  // species' own notes. Blank on drop.
   note?: string;
 };
 
-export function plantSnapshot(p: PlantProduct): PlantSnapshot {
+export function plantSnapshot(product: PlantProduct, size: PlantSize): PlantSnapshot {
   return {
-    plant_product_id: p.id,
-    name: p.name,
-    category: p.category,
-    size: p.size,
-    unit_price: p.unit_price,
+    plant_product_id: product.id,
+    plant_size_id: size.id,
+    name: product.name,
+    botanical_name: product.botanical_name,
+    category: product.category,
+    size: size.size,
+    cost: size.cost,
+    unit_price: size.unit_price,
   };
+}
+
+function num(v: unknown): number {
+  // Supabase returns `numeric` as a string. Accept both, and refuse anything
+  // that is not a real number rather than letting NaN into a price.
+  const n = typeof v === "string" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) ? n : 0;
 }
 
 // `meta` is jsonb, so anything could be in it — including rows written before
@@ -163,14 +291,16 @@ export function readPlantSnapshot(
   if (!m || typeof m !== "object") return null;
   const id = m.plant_product_id;
   const name = m.name;
-  const price = m.unit_price;
   if (typeof id !== "string" || typeof name !== "string") return null;
   return {
     plant_product_id: id,
+    plant_size_id: typeof m.plant_size_id === "string" ? m.plant_size_id : "",
     name,
+    botanical_name: typeof m.botanical_name === "string" ? m.botanical_name : null,
     category: isPlantCategory(m.category) ? m.category : "shrub",
-    size: typeof m.size === "string" ? m.size : null,
-    unit_price: typeof price === "number" && Number.isFinite(price) ? price : 0,
+    size: typeof m.size === "string" ? m.size : "",
+    cost: num(m.cost),
+    unit_price: num(m.unit_price),
     note: typeof m.note === "string" ? m.note : undefined,
   };
 }
@@ -186,17 +316,20 @@ export function isPlantArea(area: Pick<EstimateArea, "kind" | "meta">): boolean 
 // The roadmap's requirement: "a legend built from what is actually placed —
 // not a separate list to maintain." So the legend is derived, never stored.
 export type PlantLegendRow = {
-  // Groups by product AND by the snapshot price. Two placements of the same
-  // plant at different prices (catalogue re-priced mid-estimate) are two rows,
+  // Groups by size AND by the snapshot price. Two placements of the same size
+  // at different prices (catalogue re-priced mid-estimate) are two rows,
   // because merging them would report a total nobody can reconcile.
   key: string;
   name: string;
+  botanical_name: string | null;
   category: PlantCategory;
-  size: string | null;
+  size: string;
+  cost: number;
   unit_price: number;
   color: string;
   count: number;
   total: number;
+  total_cost: number;
 };
 
 export function buildPlantLegend(
@@ -206,22 +339,26 @@ export function buildPlantLegend(
   for (const area of areas) {
     const snap = readPlantSnapshot(area);
     if (!snap) continue;
-    const key = `${snap.plant_product_id}|${snap.size ?? ""}|${snap.unit_price}`;
+    const key = `${snap.plant_product_id}|${snap.size}|${snap.unit_price}`;
     const existing = rows.get(key);
     if (existing) {
       existing.count += 1;
       existing.total = existing.count * existing.unit_price;
+      existing.total_cost = existing.count * existing.cost;
       continue;
     }
     rows.set(key, {
       key,
       name: snap.name,
+      botanical_name: snap.botanical_name,
       category: snap.category,
       size: snap.size,
+      cost: snap.cost,
       unit_price: snap.unit_price,
       color: area.color,
       count: 1,
       total: snap.unit_price,
+      total_cost: snap.cost,
     });
   }
   // Trees first, then by name: a legend reads the way a planting plan does,
@@ -229,7 +366,9 @@ export function buildPlantLegend(
   const order = new Map<string, number>(PLANT_CATEGORIES.map((c, i) => [c, i]));
   return [...rows.values()].sort((a, b) => {
     const d = (order.get(a.category) ?? 99) - (order.get(b.category) ?? 99);
-    return d !== 0 ? d : a.name.localeCompare(b.name);
+    if (d !== 0) return d;
+    const n = a.name.localeCompare(b.name);
+    return n !== 0 ? n : a.size.localeCompare(b.size);
   });
 }
 
@@ -237,14 +376,27 @@ export function plantLegendTotal(rows: PlantLegendRow[]): number {
   return rows.reduce((s, r) => s + r.total, 0);
 }
 
+export function plantLegendCost(rows: PlantLegendRow[]): number {
+  return rows.reduce((s, r) => s + r.total_cost, 0);
+}
+
+// MATERIAL margin across the whole planting — see the header before showing
+// this to anyone. Null when there is no price to divide by.
+export function plantLegendMargin(rows: PlantLegendRow[]): number | null {
+  return marginPct(plantLegendCost(rows), plantLegendTotal(rows));
+}
+
 // One line item per legend row, not per plant: a quote reading "Live Oak
 // 30 gal — 4 @ $450" is what a customer expects, and 40 identical rows is not.
-// Shape matches what LawnMeasurementMap's `onAddLineItem` already takes.
+// `internal_cost` is PER-UNIT, not the row total: jobProfitability sums
+// `quantity × internal_cost` (src/lib/insights.ts), so putting the extended
+// cost here would multiply it by the count a second time.
 export function plantLineItem(row: PlantLegendRow): {
   description: string;
   quantity: number;
   unit: string;
   unit_price: number;
+  internal_cost: number;
 } {
   const size = row.size ? ` ${row.size}` : "";
   return {
@@ -252,5 +404,6 @@ export function plantLineItem(row: PlantLegendRow): {
     quantity: row.count,
     unit: "EA",
     unit_price: row.unit_price,
+    internal_cost: row.cost,
   };
 }

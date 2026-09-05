@@ -121,6 +121,11 @@ export default function LawnEstimateWorkspace({
     quantity: number;
     unit: string;
     unit_price: number;
+    // What the item costs US. Optional because measured lawn areas priced by
+    // $/sq ft have no cost side; a plant placed from the catalogue does, and
+    // it must reach estimate_line_items.internal_cost or jobProfitability
+    // reports the whole sale as margin.
+    internal_cost?: number | null;
   }) {
     if (!estimate || persisting) return;
     // Same guards as the shared page's saveEstimate — a converted estimate is
@@ -158,7 +163,7 @@ export default function LawnEstimateWorkspace({
         quantity: line.quantity,
         unit: line.unit,
         unit_price: line.unit_price,
-        internal_cost: null,
+        internal_cost: line.internal_cost ?? null,
         section: "",
       },
     ];

@@ -41,7 +41,15 @@ import { ChevronDown, ChevronUp, Ruler, X } from "lucide-react";
 type Props = {
   estimateId: string;
   address: string | null;
-  onAddLineItem: (line: { description: string; quantity: number; unit: string; unit_price: number }) => void;
+  onAddLineItem: (line: {
+    description: string;
+    quantity: number;
+    unit: string;
+    unit_price: number;
+    // Set by catalogue-priced items (plants); omitted by $/sq ft area pricing,
+    // which has no cost side.
+    internal_cost?: number | null;
+  }) => void;
   // Workspace content rendered INSIDE the floating panel (below the area
   // controls) so line items are reachable without navigating away from the
   // map — the workspace hands its line-item section through this slot.
