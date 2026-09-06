@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import NumberInput from "@/components/NumberInput";
 import { Beaker, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import DataTable from "@/components/ui/DataTable";
 import { RATE_UNITS, type ChemicalProduct } from "@/lib/chemicals";
 
 // The org's chemical product catalog. Office/PM CRUD straight through RLS
@@ -231,149 +232,165 @@ export default function ChemicalProductsManager({
           against a job.
         </p>
       ) : (
-        <>
-          {/* Mobile: stacked cards */}
-          <ul className="space-y-2 lg:hidden">
-            {sorted.map((p) => (
-              <li
-                key={p.id}
-                className={`bg-white rounded-lg p-3 shadow-sm ${p.active ? "" : "opacity-60"}`}
-              >
-                <div className="flex items-start gap-2">
-                  <Beaker className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {p.name}
-                      {p.is_restricted_use && (
-                        <span className="ml-2 text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 align-middle">
-                          RUP
-                        </span>
-                      )}
-                      {!p.active && (
-                        <span className="ml-2 text-[11px] font-normal text-gray-500">
-                          (inactive)
-                        </span>
-                      )}
-                    </p>
-                    {p.active_ingredient && (
-                      <p className="text-xs text-gray-500 truncate">
-                        {p.active_ingredient}
-                      </p>
-                    )}
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
-                      {p.epa_reg_number && <span>EPA {p.epa_reg_number}</span>}
-                      {p.default_rate != null && (
-                        <span className="tabular-nums">
-                          {p.default_rate} {p.rate_unit ?? ""}
-                        </span>
-                      )}
-                      {p.re_entry_hours != null && (
-                        <span className="tabular-nums">
-                          {p.re_entry_hours}h re-entry
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <button
-                      onClick={() => openEdit(p)}
-                      className="text-gray-400 hover:text-gray-700"
-                      aria-label={`Edit ${p.name}`}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => toggleActive(p)}
-                      disabled={busyId === p.id}
-                      className="text-[11px] text-slate-600 hover:underline disabled:opacity-50"
-                    >
-                      {p.active ? "Deactivate" : "Activate"}
-                    </button>
-                  </div>
+        // Desktop UI pass, phase 2: mobile cards moved verbatim into
+        // mobileCard (bare — per-row dimming kept via the function form of
+        // mobileCardClassName); the lg: table joined the shared DataTable
+        // idiom. No rowHref: rows don't navigate, actions are the affordance.
+        <DataTable
+          columns={[
+            {
+              key: "name",
+              header: "Product",
+              cell: (p) => (
+                <span className="font-medium text-gray-900">
+                  {p.name}
+                  {p.is_restricted_use && (
+                    <span className="ml-2 text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 align-middle">
+                      RUP
+                    </span>
+                  )}
+                  {!p.active && (
+                    <span className="ml-2 text-xs font-normal text-gray-500">
+                      (inactive)
+                    </span>
+                  )}
+                </span>
+              ),
+            },
+            {
+              key: "epa",
+              header: "EPA Reg #",
+              num: true,
+              cell: (p) => <span className="text-gray-600">{p.epa_reg_number ?? "—"}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "ingredient",
+              header: "Active ingredient",
+              cell: (p) => <span className="text-gray-600">{p.active_ingredient ?? "—"}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "rate",
+              header: "Rate",
+              align: "right",
+              num: true,
+              cell: (p) => (
+                <span className="text-gray-600">
+                  {p.default_rate != null ? `${p.default_rate} ${p.rate_unit ?? ""}` : "—"}
+                </span>
+              ),
+              hideOnMobile: true,
+            },
+            {
+              key: "reentry",
+              header: "Re-entry",
+              align: "right",
+              num: true,
+              cell: (p) => (
+                <span className="text-gray-600">
+                  {p.re_entry_hours != null ? `${p.re_entry_hours}h` : "—"}
+                </span>
+              ),
+              hideOnMobile: true,
+            },
+            {
+              key: "notes",
+              header: "Notes",
+              cell: (p) => <span className="text-gray-500 truncate block max-w-56">{p.notes ?? ""}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "actions",
+              header: "",
+              align: "right",
+              cell: (p) => (
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => toggleActive(p)}
+                    disabled={busyId === p.id}
+                    className="text-xs text-slate-600 hover:underline disabled:opacity-50"
+                  >
+                    {p.active ? "Deactivate" : "Activate"}
+                  </button>
+                  <button
+                    onClick={() => openEdit(p)}
+                    className="text-gray-400 hover:text-gray-700"
+                    aria-label={`Edit ${p.name}`}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => remove(p)}
+                    disabled={busyId === p.id}
+                    className="text-gray-300 hover:text-red-600 disabled:opacity-50"
+                    aria-label={`Delete ${p.name}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
-              </li>
-            ))}
-          </ul>
-
-          {/* Desktop: table */}
-          <div className="hidden lg:block bg-white rounded-lg shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left">
-                <tr className="text-xs uppercase tracking-wide text-gray-500">
-                  <th className="px-3 py-2 font-medium">Product</th>
-                  <th className="px-3 py-2 font-medium">EPA Reg #</th>
-                  <th className="px-3 py-2 font-medium">Active ingredient</th>
-                  <th className="px-3 py-2 font-medium text-right">Rate</th>
-                  <th className="px-3 py-2 font-medium text-right">Re-entry</th>
-                  <th className="px-3 py-2 font-medium">Notes</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {sorted.map((p) => (
-                  <tr key={p.id} className={p.active ? "" : "opacity-55"}>
-                    <td className="px-3 py-2 font-medium text-gray-900">
-                      {p.name}
-                      {p.is_restricted_use && (
-                        <span className="ml-2 text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 align-middle">
-                          RUP
-                        </span>
-                      )}
-                      {!p.active && (
-                        <span className="ml-2 text-xs font-normal text-gray-500">
-                          (inactive)
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600 tabular-nums">
-                      {p.epa_reg_number ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600">
-                      {p.active_ingredient ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right text-gray-600 tabular-nums">
-                      {p.default_rate != null
-                        ? `${p.default_rate} ${p.rate_unit ?? ""}`
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right text-gray-600 tabular-nums">
-                      {p.re_entry_hours != null ? `${p.re_entry_hours}h` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-gray-500 max-w-[220px] truncate">
-                      {p.notes ?? ""}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-3">
-                        <button
-                          onClick={() => toggleActive(p)}
-                          disabled={busyId === p.id}
-                          className="text-xs text-slate-600 hover:underline disabled:opacity-50"
-                        >
-                          {p.active ? "Deactivate" : "Activate"}
-                        </button>
-                        <button
-                          onClick={() => openEdit(p)}
-                          className="text-gray-400 hover:text-gray-700"
-                          aria-label={`Edit ${p.name}`}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => remove(p)}
-                          disabled={busyId === p.id}
-                          className="text-gray-300 hover:text-red-600 disabled:opacity-50"
-                          aria-label={`Delete ${p.name}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+              ),
+            },
+          ]}
+          rows={sorted}
+          framed
+          mobileCardBare
+          mobileCardClassName={(p) => `bg-white rounded-lg p-3 shadow-sm ${p.active ? "" : "opacity-60"}`}
+          mobileCard={(p) => (
+            <div className="flex items-start gap-2">
+              <Beaker className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">
+                  {p.name}
+                  {p.is_restricted_use && (
+                    <span className="ml-2 text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5 align-middle">
+                      RUP
+                    </span>
+                  )}
+                  {!p.active && (
+                    <span className="ml-2 text-[11px] font-normal text-gray-500">
+                      (inactive)
+                    </span>
+                  )}
+                </p>
+                {p.active_ingredient && (
+                  <p className="text-xs text-gray-500 truncate">
+                    {p.active_ingredient}
+                  </p>
+                )}
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                  {p.epa_reg_number && <span>EPA {p.epa_reg_number}</span>}
+                  {p.default_rate != null && (
+                    <span className="tabular-nums">
+                      {p.default_rate} {p.rate_unit ?? ""}
+                    </span>
+                  )}
+                  {p.re_entry_hours != null && (
+                    <span className="tabular-nums">
+                      {p.re_entry_hours}h re-entry
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <button
+                  onClick={() => openEdit(p)}
+                  className="text-gray-400 hover:text-gray-700"
+                  aria-label={`Edit ${p.name}`}
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => toggleActive(p)}
+                  disabled={busyId === p.id}
+                  className="text-[11px] text-slate-600 hover:underline disabled:opacity-50"
+                >
+                  {p.active ? "Deactivate" : "Activate"}
+                </button>
+              </div>
+            </div>
+          )}
+        />
       )}
 
       {/* Add / edit drawer */}

@@ -6,6 +6,7 @@ import { useToast } from "@/components/Toast";
 import NumberInput from "@/components/NumberInput";
 import ApplicatorLicenseBadge from "@/components/ApplicatorLicenseBadge";
 import { Download, Loader2, Plus, Search, ShieldAlert, X } from "lucide-react";
+import DataTable from "@/components/ui/DataTable";
 import {
   QUANTITY_UNITS,
   type ChemicalApplication,
@@ -426,123 +427,147 @@ export default function ChemicalApplicationsManager({
             : "No applications match these filters."}
         </p>
       ) : (
-        <>
-          {/* Mobile cards */}
-          <ul className="space-y-2 lg:hidden">
-            {filtered.map((a) => {
-              const restricted = isRestricted(a.re_entry_until);
-              return (
-                <li key={a.id} className="bg-white rounded-lg p-3 shadow-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {a.product_name}
-                    </p>
-                    <span className="text-[11px] text-gray-400 shrink-0">
-                      {fmtDateTime(a.applied_at)}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500 truncate">
-                    {a.jobs?.customers?.name ?? "—"}
-                    {a.jobs?.name ? ` · ${a.jobs.name}` : ""}
+        // Desktop UI pass, phase 2: mobile cards moved verbatim into
+        // mobileCard (bare — cards carry their own shell); the lg: table
+        // joined the shared DataTable idiom. No rowHref: the log is read-only
+        // evidence, rows don't navigate.
+        <DataTable
+          columns={[
+            {
+              key: "date",
+              header: "Date",
+              cell: (a) => <span className="text-gray-600 whitespace-nowrap">{fmtDateTime(a.applied_at)}</span>,
+            },
+            {
+              key: "applicator",
+              header: "Applicator",
+              cell: (a) => <span className="text-gray-600">{a.crew_members?.name ?? "—"}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "customer",
+              header: "Customer",
+              cell: (a) => <span className="text-gray-900">{a.jobs?.customers?.name ?? "—"}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "job",
+              header: "Job",
+              cell: (a) => <span className="text-gray-600">{a.jobs?.name ?? "—"}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "product",
+              header: "Product",
+              cell: (a) => <span className="font-medium text-gray-900">{a.product_name}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "epa",
+              header: "EPA Reg #",
+              num: true,
+              cell: (a) => <span className="text-gray-600">{a.epa_reg_number ?? "—"}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "qty",
+              header: "Qty",
+              align: "right",
+              num: true,
+              cell: (a) => (
+                <span className="text-gray-600 whitespace-nowrap">
+                  {a.quantity_used != null ? `${a.quantity_used} ${a.quantity_unit ?? ""}` : "—"}
+                </span>
+              ),
+              hideOnMobile: true,
+            },
+            {
+              key: "rate",
+              header: "Rate",
+              align: "right",
+              num: true,
+              cell: (a) => <span className="text-gray-600">{fmtNum(a.rate)}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "area",
+              header: "Area",
+              align: "right",
+              num: true,
+              cell: (a) => <span className="text-gray-600">{fmtNum(a.area_treated_sqft)}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "wind",
+              header: "Wind",
+              align: "right",
+              num: true,
+              cell: (a) => <span className="text-gray-600">{fmtNum(a.wind_mph)}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "temp",
+              header: "Temp",
+              align: "right",
+              num: true,
+              cell: (a) => <span className="text-gray-600">{fmtNum(a.temp_f)}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "reentry",
+              header: "Re-entry until",
+              cell: (a) =>
+                isRestricted(a.re_entry_until) ? (
+                  <span className="inline-flex items-center gap-1 rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-900 whitespace-nowrap">
+                    <ShieldAlert className="h-3.5 w-3.5" />
+                    {fmtDateTime(a.re_entry_until)}
+                  </span>
+                ) : (
+                  <span className="text-gray-400 whitespace-nowrap">
+                    {fmtDateTime(a.re_entry_until)}
+                  </span>
+                ),
+            },
+          ]}
+          rows={filtered}
+          framed
+          mobileCardBare
+          mobileCardClassName="bg-white rounded-lg p-3 shadow-sm"
+          mobileCard={(a) => {
+            const restricted = isRestricted(a.re_entry_until);
+            return (
+              <>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold text-gray-900 truncate">
+                    {a.product_name}
                   </p>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
-                    {a.crew_members?.name && <span>{a.crew_members.name}</span>}
-                    {a.epa_reg_number && <span>EPA {a.epa_reg_number}</span>}
-                    {a.quantity_used != null && (
-                      <span className="tabular-nums">
-                        {a.quantity_used} {a.quantity_unit ?? ""}
-                      </span>
-                    )}
-                  </div>
-                  {restricted && (
-                    <p className="mt-2 flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] font-medium text-amber-900">
-                      <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
-                      Stay off lawn until {fmtDateTime(a.re_entry_until)}
-                    </p>
+                  <span className="text-[11px] text-gray-400 shrink-0">
+                    {fmtDateTime(a.applied_at)}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 truncate">
+                  {a.jobs?.customers?.name ?? "—"}
+                  {a.jobs?.name ? ` · ${a.jobs.name}` : ""}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                  {a.crew_members?.name && <span>{a.crew_members.name}</span>}
+                  {a.epa_reg_number && <span>EPA {a.epa_reg_number}</span>}
+                  {a.quantity_used != null && (
+                    <span className="tabular-nums">
+                      {a.quantity_used} {a.quantity_unit ?? ""}
+                    </span>
                   )}
-                </li>
-              );
-            })}
-          </ul>
-
-          {/* Desktop table */}
-          <div className="hidden lg:block bg-white rounded-lg shadow-sm overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left">
-                <tr className="text-xs uppercase tracking-wide text-gray-500">
-                  <th className="px-3 py-2 font-medium">Date</th>
-                  <th className="px-3 py-2 font-medium">Applicator</th>
-                  <th className="px-3 py-2 font-medium">Customer</th>
-                  <th className="px-3 py-2 font-medium">Job</th>
-                  <th className="px-3 py-2 font-medium">Product</th>
-                  <th className="px-3 py-2 font-medium">EPA Reg #</th>
-                  <th className="px-3 py-2 font-medium text-right">Qty</th>
-                  <th className="px-3 py-2 font-medium text-right">Rate</th>
-                  <th className="px-3 py-2 font-medium text-right">Area</th>
-                  <th className="px-3 py-2 font-medium text-right">Wind</th>
-                  <th className="px-3 py-2 font-medium text-right">Temp</th>
-                  <th className="px-3 py-2 font-medium">Re-entry until</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filtered.map((a) => {
-                  const restricted = isRestricted(a.re_entry_until);
-                  return (
-                    <tr key={a.id}>
-                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
-                        {fmtDateTime(a.applied_at)}
-                      </td>
-                      <td className="px-3 py-2 text-gray-600">
-                        {a.crew_members?.name ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-gray-900">
-                        {a.jobs?.customers?.name ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-gray-600">
-                        {a.jobs?.name ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 font-medium text-gray-900">
-                        {a.product_name}
-                      </td>
-                      <td className="px-3 py-2 text-gray-600 tabular-nums">
-                        {a.epa_reg_number ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums whitespace-nowrap">
-                        {a.quantity_used != null
-                          ? `${a.quantity_used} ${a.quantity_unit ?? ""}`
-                          : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums">
-                        {fmtNum(a.rate)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums">
-                        {fmtNum(a.area_treated_sqft)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums">
-                        {fmtNum(a.wind_mph)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums">
-                        {fmtNum(a.temp_f)}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        {restricted ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-900">
-                            <ShieldAlert className="h-3.5 w-3.5" />
-                            {fmtDateTime(a.re_entry_until)}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">
-                            {fmtDateTime(a.re_entry_until)}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
+                </div>
+                {restricted && (
+                  <p className="mt-2 flex items-center gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] font-medium text-amber-900">
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+                    Stay off lawn until {fmtDateTime(a.re_entry_until)}
+                  </p>
+                )}
+              </>
+            );
+          }}
+        />
       )}
 
       {/* Log drawer */}
