@@ -36,6 +36,12 @@ one, expect to rebase, and do not restructure that file. It also migrates the
 hand-rolled `hidden lg:block` tables — including `PlantCatalogueManager.tsx`,
 which is Lane A's file — so coordinate before Phase 2 lands there.
 
+## Spec'd, not started
+
+| Doc | What it is |
+|---|---|
+| [site import](handoff-site-import.md) | Field measurements (Moasure, GNSS rover, drone/surveyor files) alongside the map. One CSV importer, not a per-device integration. Independent of every UI lane. |
+
 ## Background for the estimator work
 
 - [plant catalogue](handoff-plant-catalogue.md) · [rework](handoff-plant-catalogue-rework.md) · [seeding](handoff-plant-catalogue-seeding.md)
