@@ -15,12 +15,21 @@ import type { ReactNode } from "react";
 // so the whole row is clickable while preserving cmd/middle-click. Cell
 // content that is itself actionable (a link/button) gets `relative z-10` so
 // it sits above the overlay.
+//
+// Desktop UI pass, phase 1: row metrics come from the density tokens in
+// globals.css (`--row-py` / `--row-fs`), so the STANDARD/COMPACT toggle
+// (DensityToggle) reaches every table at once with no per-page wiring.
+// `density="compact"` forces the compact metrics on one table regardless of
+// the user's global setting (element declaration beats inherited :root).
+// Money/count columns set `align: "right"` + `num` for tabular numerals.
 
 export type Column<T> = {
   key: string;
   header: ReactNode;
   cell: (row: T) => ReactNode;
   align?: "left" | "right" | "center";
+  // Tabular numerals — pair with align: "right" for money/count columns.
+  num?: boolean;
   className?: string;
   // Omit from the default mobile card summary (status/amount are often shown
   // separately via `mobileCard`). Ignored when `mobileCard` is provided.
@@ -39,6 +48,7 @@ export default function DataTable<T>({
   rowHref,
   mobileCard,
   emptyState,
+  density,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -49,6 +59,9 @@ export default function DataTable<T>({
   // column as title, second as meta) when omitted.
   mobileCard?: (row: T) => ReactNode;
   emptyState?: ReactNode;
+  // Omit (default) to follow the user's global density setting; "compact"
+  // forces this one table compact regardless of that setting.
+  density?: "standard" | "compact";
 }) {
   if (rows.length === 0) return <>{emptyState ?? null}</>;
 
@@ -57,10 +70,10 @@ export default function DataTable<T>({
   const metaCol = mobileCols[1];
 
   return (
-    <>
+    <div className={density === "compact" ? "dt-force-compact" : undefined}>
       {/* Desktop table */}
       <div className="hidden lg:block">
-        <table className="w-full text-sm">
+        <table className="w-full">
           <thead>
             <tr className="text-xs uppercase tracking-wide text-muted border-b border-line">
               {columns.map((c) => (
@@ -73,7 +86,7 @@ export default function DataTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="text-[length:var(--row-fs)]">
             {rows.map((row, i) => {
               const href = rowHref ? rowHref(row) : undefined;
               return (
@@ -81,7 +94,7 @@ export default function DataTable<T>({
                   {columns.map((c) => (
                     <td
                       key={c.key}
-                      className={`py-2 px-3 border-b border-line/60 ${ALIGN[c.align ?? "left"]} relative z-10 ${c.className ?? ""}`}
+                      className={`px-3 py-[var(--row-py)] border-b border-line/60 ${ALIGN[c.align ?? "left"]} ${c.num ? "tabular-nums" : ""} relative z-10 ${c.className ?? ""}`}
                     >
                       {c.cell(row)}
                     </td>
@@ -146,6 +159,6 @@ export default function DataTable<T>({
           );
         })}
       </div>
-    </>
+    </div>
   );
 }
