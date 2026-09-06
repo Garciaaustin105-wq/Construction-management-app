@@ -286,8 +286,8 @@ t("names the overlap caveat rather than scoring the design",
 t("never uses the word 'covered' as a verdict", !lines.some((l) => /fully covered|pass(ed)?/i.test(l)));
 t("warns that radii assume a design pressure",
   lines.some((l) => l.includes("design pressure")));
-t("tells them to test pressure BEFORE buying heads",
-  lines.some((l) => /test the site's static and working pressure BEFORE buying/i.test(l)));
+t("tells them to record a test BEFORE laying out the system",
+  lines.some((l) => /record a pressure test at the site BEFORE laying out/i.test(l)));
 t("the caveat rides along even on a perfect-looking report",
   describeCoverage(coverageReport(SQUARE, [chead(mid, 40)], 2)).some((l) => l.includes("design pressure")));
 
@@ -298,6 +298,117 @@ const areaRows = [
   { kind: "area", polygon: SQUARE, meta: {} },
 ];
 t("plants and polygons are not heads", headsForCoverage(areaRows).length === 1);
+}
+
+{
+// Block-scoped like the coverage section above.
+const { readPressureTest, pressureUntested, pressureVerdict, pressureAgeDays,
+        CATALOGUE_DESIGN_PSI } = M;
+console.log("[reading a recorded test]");
+const full = readPressureTest({ pressure_static_psi: 62, pressure_working_psi: 48, pressure_gpm: 11, pressure_tested_at: "2026-09-01T10:00:00Z", pressure_notes: "hose bibb, north side" });
+t("reads all five fields", full.staticPsi === 62 && full.workingPsi === 48 && full.gpm === 11);
+t("string numerics coerce", readPressureTest({ pressure_working_psi: "48" }).workingPsi === 48);
+t("blank is not zero", readPressureTest({ pressure_working_psi: "" }).workingPsi === null);
+t("zero is not a pressure", readPressureTest({ pressure_working_psi: 0 }).workingPsi === null);
+t("nothing recorded reads as untested", pressureUntested(readPressureTest(null)) === true);
+t("a recorded static counts as tested", pressureUntested(readPressureTest({ pressure_static_psi: 60 })) === false);
+
+console.log("\n[the prompt: test BEFORE layout]");
+const none = pressureVerdict(readPressureTest(null));
+t("untested is its own status", none.status === "untested");
+t("says to record it BEFORE laying out", /BEFORE laying out/i.test(none.message), none.message);
+t("names the pressure the radii assume", none.message.includes("45 psi"));
+t("design pressure is 45", CATALOGUE_DESIGN_PSI === 45);
+
+console.log("\n[static alone is not enough]");
+const staticOnly = pressureVerdict(readPressureTest({ pressure_static_psi: 68 }));
+t("flagged as static only", staticOnly.status === "static_only");
+t("explains static always reads higher", /always reads higher/i.test(staticOnly.message));
+
+console.log("\n[comparing against the catalogue]");
+const good = pressureVerdict(readPressureTest({ pressure_working_psi: 52 }));
+t("at or above design is stated plainly", good.status === "at_or_above");
+t("no shortfall", good.shortfallPsi === 0);
+const low = pressureVerdict(readPressureTest({ pressure_working_psi: 30 }));
+t("below design is flagged", low.status === "below");
+t("says by how much", low.shortfallPsi === 15, `got ${low.shortfallPsi}`);
+t("warns every head throws SHORTER than drawn", /throw shorter than drawn/i.test(low.message));
+t("sends them to the chart at the MEASURED pressure", low.message.includes("at 30 psi"));
+t("does NOT invent a reduced radius",
+  !/\d+\s*ft/.test(low.message), low.message);
+t("exactly at design is not 'below'", pressureVerdict(readPressureTest({ pressure_working_psi: 45 })).status === "at_or_above");
+t("a different design pressure is respected",
+  pressureVerdict(readPressureTest({ pressure_working_psi: 30 }), 40).shortfallPsi === 10);
+
+console.log("\n[age]");
+t("never tested has no age", pressureAgeDays(readPressureTest(null)) === null);
+t("a date gives days", pressureAgeDays(readPressureTest({ pressure_tested_at: new Date(Date.now() - 5 * 86400000).toISOString() })) === 5);
+}
+
+{
+// Block-scoped: declares its own `near` and fixtures.
+const { interpolateRadius, adjustedRadius, describeAdjustment } = M;
+const near = (a, b, e = 0.05) => a !== null && Math.abs(a - b) < e;
+// The real Hunter PGP blue 3.0 chart, as fetched from the published table.
+const PGP30 = [
+  { psi: 25, radius_ft: 35, gpm: 2.6 },
+  { psi: 35, radius_ft: 36, gpm: 2.8 },
+  { psi: 45, radius_ft: 38, gpm: 3.0 },
+  { psi: 55, radius_ft: 39, gpm: 3.3 },
+  { psi: 65, radius_ft: 39, gpm: 3.6 },
+];
+const nozzle = { radius_ft: 38, rated_psi: 45, min_psi: 25, performance: PGP30 };
+
+console.log("[interpolating the real chart]");
+t("exact chart point returns it", interpolateRadius(PGP30, 45) === 38);
+t("another exact point", interpolateRadius(PGP30, 25) === 35);
+t("between 35 and 45 lands between 36 and 38", near(interpolateRadius(PGP30, 40), 37, 0.51), `got ${interpolateRadius(PGP30, 40)}`);
+t("above the chart is CAPPED, not extrapolated up", interpolateRadius(PGP30, 90) === 39);
+t("below the chart returns null, never extrapolated down", interpolateRadius(PGP30, 15) === null);
+t("one point cannot interpolate", interpolateRadius([{ psi: 45, radius_ft: 38 }], 30) === null);
+t("garbage returns null", interpolateRadius(null, 30) === null);
+
+console.log("\n[adjusting to a measured pressure]");
+const at45 = adjustedRadius(nozzle, 45);
+t("at rated pressure reads the chart", at45.method === "chart" && at45.radiusFt === 38);
+const at40 = adjustedRadius(nozzle, 40);
+t("off-chart-point interpolates", at40.method === "interpolated");
+t("...and the note credits the manufacturer chart", /chart/i.test(at40.note));
+
+console.log("\n[THE CLIFF: below minimum operating pressure]");
+const low = adjustedRadius(nozzle, 20);
+t("refuses to return a radius", low.radiusFt === null, `got ${low.radiusFt}`);
+t("method says why", low.method === "below_minimum");
+t("names the manufacturer's minimum", low.note.includes("25"), low.note);
+t("says the nozzle will not perform as designed", /not perform|rotate|mist/i.test(low.note));
+t("points at a different nozzle or a booster", /nozzle|booster/i.test(low.note));
+t("exactly AT the minimum is allowed", adjustedRadius(nozzle, 25).radiusFt !== null);
+
+console.log("\n[scaling when there is no chart]");
+const noChart = { radius_ft: 38, rated_psi: 45, min_psi: 25, performance: [] };
+const scaled = adjustedRadius(noChart, 30);
+t("scales from the rated figure", scaled.method === "scaled");
+t("...and is labelled an ESTIMATE", /estimate/i.test(scaled.note));
+// 38 * (30/45)^0.125 = 38 * 0.9507 = 36.1
+t("the exponent is flat, not sqrt: 45->30 psi costs ~2 ft not 7",
+  near(scaled.radiusFt, 36.1, 0.15), `got ${scaled.radiusFt}`);
+t("a square-root model would have said ~31 ft", Math.abs(38 * Math.sqrt(30 / 45) - 31.0) < 0.5);
+t("scaling UP is modest too", near(adjustedRadius(noChart, 65).radiusFt, 38 * Math.pow(65 / 45, 0.125), 0.15));
+
+console.log("\n[missing inputs are not zero]");
+t("no pressure recorded shows the rated figure as-is",
+  adjustedRadius(nozzle, null).method === "unknown" && adjustedRadius(nozzle, null).radiusFt === 38);
+t("...and says no pressure was recorded", /no pressure|not.*recorded/i.test(adjustedRadius(nozzle, null).note));
+t("a nozzle with no radius returns null, not 0",
+  adjustedRadius({ radius_ft: 0, rated_psi: 45 }, 45).radiusFt === null);
+t("unknown rated pressure cannot be adjusted",
+  adjustedRadius({ radius_ft: 30, performance: [] }, 30).method === "unknown");
+
+console.log("\n[wording]");
+const words = [low, scaled, at45].map(describeAdjustment).join(" ");
+t("never claims adequacy", !/\badequate\b|\bsufficient\b|\bwill work\b/i.test(words));
+t("describeAdjustment returns one line each",
+  [low, scaled, at45].every((a) => !describeAdjustment(a).includes("\n")));
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

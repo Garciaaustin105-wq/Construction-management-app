@@ -979,7 +979,7 @@ export function coverageReport(
 // a 30 psi house is the wrong part. Test static and working pressure at the
 // site first.
 export const PRESSURE_CAVEAT =
-  "Throw distances assume the manufacturer's design pressure (45 psi for most lines here). Test the site's static and working pressure BEFORE buying heads — lower pressure throws shorter, and every circle above would be optimistic.";
+  "Throw distances assume the manufacturer's design pressure (45 psi for most lines here). Record a pressure test at the site BEFORE laying out the system — lower pressure throws shorter, and every circle above would be optimistic.";
 
 // Reads the report for the UI. Deliberately descriptive, never a verdict:
 // every line states what was MEASURED and leaves the judgement to the person
@@ -1011,4 +1011,286 @@ export function headsForCoverage(
     if (at) out.push({ at, snap });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Site pressure test
+// ---------------------------------------------------------------------------
+
+// A pressure test is RECORDED, never assumed, and it is recommended BEFORE
+// laying out a system rather than after.
+//
+// The reason is mechanical: every radius in this app is a manufacturer figure
+// quoted at a design pressure — 45 psi for the Rain Bird and Hunter lines
+// seeded here. A site running below that throws SHORTER than every circle
+// drawn on the map, and nothing on screen can tell, because the app has no way
+// to know the site's pressure unless someone measures it and writes it down.
+//
+// Laying out first and testing later means the head count, the nozzle choice
+// and the zone split were all decided against a number nobody checked.
+//
+// What this does NOT do: size zones, compute pressure loss, or say the system
+// will work. It records two measurements and compares one of them against the
+// pressure the catalogue radii assume. That comparison is arithmetic. Whether
+// the design is sound is the licensed professional's call.
+
+// The pressure the seeded manufacturer radii are quoted at. Rain Bird's
+// recommended operating pressure for the R-VAN and 5000 lines, and Hunter's
+// for MP Rotator, are both 45 psi.
+export const CATALOGUE_DESIGN_PSI = 45;
+
+export type PressureTest = {
+  staticPsi: number | null;
+  workingPsi: number | null;
+  gpm: number | null;
+  testedAt: string | null;
+  notes: string | null;
+};
+
+export function readPressureTest(raw: {
+  pressure_static_psi?: unknown;
+  pressure_working_psi?: unknown;
+  pressure_gpm?: unknown;
+  pressure_tested_at?: unknown;
+  pressure_notes?: unknown;
+} | null | undefined): PressureTest {
+  const n = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const x = typeof v === "string" ? Number(v) : v;
+    return typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null;
+  };
+  return {
+    staticPsi: n(raw?.pressure_static_psi),
+    workingPsi: n(raw?.pressure_working_psi),
+    gpm: n(raw?.pressure_gpm),
+    testedAt: typeof raw?.pressure_tested_at === "string" ? raw.pressure_tested_at : null,
+    notes: typeof raw?.pressure_notes === "string" ? raw.pressure_notes : null,
+  };
+}
+
+// True when no usable reading has been recorded. This is what the UI prompts
+// on, and it should prompt BEFORE the layout, not at quote time.
+export function pressureUntested(t: PressureTest): boolean {
+  return t.staticPsi === null && t.workingPsi === null;
+}
+
+export type PressureVerdict = {
+  status: "untested" | "at_or_above" | "below" | "static_only";
+  // One line, stating the measurement and its consequence for the drawing.
+  message: string;
+  // How far below the catalogue's design pressure, when that is known.
+  shortfallPsi: number | null;
+  designPsi: number;
+};
+
+// Compares the RECORDED working pressure against the pressure the catalogue
+// radii assume.
+//
+// Deliberately does not estimate a reduced radius. Throw does not fall off
+// linearly with pressure, the curve differs per nozzle, and a number invented
+// here would be exactly the false precision this whole file avoids. It says
+// the site is short and by how much; the professional reads the manufacturer's
+// chart for that pressure.
+export function pressureVerdict(
+  t: PressureTest,
+  designPsi = CATALOGUE_DESIGN_PSI
+): PressureVerdict {
+  const design = Number.isFinite(designPsi) && designPsi > 0 ? designPsi : CATALOGUE_DESIGN_PSI;
+
+  if (pressureUntested(t)) {
+    return {
+      status: "untested",
+      message:
+        `No pressure test recorded. Test static and working pressure at the site and record it BEFORE laying out the system — every throw distance here assumes ${design} psi, and a lower site throws shorter than the circles drawn.`,
+      shortfallPsi: null,
+      designPsi: design,
+    };
+  }
+
+  if (t.workingPsi === null) {
+    return {
+      status: "static_only",
+      message:
+        `Static pressure recorded (${t.staticPsi} psi) but no WORKING pressure. Working pressure is the one that decides throw — static is measured with nothing flowing and always reads higher.`,
+      shortfallPsi: null,
+      designPsi: design,
+    };
+  }
+
+  if (t.workingPsi >= design) {
+    return {
+      status: "at_or_above",
+      message:
+        `Working pressure ${t.workingPsi} psi, at or above the ${design} psi these throw distances assume.`,
+      shortfallPsi: 0,
+      designPsi: design,
+    };
+  }
+
+  const short = Math.round((design - t.workingPsi) * 10) / 10;
+  return {
+    status: "below",
+    message:
+      `Working pressure ${t.workingPsi} psi is ${short} psi BELOW the ${design} psi these throw distances assume. Every head will throw shorter than drawn — check the manufacturer chart at ${t.workingPsi} psi before choosing nozzles.`,
+    shortfallPsi: short,
+    designPsi: design,
+  };
+}
+
+// How old the reading is, in days. Null when never tested — the UI must show
+// that as "not tested", never as "0 days old".
+export function pressureAgeDays(t: PressureTest): number | null {
+  if (!t.testedAt) return null;
+  const then = Date.parse(t.testedAt);
+  if (!Number.isFinite(then)) return null;
+  return Math.floor((Date.now() - then) / 86_400_000);
+}
+
+// ---------------------------------------------------------------------------
+// Throw at a measured pressure
+// ---------------------------------------------------------------------------
+// Written by gpt-oss:20b from a spec, verified by running. See the harness
+// section "throw at a measured pressure".
+export type PerfPoint = { psi: number; radius_ft: number; gpm?: number };
+
+export type AdjustedRadius = {
+  // The radius to use, or NULL when no defensible figure exists.
+  radiusFt: number | null;
+  // How it was arrived at, so the UI can say so.
+  method: "chart" | "interpolated" | "scaled" | "below_minimum" | "unknown";
+  // One sentence for the UI, stating what was done and any caveat.
+  note: string;
+  // The pressure the figure applies to.
+  psi: number;
+};
+
+const round1 = (x: number): number => Math.round(x * 10) / 10;
+
+/**
+ * Interpolates a radius from a manufacturer's performance chart.
+ *
+ * - Requires at least two valid points.
+ * - Exact psi match returns that point's radius.
+ * - Linear interpolation between two points.
+ * - Above the highest point returns the highest radius (no upward extrapolation).
+ *   Manufacturers flatten out and inventing more throw is the dangerous direction.
+ * - Below the lowest point returns null (refusal to extrapolate below the chart).
+ */
+export function interpolateRadius(points: PerfPoint[], psi: number): number | null {
+  if (!Array.isArray(points) || points.length < 2 || !Number.isFinite(psi)) {
+    return null;
+  }
+  const valid = points.filter(p => Number.isFinite(p.psi) && Number.isFinite(p.radius_ft));
+  if (valid.length < 2) {
+    return null;
+  }
+  const sorted = [...valid].sort((a, b) => a.psi - b.psi);
+
+  // Exact match
+  for (const p of sorted) {
+    if (p.psi === psi) {
+      return round1(p.radius_ft);
+    }
+  }
+
+  // Below lowest point
+  if (psi < sorted[0].psi) {
+    return null;
+  }
+
+  // Above highest point – cap at highest radius
+  if (psi > sorted[sorted.length - 1].psi) {
+    return round1(sorted[sorted.length - 1].radius_ft);
+  }
+
+  // Interpolate between two points
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const p1 = sorted[i];
+    const p2 = sorted[i + 1];
+    if (psi > p1.psi && psi < p2.psi) {
+      const t = (psi - p1.psi) / (p2.psi - p1.psi);
+      const radius = p1.radius_ft + t * (p2.radius_ft - p1.radius_ft);
+      return round1(radius);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Adjusts a nozzle's radius based on site pressure.
+ *
+ * Follows the strict order of preference:
+ * 1. No pressure recorded → use rated figure as-is.
+ * 2. No throw distance recorded → unknown.
+ * 3. Below minimum operating pressure → refuse to return a radius.
+ * 4. Manufacturer chart available → use chart or interpolated value.
+ * 5. Scale from rated figure using exponent 0.125.
+ *    Exponent 0.125 derived from Hunter PGP data: 2.6× pressure for 11% more throw,
+ *    giving ~P^0.12; we use 0.125 for simplicity.
+ * 6. No rated pressure → unknown.
+ */
+export function adjustedRadius(
+  nozzle: {
+    radius_ft: number;
+    rated_psi?: number | null;
+    min_psi?: number | null;
+    performance?: PerfPoint[] | null;
+  },
+  workingPsi: number | null
+): AdjustedRadius {
+  const create = (
+    radiusFt: number | null,
+    method: AdjustedRadius["method"],
+    note: string
+  ): AdjustedRadius => ({
+    radiusFt,
+    method,
+    note,
+    psi: workingPsi ?? 0,
+  });
+
+  // 1. No pressure recorded
+  if (!Number.isFinite(workingPsi) || workingPsi === null || workingPsi <= 0) {
+    return create(nozzle.radius_ft, "unknown", "No pressure has been recorded; showing the rated figure as-is.");
+  }
+
+  // 2. No throw distance recorded
+  if (!Number.isFinite(nozzle.radius_ft) || nozzle.radius_ft <= 0) {
+    return create(null, "unknown", "No throw distance is recorded for this nozzle.");
+  }
+
+  // 3. Below minimum operating pressure – refuse to extrapolate
+  if (typeof nozzle.min_psi === "number" && Number.isFinite(nozzle.min_psi) && workingPsi < nozzle.min_psi) {
+    return create(
+      null,
+      "below_minimum",
+      `Below the ${nozzle.min_psi} psi minimum; the nozzle will not perform as designed (rotor may not rotate, spray may mist). A different nozzle or a booster is needed.`
+    );
+  }
+
+  // 4. Manufacturer chart
+  if (Array.isArray(nozzle.performance) && nozzle.performance.length >= 2) {
+    const chartRadius = interpolateRadius(nozzle.performance, workingPsi);
+    if (chartRadius !== null) {
+      const method: AdjustedRadius["method"] = nozzle.performance.some(p => p.psi === workingPsi) ? "chart" : "interpolated";
+      return create(chartRadius, method, "Radius derived from the manufacturer chart.");
+    }
+  }
+
+  // 5. Scale from rated figure
+  if (typeof nozzle.rated_psi === "number" && Number.isFinite(nozzle.rated_psi) && nozzle.rated_psi > 0) {
+    const scaled = round1(nozzle.radius_ft * Math.pow(workingPsi / nozzle.rated_psi, 0.125));
+    return create(scaled, "scaled", "Estimated radius from the rated figure; the manufacturer chart is the authority.");
+  }
+
+  // 6. Unknown rated pressure
+  return create(nozzle.radius_ft, "unknown", "Rated pressure is unknown; the figure cannot be adjusted.");
+}
+
+/**
+ * Returns the note for display. No extra text is added.
+ */
+export function describeAdjustment(a: AdjustedRadius): string {
+  return a.note;
 }

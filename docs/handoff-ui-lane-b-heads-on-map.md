@@ -100,14 +100,45 @@ seeded lines). A house running lower throws shorter and every circle is then
 optimistic. That has to reach the estimator BEFORE they buy heads, because a
 nozzle chosen for 45 psi on a 30 psi house is the wrong part.
 
+## 3c. Pressure — record it BEFORE layout
+
+`estimates` now carries a pressure test: static psi, working psi, gpm, when it
+was taken, and notes. Contract: `readPressureTest`, `pressureUntested`,
+`pressureVerdict`, `pressureAgeDays`, `adjustedRadius`, `describeAdjustment`.
+
+**Prompt for it before the layout, not at quote time.** Every radius here is a
+manufacturer figure at a design pressure; laying out first and testing later
+means the head count, the nozzle choice and the zone split were all decided
+against a number nobody checked. `pressureUntested(t)` is what that prompt
+hangs on.
+
+Once a working pressure is recorded, `adjustedRadius(nozzle, workingPsi)`
+gives the real throw:
+
+- a **chart** on the nozzle is INTERPOLATED — reading the manufacturer's
+  published values, not modelling
+- otherwise it SCALES, clearly labelled an estimate. The exponent is 0.125,
+  not a square root: real Hunter PGP data is 35 ft at 25 psi and 38 ft at
+  45 psi, so 45 → 30 psi costs about 2 ft of throw, not 7
+- **below the nozzle's minimum operating pressure it returns NULL and refuses
+  to give a number**, naming the minimum. That is the most important behaviour
+  in the file: below minimum a rotor stops rotating and a spray breaks into
+  mist, so it is not "shorter throw", it is the wrong part. Show that as a
+  blocking note, not a smaller circle.
+
 ## 4. What must NOT be built
 
-From the contract header, and this is the scope line the owner drew:
+The owner's scope line, as amended 2026-09-05. The coverage MEASUREMENT is now
+in scope and built — `reachedPct`, `overlapPct`, gaps — because it reports
+geometry and refuses to grade a design. What stays out:
 
-- no coverage percentage or score
-- no gap warnings
-- no spacing suggestions
-- nothing that reads as "this system will work"
+- no single "coverage score" that collapses reach and overlap into one number.
+  Verified why: touching circles measure 100% reached / 36.8% overlap and
+  head-to-head measures 100% / 78.8%. One number cannot tell them apart, and
+  the first is the under-watered layout.
+- no spacing suggestions, no zone sizing, no GPM or pressure-loss maths
+- nothing that reads as "this system will work". Report the measurement; the
+  licensed professional decides.
 
 Head spacing, GPM, pressure loss and zone balancing are licensed engineering.
 This draws and prices what a professional places. Circles on a map already look
