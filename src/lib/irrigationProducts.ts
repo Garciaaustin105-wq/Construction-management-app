@@ -827,3 +827,188 @@ export function plantsInHeadCoverage(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Coverage report
+// ---------------------------------------------------------------------------
+
+// WHAT THIS IS, AND WHAT IT MUST NEVER BE READ AS.
+//
+// This measures GEOMETRY: which parts of a measured area fall inside the wedge
+// of at least one placed head. That is a fact about a drawing, and the app can
+// state it.
+//
+// It is NOT a verdict on whether the system waters adequately, and the gap
+// between those two is wider than it looks. Irrigation is designed HEAD TO
+// HEAD: every head's spray reaches the next head, which produces roughly 200%
+// geometric overlap. That standard exists because a rotor or spray delivers
+// very little water near the outer edge of its radius — the throw distance is
+// where the water STOPS, not where it is still useful.
+//
+// So a plan whose circles merely touch measures 100% here and is under-watered
+// in reality. A single "coverage score" would rate that layout perfectly,
+// which is why this returns TWO numbers instead:
+//
+//   reachedPct   any head reaches it at all. Below 100 means real dry gaps.
+//   overlapPct   TWO OR MORE heads reach it. The head-to-head proxy, and the
+//                number a designer actually looks at.
+//
+// Still not a design check. Precipitation rate, matched nozzles, pressure,
+// wind, slope and zone balancing decide whether a lawn gets water, and none of
+// them are here. Report the measurement; never grade the system.
+
+export type CoverageReport = {
+  areaSqft: number;
+  reachedSqft: number;
+  reachedPct: number;
+  overlapSqft: number;
+  overlapPct: number;
+  gapSqft: number;
+  // Gap centres, sampled, so the UI can point at the dry spots rather than
+  // only naming a percentage.
+  gapPoints: LatLng[];
+  headsConsidered: number;
+  // Heads exist but none has a recorded throw. The report is meaningless then,
+  // and "0% covered" would be a lie about the design rather than about the
+  // catalogue.
+  radiusMissing: boolean;
+  cellFt: number;
+};
+
+// Planar feet relative to an origin — the same flat-earth model as the rest of
+// this file, which at lawn scale is well below the error of a finger tap on
+// satellite imagery.
+function toFeet(origin: LatLng, p: LatLng): { x: number; y: number } {
+  const latFt = (p.lat - origin.lat) * 364_000;
+  const lngFt = (p.lng - origin.lng) * 364_000 * Math.cos((origin.lat * Math.PI) / 180);
+  return { x: lngFt, y: latFt };
+}
+
+function pointInRing(pt: { x: number; y: number }, ring: { x: number; y: number }[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+    const straddles = a.y > pt.y !== b.y > pt.y;
+    if (straddles && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+// Samples the measured area on a grid and counts how many heads reach each
+// cell. `cellFt` trades resolution for work: 2 ft is about 1,000 cells on a
+// 4,000 sq ft lawn — instant, and finer than any head edge is real.
+export function coverageReport(
+  polygon: LatLng[],
+  heads: { at: LatLng; snap: Pick<HeadSnapshot, "radius_ft" | "arc_deg" | "heading_deg"> }[],
+  cellFt = 2
+): CoverageReport {
+  const step = Number.isFinite(cellFt) && cellFt > 0 ? cellFt : 2;
+  const radiusMissing = heads.length > 0 && heads.every((h) => !(h.snap.radius_ft > 0));
+  const base: CoverageReport = {
+    areaSqft: 0, reachedSqft: 0, reachedPct: 0, overlapSqft: 0, overlapPct: 0,
+    gapSqft: 0, gapPoints: [], headsConsidered: heads.length,
+    radiusMissing, cellFt: step,
+  };
+  if (!Array.isArray(polygon) || polygon.length < 3) return base;
+
+  const origin = polygon[0];
+  const ring = polygon.map((p) => toFeet(origin, p));
+  const xs = ring.map((r) => r.x);
+  const ys = ring.map((r) => r.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const cosLat = Math.cos((origin.lat * Math.PI) / 180);
+
+  let inside = 0, reached = 0, overlapped = 0;
+  const gaps: LatLng[] = [];
+  const usable = heads.filter((h) => h.snap.radius_ft > 0);
+
+  for (let x = minX; x <= maxX; x += step) {
+    for (let y = minY; y <= maxY; y += step) {
+      if (!pointInRing({ x, y }, ring)) continue;
+      inside++;
+      if (usable.length === 0) continue;
+      const at: LatLng = {
+        lat: origin.lat + y / 364_000,
+        lng: origin.lng + x / (364_000 * cosLat),
+      };
+      let hits = 0;
+      for (const h of usable) {
+        if (isWithinThrow(h.at, h.snap, at)) {
+          hits++;
+          if (hits >= 2) break;
+        }
+      }
+      if (hits >= 1) reached++;
+      if (hits >= 2) overlapped++;
+      // Sample the gaps: a UI marking 400 dots is no more informative than one
+      // marking 40, and the map has to stay readable.
+      else if (gaps.length < 200 && inside % 3 === 0) gaps.push(at);
+    }
+  }
+
+  const cellArea = step * step;
+  const areaSqft = Math.round(inside * cellArea);
+  const reachedSqft = Math.round(reached * cellArea);
+  const pct = (n: number) => (inside > 0 ? Math.round((n / inside) * 1000) / 10 : 0);
+
+  return {
+    areaSqft,
+    reachedSqft,
+    reachedPct: pct(reached),
+    overlapSqft: Math.round(overlapped * cellArea),
+    overlapPct: pct(overlapped),
+    gapSqft: Math.max(0, areaSqft - reachedSqft),
+    gapPoints: gaps,
+    headsConsidered: heads.length,
+    radiusMissing,
+    cellFt: step,
+  };
+}
+
+// EVERY RADIUS IN THIS APP ASSUMES A DESIGN PRESSURE.
+//
+// Manufacturer throw figures are quoted at a stated pressure — 45 psi for the
+// Rain Bird and Hunter lines seeded here. A house running lower throws
+// SHORTER, and every circle on the map is then optimistic: the drawing shows
+// coverage the system will not deliver, and the shortfall is invisible because
+// nothing on screen knows the site's real pressure.
+//
+// This is the one caveat that has to reach the estimator BEFORE they buy, not
+// after: heads are chosen from these radii, and a nozzle picked for 45 psi on
+// a 30 psi house is the wrong part. Test static and working pressure at the
+// site first.
+export const PRESSURE_CAVEAT =
+  "Throw distances assume the manufacturer's design pressure (45 psi for most lines here). Test the site's static and working pressure BEFORE buying heads — lower pressure throws shorter, and every circle above would be optimistic.";
+
+// Reads the report for the UI. Deliberately descriptive, never a verdict:
+// every line states what was MEASURED and leaves the judgement to the person
+// holding the licence.
+export function describeCoverage(r: CoverageReport): string[] {
+  if (r.radiusMissing)
+    return ["No throw distances recorded, so coverage cannot be measured — set them in the catalogue."];
+  if (r.headsConsidered === 0) return ["No heads placed yet."];
+  const out = [
+    `${r.reachedPct}% of ${r.areaSqft.toLocaleString()} sq ft is inside at least one head's throw.`,
+  ];
+  if (r.gapSqft > 0) out.push(`${r.gapSqft.toLocaleString()} sq ft is not reached by any head.`);
+  out.push(
+    `${r.overlapPct}% is reached by two or more heads. Head-to-head layouts run far above this — spray delivers little water near the edge of its throw, so circles that merely touch are not the same as watered ground.`
+  );
+  out.push(PRESSURE_CAVEAT);
+  return out;
+}
+
+// The heads on an estimate, ready for coverageReport.
+export function headsForCoverage(
+  areas: Pick<EstimateArea, "kind" | "meta" | "polygon">[]
+): { at: LatLng; snap: HeadSnapshot }[] {
+  const out: { at: LatLng; snap: HeadSnapshot }[] = [];
+  for (const a of areas) {
+    const snap = readHeadSnapshot(a);
+    if (!snap) continue;
+    const at = Array.isArray(a.polygon) ? a.polygon[0] : null;
+    if (at) out.push({ at, snap });
+  }
+  return out;
+}

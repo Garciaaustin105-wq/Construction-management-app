@@ -199,4 +199,105 @@ t("cost is per unit", dli.internal_cost===0.45);
 t("no emitters -> null, so no $0 drip line", dripLineItem(dripTally([],cfg),cfg)===null);
 t("no drip configured -> null", dripLineItem(tal,readDripConfig({}))===null);
 
+// Block-scoped: this section declares its own geometry helpers and the
+// sections above already use several of those names.
+{
+const { coverageReport, describeCoverage, headsForCoverage } = M;
+// A 40 x 40 ft square lawn, corners walked from C.
+const NE = pointAtBearing(pointAtBearing(C, 40, 0), 40, 90);
+const N = pointAtBearing(C, 40, 0);
+const E = pointAtBearing(C, 40, 90);
+const SQUARE = [C, N, NE, E];
+const chead = (at, radius, arc = 360, heading = 0) => ({ at, snap: { radius_ft: radius, arc_deg: arc, heading_deg: heading } });
+const mid = pointAtBearing(pointAtBearing(C, 20, 0), 20, 90);
+
+console.log("[the area itself]");
+const none = coverageReport(SQUARE, [], 2);
+t("measures ~1600 sq ft for a 40 ft square", near(none.areaSqft, 1600, 120), `got ${none.areaSqft}`);
+t("no heads -> nothing reached", none.reachedPct === 0);
+t("no heads -> the whole area is gap", near(none.gapSqft, none.areaSqft, 1));
+t("says so plainly", describeCoverage(none)[0] === "No heads placed yet.");
+
+console.log("\n[one big head]");
+// A head at the centre with a 40 ft throw reaches every corner (corner is
+// 28.3 ft away), so the whole square is inside one throw.
+const big = coverageReport(SQUARE, [chead(mid, 40)], 2);
+t("one 40 ft head at centre reaches 100%", big.reachedPct === 100, `got ${big.reachedPct}`);
+t("no gaps", big.gapSqft === 0);
+t("but overlap is 0 — one head cannot overlap itself", big.overlapPct === 0);
+
+console.log("\n[THE POINT: touching circles measure 100% and are under-designed]");
+// Four heads, one per quadrant centre, each 14.2 ft radius: circles just touch.
+const q = [
+  pointAtBearing(pointAtBearing(C, 10, 0), 10, 90),
+  pointAtBearing(pointAtBearing(C, 30, 0), 10, 90),
+  pointAtBearing(pointAtBearing(C, 10, 0), 30, 90),
+  pointAtBearing(pointAtBearing(C, 30, 0), 30, 90),
+].map((p) => chead(p, 15));
+const touching = coverageReport(SQUARE, q, 2);
+// Head-to-head: same four heads with radius reaching each other (20 ft apart).
+const headToHead = coverageReport(SQUARE, q.map((h) => chead(h.at, 22)), 2);
+console.log(`      touching:     reached ${touching.reachedPct}%  overlap ${touching.overlapPct}%`);
+console.log(`      head-to-head: reached ${headToHead.reachedPct}%  overlap ${headToHead.overlapPct}%`);
+t("head-to-head reaches at least as much as touching", headToHead.reachedPct >= touching.reachedPct);
+t("head-to-head has MUCH higher overlap — the number that distinguishes them",
+  headToHead.overlapPct > touching.overlapPct + 20,
+  `${touching.overlapPct}% vs ${headToHead.overlapPct}%`);
+t("a single 'coverage score' could not tell these apart on reach alone",
+  Math.abs(headToHead.reachedPct - touching.reachedPct) < 25);
+
+console.log("\n[gaps]");
+// One small head in a corner leaves most of the lawn dry.
+const corner = coverageReport(SQUARE, [chead(C, 10)], 2);
+t("a 10 ft head in one corner leaves big gaps", corner.gapSqft > 1200, `gap ${corner.gapSqft}`);
+t("gap points are returned so the UI can mark them", corner.gapPoints.length > 0);
+t("gap points are capped, not one per cell", corner.gapPoints.length <= 200);
+t("reached + gap accounts for the whole area",
+  near(corner.reachedSqft + corner.gapSqft, corner.areaSqft, 1));
+
+console.log("\n[arcs are respected]");
+// C is the SW corner and the square lies to its north and east, so a 0->90
+// sweep covers ALL of it — correct, and the reason the first version of this
+// test was wrong rather than the code.
+const facingIn = coverageReport(SQUARE, [chead(C, 60, 90, 0)], 2);
+t("a 90 aimed INTO the lawn covers it", facingIn.reachedPct === 100, `got ${facingIn.reachedPct}`);
+// Rotate the same head to sweep south->west, away from the lawn.
+const facingOut = coverageReport(SQUARE, [chead(C, 60, 90, 180)], 2);
+t("the same 90 rotated away covers almost none of it",
+  facingOut.reachedPct < 5, `got ${facingOut.reachedPct}`);
+const full = coverageReport(SQUARE, [chead(C, 60, 360, 0)], 2);
+t("a 180 covers less than a 360 when half its sweep is off the lawn",
+  coverageReport(SQUARE, [chead(C, 60, 180, 90)], 2).reachedPct <= full.reachedPct);
+t("a 360 with 60 ft radius covers the lot", full.reachedPct === 100);
+
+console.log("\n[unrecorded throw is not zero coverage]");
+const noRadius = coverageReport(SQUARE, [chead(mid, 0)], 2);
+t("heads with no radius flags radiusMissing", noRadius.radiusMissing === true);
+t("...and does not claim 0% covered as a design fact",
+  describeCoverage(noRadius)[0].includes("cannot be measured"), describeCoverage(noRadius)[0]);
+t("mixed: one real head means the report IS meaningful",
+  coverageReport(SQUARE, [chead(mid, 0), chead(mid, 40)], 2).radiusMissing === false);
+
+console.log("\n[reading the report]");
+const lines = describeCoverage(headToHead);
+t("leads with what was measured, not a grade", lines[0].includes("inside at least one head"));
+t("names the overlap caveat rather than scoring the design",
+  lines.some((l) => l.includes("not the same as watered ground")));
+t("never uses the word 'covered' as a verdict", !lines.some((l) => /fully covered|pass(ed)?/i.test(l)));
+t("warns that radii assume a design pressure",
+  lines.some((l) => l.includes("design pressure")));
+t("tells them to test pressure BEFORE buying heads",
+  lines.some((l) => /test the site's static and working pressure BEFORE buying/i.test(l)));
+t("the caveat rides along even on a perfect-looking report",
+  describeCoverage(coverageReport(SQUARE, [chead(mid, 40)], 2)).some((l) => l.includes("design pressure")));
+
+console.log("\n[reading heads off an estimate]");
+const areaRows = [
+  { kind: "point", polygon: [mid], meta: { irrigation_product_id: "h", name: "RB", radius_ft: 25, arc_deg: 360, heading_deg: 0 } },
+  { kind: "point", polygon: [mid], meta: { plant_product_id: "p", name: "Holly" } },
+  { kind: "area", polygon: SQUARE, meta: {} },
+];
+t("plants and polygons are not heads", headsForCoverage(areaRows).length === 1);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);

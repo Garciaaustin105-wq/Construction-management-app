@@ -75,6 +75,31 @@ throw distances" rather than showing bare markers with no explanation.
 **A coverage on/off toggle is required.** On a dense plan the circles bury the
 plants underneath them.
 
+## 3b. The coverage report
+
+`coverageReport(polygon, headsForCoverage(areas))` and `describeCoverage(r)`
+now exist. Render the lines it returns verbatim; do not compose your own.
+
+It returns TWO percentages on purpose and both must show:
+
+  reachedPct   inside at least one head's throw
+  overlapPct   inside TWO or more — the head-to-head proxy
+
+A single score cannot tell a good layout from a bad one. Verified: four heads
+whose circles merely touch measure **100% reached / 36.8% overlap**, and the
+same four spaced head-to-head measure **100% reached / 78.8% overlap**. Both
+read "100% covered"; only overlap separates them, and the first is the
+under-watered one.
+
+`gapPoints` are sampled gap centres — mark them on the map so a dry spot is
+somewhere the estimator can look, not just a percentage.
+
+`describeCoverage` ends with `PRESSURE_CAVEAT` and it must not be trimmed:
+every radius here assumes the manufacturer's design pressure (45 psi for the
+seeded lines). A house running lower throws shorter and every circle is then
+optimistic. That has to reach the estimator BEFORE they buy heads, because a
+nozzle chosen for 45 psi on a 30 psi house is the wrong part.
+
 ## 4. What must NOT be built
 
 From the contract header, and this is the scope line the owner drew:
