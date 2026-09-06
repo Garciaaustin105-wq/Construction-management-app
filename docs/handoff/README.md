@@ -23,8 +23,18 @@ The lanes own disjoint files — A the catalogue screens, B
 `LawnMeasurementMap.tsx`, C `LawnEstimateWorkspace.tsx`, D the component UI. If
 a lane edits a file another lane owns, that is a rebase, not a merge.
 
-A separate desktop-UI pass owns `navItems.ts` and the shared layout. Its brief
-is not in this folder yet — it was still uncommitted when these were filed.
+## Live — the desktop UI pass
+
+| Doc | What it is |
+|---|---|
+| [desktop pass brief](handoff-ui-desktop-pass.md) | The contract: 5 phases, design decisions locked, one hard rule (lg:-and-up only, mobile byte-identical) |
+| [desktop pass → Opus](handoff-ui-desktop-pass-opus.md) | The handoff letter: phase order, division of labor, gotchas |
+
+This pass owns `navItems.ts` and the shared layout (`PageContainer`, `TopBar`,
+`DataTable`, `Sidebar`). Estimator lanes: add a nav entry if your screen needs
+one, expect to rebase, and do not restructure that file. It also migrates the
+hand-rolled `hidden lg:block` tables — including `PlantCatalogueManager.tsx`,
+which is Lane A's file — so coordinate before Phase 2 lands there.
 
 ## Background for the estimator work
 
