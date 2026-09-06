@@ -170,6 +170,11 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // into priced man-hours. Sits next to the roster it draws from. Office
       // fallthrough block = office/admin only, matching the page gate.
       { href: "/lawn/crews", label: "Crews", Icon: Users },
+      // Reads those confirmed head counts back: what jobs actually took against
+      // what they were quoted at, as proposed catalogue rates. Sits beside
+      // Crews because crew_size recorded there is what makes it work at all.
+      // Office fallthrough block = office/admin, matching the page gate.
+      { href: "/lawn/labor-feedback", label: "Labor feedback", Icon: AlarmClock },
       // "Measure & quote" (/estimates/quick) and Templates (/templates) used
       // to be separate top-of-nav tabs, but neither is a distinct top-level
       // concept — both are entry points/config that live inside Estimates
@@ -472,6 +477,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/lawn/applications",
             "/lawn/products",
             "/lawn/compliance",
+            "/lawn/labor-feedback",
             "/lawn/scheduling",
             // Customers is an Office-hub card again (it was moved to the
             // Account hub when its card lived there). The alias must follow the
