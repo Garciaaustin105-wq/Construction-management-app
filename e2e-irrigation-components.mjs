@@ -31,6 +31,18 @@ t("mainline, zone_valve, controller and sleeve are all present",
 // by the foot; without these two there was nothing to price either against.
 t("lateral and drip exist so per-foot pipe has somewhere to live",
   ["lateral","drip"].every(c=>COMPONENT_CATEGORIES.includes(c)));
+// Trenching is labor sold by the linear foot. It carries install_minutes and
+// no material cost, which the per-foot machinery already handles correctly.
+t("trenching is a category", COMPONENT_CATEGORIES.includes("trenching"));
+const trench=snap({name:"Machine trench",category:"trenching",unit:"foot",
+  cost:0,unit_price:1.85,install_minutes:2});
+const t300=componentCharge(trench,300);
+t("300 ft of trench sells at 300 x 1.85", near(t300.revenue,555), `got ${t300.revenue}`);
+t("2 man-min/ft over 300 ft is 10 man-hours", near(t300.manHours,10), `got ${t300.manHours}`);
+t("labor with no material cost is still not unpriced", t300.unpriced===false);
+t("...and reaches the quote", componentLineItem(t300)!==null);
+t("a zero internal_cost is honest for a labor line",
+  componentLineItem(t300).internal_cost===0);
 t("a typo is not a category", isComponentCategory("zonevalve")===false);
 t("units are exactly each and foot", COMPONENT_UNITS.join(",")==="each,foot");
 t("a roll is not a unit — that is the mistake this table exists to prevent",

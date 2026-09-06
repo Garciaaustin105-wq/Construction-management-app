@@ -30,10 +30,17 @@
 --
 -- Tune these from your own crew time entries — the app already collects them.
 --
--- TRENCHING IS NOT IN THIS LIST. It is excavation, not a part: the machine
--- belongs in the equipment catalogue and the digging in crew hours. Trenching
--- production is ~10 ft/hour hand-dug and ~300 ft/hour with a trencher, and it
--- moves with soil, roots, utilities and depth more than with anything here.
+-- TRENCHING IS IN THIS LIST, BY THE LINEAR FOOT, and it is the one group that
+-- DOES carry install minutes. The difference is that trenching production is
+-- published as a production rate rather than as an all-in total: ~10 ft/hour
+-- hand-dug and ~300 ft/hour with a trencher. Those are direct figures, so the
+-- per-foot man-minutes below are read off them rather than split out of a
+-- blended number. See docs/labor-production-rates.md for the full derivation.
+--
+-- The trenching rows are LABOR ONLY: cost 0, and the price per foot is what
+-- the org charges. The machine itself belongs in the equipment catalogue, and
+-- pipe laid in the open trench is priced on the mainline and lateral rows. Do
+-- not put the trencher rental here or it gets billed twice.
 --
 -- CODE CLAIMS: the notes on backflow and rain sensors say to CHECK local code.
 -- They do not state what the code requires. Backflow type, mounting height,
@@ -198,7 +205,22 @@ begin
     ('GFCI outlet for outdoor controller', 'other', 'each',
      'Line-voltage work. Whether a licensed electrician is required is set by local code.'),
     ('Winterization blow-out connection', 'other', 'each',
-     'Freeze climates. Fitted at install so the system can be blown out each fall.')
+     'Freeze climates. Fitted at install so the system can be blown out each fall.'),
+
+    -- ── Trenching, by the linear foot ─────────────────────────────────────
+    -- LABOR ONLY. Machine goes in the equipment catalogue, pipe on the pipe
+    -- rows. install_minutes are man-minutes PER FOOT, from published
+    -- production rates - see docs/labor-production-rates.md.
+    ('Trenching - machine trencher, 6 in x 8-12 in deep', 'trenching', 'foot',
+     'Labor only. Includes backfill and cleanup, not the trencher itself - that belongs in the equipment catalogue.'),
+    ('Trenching - hand dug, 6 in x 8-12 in deep', 'trenching', 'foot',
+     'Labor only. Tight access, root zones and around existing utilities where a machine cannot go.'),
+    ('Pipe pulling - vibratory plow', 'trenching', 'foot',
+     'Labor only. Pulls pipe with almost no surface damage. Fastest option on open turf, unsuitable near roots and utilities.'),
+    ('Boring - under drive or walk', 'trenching', 'foot',
+     'Labor only. Slow and highly variable with soil. Priced by the foot of bore, not the width of the drive.'),
+    ('Trench restoration - backfill, compact and reseed', 'trenching', 'foot',
+     'Labor only. Separate line where the surface has to be put back properly rather than simply raked in.')
   ) as x(name, category, unit, notes)
   where not exists (
     select 1 from public.irrigation_components c

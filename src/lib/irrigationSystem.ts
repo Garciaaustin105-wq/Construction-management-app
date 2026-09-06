@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const COMPONENT_CATEGORIES = [
   "poc","backflow","master_valve","flow_sensor","mainline","lateral","drip",
   "zone_valve","valve_box","controller","wire","connector","sensor","sleeve",
-  "fitting","other",
+  "fitting","trenching","other",
 ] as const;
 export type ComponentCategory = (typeof COMPONENT_CATEGORIES)[number];
 export function isComponentCategory(v: unknown): v is ComponentCategory {

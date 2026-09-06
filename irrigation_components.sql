@@ -34,7 +34,7 @@ create table if not exists public.irrigation_components (
   name text not null,
   -- poc, backflow, master_valve, flow_sensor, mainline, lateral, drip,
   -- zone_valve, valve_box, controller, wire, connector, sensor, sleeve,
-  -- fitting, other.
+  -- fitting, trenching, other.
   -- App-validated, no CHECK — matching every other catalogue here, so adding a
   -- category is a code change and not a migration.
   category text not null default 'other',
