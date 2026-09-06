@@ -56,3 +56,4 @@ next-env.d.ts
 .labor-build/
 .irr-build/
 .sod-build/
+.eq-build/
