@@ -6,8 +6,11 @@ heads, drip and pipe-between-heads and **nothing else** — so a quote can show
 of wire. That is not a small gap; on a residential install it is a large share
 of the material.
 
-**Lane D owns a new contract (`src/lib/irrigationSystem.ts`), a new migration,
-and the components UI.** It does NOT own `LawnMeasurementMap.tsx` (Lane B) or
+**UPDATE 2026-09-05 — the contract and the migration are DONE and merged.**
+`src/lib/irrigationSystem.ts` is written and 59 assertions are green in
+`e2e-irrigation-components.mjs`; `irrigation_components.sql` is applied.
+**Lane D is now the UI only.** Import the contract, re-derive nothing, and if
+something in it looks wrong say so in your report rather than editing it. It does NOT own `LawnMeasurementMap.tsx` (Lane B) or
 `LawnEstimateWorkspace.tsx` (Lane C). If placement on the map is wanted, it
 lands in Lane B's file AFTER Lane B is merged — coordinate, do not both edit.
 
@@ -76,16 +79,23 @@ policies from `irrigation_catalogue.sql` verbatim.
 
 ---
 
-## 3. Contract — `src/lib/irrigationSystem.ts`
+## 3. Contract — `src/lib/irrigationSystem.ts` (BUILT — read it, do not rewrite it)
 
 ```ts
 listComponents(supabase, orgId, activeOnly?)
 createComponent / updateComponent
 componentSnapshot(c) / readComponentSnapshot(raw)
-componentCharge(snapshot, quantity) -> { cost, revenue, manHours, unit, basis }
-systemTotals(lines) -> { cost, revenue, manHours, unpricedCount }
+componentCharge(snapshot, quantity) -> ComponentCharge
+systemTotals(lines) -> { cost, revenue, manHours, charges, unpricedCount }
 componentLineItem(charge) -> line | null
+stationCheck(zoneValves, stations) -> StationCheck
+COMPONENT_CATEGORIES / COMPONENT_UNITS + isComponentCategory / isComponentUnit
 ```
+
+A `ComponentCharge` carries BOTH the extended money (`cost`, `revenue`) and the
+per-unit money (`unitCost`, `unitPrice`). Show the extended figures in the
+panel; `componentLineItem` already picks the per-unit ones for the quote. Do not
+hand `charge.cost` to anything that multiplies by quantity.
 
 Rules that are not guessable from the types:
 
@@ -162,13 +172,24 @@ trade; the prices are not.
 
 ## Verify
 
-Commit `e2e-irrigation-components.mjs` at the repo root. Copy the isolation
-discipline from `e2e-plant-placement.mjs`: deactivate the org's real catalogue,
-scope every delete and REST read to `E2E%` rows, restore on the failure path.
-An earlier version of these harnesses wiped a whole org silently.
+`e2e-irrigation-components.mjs` already covers the MATHS — per-each and
+per-foot pricing, per-foot `install_minutes`, the station check, unpriced parts,
+per-unit line items, snapshot round-trip. Run it, do not rewrite it:
 
-Cover: per-each and per-foot components price correctly and are labelled with
-their unit; `install_minutes` on a per-foot part multiplies by feet; the
-station-count check fires when valves exceed stations and not otherwise; a
-component with no price is flagged rather than billed at zero; and every
+```
+npx tsc src/lib/irrigationSystem.ts --outDir .sys-build --module esnext   --target es2022 --moduleResolution bundler --skipLibCheck
+node e2e-irrigation-components.mjs
+```
+
+What is NOT yet covered, and what YOU commit as `e2e-irrigation-components-ui.mjs`:
+the database round-trip. Copy the isolation discipline from
+`e2e-plant-placement.mjs` — deactivate the org's real catalogue, scope every
+delete and REST read to `E2E%` rows, restore on the failure path. An earlier
+version of these harnesses wiped a whole org silently.
+
+Cover: a component created through `createComponent` comes back with its id
+(it needs `.select()` after `.insert()` — the contract does this, your UI must
+not lose it); a per-foot component survives a reload still marked `foot`;
+adding one to an estimate writes `estimate_components` with a full snapshot;
+re-pricing the catalogue afterwards does NOT move that estimate; and every
 `add to estimate` produces one line with a non-null `internal_cost`.
