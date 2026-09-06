@@ -498,6 +498,17 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/lawn/products",
             "/lawn/compliance",
             "/lawn/labor-feedback",
+            // The five catalogue screens. Each is an Office-hub card, so each
+            // needs its alias here or the bottom bar highlights the wrong tab
+            // on mobile — the same rule the Customers comment below records.
+            // /lawn/plants predates the estimator lanes and was missing one
+            // too; irrigation, equipment and labor-items arrived with Lane A
+            // and irrigation-components with Lane D.
+            "/lawn/plants",
+            "/lawn/irrigation",
+            "/lawn/equipment",
+            "/lawn/labor-items",
+            "/lawn/irrigation-components",
             "/lawn/scheduling",
             // Customers is an Office-hub card again (it was moved to the
             // Account hub when its card lived there). The alias must follow the
