@@ -161,6 +161,41 @@ export default function PlantCatalogueManager({
     );
   }, [products]);
 
+  // Search / category / active filter (Lane A). Client-side over `sorted` —
+  // 223 seeded species render instantly and a server round-trip per keystroke
+  // is unwanted. The text matches the COMMON name and the BOTANICAL name
+  // both, because the office looks a plant up either way ("ilex" for a
+  // holly). Category and the inactive toggle narrow further. The existing
+  // sort is kept INSIDE the filtered set — filtering never re-orders, and
+  // filtering never paginates: the whole filtered list renders.
+  const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<"all" | PlantCategory>(
+    "all"
+  );
+  const [showInactive, setShowInactive] = useState(true);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sorted.filter((p) => {
+      if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
+      if (!showInactive && !p.active) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        (p.botanical_name ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [sorted, query, categoryFilter, showInactive]);
+
+  const filtersActive =
+    query.trim() !== "" || categoryFilter !== "all" || !showInactive;
+
+  function clearFilters() {
+    setQuery("");
+    setCategoryFilter("all");
+    setShowInactive(true);
+  }
+
   function openAdd() {
     setEditing(null);
     setDraft(EMPTY);
@@ -541,7 +576,9 @@ export default function PlantCatalogueManager({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <p className="text-sm text-gray-600 flex-1">
-          {products.length} species
+          {filtered.length === products.length
+            ? `${products.length} species`
+            : `${filtered.length} of ${products.length} species`}
         </p>
         <button
           onClick={openAdd}
@@ -552,7 +589,50 @@ export default function PlantCatalogueManager({
         </button>
       </div>
 
-      {sorted.length === 0 ? (
+      {/* Search / category / active filter — client-side, above the list. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          aria-label="Search plants"
+          className={`${field} flex-1 min-w-40`}
+          placeholder="Search common or botanical name"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <select
+          aria-label="Filter plants by category"
+          className={`${field} w-40`}
+          value={categoryFilter}
+          onChange={(e) =>
+            setCategoryFilter(e.target.value as "all" | PlantCategory)
+          }
+        >
+          <option value="all">All categories</option>
+          {PLANT_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 whitespace-nowrap">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300"
+          />
+          Show inactive
+        </label>
+        {filtersActive && (
+          <button
+            onClick={clearFilters}
+            className="text-xs text-blue-700 hover:underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {products.length === 0 ? (
         <div className="text-center py-10 space-y-3">
           <p className="text-sm text-gray-500">
             Your plant &amp; tree catalog is empty. Add the plants you sell,
@@ -567,11 +647,16 @@ export default function PlantCatalogueManager({
             Add your first plant
           </button>
         </div>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-gray-500 text-center py-10">
+          No species match this search. Clear the filters to see the full
+          catalog.
+        </p>
       ) : (
         <>
           {/* Mobile: stacked cards */}
           <ul className="space-y-2 lg:hidden">
-            {sorted.map((p) => (
+            {filtered.map((p) => (
               <li
                 key={p.id}
                 className={`bg-white rounded-lg p-3 shadow-sm ${p.active ? "" : "opacity-60"}`}
@@ -659,7 +744,7 @@ export default function PlantCatalogueManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sorted.map((p) => (
+                {filtered.map((p) => (
                   <FragmentRow
                     key={p.id}
                     p={p}

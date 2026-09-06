@@ -251,6 +251,80 @@ async function main() {
     JSON.stringify(sp)
   );
 
+  // ================= 3.5 SEARCH / CATEGORY FILTER (Lane A) =================
+  // The seeded catalogue renders alongside the E2E species (hidden species
+  // stay listed, dimmed), so the count line reads "N species" with N > 1
+  // here and every check below is relative — no dependency on the exact
+  // seeded total. Filters are client-side and never re-order.
+  const countP = page.locator("p", { hasText: /species/ }).first();
+  const totalCount = (await countP.textContent().catch(() => "")) ?? "";
+  check(
+    "count line renders the full catalogue ('N species')",
+    /\d+ species/.test(totalCount) && !totalCount.includes(" of "),
+    totalCount.trim()
+  );
+
+  const searchInput = page.locator('input[aria-label="Search plants"]');
+  await searchInput.fill("E2E Dwarf");
+  await page.waitForTimeout(500);
+  const searchCount = (await countP.textContent().catch(() => "")) ?? "";
+  check(
+    "search narrows the list to '1 of N species'",
+    searchCount.includes(" of ") && /^\s*1\b/.test(searchCount),
+    searchCount.trim()
+  );
+  check(
+    "narrowed list shows the E2E species and nothing else",
+    (await page.locator("ul li").count()) === 1 &&
+      (await page.locator("ul li", { hasText: SPECIES }).count()) === 1
+  );
+
+  // Botanical search: 'ilex' matches through the botanical name even though
+  // the common name never says it — this is why both fields are searched.
+  await searchInput.fill("ilex vom");
+  await page.waitForTimeout(500);
+  check(
+    "botanical search 'ilex vom' still finds the E2E holly",
+    (await page.locator("ul li", { hasText: SPECIES }).count()) === 1
+  );
+
+  await searchInput.fill("zzzqqqx");
+  await page.waitForTimeout(500);
+  check(
+    "no-match search shows the 'clear the filters' empty state",
+    await page.getByText("No species match this search").isVisible().catch(() => false)
+  );
+
+  // Active toggle: the seeded catalogue was all deactivated for isolation,
+  // so hiding inactive species should leave exactly the active E2E row.
+  await searchInput.fill("");
+  await page.locator('label', { hasText: "Show inactive" }).locator("input").uncheck();
+  await page.waitForTimeout(500);
+  const activeCount = (await countP.textContent().catch(() => "")) ?? "";
+  check(
+    "hiding inactive species leaves only the active row ('1 of N')",
+    activeCount.includes(" of ") && (await page.locator("ul li").count()) === 1,
+    activeCount.trim()
+  );
+
+  // Category filter narrows without text; the E2E holly is a shrub.
+  await page.locator('label', { hasText: "Show inactive" }).locator("input").check();
+  await page.locator('select[aria-label="Filter plants by category"]').selectOption("palm");
+  await page.waitForTimeout(500);
+  const palmCount = (await countP.textContent().catch(() => "")) ?? "";
+  check(
+    "category filter 'palm' narrows and hides the shrub",
+    palmCount.includes(" of ") && (await page.locator("ul li", { hasText: SPECIES }).count()) === 0,
+    palmCount.trim()
+  );
+  await page.getByRole("button", { name: "Clear" }).click();
+  await page.waitForTimeout(500);
+  check(
+    "Clear restores the full catalogue (count without 'of', species back)",
+    !((await countP.textContent().catch(() => "")) ?? "").includes(" of ") &&
+      (await page.locator("ul li", { hasText: SPECIES }).count()) === 1
+  );
+
   // ================= 4. SIZE EDITOR: three sizes, sort_order not alphabetical =================
   await card.locator(`button[aria-label="Show sizes for ${SPECIES}"]`).click();
   await card.getByText("No sizes yet", { exact: false }).first().waitFor({ timeout: 10_000 });

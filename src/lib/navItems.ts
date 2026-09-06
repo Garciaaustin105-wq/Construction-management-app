@@ -63,6 +63,10 @@ import {
   LocateFixed,
   type LucideIcon,
   CheckCircle2,
+  Trees,
+  Droplets,
+  Tractor,
+  Hammer,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
@@ -160,6 +164,15 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // Products = the org's chemical catalog (office/PM manage).
       { href: "/lawn/applications", label: "Applications", Icon: FlaskConical },
       { href: "/lawn/products", label: "Products", Icon: Package },
+      // Estimator catalogues (Lane A, office/PM manage): plants, sprinkler
+      // heads, machinery and labor lines feed the map estimator's pricing.
+      // All four page gates are OFFICE_OR_PM, matching this fallthrough
+      // block. /lawn/plants shipped earlier without a nav entry — linked
+      // here now alongside its siblings.
+      { href: "/lawn/plants", label: "Plants", Icon: Trees },
+      { href: "/lawn/irrigation", label: "Heads", Icon: Droplets },
+      { href: "/lawn/equipment", label: "Machines", Icon: Tractor },
+      { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer },
       // Compliance records (RUP purchases/30-day rule, disposal, CEU,
       // noncertified training) — page gate is OFFICE_OR_PM; this entry sits in
       // the lawn office/admin fallthrough block so it matches.
