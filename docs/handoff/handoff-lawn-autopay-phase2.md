@@ -3,7 +3,7 @@
 Prepared 2026-08-23. Phase 1 (liability gate) is **SHIPPED**. This doc is
 self-contained: read it, build Phases 2 and 3 **together**, report back.
 
-Background/why: `docs/handoff-lawn-autopay.md` (the 4-phase plan) and
+Background/why: `docs/handoff/handoff-lawn-autopay.md` (the 4-phase plan) and
 `GORILLADESK_FEATURE_ADOPTION.md` (competitive context, one dir up).
 
 ---

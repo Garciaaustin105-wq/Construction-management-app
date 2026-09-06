@@ -406,7 +406,7 @@ export default async function LawnPage() {
 
                   <p className={GROUP_LABEL}>Plan</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {/* Headline lawn feature (user verdict, docs/handoff-
+                    {/* Headline lawn feature (user verdict, docs/handoff/handoff-
                         estimator-v2): first action in the rail, not buried.
                         Label matches the "Quick quote" naming used on the
                         Estimates page's New menu (was "Measure & quote" —

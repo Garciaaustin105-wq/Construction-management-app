@@ -191,7 +191,7 @@ Apply the same to `estimates` (in-person / check approvals have the identical ga
 - **Do not touch** `public/terra-verde-*` or `public/terra-vista-*` brand assets — logo work is finished and committed.
 - **Do not push.** Leave commits local for review.
 - All DDL goes through `apply_migration` with a recorded name — migration tracking is already drifted (only 7 recorded vs ~100 loose root `.sql` files); do not make it worse.
-- There is a **separate open handoff**, `docs/handoff-scalability-2026-08-25.md` (cron N+1 + RLS). If both are in flight, coordinate before touching shared live Supabase state — a local file conflict is recoverable, a half-applied policy or column migration is not.
+- There is a **separate open handoff**, `docs/handoff/handoff-scalability-2026-08-25.md` (cron N+1 + RLS). If both are in flight, coordinate before touching shared live Supabase state — a local file conflict is recoverable, a half-applied policy or column migration is not.
 
 ## Confidence note
 

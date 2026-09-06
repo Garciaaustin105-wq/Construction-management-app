@@ -70,7 +70,7 @@ therefore **required** for any re-onboard to work — not cosmetic.
 > `connect/status` returns `platformLiable`. Terra Vista's stale account id was
 > cleared and Peanutz's loss owner backfilled.
 >
-> **Phases 2 + 3 are now specced in `docs/handoff-lawn-autopay-phase2.md`** —
+> **Phases 2 + 3 are now specced in `docs/handoff/handoff-lawn-autopay-phase2.md`** —
 > start there. The section below is kept for the reasoning only.
 
 ## PHASE 1 (original spec — for reference)

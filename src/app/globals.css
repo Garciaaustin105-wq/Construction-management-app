@@ -26,6 +26,29 @@
   --success: #16a34a;         /* green-600 */
   --warning: #d97706;         /* amber-600 */
   --danger: #dc2626;          /* red-600 */
+
+  /* Desktop table row density (desktop UI pass, phase 1). Read by the shared
+     DataTable rows at lg: only — mobile card lists are unaffected. STANDARD /
+     COMPACT is a per-user setting: DensityToggle (src/components/ui/
+     DensityToggle.tsx) persists tv-row-density and stamps data-density on
+     <html>; the :root[data-density] override below is what makes the setting
+     reach every table without any per-page wiring. */
+  --row-py: 0.6875rem;        /* 11px — standard row padding */
+  --row-fs: 0.84375rem;       /* 13.5px — standard row text */
+}
+
+/* Compact density (per-user, applied at <html> by DensityToggle). */
+:root[data-density="compact"] {
+  --row-py: 0.3125rem;        /* 5px */
+  --row-fs: 0.8125rem;        /* 13px */
+}
+
+/* Forced per-table density (DataTable density="compact"). An element-level
+   declaration beats the inherited :root value, so a table forced to compact
+   stays compact even when the user's global setting is standard. */
+.dt-force-compact {
+  --row-py: 0.3125rem;
+  --row-fs: 0.8125rem;
 }
 
 @theme inline {

@@ -1,7 +1,7 @@
 -- connect_liability_and_autopay.sql  (idempotent / additive — safe to re-run)
 -- ----------------------------------------------------------------------------
 -- Two columns that together let lawn autopay ship SAFELY. See
--- docs/handoff-lawn-autopay.md for the full reasoning.
+-- docs/handoff/handoff-lawn-autopay.md for the full reasoning.
 --
 -- 1. organizations.connect_losses_owner
 --    The platform runs DIRECT charges on connected accounts. Who absorbs an

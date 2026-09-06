@@ -54,3 +54,9 @@ next-env.d.ts
 .cl-tsconfig.json
 .local-ai-bundles/
 .labor-build/
+.irr-build/
+.sod-build/
+.eq-build/
+.sys-build/
+.labor-build/
+.feedback-build/

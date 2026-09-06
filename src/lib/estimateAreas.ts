@@ -1,5 +1,5 @@
 // Multi-area lawn measurement — contract for the v2 measurement map redesign
-// (docs/handoff-estimator-v2-2026-08-28.md). Replaces the single-polygon
+// (docs/handoff/handoff-estimator-v2-2026-08-28.md). Replaces the single-polygon
 // model in lawnMeasurement.ts with named/colored `estimate_areas` rows, one
 // per drawn shape (front yard, back beds, etc.).
 //

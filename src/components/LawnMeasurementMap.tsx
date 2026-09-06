@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
@@ -35,6 +35,7 @@ import {
 import { loadGoogleMaps } from "@/lib/googleMaps";
 import { listPricedServices, sqftPrice, type PricedService } from "@/lib/lawnMeasurement";
 import {
+  isPlantArea,
   listPlantCatalogue,
   plantSnapshot,
   readPlantSnapshot,
@@ -43,6 +44,29 @@ import {
   type PlantWithSizes,
 } from "@/lib/plantProducts";
 import { formatMoney } from "@/lib/money";
+import {
+  adjustedRadius,
+  coverageReport,
+  coverageRing,
+  describeAdjustment,
+  describeCoverage,
+  describeThrow,
+  HEAD_ARCS,
+  headSnapshot,
+  headsForCoverage,
+  isIrrigationArea,
+  listIrrigationCatalogue,
+  pressureAgeDays,
+  pressureUntested,
+  pressureVerdict,
+  readHeadSnapshot,
+  readPressureTest,
+  type HeadArc,
+  type IrrigationNozzle,
+  type IrrigationProduct,
+  type IrrigationWithNozzles,
+  type PressureTest,
+} from "@/lib/irrigationProducts";
 import { useIsDesktop } from "@/lib/useIsDesktop";
 import { ChevronDown, ChevronUp, Ruler, X } from "lucide-react";
 
@@ -110,10 +134,42 @@ export default function LawnMeasurementMap({
   const [pickerSizeId, setPickerSizeId] = useState<string>("");
   // The selected placed plant (for the inspect card). Empty string = none.
   const [selectedPlantId, setSelectedPlantId] = useState<string>("");
-  // Per-placement note drafts, keyed by area id — mirrors editName.
+  // Per-placement note drafts, keyed by area id — mirrors editName. Heads
+  // reuse the same map: a note is a note, whatever the point is.
   const [plantNote, setPlantNote] = useState<{ [id: string]: string }>({});
   const [selectedAreaId, setSelectedAreaId] = useState<string>("");
   const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+
+  /* ---------- Sprinkler heads (Lane B) ---------- */
+  // The head catalogue, same shape as the plant catalogue: models ordered by
+  // name, nozzles already ordered by sort_order (never alphabetical).
+  const [headCatalogue, setHeadCatalogue] = useState<IrrigationWithNozzles[]>([]);
+  const [headCatalogueLoaded, setHeadCatalogueLoaded] = useState(false);
+  const [headPickerProductId, setHeadPickerProductId] = useState<string>("");
+  const [headPickerNozzleId, setHeadPickerNozzleId] = useState<string>("");
+  // The arc lives on the PLACEMENT, not the catalogue: the same nozzle is a 90
+  // in a corner and a 360 mid-lawn. Defaults to full circle.
+  const [headPickerArc, setHeadPickerArc] = useState<HeadArc>(360);
+  // Head placement mode — mutually exclusive with plant placing AND with the
+  // draft, exactly like plant placement (see startPlacement).
+  const [placingHead, setPlacingHead] = useState<{
+    product: IrrigationProduct;
+    nozzle: IrrigationNozzle;
+    arc: HeadArc;
+  } | null>(null);
+  // The selected placed head (inspect card). Empty string = none.
+  const [selectedHeadId, setSelectedHeadId] = useState<string>("");
+  // Coverage drawing on/off. ON by default — the drawing is the feature; the
+  // toggle exists so drawing stays possible while measuring new polygons.
+  const [coverageOn, setCoverageOn] = useState(true);
+  // Site pressure test, read off the estimates row. The prompt for it renders
+  // BEFORE layout is attempted — see the pressure section in the panel.
+  const [pressure, setPressure] = useState<PressureTest | null>(null);
+  const [pressureFormOpen, setPressureFormOpen] = useState(false);
+  const [psiStatic, setPsiStatic] = useState("");
+  const [psiWorking, setPsiWorking] = useState("");
+  const [psiGpm, setPsiGpm] = useState("");
+  const [psiNotes, setPsiNotes] = useState("");
   const [mapReady, setMapReady] = useState(false);
   // Centre the map once per mount. A ref, not state: flipping it must not
   // re-run the effect that sets it.
@@ -159,10 +215,32 @@ export default function LawnMeasurementMap({
   useEffect(() => {
     placingRef.current = placing;
   }, [placing]);
+  // Same treatment for head placement mode — one ref per mode, checked in
+  // order in the click listener.
+  const placingHeadRef = useRef(placingHead);
+  useEffect(() => {
+    placingHeadRef.current = placingHead;
+  }, [placingHead]);
+  // The site pressure test, mirrored for placeHead (same reason as orgIdRef:
+  // the once-registered listener's callees must never read stale state).
+  const pressureRef = useRef(pressure);
+  useEffect(() => {
+    pressureRef.current = pressure;
+  }, [pressure]);
   // In-flight guard for placePlant. A ref, not state: state updates are async
   // and an impatient second tap can beat the re-render — this repo has
   // already shipped a double-submit bug from exactly that (crew/photo).
   const placingSaveRef = useRef(false);
+  // Same guard for placeHead — a separate ref so the two modes never gate
+  // each other's saves.
+  const headSaveRef = useRef(false);
+  // Placed heads (kind="point" + a head snapshot in meta). Rebuilt wholesale
+  // on every areas change, same as plant markers.
+  const headMarkersRef = useRef<google.maps.Marker[]>([]);
+  // Coverage shapes: one Circle (360) or Polygon (part arc) per placed head
+  // with a recorded throw, plus the gap markers. Teardown-then-rebuild.
+  const coverageShapesRef = useRef<(google.maps.Circle | google.maps.Polygon)[]>([]);
+  const gapMarkersRef = useRef<google.maps.Marker[]>([]);
   // placePlant is called from the once-registered map click listener, so it
   // must never read state that could be stale — orgId arrives AFTER the map
   // is created, and a closure over the state would hold `null` forever.
@@ -269,12 +347,98 @@ export default function LawnMeasurementMap({
     placePlantRef.current = placePlant;
   }, [placePlant]);
 
+  /* ---------- Place a sprinkler head (kind="point" + head snapshot) ----------
+     Mirrors placePlant exactly: same row shape (one coordinate, area_sqft 0,
+     kind="point"), a HEAD snapshot in meta instead of a plant one, the same
+     in-flight guard pattern, the same reload+sync. Nothing about the row
+     format is shared code — the discrimination happens on read, via meta.
+
+     The pressure gate runs BEFORE the write: a nozzle below its minimum
+     operating pressure gets the contract's blocking note and NO placement.
+     adjustedRadius deliberately refuses to return a smaller circle in that
+     case, and this file must not undo that by placing the head anyway. */
+  const placeHead = useCallback(
+    async (
+      sel: { product: IrrigationProduct; nozzle: IrrigationNozzle; arc: HeadArc },
+      at: LatLng
+    ): Promise<void> => {
+      // Double-place guard — same race, same cure as placePlant above.
+      if (headSaveRef.current) return;
+      headSaveRef.current = true;
+      try {
+        const workingPsi = pressureRef.current?.workingPsi ?? null;
+        const adj = adjustedRadius(sel.nozzle, workingPsi);
+        if (adj.method === "below_minimum") {
+          setErrorMsg(adj.note);
+          return;
+        }
+        if (!orgIdRef.current) {
+          setErrorMsg("Still loading this estimate — try again in a moment.");
+          return;
+        }
+        const { error } = await createEstimateArea(supabase, {
+          estimate_id: estimateId,
+          organization_id: orgIdRef.current,
+          name: sel.product.name,
+          color: sel.product.color,
+          polygon: [at], // ONE coordinate — same geometry as a plant
+          area_sqft: 0,
+          kind: "point",
+          // Snapshot, not ids: arc and heading are chosen at placement, and
+          // re-pricing the catalogue must not change what was quoted.
+          meta: headSnapshot(sel.product, sel.nozzle, sel.arc, 0) as unknown as Record<
+            string,
+            unknown
+          >,
+        });
+        // Release the guard BEFORE the reload+sync — same reasoning as
+        // placePlant: sticky placement is for back-to-back tapping.
+        headSaveRef.current = false;
+        if (error) {
+          setErrorMsg(`Place head: ${error}`);
+          return;
+        }
+        setErrorMsg(null);
+        toast.success(`${sel.product.name} placed`);
+        const fresh = await loadAreasRef.current();
+        const syncErr = await syncEstimateTotals(supabase, estimateId, fresh);
+        if (syncErr) setErrorMsg(syncErr);
+      } finally {
+        headSaveRef.current = false;
+      }
+    },
+    [estimateId, supabase, toast]
+  );
+  const placeHeadRef = useRef(placeHead);
+  useEffect(() => {
+    placeHeadRef.current = placeHead;
+  }, [placeHead]);
+
+  /* ---------- Coverage reports (derived) ---------- */
+  // One report per MEASURED POLYGON (never per point row — a head is not a
+  // surface to cover), each measured against ALL placed heads. Everything
+  // below renders the contract's describeCoverage lines verbatim off these;
+  // nothing here invents a summary score. headsPlaced gates the whole report
+  // block: with no heads there is nothing to measure against.
+  const { headsPlaced, coverageReports } = useMemo(() => {
+    const heads = headsForCoverage(areas);
+    const reports = areas
+      .filter((a) => a.kind === "area" && Array.isArray(a.polygon) && a.polygon.length >= 3)
+      .map((a) => ({ areaId: a.id, report: coverageReport(a.polygon, heads) }));
+    return { headsPlaced: heads.length, coverageReports: reports };
+  }, [areas]);
+
   useEffect(() => {
     (async () => {
       await loadAreas();
+      // The pressure_* columns ride along on this same read — they are per-
+      // estimate site measurements, and one query beats a second round trip.
+      // readPressureTest narrows them (null-safe when the columns are absent).
       const { data, error } = await supabase
         .from("estimates")
-        .select("organization_id")
+        .select(
+          "organization_id, pressure_static_psi, pressure_working_psi, pressure_gpm, pressure_tested_at, pressure_notes"
+        )
         .eq("id", estimateId)
         .single();
       if (error) {
@@ -282,6 +446,7 @@ export default function LawnMeasurementMap({
         return;
       }
       setOrgId((data as { organization_id: string } | null)?.organization_id ?? null);
+      setPressure(readPressureTest(data));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estimateId]);
@@ -347,6 +512,17 @@ export default function LawnMeasurementMap({
     });
   }, [orgId, supabase]);
 
+  /* ---------- Load the head catalogue (once per org) ---------- */
+  // Same shape as the plant catalogue above. Nozzles arrive ordered by
+  // sort_order via listIrrigationCatalogue — do NOT re-sort them.
+  useEffect(() => {
+    if (!orgId) return;
+    listIrrigationCatalogue(supabase, orgId).then(({ data }) => {
+      setHeadCatalogue(data);
+      setHeadCatalogueLoaded(true);
+    });
+  }, [orgId, supabase]);
+
   /* ---------- Load Google Maps + create the map ONCE ---------- */
   useEffect(() => {
     if (mapRef.current) return;
@@ -378,11 +554,18 @@ export default function LawnMeasurementMap({
         // draws (recreating it on every vertex change was the previous bug:
         // it flickered the map and re-geocoded on every click).
         map.addListener("click", (e: google.maps.MapMouseEvent) => {
-          // PLACEMENT branches first and returns: while a species+size is
-          // armed, a map click places a plant and must never also touch the
-          // draft. placingRef mirrors the state for the same reason draftRef
-          // does — this listener is registered once and must never read a
-          // stale closure.
+          // PLACEMENT branches first and returns: while a mode is armed, a map
+          // click places one thing and must never also touch the draft.
+          // Head placement is checked first only because only one mode can be
+          // armed at a time (they clear each other) — the order is cosmetic.
+          // placingHeadRef/placingRef mirror the state for the same reason
+          // draftRef does — this listener is registered once and must never
+          // read a stale closure.
+          const placeHeadSel = placingHeadRef.current;
+          if (placeHeadSel && e.latLng) {
+            void placeHeadRef.current(placeHeadSel, { lat: e.latLng.lat(), lng: e.latLng.lng() });
+            return;
+          }
           const place = placingRef.current;
           if (place && e.latLng) {
             void placePlantRef.current(place, { lat: e.latLng.lat(), lng: e.latLng.lng() });
@@ -482,7 +665,11 @@ export default function LawnMeasurementMap({
 
     const markers: google.maps.Marker[] = [];
     areas
-      .filter((a) => a.kind === "point")
+      // NOT `kind === "point"`. A sprinkler head is a point too, so filtering
+      // on geometry alone would draw heads as plants and open the plant card
+      // on them. `kind` says what SHAPE a row is; `meta` says what it IS, and
+      // isPlantArea reads the meta.
+      .filter((a) => isPlantArea(a))
       .forEach((area) => {
         const at = Array.isArray(area.polygon) ? area.polygon[0] : null;
         if (!at) return;
@@ -503,11 +690,145 @@ export default function LawnMeasurementMap({
             strokeWeight: 2,
           },
         });
-        marker.addListener("click", () => setSelectedPlantId(area.id));
+        marker.addListener("click", () => {
+          setSelectedPlantId(area.id);
+          setSelectedHeadId(""); // one inspect card at a time
+        });
         markers.push(marker);
       });
     plantMarkersRef.current = markers;
   }, [areas, selectedPlantId]);
+
+  /* ---------- Render head markers + coverage ---------- */
+  // Two jobs in one effect because they share the teardown: every placed head
+  // gets a marker (clickable, like plants) and — when coverage is on and the
+  // snapshot has a throw — a coverage shape. A 360 draws google.maps.Circle;
+  // a part arc draws the coverageRing polygon, which Google has no primitive
+  // for. radius_ft 0 (throw not recorded) draws NOTHING — an unrecorded
+  // radius must never render as a dot at the head or a zero circle.
+  //
+  // Markers are visually distinct from plants (white fill, coloured stroke —
+  // plants are the inverse) so a head never reads as a plant on the map.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const g = google;
+    headMarkersRef.current.forEach((m) => {
+      g.maps.event.clearInstanceListeners(m);
+      m.setMap(null);
+    });
+    headMarkersRef.current = [];
+    coverageShapesRef.current.forEach((s) => s.setMap(null));
+    coverageShapesRef.current = [];
+    gapMarkersRef.current.forEach((m) => {
+      g.maps.event.clearInstanceListeners(m);
+      m.setMap(null);
+    });
+    gapMarkersRef.current = [];
+
+    const markers: google.maps.Marker[] = [];
+    const shapes: (google.maps.Circle | google.maps.Polygon)[] = [];
+    const gaps: google.maps.Marker[] = [];
+
+    areas
+      // NOT `kind === "point"`. A plant is a point too — kind says what SHAPE
+      // a row is, meta says what it IS, and isIrrigationArea reads the meta.
+      .filter((a) => isIrrigationArea(a))
+      .forEach((area) => {
+        const snap = readHeadSnapshot(area);
+        const at = Array.isArray(area.polygon) ? area.polygon[0] : null;
+        if (!snap || !at) return;
+        const selected = area.id === selectedHeadId;
+        const marker = new g.maps.Marker({
+          position: new g.maps.LatLng(at.lat, at.lng),
+          map: mapRef.current,
+          clickable: true,
+          cursor: "pointer",
+          zIndex: 1200, // above the vertex handles, same tier as plant markers
+          title: `${area.name} — ${snap.nozzle || "nozzle?"} · ${snap.arc_deg}°`,
+          // WHITE fill with a coloured stroke — the inverse of the plant
+          // marker (coloured fill, white stroke), so the two point kinds
+          // never look alike on satellite imagery.
+          icon: {
+            path: g.maps.SymbolPath.CIRCLE,
+            scale: selected ? 11 : 8,
+            fillColor: "#ffffff",
+            fillOpacity: 1,
+            strokeColor: area.color,
+            strokeWeight: 2,
+          },
+        });
+        marker.addListener("click", () => {
+          setSelectedHeadId(area.id);
+          setSelectedPlantId(""); // one inspect card at a time
+        });
+        markers.push(marker);
+
+        if (!coverageOn) return;
+        if (!(snap.radius_ft > 0)) return; // throw not recorded — draw nothing
+        const radiusM = snap.radius_ft * 0.3048; // Circle wants metres
+        if (snap.arc_deg === 360) {
+          shapes.push(
+            new g.maps.Circle({
+              center: new g.maps.LatLng(at.lat, at.lng),
+              radius: radiusM,
+              strokeColor: area.color,
+              strokeOpacity: 0.7,
+              strokeWeight: 1,
+              fillColor: area.color,
+              fillOpacity: 0.15,
+              clickable: false,
+              map: mapRef.current,
+            })
+          );
+        } else {
+          const ring = coverageRing(at, snap.radius_ft, snap.arc_deg, snap.heading_deg);
+          if (ring.length < 2) return;
+          shapes.push(
+            new g.maps.Polygon({
+              paths: ring.map((p) => new g.maps.LatLng(p.lat, p.lng)),
+              strokeColor: area.color,
+              strokeOpacity: 0.7,
+              strokeWeight: 1,
+              fillColor: area.color,
+              fillOpacity: 0.15,
+              clickable: false,
+              map: mapRef.current,
+            })
+          );
+        }
+      });
+
+    // Gap markers from the coverage reports — small amber dots, not clickable,
+    // below everything else in z-order. Drawn only while coverage is on.
+    if (coverageOn) {
+      coverageReports.forEach(({ report }) =>
+        report.gapPoints.forEach((p) => {
+          gaps.push(
+            new g.maps.Marker({
+              position: new g.maps.LatLng(p.lat, p.lng),
+              map: mapRef.current,
+              clickable: false,
+              zIndex: 300,
+              icon: {
+                path: g.maps.SymbolPath.CIRCLE,
+                scale: 4,
+                fillColor: "#b45309",
+                fillOpacity: 0.9,
+                strokeColor: "#ffffff",
+                strokeWeight: 1,
+              },
+            })
+          );
+        })
+      );
+    }
+
+    headMarkersRef.current = markers;
+    coverageShapesRef.current = shapes;
+    gapMarkersRef.current = gaps;
+    // coverageReports is derived from areas (below), so listing it here keeps
+    // the gap markers honest after every reload.
+  }, [areas, selectedHeadId, coverageOn, coverageReports]);
 
   /* ---------- Render draft polygon and markers ---------- */
   useEffect(() => {
@@ -716,7 +1037,8 @@ export default function LawnMeasurementMap({
   };
 
   const startNewArea = () => {
-    setPlacing(null); // the two modes are mutually exclusive — see startPlacement
+    setPlacing(null); // the placement modes are mutually exclusive — see startPlacement
+    setPlacingHead(null);
     if (!discardDraftOk()) return;
     setDraft({ areaId: "new", vertices: [], tags: [] });
     setHistory([]);
@@ -725,7 +1047,8 @@ export default function LawnMeasurementMap({
 
   /* ---------- Edit existing area ---------- */
   const editArea = (area: EstimateArea) => {
-    setPlacing(null); // the two modes are mutually exclusive — see startPlacement
+    setPlacing(null); // the placement modes are mutually exclusive — see startPlacement
+    setPlacingHead(null);
     if (!discardDraftOk()) return;
     const polygon = Array.isArray(area.polygon) ? area.polygon : [];
     setDraft({ areaId: area.id, vertices: polygon, tags: area.access_tags ?? [] });
@@ -750,6 +1073,7 @@ export default function LawnMeasurementMap({
     setHistory([]);
     setFuture([]);
     setSelectedPlantId("");
+    setPlacingHead(null); // one placement mode at a time
     setPlacing({ product, size });
   };
 
@@ -757,6 +1081,22 @@ export default function LawnMeasurementMap({
   // that exits after each plant makes that twenty round trips. Exit is
   // explicit — Done button, Escape, or arming a different size.
   const stopPlacing = () => setPlacing(null);
+
+  /* ---------- Head placement mode ---------- */
+  // Same discipline as plant placement: discards a draft only with consent,
+  // clears the other placement mode, sticky until explicitly ended. The arc
+  // can still be changed while armed — it is a property of the placement.
+  const startHeadPlacement = (product: IrrigationProduct, nozzle: IrrigationNozzle) => {
+    if (!discardDraftOk()) return;
+    setDraft(null);
+    setHistory([]);
+    setFuture([]);
+    setSelectedHeadId("");
+    setPlacing(null); // one placement mode at a time
+    setPlacingHead({ product, nozzle, arc: headPickerArc });
+  };
+
+  const stopHeadPlacing = () => setPlacingHead(null);
 
   /* ---------- Per-placement note ---------- */
   // Read-modify-write the WHOLE meta object: constructing a fresh one here
@@ -778,6 +1118,65 @@ export default function LawnMeasurementMap({
     await loadAreas();
   }
 
+  /* ---------- Rotate a placed head ---------- */
+  // Only meaningful for part circles — a 360 ignores heading, so the buttons
+  // are hidden on full-circle heads. Read-modify-write the WHOLE meta, same
+  // rule as savePlantNote: the snapshot fields must survive the edit.
+  async function rotateHead(area: EstimateArea, delta: number) {
+    const snap = readHeadSnapshot(area);
+    if (!snap || snap.arc_deg === 360) return;
+    const current = (area.meta ?? {}) as Record<string, unknown>;
+    const meta: Record<string, unknown> = {
+      ...current,
+      heading_deg: (snap.heading_deg + delta + 360) % 360,
+    };
+    const error = await updateEstimateArea(supabase, area.id, { meta });
+    if (error) {
+      setErrorMsg(`Rotate head: ${error}`);
+      return;
+    }
+    setErrorMsg(null);
+    await loadAreas();
+  }
+
+  /* ---------- Site pressure test ---------- */
+  // Saves the four readings + a fresh timestamp straight onto the estimate
+  // row, then re-reads them through readPressureTest so the displayed state
+  // is always the contract's narrow, not the raw form input.
+  async function savePressureTest() {
+    const numOrNull = (raw: string): number | null => {
+      const t = raw.trim();
+      if (!t) return null;
+      const n = Number(t);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const { error } = await supabase
+      .from("estimates")
+      .update({
+        pressure_static_psi: numOrNull(psiStatic),
+        pressure_working_psi: numOrNull(psiWorking),
+        pressure_gpm: numOrNull(psiGpm),
+        pressure_notes: psiNotes.trim() || null,
+        pressure_tested_at: new Date().toISOString(),
+      })
+      .eq("id", estimateId);
+    if (error) {
+      setErrorMsg(`Pressure test: ${error.message}`);
+      return;
+    }
+    setErrorMsg(null);
+    toast.success("Pressure test saved");
+    setPressureFormOpen(false);
+    const { data } = await supabase
+      .from("estimates")
+      .select(
+        "pressure_static_psi, pressure_working_psi, pressure_gpm, pressure_tested_at, pressure_notes"
+      )
+      .eq("id", estimateId)
+      .single();
+    setPressure(readPressureTest(data));
+  }
+
   /* ---------- Delete area ---------- */
   const deleteArea = async (area: EstimateArea) => {
     if (!confirm(`Delete ${area.name}?`)) return;
@@ -797,6 +1196,7 @@ export default function LawnMeasurementMap({
       setFuture([]);
     }
     if (selectedPlantId === area.id) setSelectedPlantId("");
+    if (selectedHeadId === area.id) setSelectedHeadId("");
   };
 
   /* ---------- Color cycle ---------- */
@@ -836,14 +1236,18 @@ export default function LawnMeasurementMap({
   };
 
   /* ---------- Escape key ---------- */
-  // TWO Escape behaviours, in priority order: if placement mode is armed,
+  // Escape behaviours, in priority order: if EITHER placement mode is armed,
   // Escape ends it (placement is sticky, so it needs an explicit exit — see
-  // stopPlacing). Otherwise, if the panel is open, fold it. The listener is
-  // registered even when the panel is closed because placement can be armed
-  // with the panel folded away.
+  // stopPlacing / stopHeadPlacing). Otherwise, if the panel is open, fold it.
+  // The listener is registered even when the panel is closed because
+  // placement can be armed with the panel folded away.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (placingHeadRef.current) {
+        setPlacingHead(null);
+        return;
+      }
       if (placingRef.current) {
         setPlacing(null);
         return;
@@ -871,8 +1275,36 @@ export default function LawnMeasurementMap({
     ? areas.find((a) => a.id === selectedPlantId) ?? null
     : null;
   const selectedSnapshot = selectedPlant ? readPlantSnapshot(selectedPlant) : null;
+  const selectedHead = selectedHeadId
+    ? areas.find((a) => a.id === selectedHeadId) ?? null
+    : null;
+  const selectedHeadSnap = selectedHead ? readHeadSnapshot(selectedHead) : null;
   const draftSqft = draft ? areaSqftFromPoints(draft.vertices) : 0;
   const totalSqft = savedSqft + draftSqft;
+
+  /* ---------- Pressure + adjustment derivations for the panel ---------- */
+  const pressureVerdictInfo = pressure ? pressureVerdict(pressure) : null;
+  const pressureAge = pressure ? pressureAgeDays(pressure) : null;
+  // The prompt shows once the estimate row has loaded (pressure !== null);
+  // before that it renders nothing — flashing a prompt before the data
+  // arrives reads as an error.
+  const workingPsi = pressure?.workingPsi ?? null;
+  // Adjustment for the currently armed head — recomputed on every render so
+  // a freshly saved pressure test immediately rewrites the banner note.
+  const armedAdjustment = placingHead ? adjustedRadius(placingHead.nozzle, workingPsi) : null;
+  // For the selected head, adjust against the CATALOGUE nozzle when it is
+  // still findable (carrying min_psi/performance if present); fall back to
+  // the snapshot's own radius so a head from a since-deleted model still
+  // gets an honest note instead of none.
+  const selectedAdjustNozzle = selectedHeadSnap
+    ? headCatalogue.find((p) => p.id === selectedHeadSnap.irrigation_product_id)?.nozzles.find(
+        (n) => n.id === selectedHeadSnap.irrigation_nozzle_id
+      ) ?? { radius_ft: selectedHeadSnap.radius_ft }
+    : null;
+  const selectedAdjustment =
+    selectedHeadSnap && selectedAdjustNozzle
+      ? adjustedRadius(selectedAdjustNozzle, workingPsi)
+      : null;
 
   // Shared panel body — identical content whether the panel renders as the
   // desktop docked column or the phone bottom sheet.
@@ -979,6 +1411,246 @@ export default function LawnMeasurementMap({
                 </select>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ---- Site pressure test: prompted BEFORE the layout ---- */}
+        {/* Every throw distance below assumes a design pressure the site may
+            not deliver, so the prompt (and the verdict line, verbatim from
+            the contract) renders before any head is placed, not at quote
+            time. Shown for untested AND for recorded readings (the recorded
+            verdict is the warning that matters); hidden while pressure has
+            not loaded yet so the prompt never flashes as an error. */}
+        {pressure && pressureVerdictInfo && !pressureFormOpen && (
+          <div className="space-y-1 rounded border border-amber-200 bg-amber-50 p-2">
+            <p className="text-xs text-amber-900">{pressureVerdictInfo.message}</p>
+            <p className="text-xs text-amber-800">
+              {pressureAge === null ? "Pressure not tested" : `Pressure test ${pressureAge} days old`}
+            </p>
+            <button
+              type="button"
+              onClick={() => setPressureFormOpen(true)}
+              className={
+                pressureUntested(pressure)
+                  ? "rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+                  : "text-xs font-medium text-amber-900 underline"
+              }
+            >
+              {pressureUntested(pressure) ? "Record a pressure test" : "Edit pressure test"}
+            </button>
+          </div>
+        )}
+        {pressureFormOpen && (
+          <div className="space-y-2 rounded border border-amber-200 bg-amber-50 p-2">
+            <p className="text-xs font-medium text-amber-900">Site pressure test</p>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-amber-900">
+                Static psi
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.5"
+                  value={psiStatic}
+                  onChange={(e) => setPsiStatic(e.target.value)}
+                  aria-label="Static pressure psi"
+                  className="mt-0.5 w-full rounded border border-amber-300 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-amber-900">
+                Working psi
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.5"
+                  value={psiWorking}
+                  onChange={(e) => setPsiWorking(e.target.value)}
+                  aria-label="Working pressure psi"
+                  className="mt-0.5 w-full rounded border border-amber-300 px-2 py-1 text-sm"
+                />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-amber-900">
+                Flow (gpm)
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.5"
+                  value={psiGpm}
+                  onChange={(e) => setPsiGpm(e.target.value)}
+                  aria-label="Pressure test flow gpm"
+                  className="mt-0.5 w-full rounded border border-amber-300 px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="text-xs text-amber-900">
+                Notes
+                <input
+                  type="text"
+                  value={psiNotes}
+                  onChange={(e) => setPsiNotes(e.target.value)}
+                  aria-label="Pressure test notes"
+                  className="mt-0.5 w-full rounded border border-amber-300 px-2 py-1 text-sm"
+                />
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void savePressureTest()}
+                className="rounded bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+              >
+                Save test
+              </button>
+              <button
+                type="button"
+                onClick={() => setPressureFormOpen(false)}
+                className="rounded border border-amber-300 px-3 py-1.5 text-xs text-amber-900"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ---- Sprinkler heads (model → nozzle → arc → tap the map) ---- */}
+        {/* Same empty-state discipline as plants: a brand-new org has no head
+            models either, and the picker must say where to fix that. */}
+        {headCatalogueLoaded && headCatalogue.length === 0 && !draft && (
+          <div className="space-y-1 rounded border border-amber-200 bg-amber-50 p-2">
+            <p className="text-xs font-medium text-amber-900">
+              No sprinkler heads in the catalogue yet
+            </p>
+            <p className="text-xs text-amber-800">
+              Heads are placed on the map straight from your catalogue. Add the
+              models and nozzles you install first.
+            </p>
+            <a
+              href="/lawn/irrigation"
+              className="inline-block text-xs font-medium text-amber-900 underline"
+            >
+              Go to Heads
+            </a>
+          </div>
+        )}
+
+        {headCatalogueLoaded && headCatalogue.length > 0 && !draft && (
+          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
+            <p className="text-xs font-medium text-gray-700">Sprinkler heads</p>
+            {placingHead ? (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-600">
+                  Placing{" "}
+                  <span className="font-medium text-gray-900">{placingHead.product.name}</span>{" "}
+                  ({placingHead.nozzle.nozzle},{" "}
+                  {placingHead.arc === 360 ? "full circle" : `${placingHead.arc}°`}) —{" "}
+                  {describeThrow(placingHead.nozzle.radius_ft)}. Tap the map to place one — the
+                  mode stays armed for the next.
+                </p>
+                {armedAdjustment && (
+                  <p
+                    className={
+                      armedAdjustment.method === "below_minimum"
+                        ? "text-xs font-medium text-red-700"
+                        : "text-xs text-gray-500"
+                    }
+                  >
+                    {describeAdjustment(armedAdjustment)}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  {/* The arc is a property of the PLACEMENT, not the part —
+                      changeable while armed. */}
+                  <select
+                    value={headPickerArc}
+                    onChange={(e) => {
+                      const arc = Number(e.target.value) as HeadArc;
+                      setHeadPickerArc(arc);
+                      if (placingHead) setPlacingHead({ ...placingHead, arc });
+                    }}
+                    aria-label="Spray arc"
+                    className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+                  >
+                    {HEAD_ARCS.map((a) => (
+                      <option key={a} value={a}>
+                        {a === 360 ? "360° — full circle" : `${a}°`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={stopHeadPlacing}
+                    className="w-full rounded bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700"
+                  >
+                    Done placing
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={headPickerProductId}
+                  onChange={(e) => {
+                    setHeadPickerProductId(e.target.value);
+                    setHeadPickerNozzleId("");
+                  }}
+                  aria-label="Head model"
+                  className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+                >
+                  <option value="">Model…</option>
+                  {headCatalogue.map((p) => (
+                    // A model with NO nozzles cannot be placed — disabled
+                    // with why, not hidden, same as unsized species.
+                    <option key={p.id} value={p.id} disabled={p.nozzles.length === 0}>
+                      {p.name}
+                      {p.nozzles.length === 0 ? " (no nozzles yet)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={headPickerNozzleId}
+                  onChange={(e) => {
+                    const nozzleId = e.target.value;
+                    setHeadPickerNozzleId(nozzleId);
+                    const product = headCatalogue.find((p) => p.id === headPickerProductId);
+                    const nozzle = product?.nozzles.find((n) => n.id === nozzleId);
+                    if (product && nozzle) startHeadPlacement(product, nozzle);
+                  }}
+                  disabled={!headPickerProductId}
+                  aria-label="Head nozzle"
+                  className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-40"
+                >
+                  <option value="">Nozzle…</option>
+                  {(headCatalogue.find((p) => p.id === headPickerProductId)?.nozzles ?? []).map(
+                    (n) => (
+                      // describeThrow spells out BOTH numbers ("30 ft from
+                      // the head · 60 ft across") so a radius/diameter
+                      // mistake is visible at the moment of choosing.
+                      <option key={n.id} value={n.id}>
+                        {`${n.nozzle} — ${describeThrow(n.radius_ft)}`}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+            )}
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={coverageOn}
+                onChange={(e) => setCoverageOn(e.target.checked)}
+                aria-label="Show head coverage"
+                className="h-3.5 w-3.5"
+              />
+              Show coverage
+            </label>
+            <p className="text-xs text-gray-500">
+              Draw what you are installing and price it in minutes. Coverage shows
+              what you placed, so gaps and overlaps are easy to spot — spacing,
+              pressure and zoning stay your call.
+            </p>
           </div>
         )}
 
@@ -1170,6 +1842,30 @@ export default function LawnMeasurementMap({
                     ))}
                   </div>
                 )}
+                {/* Coverage for THIS area, measured against every placed head.
+                    The contract's describeCoverage lines render VERBATIM —
+                    including the pressure caveat — and carry BOTH numbers the
+                    report computes (reached %, overlap %). No single score is
+                    invented here; that is a deliberate non-feature. */}
+                {headsPlaced > 0 &&
+                  (() => {
+                    const rep = coverageReports.find((r) => r.areaId === area.id);
+                    if (!rep) return null;
+                    return (
+                      <div className="w-full space-y-0.5 pl-9">
+                        {describeCoverage(rep.report).map((line, i) => (
+                          <p
+                            key={i}
+                            className={
+                              i === 0 ? "text-xs text-gray-700" : "text-xs text-gray-500"
+                            }
+                          >
+                            {line}
+                          </p>
+                        ))}
+                      </div>
+                    );
+                  })()}
               </li>
             ))}
           </ul>
@@ -1228,6 +1924,86 @@ export default function LawnMeasurementMap({
               className="w-full rounded border border-red-200 px-2 py-1 text-sm text-red-600"
             >
               Delete plant
+            </button>
+          </div>
+        )}
+
+        {/* ---- Selected placed head: inspect / rotate / note / delete ---- */}
+        {/* Mirrors the plant card. Rotation is only offered on part circles —
+            a 360 ignores heading entirely. Deleting is the head's undo. */}
+        {selectedHead && selectedHeadSnap && (
+          <div className="space-y-2 rounded border border-gray-200/70 bg-white/50 p-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-gray-900">{selectedHead.name}</p>
+                <p className="text-xs text-gray-500">
+                  {selectedHeadSnap.nozzle || "nozzle?"} ·{" "}
+                  {selectedHeadSnap.arc_deg === 360
+                    ? "full circle"
+                    : `${selectedHeadSnap.arc_deg}° arc`}{" "}
+                  · {describeThrow(selectedHeadSnap.radius_ft)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedHeadId("")}
+                title="Close"
+                aria-label="Close head card"
+                className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {selectedAdjustment && (
+              <p
+                className={
+                  selectedAdjustment.method === "below_minimum"
+                    ? "text-xs font-medium text-red-700"
+                    : "text-xs text-gray-500"
+                }
+              >
+                {describeAdjustment(selectedAdjustment)}
+              </p>
+            )}
+            {selectedHeadSnap.arc_deg !== 360 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">Facing</span>
+                <button
+                  type="button"
+                  onClick={() => void rotateHead(selectedHead, -45)}
+                  aria-label="Rotate head 45 degrees left"
+                  className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700"
+                >
+                  −45°
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void rotateHead(selectedHead, 45)}
+                  aria-label="Rotate head 45 degrees right"
+                  className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700"
+                >
+                  +45°
+                </button>
+                <span className="text-xs tabular-nums text-gray-500">
+                  {selectedHeadSnap.heading_deg}°
+                </span>
+              </div>
+            )}
+            <input
+              type="text"
+              value={plantNote[selectedHead.id] ?? selectedHeadSnap.note ?? ""}
+              onChange={(e) => setPlantNote((n) => ({ ...n, [selectedHead.id]: e.target.value }))}
+              onBlur={(e) => void savePlantNote(selectedHead, e.target.value)}
+              placeholder="Note for this placement (optional)"
+              aria-label="Placement note"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+            />
+            <button
+              type="button"
+              onClick={() => void deleteArea(selectedHead)}
+              className="w-full rounded border border-red-200 px-2 py-1 text-sm text-red-600"
+            >
+              Delete head
             </button>
           </div>
         )}

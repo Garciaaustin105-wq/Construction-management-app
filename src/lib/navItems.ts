@@ -63,6 +63,11 @@ import {
   LocateFixed,
   type LucideIcon,
   CheckCircle2,
+  CircuitBoard,
+  Trees,
+  Droplets,
+  Tractor,
+  Hammer,
 } from "lucide-react";
 import type { Role } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
@@ -160,6 +165,21 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // Products = the org's chemical catalog (office/PM manage).
       { href: "/lawn/applications", label: "Applications", Icon: FlaskConical },
       { href: "/lawn/products", label: "Products", Icon: Package },
+      // Estimator catalogues (Lane A, office/PM manage): plants, sprinkler
+      // heads, machinery and labor lines feed the map estimator's pricing.
+      // All four page gates are OFFICE_OR_PM, matching this fallthrough
+      // block. /lawn/plants shipped earlier without a nav entry — linked
+      // here now alongside its siblings.
+      { href: "/lawn/plants", label: "Plants", Icon: Trees },
+      { href: "/lawn/irrigation", label: "Heads", Icon: Droplets },
+      { href: "/lawn/equipment", label: "Machines", Icon: Tractor },
+      { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer },
+      // Lane D: everything between the water source and the heads — POC,
+      // backflow, valves, controller, wire, mainline, sleeving. Two units,
+      // each and foot, which is why this is its own catalogue and not a
+      // tab on Heads (which is per-each model→nozzle). Page gate
+      // OFFICE_OR_PM, matching this block and the components RLS tier.
+      { href: "/lawn/irrigation-components", label: "Components", Icon: CircuitBoard },
       // Compliance records (RUP purchases/30-day rule, disposal, CEU,
       // noncertified training) — page gate is OFFICE_OR_PM; this entry sits in
       // the lawn office/admin fallthrough block so it matches.
@@ -170,6 +190,11 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // into priced man-hours. Sits next to the roster it draws from. Office
       // fallthrough block = office/admin only, matching the page gate.
       { href: "/lawn/crews", label: "Crews", Icon: Users },
+      // Reads those confirmed head counts back: what jobs actually took against
+      // what they were quoted at, as proposed catalogue rates. Sits beside
+      // Crews because crew_size recorded there is what makes it work at all.
+      // Office fallthrough block = office/admin, matching the page gate.
+      { href: "/lawn/labor-feedback", label: "Labor feedback", Icon: AlarmClock },
       // "Measure & quote" (/estimates/quick) and Templates (/templates) used
       // to be separate top-of-nav tabs, but neither is a distinct top-level
       // concept — both are entry points/config that live inside Estimates
@@ -472,6 +497,18 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/lawn/applications",
             "/lawn/products",
             "/lawn/compliance",
+            "/lawn/labor-feedback",
+            // The five catalogue screens. Each is an Office-hub card, so each
+            // needs its alias here or the bottom bar highlights the wrong tab
+            // on mobile — the same rule the Customers comment below records.
+            // /lawn/plants predates the estimator lanes and was missing one
+            // too; irrigation, equipment and labor-items arrived with Lane A
+            // and irrigation-components with Lane D.
+            "/lawn/plants",
+            "/lawn/irrigation",
+            "/lawn/equipment",
+            "/lawn/labor-items",
+            "/lawn/irrigation-components",
             "/lawn/scheduling",
             // Customers is an Office-hub card again (it was moved to the
             // Account hub when its card lived there). The alias must follow the

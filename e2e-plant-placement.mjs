@@ -1,5 +1,5 @@
 // Browser E2E for plant placement on the measurement map
-// (docs/handoff-plant-map-placement.md). Runs the REAL workspace at
+// (docs/handoff/handoff-plant-map-placement.md). Runs the REAL workspace at
 // /lawn/estimate/[id] against the LIVE database, in Terra Verde Test Co.
 //
 // THE MAP IS STUBBED — read this before trusting or dismissing the run:
@@ -61,7 +61,13 @@ const env = Object.fromEntries(
 
 const BASE = process.env.E2E_BASE || "http://localhost:3007";
 const OFFICE_EMAIL = "e2e-admin-lawn@test.local";
-const E2E_PASSWORD = "E2e-Lawn-lwer5vah!";
+// READ, NEVER HARDCODED. This literal sat in a PUBLIC repo alongside the anon
+// key, which together are a complete sign-in for an office-role account. Put
+// E2E_PASSWORD in .env.local (gitignored) or the environment.
+const E2E_PASSWORD = process.env.E2E_PASSWORD || env.E2E_PASSWORD;
+if (!E2E_PASSWORD) {
+  throw new Error("E2E_PASSWORD is not set — add it to .env.local or export it.");
+}
 const ORG = "600d02fa-fae2-440b-99ab-42e96997da91"; // Terra Verde Test Co
 
 const { createClient } = await import("@supabase/supabase-js");
@@ -184,11 +190,42 @@ async function pickSize(page, speciesId, sizeLabel) {
   await page.getByText("Tap the map to place one").waitFor({ timeout: 10_000 });
 }
 
+// ---------------------------------------------------------------------------
+// Catalogue isolation
+// ---------------------------------------------------------------------------
+// These harnesses used to run `delete().eq("organization_id", ORG)` on
+// plant_products — wiping the org's ENTIRE catalogue. That was harmless when
+// the test org held nothing; it now holds a 223-species starter catalogue, and
+// a single harness run would have destroyed it silently.
+//
+// Instead: DEACTIVATE what is already there, run against a clean-looking
+// catalogue, then reactivate exactly what was deactivated. The picker and
+// listPlantCatalogue both filter on `active`, so the empty-state assertion
+// still holds, and nothing real is deleted at any point.
+//
+// Deletes below are scoped to the rows this harness creates (E2E-prefixed
+// names), never to the org.
+async function hideExistingCatalogue(admin, ORG) {
+  const { data } = await admin.from("plant_products")
+    .select("id").eq("organization_id", ORG).eq("active", true);
+  const ids = (data ?? []).map((r) => r.id);
+  if (ids.length) await admin.from("plant_products").update({ active: false }).in("id", ids);
+  return ids;
+}
+async function restoreCatalogue(admin, ids) {
+  if (ids?.length) await admin.from("plant_products").update({ active: true }).in("id", ids);
+}
+
 let estimateId = null;
+let hiddenSpeciesIds = [];
 const createdEstimates = [];
 try {
   // ---------------- reset: wipe the org catalogue (sizes cascade) ----------------
-  await admin.from("plant_products").delete().eq("organization_id", ORG);
+  // Hide the org's real catalogue for the run (the picker filters on
+  // active), and delete only rows a previous run of THIS harness left.
+  hiddenSpeciesIds = await hideExistingCatalogue(admin, ORG);
+  await admin.from("plant_products").delete()
+    .eq("organization_id", ORG).like("name", "E2E%");
 
   // ---------------- test estimate + one real polygon area ----------------
   const { data: est, error: estErr } = await admin
@@ -429,9 +466,21 @@ try {
     await admin.from("estimate_areas").delete().eq("estimate_id", estimateId);
     await admin.from("estimates").delete().eq("id", estimateId);
   }
-  await admin.from("plant_product_sizes").delete().eq("organization_id", ORG);
-  await admin.from("plant_products").delete().eq("organization_id", ORG);
-  console.log("\ncleanup: estimate + areas + catalogue wiped for the test org");
+  // Scoped to THIS harness's species. This line was org-wide and deleted the
+  // whole seeded catalogue's sizes on its first run -- species survived,
+  // because those were already scoped, so the damage was invisible in a
+  // species count. Sizes cascade from the species delete below anyway; this
+  // stays only as a belt for rows whose parent is already gone.
+  {
+    const { data: e2eSpecies } = await admin.from("plant_products")
+      .select("id").eq("organization_id", ORG).like("name", "E2E%");
+    const ids = (e2eSpecies ?? []).map((r) => r.id);
+    if (ids.length) await admin.from("plant_product_sizes").delete().in("plant_product_id", ids);
+  }
+  await admin.from("plant_products").delete()
+    .eq("organization_id", ORG).like("name", "E2E%");
+  await restoreCatalogue(admin, hiddenSpeciesIds);
+  console.log("\ncleanup: E2E rows removed; the org's real catalogue is restored");
   console.log(`\n${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);
 }

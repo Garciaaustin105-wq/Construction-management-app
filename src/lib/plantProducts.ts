@@ -49,6 +49,9 @@ import type { EstimateArea } from "@/lib/estimateAreas";
 // App-validated, matching the DB comment. Not a CHECK constraint and not a
 // TS enum — a plain list the picker renders and the writer validates against,
 // so adding "vine" is a one-line change with no migration.
+// Ordered canopy-down: buildPlantLegend sorts by this index so a legend reads
+// the way a planting plan does. A vine sits after groundcover because it is
+// the last thing installed and the last thing read.
 export const PLANT_CATEGORIES = [
   "tree",
   "palm",
@@ -57,6 +60,7 @@ export const PLANT_CATEGORIES = [
   "grass",
   "annual",
   "groundcover",
+  "vine",
 ] as const;
 
 export type PlantCategory = (typeof PLANT_CATEGORIES)[number];

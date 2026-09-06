@@ -127,7 +127,7 @@ impossible to act on by construction, not by asking the model nicely.
 
 ## Build order
 
-1. `/lawn/plants` catalogue screen — `docs/handoff-plant-catalogue.md`. The
+1. `/lawn/plants` catalogue screen — `docs/handoff/handoff-plant-catalogue.md`. The
    importer needs somewhere to import *to*, and the preview grid is the same
    grid.
 2. CSV/Excel import with manual column mapping (this doc, phases 1–5).
