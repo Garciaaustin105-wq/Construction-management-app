@@ -1,5 +1,22 @@
 # HANDOFF — state of play, 2026-09-06
 
+> **UPDATE, later on 2026-09-06 — WORK FROM `feat/desktop-ui-pass`.**
+> It contains every estimator commit (`feat/plant-catalogue` is 0 ahead of it)
+> plus the desktop UI pass phases 1 and 2. `feat/plant-catalogue` is now behind
+> and building there means missing `DataTable` entirely.
+>
+> **The desktop table pattern changed after the lane specs were written.**
+> `src/components/ui/DataTable.tsx` is the house pattern — 12 files migrated —
+> and any NEW screen with a desktop table uses it rather than hand-rolling
+> `hidden lg:block` markup. `PlantCatalogueManager.tsx` has not been migrated
+> yet, so copying it copies the old shape; copy
+> `src/components/ChemicalProductsManager.tsx` instead. Its CRUD and drawer
+> conventions are unchanged and still the ones to follow.
+>
+> The desktop pass owns `navItems.ts`, the shared layout and the remaining
+> table migrations — including `PlantCatalogueManager.tsx`, which is Lane A’s
+> file. Whoever reaches it second rebases.
+
 **Read this before the lane docs.** Four of them were written days ago and three
 are now partly stale. This says what is actually true today, what changed under
 them, and which rules are new and non-negotiable.

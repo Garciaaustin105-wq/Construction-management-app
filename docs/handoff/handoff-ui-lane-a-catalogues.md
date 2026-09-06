@@ -5,6 +5,34 @@
 > afterwards. Where the two disagree, the state-of-play note wins.
 >
 > This lane gained two catalogues it does not mention: labor items and irrigation components.
+>
+> **AMENDED 2026-09-06 — THE TABLE PATTERN MOVED UNDER THIS SPEC.** Below, this
+> doc says four times to match `PlantCatalogueManager.tsx`. That is still right
+> for the CRUD SHAPE — drawer form, `editing`/`showForm`/`saving` state, every
+> write busy-gated, empty renders empty. It is NO LONGER right for the TABLE.
+>
+> The desktop UI pass shipped `src/components/ui/DataTable.tsx` and migrated 12
+> files onto it; `PlantCatalogueManager` is on its list and simply has not been
+> reached yet. Hand-rolling a `hidden lg:block` table in a new screen now means
+> building it twice.
+>
+> **Copy `src/components/ChemicalProductsManager.tsx` instead.** It is a client
+> catalogue manager with exactly this shape, already migrated: same drawer and
+> state pattern, with the desktop table expressed as `DataTable` columns.
+>
+> - `columns: Column<T>[]` — `{ key, header, cell }`, plus `align: "right"` and
+>   `num` on money and count columns for tabular numerals.
+> - `framed` for the card chrome the hand-rolled tables carried.
+> - `mobileCard` for the phone list; **mobile output must not change**, which is
+>   the desktop pass’s one hard rule. `mobileCardClassName` takes a function so
+>   per-row dimming of inactive rows survives.
+> - Row height and font come from the density tokens automatically. Do not set
+>   your own padding, and do not pass `density` unless one table must be compact
+>   regardless of the user’s global setting.
+>
+> Branch matters here: `DataTable` exists on **`feat/desktop-ui-pass`**, not on
+> `feat/plant-catalogue`. Work from the former, which already contains every
+> estimator commit.
 
 
 Three screens' worth of work, none of it touching the map or the workspace.
