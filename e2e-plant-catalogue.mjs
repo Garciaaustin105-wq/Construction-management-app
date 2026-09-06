@@ -47,7 +47,13 @@ const env = Object.fromEntries(
 const BASE = process.env.E2E_BASE || "http://localhost:3007";
 const OFFICE_EMAIL = "e2e-admin-lawn@test.local";
 const CREW_EMAIL = "e2e-crew-lawn@test.local";
-const E2E_PASSWORD = "E2e-Lawn-lwer5vah!";
+// READ, NEVER HARDCODED. This literal sat in a PUBLIC repo alongside the anon
+// key, which together are a complete sign-in for an office-role account. Put
+// E2E_PASSWORD in .env.local (gitignored) or the environment.
+const E2E_PASSWORD = process.env.E2E_PASSWORD || env.E2E_PASSWORD;
+if (!E2E_PASSWORD) {
+  throw new Error("E2E_PASSWORD is not set — add it to .env.local or export it.");
+}
 const ORG = "600d02fa-fae2-440b-99ab-42e96997da91"; // Terra Verde Test Co
 
 const { createClient } = await import("@supabase/supabase-js");
