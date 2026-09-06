@@ -8,6 +8,22 @@
 // "@/lib/estimateAreas": the path alias is not configured on a bare tsc call.
 // Expected, not a failure — the import is erased, the emitted JS is complete.
 //
+// THAT IS NO LONGER THE WHOLE STORY, and the harness would not run at all
+// until this was fixed. irrigationProducts also imports readPlantSnapshot from
+// "@/lib/plantProducts" - a VALUE, not a type, so the specifier survives into
+// the emitted JS and Node cannot resolve "@/lib". Compile plantProducts
+// alongside, then rewrite the specifier:
+//
+//   npx tsc src/lib/irrigationProducts.ts src/lib/plantProducts.ts
+//     --outDir .irr-build --module esnext --target es2022
+//     --moduleResolution bundler --skipLibCheck
+//   sed -i {s|"@/lib/plantProducts"|"./plantProducts.js"|} .irr-build/irrigationProducts.js
+//        (single-quote the sed script; braces above only to keep this comment quotable)
+//   node e2e-irrigation-geometry.mjs
+//
+// The instructions above predate that import, which is how a harness believed
+// green sat unrunnable.
+//
 // Pure math, no database and no browser. The arc geometry is the only genuinely
 // new code in the irrigation work, and it is the kind that looks right and is
 // wrong by a cos(lat) factor, so it is checked against known ground distances
@@ -409,6 +425,37 @@ const words = [low, scaled, at45].map(describeAdjustment).join(" ");
 t("never claims adequacy", !/\badequate\b|\bsufficient\b|\bwill work\b/i.test(words));
 t("describeAdjustment returns one line each",
   [low, scaled, at45].every((a) => !describeAdjustment(a).includes("\n")));
+}
+
+{
+  // THE SELECT LIST IS PART OF THE CONTRACT.
+  //
+  // adjustedRadius() refuses to return a radius below a nozzle minimum
+  // operating pressure - the most important behaviour in the file, because
+  // below minimum a rotor stops turning and a spray breaks into mist, so it is
+  // not "shorter throw", it is the wrong part.
+  //
+  // That guard reads nozzle.min_psi. If min_psi is not SELECTED it arrives as
+  // undefined, `undefined < min_psi` is false, the guard passes, and the
+  // function hands back a radius exactly where it must refuse. The columns were
+  // live in the database for days while the select string omitted them.
+  //
+  // A comment saying "list every field" was already above that string and it
+  // drifted anyway. Hence a test.
+  console.log("\n[the select list covers every field the pressure maths reads]");
+  const cols = M.NOZZLE_COLUMNS || "";
+  for (const field of ["min_psi", "rated_psi", "performance"]) {
+    t(`NOZZLE_COLUMNS selects ${field}`, cols.includes(field), `missing from: ${cols}`);
+  }
+  // The consequence as behaviour, not string-matching: a nozzle whose minimum
+  // never loaded must not silently produce a radius.
+  const withMin = M.adjustedRadius({ radius_ft: 30, rated_psi: 45, min_psi: 30 }, 22);
+  t("below the minimum, no radius is returned", withMin.radiusFt === null);
+  t("...and the refusal names the minimum", withMin.note.includes("30"));
+  t("...and is labelled below_minimum", withMin.method === "below_minimum");
+  const noMin = M.adjustedRadius({ radius_ft: 30, rated_psi: 45 }, 22);
+  t("with the minimum ABSENT the same site scales instead of refusing - which " +
+    "is why the column must be selected", noMin.radiusFt !== null);
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed`);

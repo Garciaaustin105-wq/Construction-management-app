@@ -87,6 +87,13 @@ export type IrrigationNozzle = {
   cost: number;
   unit_price: number;
   install_minutes: number;
+  // PRESSURE. radius_ft is quoted AT a pressure; these say which, and where the
+  // nozzle stops working. adjustedRadius() reads all three, and every one must
+  // appear in NOZZLE_COLUMNS or it arrives undefined and the below-minimum
+  // refusal never fires — see the comment there.
+  rated_psi: number | null;
+  min_psi: number | null;
+  performance: PerfPoint[] | null;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -99,8 +106,17 @@ const PRODUCT_COLUMNS =
 
 // Must list every field on IrrigationNozzle — a column missing here arrives as
 // undefined while the type still claims it is present.
-const NOZZLE_COLUMNS =
-  "id, organization_id, irrigation_product_id, nozzle, radius_ft, cost, unit_price, install_minutes, sort_order, active, created_at";
+//
+// THIS COMMENT WAS ALREADY HERE AND THE LIST DRIFTED ANYWAY. rated_psi, min_psi
+// and performance were live in the database for days while this string omitted
+// them, so adjustedRadius() saw `undefined` for the minimum — and
+// `undefined < min_psi` is false, so the below-minimum guard passed silently and
+// returned a radius where it is required to refuse. That is the most dangerous
+// outcome in this file and it was produced by three missing words in a string.
+// e2e-irrigation-geometry.mjs now ASSERTS this list covers them; a comment was
+// not enough, twice (see AREA_COLUMNS in estimateAreas.ts for the first time).
+export const NOZZLE_COLUMNS =
+  "id, organization_id, irrigation_product_id, nozzle, radius_ft, cost, unit_price, install_minutes, rated_psi, min_psi, performance, sort_order, active, created_at";
 
 export type NewIrrigationProduct = {
   organization_id: string;
