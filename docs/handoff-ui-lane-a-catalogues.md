@@ -1,5 +1,12 @@
 # HANDOFF — Lane A: irrigation + equipment catalogue screens, and plant search
 
+> **READ `docs/handoff-ui-state-of-play.md` FIRST (2026-09-06).** It records
+> what changed under this lane since it was written, and the rules added
+> afterwards. Where the two disagree, the state-of-play note wins.
+>
+> This lane gained two catalogues it does not mention: labor items and irrigation components.
+
+
 Three screens' worth of work, none of it touching the map or the workspace.
 **Lane A owns: `src/app/lawn/irrigation/`, `src/app/lawn/equipment/`, new
 `src/components/Irrigation*`/`Equipment*`, and `PlantCatalogueManager.tsx`.**

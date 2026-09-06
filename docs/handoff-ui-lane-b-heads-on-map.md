@@ -1,5 +1,12 @@
 # HANDOFF — Lane B: sprinkler heads and coverage on the map
 
+> **READ `docs/handoff-ui-state-of-play.md` FIRST (2026-09-06).** It records
+> what changed under this lane since it was written, and the rules added
+> afterwards. Where the two disagree, the state-of-play note wins.
+>
+> This lane is UNCHANGED and fully accurate. It can start with no rebase.
+
+
 **Lane B owns `src/components/LawnMeasurementMap.tsx` and nothing else.**
 Lane A is in the catalogue screens, Lane C is in the workspace. Do not touch
 either.

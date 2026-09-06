@@ -1,5 +1,12 @@
 # HANDOFF — Lane D: controller, valves, backflow, wire and mainline
 
+> **READ `docs/handoff-ui-state-of-play.md` FIRST (2026-09-06).** It records
+> what changed under this lane since it was written, and the rules added
+> afterwards. Where the two disagree, the state-of-play note wins.
+>
+> Three categories were added after this doc: lateral, drip and trenching.
+
+
 Everything between the water source and the heads. Today the estimator prices
 heads, drip and pipe-between-heads and **nothing else** — so a quote can show
 40 sprinklers and omit the controller, the valves, the backflow and every foot

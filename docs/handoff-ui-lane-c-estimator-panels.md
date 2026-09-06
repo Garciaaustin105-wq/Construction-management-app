@@ -1,5 +1,12 @@
 # HANDOFF — Lane C: sod, pipe, drip and equipment panels
 
+> **READ `docs/handoff-ui-state-of-play.md` FIRST (2026-09-06).** It records
+> what changed under this lane since it was written, and the rules added
+> afterwards. Where the two disagree, the state-of-play note wins.
+>
+> This lane is now the HIGHEST-VALUE one, and gained scope: nothing yet writes estimate_labor_items or estimate_components.
+
+
 **Lane C owns `src/components/LawnEstimateWorkspace.tsx` and new panel
 components.** Lane A is in the catalogue screens, Lane B is in the map. Do not
 touch either.
