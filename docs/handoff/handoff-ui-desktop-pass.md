@@ -1,6 +1,11 @@
 # Desktop UI pass — implementation contract
 
-**Status**: APPROVED design (v1 sidebar regroup + v2 desktop density). No code shipped yet.
+**Status**: APPROVED design (v1 sidebar regroup + v2 desktop density). Phases 1+2 shipped
+on `feat/desktop-ui-pass` (`06fd3d9` density tokens + DataTable resurrection; `28f9421`
+11 tables migrated — DataTable gained framed/mobileCardClassName/mobileCardBare/
+mobileListClassName/rowExpansion parity props). Phases 3-5 pending. Mobile output is
+pixel-identical so far; `PlantCatalogueManager.tsx` (Lane A's file) still hand-rolled —
+flagged, not touched.
 **Design mockups**: `C:\Users\garci_9e2kg3l\Projects\design\lawn-nav-regroup.html` (v1),
 `lawn-desktop-home-v2.html` (v2) — the visual reference for every phase below.
 
