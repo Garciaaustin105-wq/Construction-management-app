@@ -42,8 +42,8 @@ Where a figure had to be derived from a price, it says so — those are weaker.
 | Worst case cited (750 sqft carried up 20 flights) | 100 sqft/man-hr | 600 man-min |
 
 Nearly a **3x spread**, and it tracks **carry distance and access**, not grass
-type. Seeded at **420 man-min per 1000 sqft** (~143 sqft/man-hr), the middle of
-the accessible band.
+type. **420 man-min per 1000 sqft** (~143 sqft/man-hr) is the middle of the
+accessible band — carried as a suggestion, not written to the catalogue.
 
 Blended $/sqft figures also exist — labor $0.35–1.00/sqft, installed
 $1.70–2.60/sqft — but those bundle labor, overhead and margin. They are useful
@@ -61,9 +61,14 @@ as a sanity check on a finished quote and useless as an input.
 
 **This independently validates the plant seed.** The catalogue carries 12 min
 for a 1-gal shrub against a found figure of 12, and 120 min for a 2 in caliper
-B&B tree against a found 113 hand-dug / 76 with a machine. The seeded numbers
-sit at the conservative hand-dig end of the published range, which is the right
-place for a default.
+B&B tree against a found 113 hand-dug / 76 with a machine — the conservative
+hand-dig end of the published range.
+
+**Plants are the one catalogue still carrying seeded labor figures**, on 690
+sizes, which sits against the rule in §4. They are left in place because they
+are validated rather than guessed and because blanking 690 rows is a bigger
+decision than this pass should make on its own. Open question for the owner:
+blank them and keep the numbers as a suggestion, matching everything else.
 
 Note the machine effect: **the same tree is 113 man-minutes by hand and 76 with
 an excavator.** That is a 33% swing from equipment alone, which is an argument
@@ -134,9 +139,10 @@ Three different labor units, all correct for their domain:
 | Catalogue | Unit | State |
 |---|---|---|
 | Plants | `install_minutes` per size | **Seeded**, 690 sizes, validated above |
-| Sod | `install_minutes_per_1000_sqft` | **Seeded** this pass, 11 products |
-| Irrigation components | `install_minutes` per each/foot | **Zero** — see below |
-| Irrigation trenching | `install_minutes` per foot | **Seeded** this pass, 5 rows |
+| Sod | `install_minutes_per_1000_sqft` | **Blank** — suggestion only |
+| Irrigation components | `install_minutes` per each/foot | **Blank** — see below |
+| Irrigation trenching | `install_minutes` per foot | **Seeded**, 5 rows |
+| Everything else | `labor_items`, 8 units | **Blank** — 38 rows, suggestion only |
 
 ### Why the 68 irrigation parts stay at zero
 
@@ -152,26 +158,60 @@ the moment those get filled in. Trenching is the exception precisely because
 its production rate is published directly rather than buried in a blended
 total.
 
-### What has no home at all
+### What had no home — now built
 
-Mulch, edging, bed prep, grading, haul-off and disposal have **no labor line
-anywhere in the app**. The rates above exist and are usable; the table to put
-them in does not. Mulch is per cubic yard, edging is per linear foot, bed prep
-is per square foot — three more units on top of the three already in use.
+Mulch, edging, bed prep, grading, demolition, haul-off, drainage and cleanup
+had **no labor line anywhere**. `labor_items` is that table: one row shape, a
+unit enum of eight, and man-minutes per unit. Not a fourth bespoke catalogue —
+the component contract already proved the shape works, so `src/lib/laborItems.ts`
+reuses it exactly: `unit` on the row, `basis` naming it on every charge,
+per-unit money on the line item.
 
-Recommendation: **one `labor_items` table** with a unit enum and man-minutes
-per unit, rather than a fourth bespoke catalogue. The component contract
-already proves the shape works — `unit` on the row, `basis` naming it on every
-charge, per-unit money on the line item. Not built; flagged.
+Two additions the wider unit set forced:
+
+- **`msqft`** (per thousand square feet), because per-sqft turf rates are
+  four-decimal numbers nobody can check — fertilizer at 43,000 sqft/hour is
+  0.0014 man-min/sqft. `toMsqft()` converts measured area so nobody types
+  thousands into a field; entering 5000 in an MSF box is a thousand-fold error
+  that looks correct, and the `basis` string restates the square footage so it
+  is visible on the line.
+- **`untimed`**, separate from `unpriced`. A row can be priced with no rate
+  entered, and reporting zero man-hours for it is not the same as it taking no
+  time.
 
 ---
 
-## 4. What this pass changed
+## 4. The rule these figures live under
+
+**Nothing in this document is written into a catalogue.** Every rate and price
+here is exposed as a SUGGESTION shown beside the field — `LABOR_BENCHMARKS`,
+`SOD_INSTALL_BENCHMARK` and `BILL_RATE_BENCHMARK` in `src/lib/laborItems.ts` —
+and never as a default, never in a calculation. The org enters its own numbers
+and decides.
+
+That is not caution for its own sake; it is what the research itself says. A
+default is how someone else's crew speed silently becomes your quote, and a 20%
+labor error is the difference between a profitable contract and a break-even
+one. Where only a market price was found and no production rate, the benchmark
+says so and frames it as *what others charge*, because that is an observation
+about the market and not a rate this app recommends.
+
+Units are seeded, values are not. A unit is not an opinion — mulch is bought by
+the cubic yard whoever you are. It is also the thing an estimator cannot easily
+catch later: a wrong rate looks wrong, a wrong unit looks fine and is off by a
+factor of nine or a thousand.
+
+## 5. What this pass changed
 
 - `sod_products.sqft_per_pallet` 0 → 450 on all 11 products. **This was a
   defect, not a gap**: pallet count is sqft ÷ sqft_per_pallet, so zero produced
   no estimate rather than a cautious one. The sod calculator did not work.
-- `sod_products.install_minutes_per_1000_sqft` 0 → 420.
+- `sod_products.install_minutes_per_1000_sqft` stays **blank**; the researched
+  420 lives on as `SOD_INSTALL_BENCHMARK` instead.
+- New `labor_items` / `estimate_labor_items` tables and
+  `src/lib/laborItems.ts`, seeded with 38 rows carrying names and units only.
+- `irrigation_components.install_minutes` widened integer → numeric. **A defect**:
+  per-foot labor is fractional, and 0.5 man-min/ft of wire silently rounded.
 - Five per-linear-foot trenching rows, labor only, with man-minutes.
 - New `trenching` component category.
 

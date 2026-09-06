@@ -58,3 +58,4 @@ next-env.d.ts
 .sod-build/
 .eq-build/
 .sys-build/
+.labor-build/
