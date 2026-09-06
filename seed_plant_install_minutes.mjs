@@ -1,6 +1,6 @@
 // Install-labor benchmarks for the plant catalogue, in MAN-minutes.
 //
-// Source: docs/handoff-plant-catalogue-seeding.md §3.4, compiled from nursery
+// Source: docs/handoff/handoff-plant-catalogue-seeding.md §3.4, compiled from nursery
 // trade lists, a published landscape estimating guide and contractor threads.
 // Labor is modelled as SIZE-BANDED man-minutes, never as a percentage of
 // material cost — the contractor consensus in that research is that %-of-cost

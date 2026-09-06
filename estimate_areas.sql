@@ -1,5 +1,5 @@
 -- estimate_areas.sql
--- Handoff doc docs/handoff-estimator-v2-2026-08-28.md, section 2: multi-area
+-- Handoff doc docs/handoff/handoff-estimator-v2-2026-08-28.md, section 2: multi-area
 -- lawn measurement (replaces the single-polygon click-to-draw model, which
 -- was shipped in ff6d74f and then rejected by the user as confusing).
 --

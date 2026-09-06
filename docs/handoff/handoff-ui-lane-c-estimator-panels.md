@@ -1,6 +1,6 @@
 # HANDOFF — Lane C: sod, pipe, drip and equipment panels
 
-> **READ `docs/handoff-ui-state-of-play.md` FIRST (2026-09-06).** It records
+> **READ `docs/handoff/handoff-ui-state-of-play.md` FIRST (2026-09-06).** It records
 > what changed under this lane since it was written, and the rules added
 > afterwards. Where the two disagree, the state-of-play note wins.
 >

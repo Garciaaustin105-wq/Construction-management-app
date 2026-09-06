@@ -1,5 +1,5 @@
 -- Everything between the water source and the heads — phase 4b of
--- docs/quick-estimator-roadmap.md. Spec: docs/handoff-ui-lane-d-controls-and-mainline.md.
+-- docs/quick-estimator-roadmap.md. Spec: docs/handoff/handoff-ui-lane-d-controls-and-mainline.md.
 --
 -- WHY A SECOND TABLE rather than more rows in irrigation_products: that one is
 -- model -> nozzle, two levels, and these are flat. More to the point they need

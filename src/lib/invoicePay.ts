@@ -527,7 +527,7 @@ export async function chargeInvoiceOffSession(input: {
   // autopay_enabled is the Phase-2 consent gate — it MUST be checked before any
   // card is charged. Without it, exposing save-card would auto-charge every
   // customer forever with no opt-out (the sequencing hazard in
-  // docs/handoff-lawn-autopay-phase2.md). A falsy result leaves the invoice
+  // docs/handoff/handoff-lawn-autopay-phase2.md). A falsy result leaves the invoice
   // `sent` (the try/catch in lawnBilling.ts), so normal delivery still runs.
   const { data: customer } = await admin
     .from("customers")

@@ -4,7 +4,7 @@ The hardest of the plant handoffs. `src/components/LawnMeasurementMap.tsx` is
 928 lines that understand **polygons only** — there is not one reference to
 `kind` in the file. You are teaching it a second geometry.
 
-Do the catalogue rework (`docs/handoff-plant-catalogue-rework.md`) first. There
+Do the catalogue rework (`docs/handoff/handoff-plant-catalogue-rework.md`) first. There
 is nothing to place until a catalogue exists.
 
 ## What already exists — do not rebuild any of it

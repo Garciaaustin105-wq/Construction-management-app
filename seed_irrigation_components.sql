@@ -1,5 +1,5 @@
 -- Starter list of irrigation system components — the parts between the water
--- source and the heads. Spec: docs/handoff-ui-lane-d-controls-and-mainline.md §1.
+-- source and the heads. Spec: docs/handoff/handoff-ui-lane-d-controls-and-mainline.md §1.
 --
 -- WHY THIS IS SEEDED, like the Rain Bird catalogue and unlike a plant list:
 -- a 1 in inline globe valve is the same part in Florida and Colorado. What an

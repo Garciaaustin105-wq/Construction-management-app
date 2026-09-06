@@ -1,5 +1,5 @@
 // Browser E2E for plant placement on the measurement map
-// (docs/handoff-plant-map-placement.md). Runs the REAL workspace at
+// (docs/handoff/handoff-plant-map-placement.md). Runs the REAL workspace at
 // /lawn/estimate/[id] against the LIVE database, in Terra Verde Test Co.
 //
 // THE MAP IS STUBBED — read this before trusting or dismissing the run:

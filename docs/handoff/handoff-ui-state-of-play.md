@@ -96,7 +96,7 @@ extended figures in the panel; let the line item do its own thing.
 
 ## 3. What changed under each lane
 
-### Lane A — `docs/handoff-ui-lane-a-catalogues.md`
+### Lane A — `docs/handoff/handoff-ui-lane-a-catalogues.md`
 Still accurate for plants, sod and equipment. **Now also owns two catalogues it
 does not mention:** `/lawn/labor-items` (38 rows, `laborItems.ts`) and, if Lane D
 does not take it, `/lawn/irrigation-components` (73 rows). Both are flat
@@ -109,12 +109,12 @@ species in one scroll**. That is the oldest open item in this project.
 Render `LABOR_SCOPE_NOTE` on the labor-items screen. It stops someone adding a
 "sod install" row that double-bills hours the sod catalogue already prices.
 
-### Lane B — `docs/handoff-ui-lane-b-heads-on-map.md`
+### Lane B — `docs/handoff/handoff-ui-lane-b-heads-on-map.md`
 **Unchanged and fully accurate.** Nothing has touched
 `LawnMeasurementMap.tsx`. Contract is stable, 76 assertions green. This lane can
 start today with no rebase.
 
-### Lane C — `docs/handoff-ui-lane-c-estimator-panels.md`
+### Lane C — `docs/handoff/handoff-ui-lane-c-estimator-panels.md`
 **Now the highest-value lane**, and it gained scope: the panel must be able to
 add a **labor item** and an **irrigation component** to an estimate, writing
 `estimate_labor_items` and `estimate_components` with a full snapshot. Those two
@@ -123,7 +123,7 @@ tables exist, have RLS, and have never been written to.
 Snapshot rule as everywhere: store a copy, so re-pricing the catalogue never
 moves a quote already sent.
 
-### Lane D — `docs/handoff-ui-lane-d-controls-and-mainline.md`
+### Lane D — `docs/handoff/handoff-ui-lane-d-controls-and-mainline.md`
 **Already updated.** Contract and migration are merged; Lane D is UI only. Two
 categories were added after that doc: `lateral`, `drip` (so `pipeEstimate`
 footage and dripline have somewhere to be priced) and `trenching` (per linear
