@@ -57,3 +57,4 @@ next-env.d.ts
 .irr-build/
 .sod-build/
 .eq-build/
+.sys-build/
