@@ -65,10 +65,11 @@ B&B tree against a found 113 hand-dug / 76 with a machine — the conservative
 hand-dig end of the published range.
 
 **Plants are the one catalogue still carrying seeded labor figures**, on 690
-sizes, which sits against the rule in §4. They are left in place because they
-are validated rather than guessed and because blanking 690 rows is a bigger
-decision than this pass should make on its own. Open question for the owner:
-blank them and keep the numbers as a suggestion, matching everything else.
+sizes, which sits against the rule in §4. **Owner decision, 2026-09-05: leave
+them.** They are validated against independent sources rather than guessed —
+which is the distinction that earns the exception — and an org that disagrees
+edits them like any other catalogue value. Nothing else gets a seeded rate on
+that basis unless it clears the same bar.
 
 Note the machine effect: **the same tree is 113 man-minutes by hand and 76 with
 an excavator.** That is a 33% swing from equipment alone, which is an argument
