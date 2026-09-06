@@ -58,14 +58,15 @@ explicitly.
 
 ## Flags for the owner
 
-1. **Org-fill trigger migration pending authorization.** DB convention
-   says children get `set_org_from_estimate()` BEFORE-INSERT triggers. A
-   migration `org_triggers_estimator_child_tables` (3 CREATE TRIGGERs on
-   `estimate_labor_items` / `estimate_components` / `estimate_equipment`
-   using the existing function) was drafted but NOT applied — production
-   DDL needs explicit sign-off. The workspace fix above is sufficient on
-   its own; the trigger is defense-in-depth so hand-written SQL or future
-   call sites can't insert an orphan org row.
+1. **Org-fill triggers — RESOLVED.** DB convention says children get
+   `set_org_from_estimate()` BEFORE-INSERT triggers. After owner sign-off,
+   migration `org_triggers_estimator_child_tables` was applied to
+   production (3 CREATE TRIGGERs on `estimate_labor_items` /
+   `estimate_components` / `estimate_equipment` using the existing
+   function) and verified in `pg_trigger` — all six
+   `trg_estimate_*_org` triggers now present. The workspace-side
+   `organization_id` supply stays as the primary mechanism; the triggers
+   are the belt for any other write path.
 2. **Pipe allowances are session-local.** Routing/waste percentages live
    in panel state only — no DB column, no persistence. Reload resets
    them. The lane doc does not require persistence; flagged in case the
