@@ -27,6 +27,10 @@ t("every category the schema allows is recognised",
   COMPONENT_CATEGORIES.every(isComponentCategory));
 t("mainline, zone_valve, controller and sleeve are all present",
   ["mainline","zone_valve","controller","sleeve","backflow","wire"].every(c=>COMPONENT_CATEGORIES.includes(c)));
+// pipeEstimate() computes lateral footage between heads and dripline is sold
+// by the foot; without these two there was nothing to price either against.
+t("lateral and drip exist so per-foot pipe has somewhere to live",
+  ["lateral","drip"].every(c=>COMPONENT_CATEGORIES.includes(c)));
 t("a typo is not a category", isComponentCategory("zonevalve")===false);
 t("units are exactly each and foot", COMPONENT_UNITS.join(",")==="each,foot");
 t("a roll is not a unit — that is the mistake this table exists to prevent",

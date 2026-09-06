@@ -32,8 +32,9 @@ create table if not exists public.irrigation_components (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   name text not null,
-  -- poc, backflow, master_valve, flow_sensor, mainline, zone_valve, valve_box,
-  -- controller, wire, connector, sensor, sleeve, fitting, other.
+  -- poc, backflow, master_valve, flow_sensor, mainline, lateral, drip,
+  -- zone_valve, valve_box, controller, wire, connector, sensor, sleeve,
+  -- fitting, other.
   -- App-validated, no CHECK — matching every other catalogue here, so adding a
   -- category is a code change and not a migration.
   category text not null default 'other',
