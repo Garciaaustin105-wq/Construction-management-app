@@ -63,6 +63,7 @@ import {
   LocateFixed,
   type LucideIcon,
   CheckCircle2,
+  CircuitBoard,
   Trees,
   Droplets,
   Tractor,
@@ -173,6 +174,12 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       { href: "/lawn/irrigation", label: "Heads", Icon: Droplets },
       { href: "/lawn/equipment", label: "Machines", Icon: Tractor },
       { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer },
+      // Lane D: everything between the water source and the heads — POC,
+      // backflow, valves, controller, wire, mainline, sleeving. Two units,
+      // each and foot, which is why this is its own catalogue and not a
+      // tab on Heads (which is per-each model→nozzle). Page gate
+      // OFFICE_OR_PM, matching this block and the components RLS tier.
+      { href: "/lawn/irrigation-components", label: "Components", Icon: CircuitBoard },
       // Compliance records (RUP purchases/30-day rule, disposal, CEU,
       // noncertified training) — page gate is OFFICE_OR_PM; this entry sits in
       // the lawn office/admin fallthrough block so it matches.
