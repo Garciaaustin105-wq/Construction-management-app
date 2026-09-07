@@ -325,6 +325,12 @@ export type ImportOptions = {
   unit: LengthUnit | null;
   source: ImportSource;
   frame: CoordFrame;
+  /**
+   * Optional placement for a LOCAL trace, solved from two correspondences.
+   * Absent means the shape stays unplaced, which is the safe default: a local
+   * file imports its measurements and no polygon until someone anchors it.
+   */
+  anchor?: AnchorTransform | null;
 };
 
 export function buildImport(
@@ -364,7 +370,6 @@ export function buildImport(
       // Area, perimeter and elevation are frame-INDEPENDENT, so they are still
       // reported: a refusal here should not throw away the numbers that are
       // genuinely knowable.
-      issues.push("local_frame");
       const xy = path.points.map((p) => ({ x: p.b * toFt, y: p.a * toFt }));
       for (let i = 1; i < xy.length; i++) {
         const d = Math.hypot(xy[i].x - xy[i - 1].x, xy[i].y - xy[i - 1].y);
@@ -372,6 +377,28 @@ export function buildImport(
         lengthFt += d;
       }
       if (path.closed && xy.length >= 3) areaSqft = localAreaSqft(xy);
+
+      if (opts.anchor && opts.unit !== null) {
+        // Anchored: the trace now has a real position, so it gets a polygon and
+        // the area is taken FROM THAT POLYGON rather than from the local plane.
+        // The two agree when the scale is 1; when it is not, the shape that gets
+        // drawn and the number that gets quoted must still be the same thing.
+        polygon = applyAnchor(
+          path.points.map((p) => ({ east: p.b * toFt, north: p.a * toFt })),
+          opts.anchor
+        );
+        if (path.closed && polygon.length >= 3) areaSqft = ringAreaSqft(polygon);
+        lengthFt = 0;
+        for (let i = 1; i < polygon.length; i++) {
+          lengthFt += distanceFt(polygon[i - 1], polygon[i]);
+        }
+      } else {
+        // Unanchored. The shape cannot be placed and a wrong placement looks
+        // right, so no polygon is produced at all. Area, perimeter and
+        // elevation are frame-INDEPENDENT and still reported — a refusal here
+        // must not throw away the numbers that are genuinely knowable.
+        issues.push("local_frame");
+      }
     }
 
     const kind: ImportedArea["kind"] =
@@ -461,4 +488,131 @@ export function describeImport(area: ImportedArea): string {
     );
   }
   return bits.join(" · ") || "Nothing measurable in this path.";
+}
+
+/* ── Anchoring a local frame onto the map ─────────────────────────────────── */
+
+/**
+ * Placing a local trace.
+ *
+ * A Moasure file has no position on earth: its coordinates are feet from
+ * wherever the operator started, at whatever rotation they happened to be
+ * facing. To draw it on the map you need a transform, and a transform needs
+ * REAL correspondences — two points the surveyor can identify in both the trace
+ * and the world (driveway corners, a gate post, a hydrant).
+ *
+ * Two points give rotation, translation and scale. That is everything a rigid
+ * placement needs, and it is the fewest points a person can reasonably be asked
+ * for. What two points CANNOT give you is a mirror: a trace walked clockwise and
+ * one walked anticlockwise anchor identically, so a flipped shape still looks
+ * plausible. `anchorWarnings` says so rather than pretending otherwise.
+ */
+
+// Feet per degree of latitude — the same convention as ringAreaSqft above and
+// irrigationProducts.ts. One convention, not two.
+const FT_PER_DEG_LAT = 364000;
+
+const ftPerDegLng = (lat: number) =>
+  FT_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);
+
+/** A point in the trace's own frame, in FEET (already unit-converted). */
+export type LocalPoint = { east: number; north: number };
+
+export type AnchorPair = {
+  /** The point as it appears in the file. */
+  local: LocalPoint;
+  /** Where that point actually is. */
+  world: LatLng;
+};
+
+export type AnchorTransform = {
+  /** Degrees the trace must rotate, clockwise, to face the way the site does. */
+  rotationDeg: number;
+  /**
+   * World distance divided by trace distance. Should be ~1. It is the single
+   * best cross-check on the unit choice available anywhere in this feature:
+   * a trace read as feet when it was metres solves to ~3.28.
+   */
+  scale: number;
+  origin: AnchorPair;
+  warnings: string[];
+};
+
+const SCALE_TOLERANCE = 0.02; // 2% — survey noise, not a unit error.
+
+/**
+ * Solve the transform from two correspondences.
+ *
+ * Returns null when the two points are too close together to define a bearing:
+ * a metre apart on a 40-metre site turns half a degree of click error into
+ * twenty degrees of rotation error, and the result would look placed while
+ * being wrong.
+ */
+export function solveAnchor(a: AnchorPair, b: AnchorPair): AnchorTransform | null {
+  const localE = b.local.east - a.local.east;
+  const localN = b.local.north - a.local.north;
+  const localLen = Math.hypot(localE, localN);
+
+  const midLat = (a.world.lat + b.world.lat) / 2;
+  const worldE = (b.world.lng - a.world.lng) * ftPerDegLng(midLat);
+  const worldN = (b.world.lat - a.world.lat) * FT_PER_DEG_LAT;
+  const worldLen = Math.hypot(worldE, worldN);
+
+  // 10 ft apart minimum. Below that the bearing is dominated by click error.
+  if (!Number.isFinite(localLen) || localLen < 10) return null;
+  if (!Number.isFinite(worldLen) || worldLen < 10) return null;
+
+  const rotationRad = Math.atan2(worldE, worldN) - Math.atan2(localE, localN);
+  const scale = worldLen / localLen;
+
+  const warnings: string[] = [];
+  if (Math.abs(scale - 1) > SCALE_TOLERANCE) {
+    const pct = Math.round((scale - 1) * 100);
+    warnings.push(
+      `The two points are ${Math.abs(pct)}% ${pct > 0 ? "further apart" : "closer together"} on the map than in the file. A scale near 3.28 means the file is in metres and was read as feet; near 0.3 means the reverse. Check the unit before importing.`
+    );
+  }
+  // Two points fix rotation but not handedness.
+  warnings.push(
+    "Two points cannot tell a trace walked clockwise from one walked anticlockwise, so check the shape sits the right way round before importing."
+  );
+
+  return {
+    rotationDeg: Math.round(((rotationRad * 180) / Math.PI) * 10) / 10,
+    scale: Math.round(scale * 1000) / 1000,
+    origin: a,
+    warnings,
+  };
+}
+
+/** Place local points on the map using a solved transform. */
+export function applyAnchor(
+  points: LocalPoint[],
+  t: AnchorTransform
+): LatLng[] {
+  const rad = (t.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const { local: o, world: w } = t.origin;
+  const perLng = ftPerDegLng(w.lat);
+
+  return points.map((p) => {
+    const de = (p.east - o.east) * t.scale;
+    const dn = (p.north - o.north) * t.scale;
+    // Clockwise rotation in an (east, north) frame.
+    const e = de * cos + dn * sin;
+    const n = -de * sin + dn * cos;
+    return {
+      lat: w.lat + n / FT_PER_DEG_LAT,
+      lng: w.lng + e / perLng,
+    };
+  });
+}
+
+/** The trace's points as feet in its own frame, for anchoring. */
+export function localPoints(path: ParsedPath, unit: LengthUnit): LocalPoint[] {
+  const toFt = unit === "m" ? FT_PER_M : 1;
+  // `b` is the east-west axis and `a` the north-south one, matching
+  // guessColumns — getting this backwards mirrors every shape.
+  return path.points.map((p) => ({ east: p.b * toFt, north: p.a * toFt }));
 }

@@ -15,6 +15,9 @@ import {
   buildImport,
   compareAreas,
   describeImport,
+  solveAnchor,
+  localPoints,
+  type AnchorTransform,
   type ImportSource,
   type LengthUnit,
   type CoordFrame,
@@ -58,6 +61,13 @@ export default function SiteImportPanel({
   const [unit, setUnit] = useState<LengthUnit | null>(null);
   const [source, setSource] = useState<ImportSource>("moasure");
   const [frame, setFrame] = useState<CoordFrame>("local");
+  // Anchoring: two points the surveyor can identify in BOTH the trace and the
+  // world. An index into the flat point list, plus the real coordinates.
+  const [anchoring, setAnchoring] = useState(false);
+  const [pairs, setPairs] = useState([
+    { idx: 0, lat: "", lng: "" },
+    { idx: 1, lat: "", lng: "" },
+  ]);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState<{ written: number; skipped: number } | null>(null);
 
@@ -66,10 +76,30 @@ export default function SiteImportPanel({
     [headers, points]
   );
 
+  // The transform, when two usable correspondences exist. Solved by the
+  // contract, never worked out in the component.
+  const anchor: AnchorTransform | null = useMemo(() => {
+    if (!anchoring || frame !== "local" || unit === null) return null;
+    const all = groupPaths(points).flatMap((p) => localPoints(p, unit));
+    const [p1, p2] = pairs;
+    const a = all[p1.idx];
+    const b = all[p2.idx];
+    if (!a || !b) return null;
+    const la = Number(p1.lat);
+    const na = Number(p1.lng);
+    const lb = Number(p2.lat);
+    const nb = Number(p2.lng);
+    if (![la, na, lb, nb].every((v) => Number.isFinite(v) && v !== 0)) return null;
+    return solveAnchor(
+      { local: a, world: { lat: la, lng: na } },
+      { local: b, world: { lat: lb, lng: nb } }
+    );
+  }, [anchoring, frame, unit, points, pairs]);
+
   const areas: ImportedArea[] = useMemo(() => {
     if (!points.length) return [];
-    return buildImport(groupPaths(points), { unit, source, frame });
-  }, [points, unit, source, frame]);
+    return buildImport(groupPaths(points), { unit, source, frame, anchor });
+  }, [points, unit, source, frame, anchor]);
 
   const importedSqft = useMemo(
     () => areas.filter((a) => a.kind === "area").reduce((s, a) => s + a.areaSqft, 0),
@@ -248,6 +278,113 @@ export default function SiteImportPanel({
           )}
 
           {frame === "local" && (
+            <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                <input
+                  type="checkbox"
+                  checked={anchoring}
+                  onChange={(e) => setAnchoring(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                Place it on the map
+              </label>
+              {!anchoring ? (
+                <p className="text-xs text-gray-500">
+                  Optional. Without this the measurements import and the shape
+                  does not. To place it, pick two points you can identify in both
+                  the trace and the world — driveway corners, a gate post, a
+                  hydrant — and give their real coordinates. Right-click a spot
+                  in Google Maps to copy them.
+                </p>
+              ) : (
+                <>
+                  {pairs.map((pr, i) => (
+                    <div key={i} className="grid grid-cols-3 gap-2">
+                      <label className="block">
+                        <span className="text-[11px] text-gray-500">
+                          Point {i + 1} row
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          className={`${field} mt-1`}
+                          value={pr.idx}
+                          onChange={(e) =>
+                            setPairs((prev) =>
+                              prev.map((x, j) =>
+                                j === i ? { ...x, idx: Number(e.target.value) } : x
+                              )
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-[11px] text-gray-500">Latitude</span>
+                        <input
+                          className={`${field} mt-1`}
+                          placeholder="27.9506"
+                          value={pr.lat}
+                          onChange={(e) =>
+                            setPairs((prev) =>
+                              prev.map((x, j) =>
+                                j === i ? { ...x, lat: e.target.value } : x
+                              )
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-[11px] text-gray-500">Longitude</span>
+                        <input
+                          className={`${field} mt-1`}
+                          placeholder="-82.4572"
+                          value={pr.lng}
+                          onChange={(e) =>
+                            setPairs((prev) =>
+                              prev.map((x, j) =>
+                                j === i ? { ...x, lng: e.target.value } : x
+                              )
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                  ))}
+                  {anchor ? (
+                    <div className="space-y-1">
+                      <p className="text-xs text-gray-600">
+                        Rotated {anchor.rotationDeg} degrees, scale {anchor.scale}.
+                      </p>
+                      {/* The solved scale is the best cross-check on the unit
+                          choice anywhere in this feature: about 3.28 means a
+                          metres file was read as feet. */}
+                      {anchor.warnings.map((w, wi) => (
+                        <p
+                          key={wi}
+                          className={`text-xs p-2 rounded ${
+                            w.includes("metres")
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-gray-50 text-gray-600"
+                          }`}
+                        >
+                          {w}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      Fill both points to solve the placement. They must be at
+                      least 10 ft apart — closer than that and a small coordinate
+                      error swings the rotation wildly, so it is refused rather
+                      than guessed.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {frame === "local" && !anchor && (
             <p className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
               <MapPinOff className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
