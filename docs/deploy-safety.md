@@ -73,6 +73,26 @@ below). A direct call fails on `new` being unset, so the exposure was small —
 but "it errors before it does damage" is not a boundary. Check BOTH halves when
 a function has a trigger wrapper.
 
+**Now checked, not just written.** Run this after any migration that creates
+or replaces a function:
+
+```sql
+select * from audit_function_grants();
+```
+
+Empty means clean. Any row is a violation, with the severity and what to add.
+It checks four things: SECURITY DEFINER functions anon can execute; ones
+`authenticated` can execute that take a caller-supplied argument with no org
+guard; a missing `search_path` pin; and rule A's easily-missed second half —
+revoking PUBLIC also strips `service_role`'s *implicit* grant, so an internal
+function ends up callable by nothing.
+
+The allowlist of deliberate exceptions lives inside that function with a reason
+on every entry — the six `me_*` RLS predicates and the parameterised helpers
+policies depend on are there, and revoking those breaks RLS. If a new finding is
+a real exception, add it to that allowlist with its reason rather than deleting
+the check.
+
 **The rule:** a migration that creates or replaces a function in `public` MUST
 end with exactly one of these blocks, with the function's real signature:
 
