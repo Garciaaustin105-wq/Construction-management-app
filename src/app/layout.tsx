@@ -6,6 +6,7 @@ import { BRAND } from "@/lib/brand";
 import { getMe } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import GoogleTag from "@/components/GoogleTag";
 import AttributionCapture from "@/components/AttributionCapture";
 
@@ -75,6 +76,17 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             dev; only reports in production deploys. No env var needed; tied to
             the Vercel project. Measures the Tier 1 auth-preamble win. */}
         <SpeedInsights />
+        {/* Vercel Web Analytics — page views per route. Same shape as
+            SpeedInsights above: a no-op in dev, reports only from production
+            deploys, no env var, scoped to the Vercel project. Two projects
+            build from this tree, so lawn and construction report separately.
+
+            It records the Next ROUTE, not the resolved URL — /lawn/estimate/[id]
+            rather than the id — so estimate and customer ids do not leave the
+            app. Worth re-checking against Vercel's docs if that ever stops
+            being true, because this is a multi-tenant app with a live customer
+            on it. */}
+        <Analytics />
         {/* Google Ads tag (no-op until NEXT_PUBLIC_GOOGLE_ADS_ID is set) +
             utm_* capture for signup source attribution. See src/lib/gtag.ts
             and src/lib/attribution.ts. */}
