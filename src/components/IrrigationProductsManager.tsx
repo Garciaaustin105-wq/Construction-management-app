@@ -24,8 +24,12 @@ import {
   deleteIrrigationNozzle,
   describeThrow,
   sortNozzles,
+  throwsWater,
   updateIrrigationNozzle,
   updateIrrigationProduct,
+  submitNozzleSuggestion,
+  suggestionProblem,
+  THROW_VERIFY_NOTE,
   type HeadCategory,
   type IrrigationNozzle,
   type IrrigationProduct,
@@ -146,6 +150,12 @@ export default function IrrigationProductsManager({
   const [nozzleDraft, setNozzleDraft] = useState<NozzleDraft>(EMPTY_NOZZLE);
   const [showNozzleForm, setShowNozzleForm] = useState(false);
   const [savingNozzle, setSavingNozzle] = useState(false);
+  // Sharing a figure back is a SEPARATE, opt-in act from saving it to the org's
+  // own catalogue. Capturing what someone typed without asking would be taking
+  // their data.
+  const [share, setShare] = useState(false);
+  const [sourceNote, setSourceNote] = useState("");
+  const [sharing, setSharing] = useState(false);
   const [nozzleBusyId, setNozzleBusyId] = useState<string | null>(null);
 
   // Active first (matches the plant and chemical catalogues), then name —
@@ -155,6 +165,20 @@ export default function IrrigationProductsManager({
     () =>
       [...products].sort(
         (a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
+      ),
+    [products]
+  );
+
+  // Drip and bubbler nozzles are excluded: zero throw is the CORRECT answer for
+  // them, and counting them would show a warning no one can ever clear.
+  const missingThrow = useMemo(
+    () =>
+      products.reduce(
+        (n, p) =>
+          throwsWater(p.category)
+            ? n + p.nozzles.filter((z) => Number(z.radius_ft ?? 0) <= 0).length
+            : n,
+        0
       ),
     [products]
   );
@@ -184,7 +208,16 @@ export default function IrrigationProductsManager({
   function openNozzleAdd() {
     setNozzleEditing(null);
     setNozzleDraft(EMPTY_NOZZLE);
+    clearShare();
     setShowNozzleForm(true);
+  }
+
+  // The share opt-in and its source note belong to ONE nozzle. Carrying either
+  // across a form open would file a Hunter chart citation against a Rain Bird
+  // nozzle.
+  function clearShare() {
+    setShare(false);
+    setSourceNote("");
   }
 
   function openNozzleEdit(n: IrrigationNozzle) {
@@ -198,11 +231,13 @@ export default function IrrigationProductsManager({
       unit_price: Number(n.unit_price ?? 0),
       install_minutes: Number(n.install_minutes ?? 0),
     });
+    clearShare();
     setShowNozzleForm(true);
   }
 
   function closeNozzleForm() {
     setShowNozzleForm(false);
+    clearShare();
     setNozzleEditing(null);
   }
 
@@ -274,6 +309,41 @@ export default function IrrigationProductsManager({
     }
   }
 
+  /**
+   * Send a figure back so it can be folded into the shipped catalogue.
+   *
+   * Runs only after the org's OWN save succeeded, and a failure here never
+   * blocks that save — sharing is a courtesy to everyone else, not a condition
+   * of recording your own data.
+   */
+  async function shareFigure(modelName: string, nozzleName: string) {
+    if (!share) return;
+    const candidate = {
+      organization_id: orgId,
+      model_name: modelName,
+      nozzle_name: nozzleName,
+      radius_ft: nozzleDraft.radius_ft,
+      rated_psi: nozzleDraft.rated_psi > 0 ? nozzleDraft.rated_psi : null,
+      min_psi: nozzleDraft.min_psi > 0 ? nozzleDraft.min_psi : null,
+      source_note: sourceNote,
+    };
+    const problem = suggestionProblem(candidate);
+    if (problem) {
+      toast.warning(problem);
+      return;
+    }
+    setSharing(true);
+    const { error } = await submitNozzleSuggestion(supabase, candidate);
+    setSharing(false);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    toast.success("Thanks — shared for the shipped catalogue");
+    setShare(false);
+    setSourceNote("");
+  }
+
   async function saveNozzle(e: React.FormEvent, productId: string) {
     e.preventDefault();
     const nozzle = nozzleDraft.nozzle.trim();
@@ -281,6 +351,7 @@ export default function IrrigationProductsManager({
       toast.warning("Nozzle label is required");
       return;
     }
+    const modelName = products.find((p) => p.id === productId)?.name ?? "";
     const payload = {
       nozzle,
       radius_ft: nozzleDraft.radius_ft,
@@ -316,6 +387,7 @@ export default function IrrigationProductsManager({
         )
       );
       toast.success("Nozzle updated");
+      await shareFigure(modelName, nozzle);
     } else {
       // sort_order is never typed — it IS the position in the nozzle tree,
       // and the order is never alphabetical ("15-VAN" would sort before
@@ -554,12 +626,52 @@ export default function IrrigationProductsManager({
                 Leave 0 if not estimated — it never quotes labor as free.
               </span>
             </label>
+            {/*
+              Sharing is opt-in and separate from saving. The org's own
+              catalogue is theirs either way; this only asks whether the figure
+              may also be folded into the shipped seed so the next org does not
+              have to look it up.
+            */}
+            <div className="rounded-lg border border-gray-200 bg-white p-2 space-y-2">
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={share}
+                  onChange={(e) => setShare(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="text-[11px] leading-snug text-gray-600">
+                  Share this throw distance so it can be added to the shipped
+                  catalogue. Your prices, costs and install times are never
+                  sent — only the nozzle name, throw and pressures.
+                </span>
+              </label>
+              {share && (
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-600">
+                    Where did this figure come from?
+                  </span>
+                  <input
+                    value={sourceNote}
+                    onChange={(e) => setSourceNote(e.target.value)}
+                    placeholder="Hunter PGP chart p.4 / measured on site / box label"
+                    className={`${field} mt-1`}
+                  />
+                  <span className="mt-1 block text-[11px] text-gray-400">
+                    Required. A number with no source cannot be added to a
+                    catalogue other companies will quote from.
+                  </span>
+                </label>
+              )}
+            </div>
             <button
               type="submit"
-              disabled={savingNozzle}
+              disabled={savingNozzle || sharing}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg px-3 py-1.5 active:bg-slate-800 disabled:opacity-50"
             >
-              {savingNozzle && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {(savingNozzle || sharing) && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              )}
               {nozzleEditing ? "Save nozzle" : "Add nozzle"}
             </button>
           </form>
@@ -583,6 +695,23 @@ export default function IrrigationProductsManager({
 
   return (
     <div className="space-y-3">
+      {/*
+        Seeded throw distances are a STARTING POINT. An org that quotes from
+        them unchecked is quoting someone else's nozzles, so say so where the
+        numbers are edited rather than burying it in documentation.
+      */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+        <p className="text-[11px] leading-snug text-amber-900">
+          {THROW_VERIFY_NOTE}
+        </p>
+        {missingThrow > 0 && (
+          <p className="mt-1.5 text-[11px] font-semibold text-amber-900">
+            {missingThrow} nozzle{missingThrow === 1 ? " has" : "s have"} no
+            throw distance yet. Add yours and tick &ldquo;share&rdquo; — that is
+            how the missing ones get filled in for everybody.
+          </p>
+        )}
+      </div>
       <div className="flex items-center gap-2">
         <p className="text-sm text-gray-600 flex-1">
           {products.length} head model{products.length === 1 ? "" : "s"}
