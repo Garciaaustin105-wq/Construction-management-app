@@ -1,0 +1,60 @@
+# DeepSource configuration.
+#
+# WHY THIS FILE EXISTS. The JavaScript check has been failing on main for a
+# long time, and a large share of what it reported was not a defect: every
+# e2e-*.mjs harness failed to PARSE, because without a module system declared
+# the analyzer read them as classic scripts and `import` is a syntax error
+# there. A permanently red light that is mostly wrong is a light nobody reads,
+# which is worse than no light at all.
+#
+# Adding this file makes the repository the source of truth for analysis
+# configuration, so every analyzer that should run has to be listed here —
+# omitting one silently switches it off. Secrets in particular must stay on:
+# it caught a real credential committed to this public repo.
+version = 1
+
+# The 33 e2e-*.mjs harnesses are tests. Saying so stops the analyzer applying
+# production rules to them (unused expressions in assertions, and so on) while
+# still parsing and checking them.
+test_patterns = [
+  "e2e-*.mjs",
+  "tools/**/e2e-*.mjs",
+]
+
+exclude_patterns = [
+  # Standalone contract compiles produced for the harnesses. Emitted output,
+  # never edited by hand.
+  ".irr-build/**",
+  ".feedback-build/**",
+  ".mat-build/**",
+  ".next/**",
+  "public/**",
+]
+
+[[analyzers]]
+name = "javascript"
+enabled = true
+
+  [analyzers.meta]
+  # THE FIX. Everything here is an ES module — the app, the config files and
+  # every harness. Declared as commonjs (the default when nothing is said) a
+  # top-level `import` is a parse error, which is exactly what was being
+  # reported 33 times.
+  module_system = "es-modules"
+  dialect = "typescript"
+  plugins = ["react"]
+  # Both, deliberately: server routes and scripts run under node, components
+  # run in a browser, and the harnesses are node.
+  environment = ["nodejs", "browser"]
+
+[[analyzers]]
+name = "sql"
+enabled = true
+
+[[analyzers]]
+name = "shell"
+enabled = true
+
+[[analyzers]]
+name = "secrets"
+enabled = true
