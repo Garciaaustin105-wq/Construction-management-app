@@ -574,6 +574,36 @@ function readBuildRules() {
   }
 }
 
+/**
+ * The operating model, read from docs/how-we-work.md at render time.
+ *
+ * Live for the same reason the rules are: this describes how work is actually
+ * split between the orchestrator, the implementing agents and the person, and a
+ * hub showing last month's version of that is worse than showing none.
+ * Sections are "## Heading" with "- " bullets under them.
+ */
+function readWorkflow() {
+  try {
+    const md = fs.readFileSync(path.resolve(DIR, "..", "..", "docs", "how-we-work.md"), "utf8");
+    const groups = [];
+    let current = null;
+    for (const raw of md.split("\n")) {
+      const line = raw.trim();
+      const head = line.match(/^##\s+(.+)$/);
+      if (head) {
+        current = { title: head[1], items: [] };
+        groups.push(current);
+        continue;
+      }
+      const item = line.match(/^-\s+(.+)$/);
+      if (item && current) current.items.push(item[1]);
+    }
+    return groups.filter((g) => g.items.length);
+  } catch {
+    return [];
+  }
+}
+
 function renderStatusHtml(state, opts = {}) {
   const { flash = null, interactive = false } = opts;
   pruneAgents(state);
@@ -625,6 +655,17 @@ function renderStatusHtml(state, opts = {}) {
         )
         .join("")
     : "<p class=\"mut\">The board is empty.</p>";
+
+  const workGroups = readWorkflow();
+  const workHtml = workGroups.length
+    ? workGroups
+        .map(
+          (g) => `<div class="rulegroup"><h3>${esc(g.title)}</h3><ul>${g.items
+            .map((i) => `<li>${esc(i.replace(/[`*]/g, ""))}</li>`)
+            .join("")}</ul></div>`
+        )
+        .join("")
+    : "<p class=\"mut\">docs/how-we-work.md not found from here.</p>";
 
   const ruleGroups = readBuildRules();
   const ruleHtml = ruleGroups.length
@@ -779,6 +820,12 @@ node tools/agent-bus/server.mjs note my-status "what I am doing"</pre>
 </div>
 <p class="mut">Running <code>server.mjs</code> with no arguments starts the stdio MCP
   server and blocks — that is for editors, not for you. Any verb prints usage.</p>
+
+<h2>How we work</h2>
+<p class="mut">The operating model, read live from <code>docs/how-we-work.md</code>.
+  The expensive model plans and verifies, cheaper agents implement, and this board is
+  how they stay out of each other's way.</p>
+<div class="grid2">${workHtml}</div>
 
 <h2>How to build here — ${ruleGroups.reduce((n, g) => n + g.rules.length, 0)} rules</h2>
 <p class="mut">Read live from <code>docs/build-rules.md</code>. Every one was written after
