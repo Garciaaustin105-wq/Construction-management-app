@@ -58,6 +58,9 @@ function stateDir() {
 const DIR = stateDir();
 const STATE = path.join(DIR, "state.json");
 const LOCK = path.join(DIR, ".lock");
+// Lives beside the state, not in the repo tree: it is generated, per-machine,
+// and nobody should be tempted to commit it.
+const STATUS_PAGE = path.join(DIR, "status.html");
 
 /* ── atomic state access ──────────────────────────────────────────────────── */
 
@@ -119,6 +122,9 @@ function withState(fn) {
     const tmp = `${STATE}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
     fs.renameSync(tmp, STATE);
+    // Refresh the page every time the bus changes, so an open browser tab is
+    // never behind the tools. Defined below; hoisting makes that fine.
+    writeStatusPage(state);
     return result;
   } finally {
     try { fs.closeSync(fd); } catch { /* already closed */ }
@@ -536,8 +542,8 @@ function callTool(name, args) {
 // Server-rendered with a meta refresh rather than client-side polling. It is a
 // status board on a local socket; five lines of HTML beat a fetch loop, and it
 // keeps the no-dependencies rule this file has kept from the start.
-function dashboardHtml() {
-  return withState((state) => {
+function renderStatusHtml(state) {
+  {
     pruneAgents(state);
     const now = Date.now();
     const ago = (iso) => {
@@ -634,7 +640,32 @@ function dashboardHtml() {
 <h2>Board (${board.length})</h2>
 ${boardRows}
 `;
-  });
+  }
+}
+
+// THE PAGE, as a file rather than a server.
+//
+// Written next to the state on every change, so opening
+// tools/agent-bus/status.html in a browser and leaving it there shows the bus
+// live — the meta refresh re-reads the file, and the file is rewritten whenever
+// any agent does anything. No command to run, no port, no terminal.
+//
+// This is the difference between "there is a dashboard" and "there is a page I
+// can look at": a status view you have to remember to start is one you stop
+// using.
+function writeStatusPage(state) {
+  try {
+    const tmp = `${STATUS_PAGE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, renderStatusHtml(state));
+    fs.renameSync(tmp, STATUS_PAGE);
+  } catch {
+    // Never let the page break the bus. A failed write here is cosmetic; the
+    // tools that agents depend on must still return.
+  }
+}
+
+function dashboardHtml() {
+  return withState((state) => renderStatusHtml(state));
 }
 
 function runDashboard(port) {
