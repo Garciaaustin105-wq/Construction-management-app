@@ -15,18 +15,22 @@
 // because a script that revokes sessions is one typo away from signing out a
 // real customer.
 //
-// Usage:
-//   node scripts/revoke-e2e-sessions.mjs              # dry run — reports, changes nothing
-//   node scripts/revoke-e2e-sessions.mjs --confirm    # actually revokes
+// Usage — identical in PowerShell, cmd and bash:
 //
-// Optional password rotation in the same pass. The value comes from YOUR
-// environment; it is never written to disk or logged:
-//   E2E_NEW_PASSWORD='...' node scripts/revoke-e2e-sessions.mjs --confirm --rotate
+//   node scripts/revoke-e2e-sessions.mjs
+//       Dry run. Reports what it found; changes nothing.
 //
-// Afterwards, put the new password in .env.local (gitignored) as E2E_PASSWORD so
-// the harnesses keep working.
+//   node scripts/revoke-e2e-sessions.mjs --confirm --rotate
+//       Sets a NEW generated password on both accounts and prints it once.
+//       Copy that into .env.local as E2E_PASSWORD.
+//
+// To choose the password yourself, set E2E_NEW_PASSWORD first. In PowerShell
+// that is  $env:E2E_NEW_PASSWORD='...'  on its own line — the bash-style
+// VAR=x node script  prefix does NOT work there, which is exactly why the
+// generated default exists.
 
 import fs from "node:fs";
+import { randomBytes } from "node:crypto";
 
 // Hardcoded on purpose. Taking these as arguments is how you accidentally sign
 // out a live customer.
@@ -35,7 +39,19 @@ const TEST_ORG = "600d02fa-fae2-440b-99ab-42e96997da91"; // Terra Verde Test Co
 
 const CONFIRM = process.argv.includes("--confirm");
 const ROTATE = process.argv.includes("--rotate");
-const NEW_PASSWORD = process.env.E2E_NEW_PASSWORD || "";
+
+// GENERATED HERE BY DEFAULT, rather than asked for.
+//
+// The earlier version required E2E_NEW_PASSWORD in the environment, which is
+// bash syntax — `VAR=x node script` is not a thing in PowerShell, so the
+// documented command silently did nothing useful on the machine this runs on.
+// Generating it removes the step entirely: one command, and the value is
+// printed once for pasting into .env.local.
+//
+// Still overridable for anyone who wants to choose their own.
+const NEW_PASSWORD =
+  process.env.E2E_NEW_PASSWORD || `E2e-${randomBytes(15).toString("base64url")}`;
+const GENERATED = !process.env.E2E_NEW_PASSWORD;
 
 function loadEnv() {
   let text;
@@ -63,10 +79,7 @@ if (!URL_BASE || !SERVICE_KEY) {
   console.error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be in .env.local.");
   process.exit(1);
 }
-if (ROTATE && !NEW_PASSWORD) {
-  console.error("--rotate needs E2E_NEW_PASSWORD in the environment.");
-  process.exit(1);
-}
+// No check needed for a missing password any more — one is generated above.
 
 const headers = {
   apikey: SERVICE_KEY,
@@ -187,7 +200,26 @@ if (verified.length) {
 if (!CONFIRM) {
   console.log("\nDry run. Re-run with --confirm (add --rotate to set a new password).");
 }
-if (ROTATE && CONFIRM) {
-  console.log("\nPut the new password in .env.local as E2E_PASSWORD so the harnesses keep working.");
+if (ROTATE && CONFIRM && !failures) {
+  // Printed ONCE, and nowhere else. Not written to a file, not logged, not
+  // committed — putting it somewhere automatically is how it ended up in a
+  // public repo the first time.
+  console.log(
+    [
+      "",
+      "=".repeat(62),
+      GENERATED ? "  NEW PASSWORD (generated just now):" : "  NEW PASSWORD (the one you supplied):",
+      "",
+      `      ${NEW_PASSWORD}`,
+      "",
+      "  Copy this into .env.local in every checkout you run harnesses from:",
+      "",
+      `      E2E_PASSWORD=${NEW_PASSWORD}`,
+      "",
+      "  .env.local is gitignored, so it never reaches the repo. This is the",
+      "  only time this value is shown.",
+      "=".repeat(62),
+    ].join("\n")
+  );
 }
 process.exit(failures ? 1 : 0);
