@@ -31,6 +31,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "resend": "^6.19.0",
+    "server-only": "^0.0.1",
     "stripe": "^22.5.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
