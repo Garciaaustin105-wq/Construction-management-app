@@ -542,130 +542,306 @@ function callTool(name, args) {
 // Server-rendered with a meta refresh rather than client-side polling. It is a
 // status board on a local socket; five lines of HTML beat a fetch loop, and it
 // keeps the no-dependencies rule this file has kept from the start.
-function renderStatusHtml(state) {
-  {
-    pruneAgents(state);
-    const now = Date.now();
-    const ago = (iso) => {
-      const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-      if (s < 60) return `${s}s ago`;
-      if (s < 3600) return `${Math.round(s / 60)}m ago`;
-      return `${Math.round(s / 3600)}h ago`;
-    };
-    // Anything the agents wrote is untrusted text going into HTML.
-    const esc = (v) =>
-      String(v ?? "").replace(/[&<>"']/g, (c) =>
-        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-      );
+/**
+ * The build rules, read from docs/build-rules.md at render time.
+ *
+ * NOT copied into this file. The rules change as incidents happen — they are up
+ * to 26 and were 12 — and a hub showing a stale copy of the rules would be
+ * exactly the failure the rules exist to prevent. DIR is <repo>/.git/agent-bus,
+ * so two levels up is the repo.
+ */
+function readBuildRules() {
+  try {
+    const md = fs.readFileSync(path.resolve(DIR, "..", "..", "docs", "build-rules.md"), "utf8");
+    const groups = [];
+    let current = null;
+    for (const raw of md.split("\n")) {
+      const line = raw.trim();
+      // "## A. The shape of the work" — a group.
+      const head = line.match(/^##\s+[A-Z]\.\s+(.+)$/);
+      if (head) {
+        current = { title: head[1], rules: [] };
+        groups.push(current);
+        continue;
+      }
+      // "### A1. Contract, then harness, then UI. In that order."
+      const rule = line.match(/^###\s+([A-Z]\d+)\.\s+(.+)$/);
+      if (rule && current) current.rules.push({ n: rule[1], text: rule[2] });
+    }
+    return groups.filter((g) => g.rules.length);
+  } catch {
+    return [];
+  }
+}
 
-    const agents = Object.entries(state.agents).sort(
-      (a, b) => Date.parse(b[1].lastSeen ?? 0) - Date.parse(a[1].lastSeen ?? 0)
+function renderStatusHtml(state, opts = {}) {
+  const { flash = null, interactive = false } = opts;
+  pruneAgents(state);
+  const now = Date.now();
+  const ago = (iso) => {
+    const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
+  };
+  // Everything below is text other processes wrote. All of it is escaped.
+  const esc = (v) =>
+    String(v ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
     );
-    const lock = state.lock;
-    const held = lockIsLive(lock);
-    const board = Object.entries(state.board).sort(
-      (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
-    );
 
-    const agentCards = agents.length
-      ? agents
-          .map(([name, a]) => {
-            // Two minutes without a bus call and it is probably idle rather
-            // than working. Said as "quiet", not "offline" — the bus cannot
-            // tell the difference and should not pretend to.
-            const quiet = now - Date.parse(a.lastSeen ?? 0) > 120_000;
-            return `<div class="card${quiet ? " quiet" : ""}">
-        <div class="row"><span class="dot"></span><b>${esc(name)}</b>
-          <span class="seen">${esc(ago(a.lastSeen ?? new Date(0).toISOString()))}</span></div>
-        <p class="lane">${esc(a.lane || "no lane stated")}</p>
-        <p class="path">${esc(a.cwd || "")}</p>
-      </div>`;
-          })
-          .join("")
-      : "<p class=\"empty\">Nobody on the bus. An agent appears here after its first command.</p>";
+  const agents = Object.entries(state.agents).sort(
+    (a, b) => Date.parse(b[1].lastSeen ?? 0) - Date.parse(a[1].lastSeen ?? 0)
+  );
+  const lock = state.lock;
+  const held = lockIsLive(lock);
+  const board = Object.entries(state.board).sort(
+    (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
+  );
+  const repo = path.resolve(DIR, "..", "..");
 
-    const boardRows = board.length
-      ? board
-          .map(
-            ([k, v]) => `<details><summary><b>${esc(k)}</b>
-        <span class="seen">${esc(v.by)} · ${esc(ago(v.at))}</span></summary>
-        <p>${esc(v.value)}</p></details>`
-          )
-          .join("")
-      : "<p class=\"empty\">The board is empty.</p>";
+  const agentCards = agents.length
+    ? agents
+        .map(([name, a]) => {
+          // Two minutes without a bus call reads as idle. Called "quiet", not
+          // "offline": the bus cannot tell the difference and must not pretend.
+          const quiet = now - Date.parse(a.lastSeen ?? 0) > 120_000;
+          return `<div class="card${quiet ? " quiet" : ""}">
+      <div class="row"><span class="dot"></span><b>${esc(name)}</b>
+        <span class="mut">${esc(ago(a.lastSeen ?? new Date(0).toISOString()))}</span></div>
+      <p class="lane">${esc(a.lane || "no lane stated")}</p>
+      <p class="path">${esc(a.cwd || "")}</p>
+    </div>`;
+        })
+        .join("")
+    : `<p class="mut">Nobody on the bus yet. An agent appears here after its first command.</p>`;
 
-    return `<!doctype html>
-<meta charset="utf-8"><title>agent-bus</title>
+  const boardRows = board.length
+    ? board
+        .map(
+          ([k, v]) => `<details><summary><b>${esc(k)}</b>
+      <span class="mut">${esc(v.by)} · ${esc(ago(v.at))}</span></summary>
+      <p>${esc(v.value)}</p></details>`
+        )
+        .join("")
+    : `<p class="mut">The board is empty.</p>`;
+
+  const ruleGroups = readBuildRules();
+  const ruleHtml = ruleGroups.length
+    ? ruleGroups
+        .map(
+          (g) => `<div class="rulegroup"><h3>${esc(g.title)}</h3><ul>${g.rules
+            .map((r) => `<li><b>${esc(r.n)}</b> ${esc(r.text.replace(/[`*]/g, ""))}</li>`)
+            .join("")}</ul></div>`
+        )
+        .join("")
+    : `<p class="mut">docs/build-rules.md not found from here.</p>`;
+
+  // Forms only exist in the served app. The written-to-disk copy is a file://
+  // page with nothing to POST to, and a dead button is worse than no button.
+  const actions = interactive
+    ? `
+<h2>Do something</h2>
+<div class="grid2">
+  <form method="post" class="card">
+    <b>Post a note to the board</b>
+    <p class="mut">Durable. Reaches agents who were not listening when you wrote it.</p>
+    <input type="hidden" name="action" value="note">
+    <input name="actor" placeholder="from (default: desk)" value="desk">
+    <input name="key" placeholder="key, e.g. table-pattern" required>
+    <textarea name="value" rows="3" placeholder="the fact, written for someone who was not here" required></textarea>
+    <button>Post note</button>
+  </form>
+
+  <form method="post" class="card">
+    <b>Send a message</b>
+    <p class="mut">Only reaches an agent that is listening now. Use a note for anything that must outlive the moment.</p>
+    <input type="hidden" name="action" value="send">
+    <input name="actor" placeholder="from (default: desk)" value="desk">
+    <input name="to" placeholder="to — an agent name, or all" required>
+    <textarea name="message" rows="3" placeholder="message" required></textarea>
+    <button>Send</button>
+  </form>
+
+  <form method="post" class="card">
+    <b>${held ? "Release the working tree" : "Claim the working tree"}</b>
+    <p class="mut">${
+      held
+        ? "Only the holder can release it."
+        : "Claim before any git operation in a shared checkout."
+    }</p>
+    <input type="hidden" name="action" value="${held ? "release" : "claim"}">
+    <input name="actor" placeholder="your name" value="${esc(held && lock ? lock.holder : "desk")}">
+    ${
+      held
+        ? ""
+        : `<input name="path" placeholder="path" value="${esc(repo)}" required>
+    <input name="reason" placeholder="what you are doing" required>
+    <input name="minutes" placeholder="minutes (default 30)" value="30">`
+    }
+    <button>${held ? "Release" : "Claim"}</button>
+  </form>
+</div>`
+    : `<h2>Do something</h2>
+<p class="mut">This is the saved copy of the page — read-only. Launch <b>Agent Bus</b>
+from the desktop to run commands.</p>`;
+
+  return `<!doctype html>
+<meta charset="utf-8"><title>Agent Bus — command hub</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="5">
+${interactive ? "" : '<meta http-equiv="refresh" content="5">'}
 <style>
   :root { color-scheme: light dark; --bg:#f6f7f5; --fg:#16201a; --mut:#5d6b5f;
-    --card:#fff; --line:#dfe4dc; --ok:#2f6b3f; --warn:#b4530a; }
+    --card:#fff; --line:#dfe4dc; --ok:#2f6b3f; --warn:#b4530a; --code:#eef1ec; }
   @media (prefers-color-scheme: dark) { :root {
-    --bg:#11150f; --fg:#e4ebe2; --mut:#93a094; --card:#19200f1a; --line:#2a3329; } }
-  body { margin:0; padding:28px; background:var(--bg); color:var(--fg);
-    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif; }
-  h1 { font-size:15px; margin:0 0 2px; letter-spacing:.02em; }
-  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
-    color:var(--mut); margin:26px 0 8px; font-weight:600; }
-  .sub { color:var(--mut); font-size:12px; margin:0 0 4px; }
-  .grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:11px 13px; }
-  .card.quiet { opacity:.55; }
+    --bg:#11150f; --fg:#e4ebe2; --mut:#93a094; --card:#181e16; --line:#2a3329;
+    --code:#1e2620; } }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:26px 30px 60px; background:var(--bg); color:var(--fg);
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif; }
+  h1 { font-size:16px; margin:0; letter-spacing:.02em; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--mut); margin:30px 0 9px; font-weight:600; }
+  h3 { font-size:12px; margin:0 0 6px; }
+  .mut { color:var(--mut); font-size:12px; margin:4px 0 0; }
+  .grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); }
+  .grid2 { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card.quiet { opacity:.5; }
   .row { display:flex; align-items:center; gap:7px; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto; }
   .quiet .dot { background:var(--mut); }
-  .seen { margin-left:auto; color:var(--mut); font-size:11px; }
-  .lane { margin:5px 0 0; }
+  .row .mut { margin-left:auto; }
+  .lane { margin:6px 0 0; }
   .path { margin:3px 0 0; color:var(--mut); font-size:11px;
     overflow-wrap:anywhere; font-family:ui-monospace,monospace; }
-  .lock { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--ok);
-    border-radius:10px; padding:11px 13px; }
+  .lock { background:var(--card); border:1px solid var(--line);
+    border-left:3px solid var(--ok); border-radius:10px; padding:12px 14px; }
   .lock.held { border-left-color:var(--warn); }
-  .empty { color:var(--mut); }
   details { background:var(--card); border:1px solid var(--line); border-radius:10px;
-    padding:9px 13px; margin-bottom:6px; }
+    padding:10px 14px; margin-bottom:6px; }
   summary { cursor:pointer; display:flex; gap:8px; align-items:center; }
   details p { margin:9px 0 2px; color:var(--mut); overflow-wrap:anywhere; }
+  input, textarea { width:100%; margin-top:7px; padding:7px 9px; border-radius:7px;
+    border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; font-size:13px; }
+  textarea { resize:vertical; }
+  button { margin-top:9px; padding:7px 14px; border-radius:7px; border:0;
+    background:var(--ok); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:8px;
+    padding:9px 11px; overflow-x:auto; font-size:12px; margin:6px 0 0; }
+  .flash { background:var(--card); border:1px solid var(--ok); border-left:3px solid var(--ok);
+    border-radius:9px; padding:10px 13px; margin:14px 0 0; white-space:pre-wrap; font-size:13px; }
+  .rulegroup { background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:12px 14px; }
+  .rulegroup ul { margin:0; padding-left:0; list-style:none; }
+  .rulegroup li { margin:3px 0; color:var(--mut); }
+  .head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
 </style>
-<h1>agent-bus</h1>
-<p class="sub">Refreshes every 5s · ${esc(new Date().toLocaleTimeString())}</p>
+
+<div class="head">
+  <h1>Agent Bus</h1>
+  <span class="mut">command hub · ${esc(new Date().toLocaleTimeString())}</span>
+</div>
+${flash ? `<div class="flash">${esc(flash)}</div>` : ""}
 
 <h2>Connected (${agents.length})</h2>
 <div class="grid">${agentCards}</div>
 
 <h2>Working tree</h2>
 <div class="lock${held ? " held" : ""}">${esc(describeLock(lock))}</div>
+${actions}
 
 <h2>Board (${board.length})</h2>
 ${boardRows}
+
+<h2>Connect another AI</h2>
+<div class="grid2">
+  <div class="card">
+    <b>Anything that can run a command</b>
+    <p class="mut">A PowerShell session, an ollama-driven script, a person at a terminal.
+      No install, no MCP. Run it from the repo.</p>
+    <pre>cd ${esc(repo)}
+node tools/agent-bus/server.mjs board
+node tools/agent-bus/server.mjs note my-status "what I am doing"</pre>
+    <p class="mut">Set a name once so you do not pass it every time:</p>
+    <pre>$env:AGENT_BUS_NAME = "your-agent-name"</pre>
+  </div>
+  <div class="card">
+    <b>A Claude session</b>
+    <p class="mut">Already wired — <code>.mcp.json</code> in the repo root starts the bus
+      as an MCP server, so the tools appear on their own. Nothing to do.</p>
+    <pre>{ "mcpServers": { "agent-bus": {
+    "command": "node",
+    "args": ["tools/agent-bus/server.mjs"] } } }</pre>
+    <p class="mut">First call should be <code>register(name, lane)</code>, then
+      <code>board()</code>.</p>
+  </div>
+</div>
+<p class="mut">Running <code>server.mjs</code> with no arguments starts the stdio MCP
+  server and blocks — that is for editors, not for you. Any verb prints usage.</p>
+
+<h2>How to build here — ${ruleGroups.reduce((n, g) => n + g.rules.length, 0)} rules</h2>
+<p class="mut">Read live from <code>docs/build-rules.md</code>. Every one was written after
+  something went wrong; the reasoning and the incident behind each is in that file.</p>
+<div class="grid2">${ruleHtml}</div>
 `;
-  }
 }
 
 // THE PAGE, as a file rather than a server.
 //
-// Written next to the state on every change, so opening
-// tools/agent-bus/status.html in a browser and leaving it there shows the bus
-// live — the meta refresh re-reads the file, and the file is rewritten whenever
-// any agent does anything. No command to run, no port, no terminal.
-//
-// This is the difference between "there is a dashboard" and "there is a page I
-// can look at": a status view you have to remember to start is one you stop
-// using.
+// Written beside the state on every change, so a browser tab left open on
+// .git/agent-bus/status.html stays current with no command to run. Read-only:
+// a file:// page has nothing to POST to, so the action forms are omitted rather
+// than rendered dead.
 function writeStatusPage(state) {
   try {
     const tmp = `${STATUS_PAGE}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, renderStatusHtml(state));
+    fs.writeFileSync(tmp, renderStatusHtml(state, { interactive: false }));
     fs.renameSync(tmp, STATUS_PAGE);
   } catch {
     // Never let the page break the bus. A failed write here is cosmetic; the
-    // tools that agents depend on must still return.
+    // tools agents depend on must still return.
   }
 }
 
-function dashboardHtml() {
-  return withState((state) => renderStatusHtml(state));
+function dashboardHtml(flash) {
+  return withState((state) => renderStatusHtml(state, { flash, interactive: true }));
+}
+
+/**
+ * Run one action on behalf of the person at the window.
+ *
+ * The web UI has no session of its own, so it borrows an identity for the
+ * length of the call the same way the CLI does. `actor` defaults to "desk" so
+ * anything done from the app is attributable to the desk rather than appearing
+ * to come from whichever agent happened to be listed first.
+ */
+function runAction(action, form) {
+  const actor = (form.get("actor") || "desk").trim() || "desk";
+  const prev = myName;
+  myName = actor;
+  IS_CLI = true; // a browser POST is as short-lived as a CLI call: no pid to trust
+  try {
+    registerCli(actor);
+    switch (action) {
+      case "note":
+        return callTool("note", { key: form.get("key"), value: form.get("value") });
+      case "send":
+        return callTool("send", { to: form.get("to"), message: form.get("message") });
+      case "claim":
+        return callTool("claim_tree", {
+          path: form.get("path"),
+          reason: form.get("reason"),
+          minutes: Number(form.get("minutes")) || 30,
+        });
+      case "release":
+        return callTool("release_tree", {});
+      default:
+        throw new Error(`Unknown action: ${action}`);
+    }
+  } finally {
+    myName = prev;
+  }
 }
 
 function runDashboard(port) {
@@ -674,8 +850,34 @@ function runDashboard(port) {
   return import("node:http").then(({ default: http }) => {
     const server = http.createServer((req, res) => {
       try {
+        if (req.method === "POST") {
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+            // A form post is a few hundred bytes. Anything much larger is not
+            // this UI, and an unbounded read on a local socket is how a tiny
+            // server becomes a memory bug.
+            if (body.length > 64_000) req.destroy();
+          });
+          req.on("end", () => {
+            const form = new URLSearchParams(body);
+            let flash;
+            try {
+              flash = runAction(form.get("action"), form);
+            } catch (err) {
+              flash = `FAILED: ${err.message}`;
+            }
+            // POST-then-redirect, so a refresh does not repeat the action.
+            res.writeHead(303, {
+              location: `/?flash=${encodeURIComponent(String(flash).slice(0, 400))}`,
+            });
+            res.end();
+          });
+          return;
+        }
+        const url = new URL(req.url, "http://127.0.0.1");
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(dashboardHtml());
+        res.end(dashboardHtml(url.searchParams.get("flash")));
       } catch (err) {
         res.writeHead(500, { "content-type": "text/plain" });
         res.end(String(err.message));
