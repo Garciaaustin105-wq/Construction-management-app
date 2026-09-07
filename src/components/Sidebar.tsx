@@ -128,12 +128,12 @@ export default function Sidebar() {
   // explicit hub aliases; this nav needs the guard since one href can be a
   // prefix of another.
   function isActive(href: string): boolean {
-    const prefixMatch = pathname.startsWith(href + "/");
+    const prefixMatch = pathname.startsWith(`${href}/`);
     const longerMatchExists = hrefs.some(
       (other) =>
         other !== href &&
-        other.startsWith(href + "/") &&
-        (pathname === other || pathname.startsWith(other + "/")),
+        other.startsWith(`${href}/`) &&
+        (pathname === other || pathname.startsWith(`${other}/`)),
     );
     return pathname === href || (prefixMatch && !longerMatchExists);
   }
