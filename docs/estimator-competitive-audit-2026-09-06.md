@@ -168,12 +168,31 @@ finance team's reporting. LMN has labor burden and a training ecosystem. We have
 a good two weeks of estimator. Against a $2M+ commercial operation we are not in
 the running, and should not pretend to be.
 
-### 3.5 The loudest unmet needs in the market are still unbuilt
+### 3.5 NOT a gap — the Jobber wish-list is largely built (corrected)
 
-From our own voice-of-customer research, the things Jobber users beg for — bulk
-**seasonal pause/restart**, **skip-visit**, bulk scheduling, text-photos-to-client
-— are still on the list. The estimator work was deeper, but it was not what the
-market was shouting about.
+**An earlier draft of this section claimed the loudest unmet needs in the market
+were still unbuilt. That was wrong**, and it was wrong the same way the handoff
+docs were: taken from the 2026-08-17 research rather than from the code. Checked
+against `0f93fa7`, the lawn wish-list from that research stands as:
+
+| Jobber user asks for | Us |
+|---|---|
+| Seasonal pause / restart, in bulk | **Built** — `/lawn/seasonal`, customer-scoped, one tap for a whole account (`SeasonalActions.tsx`) |
+| Skip-visit | **Built** — crew taps Skip on the route, with a reason; `skipped` is a settled visit state |
+| Bulk scheduling | **Built** — `BulkScheduleEditModal.tsx`; paused schedules are skipped server-side and reported, not silently dropped |
+| Route optimization | **Built** — `/api/lawn/route-optimize`, plan-gated |
+| Multi-line estimate → scheduled jobs | **Built** — `/api/estimates/[id]/convert` |
+| Customizable chemical tracking / reporting | **Built** — `/lawn/applications`, `/lawn/compliance` |
+| Text photos to the client | **Partial** — the customer gets a link to a photo portal, not an MMS attachment |
+
+So the position is stronger than the earlier draft said: we already answer the
+complaints Jobber users have been making for years, *and* the estimator is
+deeper. The only item not literally satisfied is MMS, and a portal link is
+arguably the better build (it does not cost per-message and it does not degrade
+the image).
+
+**The lesson is the one this repo keeps relearning:** research documents age.
+Check the code.
 
 ---
 
