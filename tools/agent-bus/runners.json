@@ -12,10 +12,12 @@
     "list, never joined into a string, so nothing in a prompt can be read as an",
     "argument or a second command.",
     "",
-    "GLM: fill in the command you use. It is launched from PowerShell on this",
-    "machine and Claude cannot see that session, so the exact invocation has to come",
-    "from you. Put the flags that select GLM 5.3 Flash in args, leave the prompt to",
-    "arrive on stdin, and set enabled to true."
+    "GLM turned out NOT to need a shell runner. `ollama launch claude` presents a",
+    "model menu, and GLM 5.3 Flash in that menu is an ollama CLOUD model — so it",
+    "answers /api/generate like any local one, under the name glm-5.3-flash:cloud.",
+    "It is not in `ollama list` because nothing was pulled.",
+    "",
+    "The shell type stays for a genuine command-line agent, if one is ever added."
   ],
   "runners": [
     {
@@ -51,12 +53,12 @@
     },
     {
       "id": "glm",
-      "label": "GLM 5.3 Flash — PowerShell",
-      "type": "shell",
-      "command": "powershell",
-      "args": ["-NoProfile", "-Command", "REPLACE ME - the command that starts GLM 5.3 Flash and reads its prompt from stdin"],
-      "enabled": false,
-      "note": "Disabled until the invocation is filled in. See _comment above."
+      "label": "GLM 5.3 Flash — cloud",
+      "type": "ollama",
+      "model": "glm-5.3-flash:cloud",
+      "enabled": true,
+      "thinking": true,
+      "note": "Served by ollama as a CLOUD model, so it is not in `ollama list` and needs no pull. A THINKING model: it spends output tokens reasoning before it answers, so num_predict has to be generous or `response` comes back empty with the reasoning stranded in `thinking`."
     }
   ]
 }

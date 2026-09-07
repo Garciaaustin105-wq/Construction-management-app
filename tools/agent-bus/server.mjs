@@ -630,16 +630,33 @@ async function askOllama(runner, prompt) {
         model: runner.model,
         prompt,
         stream: false,
-        options: { temperature: 0.2, num_predict: 1200 },
+        options: {
+          temperature: 0.2,
+          // A THINKING model spends output tokens reasoning BEFORE it answers,
+          // so a budget sized for the answer alone returns an empty response
+          // with the reasoning stranded in `thinking`. Found the hard way:
+          // GLM at 80 tokens produced nothing at all.
+          num_predict: runner.thinking ? 4000 : 1200,
+        },
       }),
     });
   } catch {
     throw new Error(`Cannot reach ollama at ${OLLAMA}. Is it running? (ollama serve)`);
   }
   if (!res.ok) throw new Error(`ollama returned ${res.status}. Is "${runner.model}" pulled?`);
-  const text = String((await res.json()).response ?? "").trim();
-  if (!text) throw new Error("The model returned nothing.");
-  return text;
+  const body = await res.json();
+  const text = String(body.response ?? "").trim();
+  if (text) return text;
+  // Ran out of budget mid-thought. Say so, and hand back the reasoning rather
+  // than an empty result — a partial answer is worth more than "returned
+  // nothing", and it tells you exactly why.
+  const thinking = String(body.thinking ?? "").trim();
+  if (thinking) {
+    return `[no final answer — the model was still reasoning when it ran out of output budget. Its thinking so far:]
+
+${thinking}`;
+  }
+  throw new Error("The model returned nothing.");
 }
 
 /**
