@@ -25,14 +25,6 @@ const eslintConfig = defineConfig([
     ".*-build/**",
   ]),
   {
-    // A .cjs file IS CommonJS — require() is its module system, not a lapse.
-    // The repo has one: scripts/check-function-grants.cjs, written that way so
-    // DeepSource can parse it (its JS analyzer reads .mjs as a classic script
-    // and reports every top-level import as a syntax error).
-    files: ["**/*.cjs"],
-    rules: { "@typescript-eslint/no-require-imports": "off" },
-  },
-  {
     // Double quotes, and a template literal only when it earns its keep.
     //
     // Added after a DeepSource autofix PR sat open for three weeks proposing

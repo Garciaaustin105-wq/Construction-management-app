@@ -1,7 +1,7 @@
 // Checks the LIVE database against the function-EXECUTE rule in
 // docs/deploy-safety.md, and exits non-zero when anything violates it.
 //
-// Usage:  node scripts/check-function-grants.cjs
+// Usage:  node check-function-grants.mjs
 // Run it after any migration that creates or replaces a function.
 //
 // WHY THIS EXISTS. Every `create function` in `public` grants EXECUTE to PUBLIC
@@ -22,29 +22,28 @@
 // Needs SUPABASE_SERVICE_ROLE_KEY: the audit function is revoked from every
 // client role, because it follows the rule it enforces. No secret is printed.
 //
-// WHY .cjs AND NOT .mjs, alone among scripts/. DeepSource's JavaScript analyzer
-// parses .mjs as a classic script, so every top-level `import` is reported as a
-// syntax error; the repo excludes .mjs from analysis for that reason. Root-level
-// excludes work, but no exclude pattern tried would match a .mjs inside
-// scripts/. CommonJS sidesteps the parser problem entirely, which means this
-// file gets LINTED rather than ignored — a better outcome than the exclusion it
-// was written to work around.
+// WHY THE REPO ROOT, not scripts/. DeepSource's JavaScript analyzer parses
+// .mjs as a classic script and reports every top-level import as a syntax
+// error, so .deepsource.toml excludes them. Its exclude_patterns work at the
+// root and — across five attempts — not at depth: "scripts/*.mjs",
+// "tools/**/*.mjs", "**/*.mjs", the exact path, and the bare basename all left
+// the parse error standing. Root "*.mjs" is the one form verified to work. The
+// 33 e2e-*.mjs harnesses already live here for the same practical reason.
 //
 // EXIT CODE, not process.exit(). On Windows, calling process.exit() while the
 // Supabase client still holds a keep-alive socket aborts the process with a
 // libuv assertion and code 127 — on a CLEAN run. A checker whose success looks
 // like a crash is worse than no checker, so this sets process.exitCode and lets
 // Node close its own handles.
-const { readFileSync, existsSync } = require("node:fs");
-const { join } = require("node:path");
-const { createClient } = require("@supabase/supabase-js");
+import { readFileSync, existsSync } from "node:fs";
+import { createClient } from "@supabase/supabase-js";
 
 function fail(...lines) {
   for (const l of lines) console.error(l);
   process.exitCode = 1;
 }
 
-const envPath = join(__dirname, "..", ".env.local");
+const envPath = new URL("./.env.local", import.meta.url);
 
 async function main() {
   if (!existsSync(envPath)) {
@@ -118,4 +117,4 @@ async function main() {
   if (bySeverity.HIGH.length > 0) process.exitCode = 1;
 }
 
-main();
+await main();

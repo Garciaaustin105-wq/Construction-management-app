@@ -73,7 +73,7 @@ below). A direct call fails on `new` being unset, so the exposure was small —
 but "it errors before it does damage" is not a boundary. Check BOTH halves when
 a function has a trigger wrapper.
 
-**Now checked, not just written.** `node scripts/check-function-grants.cjs`
+**Now checked, not just written.** `node check-function-grants.mjs`
 runs the rule against the LIVE database and exits non-zero on a HIGH finding.
 Run it after any migration that creates or replaces a function. The query lives
 in the `audit_function_grants()` function so the allowlist of deliberate

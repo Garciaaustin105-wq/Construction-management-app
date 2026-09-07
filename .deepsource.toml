@@ -29,35 +29,13 @@ exclude_patterns = [
   # If DeepSource later parses .mjs correctly, delete these lines. The tell is
   # that removing them stops producing "Unexpected token import".
   #
-  # ONLY THE ROOT PATTERN IS KNOWN TO WORK. "*.mjs" demonstrably excludes the
-  # root harnesses. "scripts/*.mjs" did not match, and neither did "**/*.mjs" —
-  # both were tried against a real file and both left the parse error standing.
-  # So whatever these globs are matched with, do not assume globstar.
-  #
-  # The rest are kept because they cost nothing and would start working if the
-  # matcher ever learns "**". Nothing depends on them: the one script that lives
-  # in a subdirectory is CommonJS (scripts/check-function-grants.cjs), which the
-  # analyzer parses fine and therefore actually lints.
+  # ROOT ONLY, and that is not a style choice. exclude_patterns here work on
+  # root-level files and, across five attempts, not at depth: "scripts/*.mjs",
+  # "tools/**/*.mjs", "**/*.mjs", an exact path, and a bare basename were each
+  # tried against a real file and each left "Unexpected token import" standing.
+  # If you need a .mjs excluded, it has to live at the repo root — which is why
+  # check-function-grants.mjs sits there beside the 33 e2e-*.mjs harnesses.
   "*.mjs",
-  "scripts/*.mjs",
-  "tools/**/*.mjs",
-  "**/*.mjs",
-
-  # A CLI script, excluded by EXACT PATH rather than a glob, since the globs
-  # above are unreliable at depth. Kept as .cjs so the analyzer parses it — a
-  # parse error means the analyzer choked, which is worse than it choosing to
-  # skip — but its findings here are category errors: "function declaration in
-  # the global scope" for a CommonJS module whose top-level functions are
-  # module-scoped, and console calls in a program whose entire output is
-  # console.
-  #
-  # BASENAME, not a path. Four attempts at a path-shaped pattern all failed
-  # ("scripts/*.mjs", "tools/**/*.mjs", "**/*.mjs", and the exact path
-  # "scripts/check-function-grants.cjs"), while the bare "*.mjs" worked. The
-  # one thing those four have in common is a "/" — so these patterns appear to
-  # be matched against the FILE NAME, not the path. That also explains why
-  # "*.mjs" excludes harnesses at the root and nothing at depth.
-  "check-function-grants.cjs",
 
   # Standalone contract compiles produced for the harnesses. Emitted output,
   # never edited by hand.
