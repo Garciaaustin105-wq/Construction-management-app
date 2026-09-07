@@ -43,6 +43,15 @@ exclude_patterns = [
   "tools/**/*.mjs",
   "**/*.mjs",
 
+  # A CLI script, excluded by EXACT PATH rather than a glob, since the globs
+  # above are unreliable at depth. Kept as .cjs so the analyzer parses it — a
+  # parse error means the analyzer choked, which is worse than it choosing to
+  # skip — but its findings here are category errors: "function declaration in
+  # the global scope" for a CommonJS module whose top-level functions are
+  # module-scoped, and console calls in a program whose entire output is
+  # console.
+  "scripts/check-function-grants.cjs",
+
   # Standalone contract compiles produced for the harnesses. Emitted output,
   # never edited by hand.
   ".irr-build/**",

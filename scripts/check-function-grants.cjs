@@ -48,7 +48,8 @@ const envPath = join(__dirname, "..", ".env.local");
 
 async function main() {
   if (!existsSync(envPath)) {
-    return fail("no .env.local found");
+    fail("no .env.local found");
+    return;
   }
   const env = Object.fromEntries(
     readFileSync(envPath, "utf8")
@@ -62,7 +63,8 @@ async function main() {
   const url = env.NEXT_PUBLIC_SUPABASE_URL;
   const key = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
-    return fail("missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local");
+    fail("missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local");
+    return;
   }
 
   const admin = createClient(url, key, {
@@ -76,12 +78,13 @@ async function main() {
     // be mistaken for one — exiting 0 here would be the check quietly not
     // running at all, which is the exact failure this script exists to prevent
     // elsewhere.
-    return fail(
+    fail(
       `could not run audit_function_grants(): ${error.message}`,
       "",
       "If the function is missing, the audit_function_grants migration has not",
       "been applied to this project."
     );
+    return;
   }
 
   const findings = data ?? [];
