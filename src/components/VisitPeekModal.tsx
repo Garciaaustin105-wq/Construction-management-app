@@ -37,6 +37,9 @@ export type VisitPeekVisit = {
   /** Preformatted scheduled window ("8:00 AM – 10:00 AM"), null when unset or
    *  when the surface doesn't carry windows. */
   windowLabel: string | null;
+  /** Position on the day's route. Null when the day has not been sequenced —
+   *  shown as a dash, never as a 0 or a made-up order. */
+  routeOrder?: number | null;
   /** Null at every current call site — no surface fetches visit notes yet.
    *  Kept so a surface that already holds notes can pass them through. */
   notes: string | null;
@@ -210,7 +213,80 @@ export function TodayVisitPeekList({
 
   return (
     <>
-      <div className="divide-y divide-gray-100">
+      {/*
+        DESKTOP TABLE, lg and up. Six columns because a wide screen can carry
+        them and a dispatcher reads down a column: stop order, who, what, which
+        crew, when, and the state. The rows are still BUTTONS opening the same
+        peek modal - navigating to /lawn/visits/[id] would be a server render to
+        re-read data this page already holds, which is the whole reason the peek
+        modal exists.
+
+        Mobile is untouched: the stacked list below is the original markup,
+        now hidden at lg.
+      */}
+      <div className="hidden lg:block overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-gray-200">
+              {["Stop", "Customer", "Service", "Crew", "Window", "Status"].map(
+                (h) => (
+                  <th
+                    key={h}
+                    className="py-2 pr-3 text-[10px] font-semibold uppercase tracking-wide text-gray-400"
+                  >
+                    {h}
+                  </th>
+                )
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {visits.map((v) => (
+              <tr
+                key={v.id}
+                onClick={() => setOpenId(v.id)}
+                className="cursor-pointer hover:bg-gray-50"
+              >
+                {/* Row metrics come from the density tokens, so the STANDARD /
+                    COMPACT toggle reaches this table like every DataTable. */}
+                <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] tabular-nums text-gray-500">
+                  {v.routeOrder ?? "—"}
+                </td>
+                <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)]">
+                  <span className="font-semibold text-gray-900">
+                    {v.customerName ?? v.jobName}
+                  </span>
+                  {v.address && (
+                    <span className="block text-xs text-gray-500 truncate">
+                      {v.address}
+                    </span>
+                  )}
+                </td>
+                <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-gray-700">
+                  {v.serviceType ?? "—"}
+                </td>
+                <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-gray-700">
+                  {v.crewName ?? "—"}
+                </td>
+                <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] tabular-nums text-gray-700">
+                  {v.windowLabel ?? "—"}
+                </td>
+                <td className="py-[var(--row-py)] text-[length:var(--row-fs)]">
+                  <span
+                    className={`text-[10px] font-semibold px-2 py-1 rounded whitespace-nowrap ${
+                      STATUS_CHIP[v.status] ?? "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {dueChipLabel(v.dueDate, today)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="divide-y divide-gray-100 lg:hidden">
         {visits.map((v) => (
           <button
             key={v.id}
