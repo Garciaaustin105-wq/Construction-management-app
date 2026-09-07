@@ -18,6 +18,21 @@ tool in the tool list gets used and a convention in a README gets skipped —
 which is the same lesson that produced rule A4 in
 [`docs/build-rules.md`](../../docs/build-rules.md).
 
+## Which AI is connected right now
+
+```
+node tools/agent-bus/server.mjs status
+```
+
+One screen: who is on the bus and how long since each was heard from, who holds
+the working tree and until when, and what the board is carrying. `agents` and
+`board` each answer half of that, and needing both is what made the bus
+confusing to look at.
+
+"Last seen" is real rather than a guess — every bus call refreshes it, and an
+agent an hour cold is dropped so its name frees up for a restarted session.
+
+
 ## Using it from a Claude session
 
 Configured in `.mcp.json`, so it loads automatically. **MCP config is read at

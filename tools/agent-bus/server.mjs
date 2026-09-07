@@ -443,6 +443,51 @@ function callTool(name, args) {
       });
     }
 
+    // Everything at a glance. `agents` answers who is here and `board` answers
+    // what they left behind; needing both to know the state of the bus is what
+    // made it confusing to look at.
+    case "status":
+      return withState((state) => {
+        pruneAgents(state);
+        touch(state);
+        const now = Date.now();
+        const ago = (iso) => {
+          const secs = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+          if (secs < 60) return `${secs}s ago`;
+          if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+          return `${Math.round(secs / 3600)}h ago`;
+        };
+        const agents = Object.entries(state.agents);
+        const lines = ["CONNECTED"];
+        if (!agents.length) {
+          lines.push("  nobody — an agent appears here after its first bus command");
+        } else {
+          for (const [n, a] of agents) {
+            const mine = a.sessionKey === SESSION_KEY ? "  <- you" : "";
+            // lastSeen is refreshed by touch() on every bus call, and
+            // pruneAgents drops anyone an hour cold — so this is the honest
+            // answer to "is that one still there?" rather than a guess.
+            const seen = a.lastSeen ? ago(a.lastSeen) : "unknown";
+            lines.push(`  ${n}${mine}`);
+            lines.push(`     ${a.lane || "no lane stated"}`);
+            lines.push(`     last seen ${seen}`);
+          }
+        }
+        lines.push("", "WORKING TREE", "  " + describeLock(state.lock));
+        const board = Object.entries(state.board).sort(
+          (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
+        );
+        lines.push("", `BOARD (${board.length})`);
+        if (!board.length) lines.push("  empty");
+        for (const [k, v] of board) {
+          // Keys and authors only. The values are paragraphs; `board` prints
+          // those in full and this is meant to fit on one screen.
+          lines.push(`  ${k} — ${v.by}, ${ago(v.at)}`);
+        }
+        if (board.length) lines.push("", "  full text: node server.mjs board");
+        return lines.join("\n");
+      });
+
     case "board":
       return withState((state) => {
         touch(state);
@@ -487,6 +532,8 @@ function runCli(argv) {
         return say(callTool("board", {}));
       case "agents":
         return say(callTool("agents", {}));
+      case "status":
+        return say(callTool("status", {}));
       case "note": {
         const [key, ...v] = rest;
         myName = process.env.AGENT_BUS_NAME || "cli";
@@ -517,7 +564,7 @@ function runCli(argv) {
       }
       default:
         say("agent-bus — usage:");
-        say("  board | agents | note <key> <value> | send <to> <msg>");
+        say("  status | board | agents | note <key> <value> | send <to> <msg>");
         say("  inbox <name> | claim <name> <path> <reason> | release <name>");
         say("");
         say("Set AGENT_BUS_NAME to avoid passing your name each time.");
