@@ -158,6 +158,13 @@ export default function IrrigationProductsManager({
   const [sharing, setSharing] = useState(false);
   const [nozzleBusyId, setNozzleBusyId] = useState<string | null>(null);
 
+  // Eight inputs across three render helpers read this, all of them defined
+  // above where it used to sit. Declaring it first is not style: a const in the
+  // temporal dead zone throws the moment one of those helpers is called any
+  // earlier than render.
+  const field =
+    "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white";
+
   // Active first (matches the plant and chemical catalogues), then name —
   // listIrrigationCatalogue already orders by name and sortNozzles keeps the
   // nozzle order inside each model.
@@ -689,9 +696,6 @@ export default function IrrigationProductsManager({
       </div>
     );
   }
-
-  const field =
-    "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white";
 
   return (
     <div className="space-y-3">
