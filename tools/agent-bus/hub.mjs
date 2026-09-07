@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
   DIR,
@@ -327,6 +328,32 @@ function renderStatusHtml(state, opts = {}) {
         .join("")
     : "<p class=\"mut\">No worker running. Start one below and queued work begins moving.</p>";
 
+  // The message thread (Stage 1) — the last 30, newest LAST, so reading order
+  // matches how it was written. Local time on the machine rendering the page;
+  // the day is shown for anything not from today.
+  const fmtWhen = (iso) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toDateString() === new Date().toDateString()
+      ? d.toLocaleTimeString()
+      : `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString()}`;
+  };
+  const thread = (state.messages ?? []).slice(-30);
+  const threadHtml = thread.length
+    ? thread
+        .map(
+          (m) => `<div class="msg"><span class="mut">${esc(fmtWhen(m.at))}</span>
+      <b>${esc(m.from)}</b> → <b>${esc(m.to)}</b>
+      <p class="msgtext">${esc(m.text)}</p></div>`
+        )
+        .join("")
+    : "<p class=\"mut\">No messages yet.</p>";
+  // Recipients: all, plus every name the bus can currently address. The list is
+  // re-rendered per request, so a freshly pruned name drops off on its own.
+  const recipientOptions = agents.length
+    ? agents.map(([name]) => `<option value="${esc(name)}">${esc(name)}</option>`).join("")
+    : "";
+
   const workGroups = readWorkflow();
   const workHtml = workGroups.length
     ? workGroups
@@ -445,6 +472,11 @@ ${interactive ? "" : '<meta http-equiv="refresh" content="5">'}
     border-radius:9px; padding:10px 13px; margin:14px 0 0; white-space:pre-wrap; font-size:13px; }
   .rulegroup { background:var(--card); border:1px solid var(--line); border-radius:10px;
     padding:12px 14px; }
+  .msg { background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:8px 12px; margin-bottom:6px; }
+  .msg .mut { margin:0 6px 0 0; font-size:11px; }
+  .msgtext { margin:5px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--fg); }
+  .thread { max-height:420px; overflow-y:auto; }
   .rulegroup ul { margin:0; padding-left:0; list-style:none; }
   .rulegroup li { margin:3px 0; color:var(--mut); }
   .head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
@@ -474,6 +506,23 @@ ${
     <input name="lane" placeholder="lane" value="local">
     <select name="runner_id">${runnerOptions}</select>
     <button>Start</button>
+  </form>`
+    : ""
+}
+
+<h2>Talk to the agents</h2>
+<p class="mut">A noticeboard, not chat — an agent reads your message at its next
+  <code>inbox()</code> call. A session already running will not notice until it looks.
+  For a fact the NEXT agent needs even if nobody is listening, post a note to the board instead.</p>
+<div class="thread">${threadHtml}</div>
+${
+  interactive
+    ? `<form method="post" class="card" style="margin-top:10px">
+    <b>Write to the agents</b>
+    <input type="hidden" name="action" value="message">
+    <select name="to"><option value="all">all</option>${recipientOptions}</select>
+    <textarea name="text" rows="3" placeholder="the message" required></textarea>
+    <button>Post it</button>
   </form>`
     : ""
 }
@@ -566,6 +615,9 @@ function runAction(action, form) {
         return callTool("note", { key: form.get("key"), value: form.get("value") });
       case "send":
         return callTool("send", { to: form.get("to"), message: form.get("message") });
+      case "message":
+        // Stage 1 — the person writes as "human", bypassing send's requireName.
+        return postFromWindow(form.get("to"), form.get("text"));
       case "claim":
         return callTool("claim_tree", {
           path: form.get("path"),
@@ -588,6 +640,48 @@ function runAction(action, form) {
       default:
         throw new Error(`Unknown action: ${action}`);
     }
+  });
+}
+
+/**
+ * Post a message on behalf of the person at the window (Stage 1).
+ *
+ * Deliberately NOT routed through the send tool: send() calls requireName(),
+ * and the hub is not a registered agent — the person at the desk is nobody the
+ * bus has a session for. The write happens inside withState() directly, with
+ * the same 500-entry cap. `from` is "human": the desk speaks as itself, not by
+ * borrowing another agent's identity.
+ *
+ * A broadcast to `all` works when nobody is registered — the normal case when
+ * the window is opened first. A NAMED recipient must still exist: the dropdown
+ * only offers live names, but an agent an hour cold is pruned between
+ * rendering the form and posting, and a message addressed to nobody would
+ * silently never be read.
+ */
+function postFromWindow(to, text) {
+  const toName = String(to || "").trim();
+  const body = String(text || "").trim();
+  if (!toName) throw new Error("A recipient is required.");
+  if (!body) throw new Error("The message needs text.");
+  return withState((state) => {
+    if (toName !== "all" && !state.agents[toName]) {
+      throw new Error(
+        `No agent named "${toName}" is registered. Active: ${Object.keys(state.agents).join(", ") || "none"}.`
+      );
+    }
+    state.messages.push({
+      id: randomUUID(),
+      from: "human",
+      to: toName,
+      text: body,
+      at: new Date().toISOString(),
+      readBy: [],
+    });
+    // Keep the log bounded; this is a bus, not an archive.
+    if (state.messages.length > 500) state.messages = state.messages.slice(-500);
+    return toName === "all"
+      ? "Posted to all. Agents see it at their next inbox() call."
+      : `Posted to ${toName}. They see it at their next inbox() call.`;
   });
 }
 
