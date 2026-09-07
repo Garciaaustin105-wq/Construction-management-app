@@ -12,29 +12,41 @@
  * something into context is not its size. It is its size multiplied by every
  * turn that comes after it.
  *
- *   node context-cost.mjs          summary for this repo
- *   node context-cost.mjs --full   plus per-tool attribution
+ *   node tools/agent-bus/context-cost.cjs          summary for this repo
+ *   node tools/agent-bus/context-cost.cjs --full   plus per-tool attribution
  *
  * No dependencies, by the same rule as the rest of the bus.
  *
- * WHY THIS SITS AT THE REPO ROOT and not in tools/agent-bus/ with the rest of
- * the bus: DeepSource's JavaScript analyser cannot parse an ES module, so every
- * .mjs is excluded in .deepsource.toml — but its exclude patterns only take
- * effect at the ROOT. A recursive tools glob is in that file and does NOT
- * work; five
- * attempts at excluding a .mjs at depth failed (see docs/build-rules.md and
- * commit b4e5b8f, which moved the grant checker here for exactly this reason).
- * Left in tools/agent-bus/ this file fails CI on a parse error that is not a
- * defect. Move it back the day DeepSource parses .mjs, and not before.
+ * WHY THIS IS .cjs AND THE REST OF THE BUS IS .mjs. DeepSource's JavaScript
+ * analyser reads a .mjs as a classic script, so a top-level import is a parse
+ * error and the check goes red. .deepsource.toml tries to exclude every .mjs
+ * and that does NOT suppress it for a file that is new in a pull request:
+ * excluding at depth, by exact path, by basename, and moving the file to the
+ * repo root were all tried on the grant checker (014a02c, 48cd87b, 68debf8,
+ * b4e5b8f) and all failed — b4e5b8f claims the root works and 16dede6, the very
+ * next commit, gave up and deleted the script. Do not repeat that sequence.
+ *
+ * CommonJS parses cleanly, so this file is analysed properly instead of being
+ * excluded, and it can live here with the rest of the bus. package.json has no
+ * "type" field, so CommonJS is this project's default anyway. Nothing imports
+ * this module — server.mjs spawns it as a child process — so there is no ESM
+ * interop cost. Four lines differ from the ESM original: three requires and
+ * __dirname.
  */
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+/* eslint-disable @typescript-eslint/no-require-imports --
+   CommonJS is deliberate here and the reason is in the header above: it is what
+   lets DeepSource parse this file instead of excluding it. Scoped to this file
+   on purpose — an override in eslint.config.mjs would add a `files` pattern,
+   and adding one makes eslint walk into the nested agent worktrees (31 problems
+   became 36,476 the last time that happened). */
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 // Claude Code stores transcripts under a directory named after the working
 // directory with every non-alphanumeric character replaced by a dash.
-const REPO = path.resolve(import.meta.dirname);
+const REPO = path.resolve(__dirname, "..", "..");
 const SESSION_DIR = path.join(
   os.homedir(),
   ".claude",

@@ -68,7 +68,7 @@ Short list. The reasoning and the incident behind each one is in
     blurry render produces a confident wrong answer.
 30. Read structure before pixels, a range before a whole file. End the session
     when the work changes.
-31. Measure before optimising: `node context-cost.mjs`.
+31. Measure before optimising: `node tools/agent-bus/context-cost.cjs`.
 
 ## The coordination bus
 

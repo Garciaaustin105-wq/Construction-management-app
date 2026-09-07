@@ -102,7 +102,7 @@ That is the whole reason the board exists.
 
 ## The context budget
 
-Measured, not assumed. Run `node context-cost.mjs` to reproduce
+Measured, not assumed. Run `node tools/agent-bus/context-cost.cjs` to reproduce
 every number here against the current transcripts.
 
 - **Everything in context is paid for on every turn, not once.** 98.6% of this
