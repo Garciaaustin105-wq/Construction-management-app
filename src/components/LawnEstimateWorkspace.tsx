@@ -960,7 +960,15 @@ export default function LawnEstimateWorkspace({
         );
       // Last on purpose: it reads every other tab and takes no input of its own.
       case "materials":
-        return <MaterialsPanel areas={areas} components={componentRows} />;
+        return (
+          <MaterialsPanel
+            areas={areas}
+            components={componentRows}
+            organizationId={estimate.organization_id}
+            estimateId={estimate.id}
+            canEdit={editable}
+          />
+        );
       case "machines":
         return (
           <EquipmentPanel
