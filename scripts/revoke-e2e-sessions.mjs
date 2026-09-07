@@ -97,15 +97,30 @@ async function orgOf(userId) {
   return rows[0] ?? null;
 }
 
-async function revoke(userId) {
-  // GoTrue admin logout: invalidates every refresh token for the user.
-  const r = await fetch(`${URL_BASE}/auth/v1/admin/users/${userId}/logout`, {
-    method: "POST",
-    headers,
-  });
-  if (!r.ok && r.status !== 204) {
-    throw new Error(`logout: ${r.status} ${await r.text()}`);
-  }
+// THE ADMIN LOGOUT ROUTE DOES NOT EXIST ON THIS PROJECT. The obvious call —
+// POST /auth/v1/admin/users/{id}/logout — returns 404; that endpoint is not
+// exposed by the GoTrue version behind this project, and finding out cost a
+// failed run. There is no REST route that revokes another user's sessions here
+// and no generic SQL-over-REST either, so the revocation itself is two DELETEs
+// against the database. This script's job is to make those SAFE: resolve the
+// accounts, PROVE they are in the test org, and print the exact scoped SQL —
+// rather than pretending to revoke and silently failing, which is what the
+// first version did.
+//
+// Password rotation is different: that admin route does work, so --rotate is
+// carried out directly below.
+function revocationSql(ids) {
+  const list = ids.map((i) => `'${i}'`).join(", ");
+  return [
+    "-- Scoped to these account IDs only. Never widen this to a LIKE pattern.",
+    `with targets as (select id from auth.users where id in (${list})),`,
+    "del_rt as (delete from auth.refresh_tokens",
+    "           where user_id::text in (select id::text from targets) returning 1),",
+    "del_s  as (delete from auth.sessions",
+    "           where user_id in (select id from targets) returning 1)",
+    "select (select count(*) from del_rt) as refresh_tokens_deleted,",
+    "       (select count(*) from del_s)  as sessions_deleted;",
+  ].join("\n");
 }
 
 async function rotate(userId) {
@@ -120,6 +135,7 @@ async function rotate(userId) {
 console.log(CONFIRM ? "REVOKING SESSIONS\n" : "DRY RUN — nothing will change. Add --confirm to act.\n");
 
 let failures = 0;
+const verified = [];
 for (const email of TARGETS) {
   try {
     const user = await findUser(email);
@@ -144,14 +160,9 @@ for (const email of TARGETS) {
     console.log(`    role: ${profile.role}   org: test org (verified)`);
     console.log(`    last sign-in: ${user.last_sign_in_at ?? "never"}`);
 
-    if (!CONFIRM) {
-      console.log(`    would revoke all sessions${ROTATE ? " and set a new password" : ""}`);
-      continue;
-    }
+    verified.push(user.id);
 
-    await revoke(user.id);
-    console.log("    sessions revoked");
-    if (ROTATE) {
+    if (CONFIRM && ROTATE) {
       await rotate(user.id);
       console.log("    password rotated");
     }
@@ -161,12 +172,22 @@ for (const email of TARGETS) {
   }
 }
 
-console.log(
-  CONFIRM
-    ? "\nDone. Verify with:  select count(*) from auth.sessions s join auth.users u on u.id=s.user_id where u.email like 'e2e-%@test.local';"
-    : "\nDry run complete. Re-run with --confirm to revoke."
-);
+if (verified.length) {
+  console.log([
+    "",
+    "Run this against the database to revoke the sessions:",
+    "",
+    revocationSql(verified),
+    "",
+    "Then confirm both are at zero:",
+    "  select u.email, (select count(*) from auth.sessions s where s.user_id = u.id) as sessions",
+    `  from auth.users u where u.email in ('${TARGETS.join("','")}');`,
+  ].join("\n"));
+}
+if (!CONFIRM) {
+  console.log("\nDry run. Re-run with --confirm (add --rotate to set a new password).");
+}
 if (ROTATE && CONFIRM) {
-  console.log("Now put the new password in .env.local as E2E_PASSWORD so the harnesses keep working.");
+  console.log("\nPut the new password in .env.local as E2E_PASSWORD so the harnesses keep working.");
 }
 process.exit(failures ? 1 : 0);
