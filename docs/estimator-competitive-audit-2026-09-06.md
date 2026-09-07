@@ -129,15 +129,32 @@ service software."* A four-crew shop pays us **$199** against **$196–$1,196**.
 
 ## 3. Where we are behind, honestly
 
-### 3.1 No purchasing. This is the biggest functional gap.
+### 3.1 No purchasing — CLOSED, 2026-09-07
 
-There is **no purchase order, no material ordering, no vendor** anywhere in the
-codebase. Aspire's entire pitch is estimate → job → **purchasing** → job costing
-as one chain. We produce a quantity take-off and then drop it: the contractor
-retypes the plant list into an order.
+This was the biggest functional gap when the audit was written: no purchase
+order, no material ordering, nothing. We produced a quantity take-off and then
+dropped it, and the contractor retyped the plant list into a supplier order.
+Aspire's entire pitch is estimate → job → **purchasing** → job costing as one
+chain, and ours stopped one link short.
 
-For a design/build contractor that is a daily irritation, and it is the first
-thing an Aspire evaluator will ask about.
+**Built and merged** as `materialTakeoff.ts` + `materialOrders.ts` and a
+Materials tab on the estimate:
+
+- The take-off — plants, sod, heads, components, expressed as things a supplier
+  sells. Labor and equipment excluded; nobody sells labor by the each.
+- Sod is denominated in **whole pallets**, summed per area, and an order that
+  cannot work out a pallet count says so instead of offering square feet.
+- An order is a **frozen copy**, enforced by a database trigger as well as by
+  the contract. Re-pricing the catalogue does not move a document a supplier is
+  holding.
+- Unpriced lines go on the order — that is what a quote request is — flagged,
+  with the total stating it is partial.
+
+**Still open on this front:** no vendor records (supplier is free text, on
+purpose), no order document to send, and no reconciliation of what arrived
+against what was ordered. The chain is joined; it is not yet paved.
+
+That leaves 3.3, the onboarding cliff, as the largest remaining gap against us.
 
 ### 3.2 We refuse the hydraulics. That is correct, and it still costs us deals.
 
@@ -204,7 +221,7 @@ Check the code.
 | **Housecall Pro / RealGreen** | Not estimating competitors at all. We win on structure and on their own users' complaints (billing, lock-in, support). |
 | **SingleOps** | Arborist-first. Different buyer; little overlap. |
 | **LMN** | The closest real fight. They win on labor burden, training, and being a known quantity. We win on price, included measurement, irrigation heads, and the feedback loop. |
-| **Aspire** | Lose on depth and purchasing; not our buyer below $1M revenue — where reviewers say Aspire is the wrong tool anyway. **That is our lane.** |
+| **Aspire** | Lose on depth and on the paved parts of purchasing (vendors, order documents, receiving); not our buyer below $1M revenue — where reviewers say Aspire is the wrong tool anyway. **That is our lane.** |
 | **SiteRecon / PropertyIntel** | We do not beat their measurement AI. We make buying it optional, and we take field data they cannot. |
 | **Land F/X / Pro Contractor Studio** | Lose on design and hydraulics. Win on not being CAD. |
 
@@ -223,12 +240,12 @@ paying SiteRecon on top."*
 
 **The two gaps to close, in order:**
 
-1. **Purchasing** — estimate → material order. The quantities are already
-   computed; not emitting an order is leaving the chain broken one link from the
-   end. Biggest functional gap and the most mechanical to close.
+1. ~~**Purchasing**~~ — **closed 2026-09-07**, see 3.1. Estimate → material
+   order now runs end to end, with the order frozen once placed. Vendors, a
+   sendable order document and receiving are the remaining paving.
 2. **The onboarding cliff** — a new org faces a catalogue of blank rates. Not by
    seeding values (that rule stands), but by making the first-run path through
-   entering them short and obvious.
+   entering them short and obvious. **Now the largest gap against us.**
 
 **Do not close #3.2.** Refusing to compute hydraulics is a liability decision, not
 a feature gap.
