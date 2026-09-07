@@ -64,3 +64,6 @@ next-env.d.ts
 
 # standalone contract compiles for the harnesses
 .mat-build/
+
+# standalone nav compile for the harness
+.nav-build/
