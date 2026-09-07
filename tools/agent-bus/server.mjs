@@ -523,6 +523,150 @@ function callTool(name, args) {
 // rather than registering once. Its claims carry no pid, which means they fall
 // back to the TTL — a shell script cannot be probed for liveness the way a
 // server process can.
+/* ── dashboard ────────────────────────────────────────────────────────────── */
+
+// A page, because a status line you have to remember to run is not the same as
+// a window you leave open on a second monitor.
+//
+// SERVED LOCALLY, and it has to be: the bus state is a JSON file in this repo's
+// .git directory. Nothing hosted could read it, so this renders on each request
+// from the same withState() the tools use — no cache, no sync, no way for the
+// page to disagree with the bus.
+//
+// Server-rendered with a meta refresh rather than client-side polling. It is a
+// status board on a local socket; five lines of HTML beat a fetch loop, and it
+// keeps the no-dependencies rule this file has kept from the start.
+function dashboardHtml() {
+  return withState((state) => {
+    pruneAgents(state);
+    const now = Date.now();
+    const ago = (iso) => {
+      const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.round(s / 60)}m ago`;
+      return `${Math.round(s / 3600)}h ago`;
+    };
+    // Anything the agents wrote is untrusted text going into HTML.
+    const esc = (v) =>
+      String(v ?? "").replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+      );
+
+    const agents = Object.entries(state.agents).sort(
+      (a, b) => Date.parse(b[1].lastSeen ?? 0) - Date.parse(a[1].lastSeen ?? 0)
+    );
+    const lock = state.lock;
+    const held = lockIsLive(lock);
+    const board = Object.entries(state.board).sort(
+      (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
+    );
+
+    const agentCards = agents.length
+      ? agents
+          .map(([name, a]) => {
+            // Two minutes without a bus call and it is probably idle rather
+            // than working. Said as "quiet", not "offline" — the bus cannot
+            // tell the difference and should not pretend to.
+            const quiet = now - Date.parse(a.lastSeen ?? 0) > 120_000;
+            return `<div class="card${quiet ? " quiet" : ""}">
+        <div class="row"><span class="dot"></span><b>${esc(name)}</b>
+          <span class="seen">${esc(ago(a.lastSeen ?? new Date(0).toISOString()))}</span></div>
+        <p class="lane">${esc(a.lane || "no lane stated")}</p>
+        <p class="path">${esc(a.cwd || "")}</p>
+      </div>`;
+          })
+          .join("")
+      : "<p class=\"empty\">Nobody on the bus. An agent appears here after its first command.</p>";
+
+    const boardRows = board.length
+      ? board
+          .map(
+            ([k, v]) => `<details><summary><b>${esc(k)}</b>
+        <span class="seen">${esc(v.by)} · ${esc(ago(v.at))}</span></summary>
+        <p>${esc(v.value)}</p></details>`
+          )
+          .join("")
+      : "<p class=\"empty\">The board is empty.</p>";
+
+    return `<!doctype html>
+<meta charset="utf-8"><title>agent-bus</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="5">
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f5; --fg:#16201a; --mut:#5d6b5f;
+    --card:#fff; --line:#dfe4dc; --ok:#2f6b3f; --warn:#b4530a; }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#11150f; --fg:#e4ebe2; --mut:#93a094; --card:#19200f1a; --line:#2a3329; } }
+  body { margin:0; padding:28px; background:var(--bg); color:var(--fg);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif; }
+  h1 { font-size:15px; margin:0 0 2px; letter-spacing:.02em; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--mut); margin:26px 0 8px; font-weight:600; }
+  .sub { color:var(--mut); font-size:12px; margin:0 0 4px; }
+  .grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:11px 13px; }
+  .card.quiet { opacity:.55; }
+  .row { display:flex; align-items:center; gap:7px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto; }
+  .quiet .dot { background:var(--mut); }
+  .seen { margin-left:auto; color:var(--mut); font-size:11px; }
+  .lane { margin:5px 0 0; }
+  .path { margin:3px 0 0; color:var(--mut); font-size:11px;
+    overflow-wrap:anywhere; font-family:ui-monospace,monospace; }
+  .lock { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--ok);
+    border-radius:10px; padding:11px 13px; }
+  .lock.held { border-left-color:var(--warn); }
+  .empty { color:var(--mut); }
+  details { background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:9px 13px; margin-bottom:6px; }
+  summary { cursor:pointer; display:flex; gap:8px; align-items:center; }
+  details p { margin:9px 0 2px; color:var(--mut); overflow-wrap:anywhere; }
+</style>
+<h1>agent-bus</h1>
+<p class="sub">Refreshes every 5s · ${esc(new Date().toLocaleTimeString())}</p>
+
+<h2>Connected (${agents.length})</h2>
+<div class="grid">${agentCards}</div>
+
+<h2>Working tree</h2>
+<div class="lock${held ? " held" : ""}">${esc(describeLock(lock))}</div>
+
+<h2>Board (${board.length})</h2>
+${boardRows}
+`;
+  });
+}
+
+function runDashboard(port) {
+  // Imported here, not at the top: every other path in this file is a stdio
+  // server or a one-shot command that has no business opening a socket.
+  return import("node:http").then(({ default: http }) => {
+    const server = http.createServer((req, res) => {
+      try {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(dashboardHtml());
+      } catch (err) {
+        res.writeHead(500, { "content-type": "text/plain" });
+        res.end(String(err.message));
+      }
+    });
+    // Loopback only. This exposes who is working on what and where their
+    // worktrees are; it is for the machine it runs on.
+    server.listen(port, "127.0.0.1", () => {
+      process.stdout.write(`agent-bus dashboard: http://127.0.0.1:${port}\n`);
+      process.stdout.write("Ctrl+C to stop.\n");
+    });
+    server.on("error", (err) => {
+      process.stdout.write(
+        err.code === "EADDRINUSE"
+          ? `Port ${port} is busy — try: node server.mjs dashboard ${port + 1}\n`
+          : `dashboard failed: ${err.message}\n`
+      );
+      process.exitCode = 1;
+    });
+  });
+}
+
 function runCli(argv) {
   const [cmd, ...rest] = argv;
   const say = (t) => { process.stdout.write(String(t) + "\n"); };
@@ -534,6 +678,10 @@ function runCli(argv) {
         return say(callTool("agents", {}));
       case "status":
         return say(callTool("status", {}));
+      case "dashboard":
+        // Long-running, unlike every other verb here, so it returns the
+        // listener rather than falling through to the process exit below.
+        return runDashboard(Number(rest[0]) || 7777);
       case "note": {
         const [key, ...v] = rest;
         myName = process.env.AGENT_BUS_NAME || "cli";
@@ -564,7 +712,7 @@ function runCli(argv) {
       }
       default:
         say("agent-bus — usage:");
-        say("  status | board | agents | note <key> <value> | send <to> <msg>");
+        say("  dashboard [port] | status | board | agents | note <key> <value> | send <to> <msg>");
         say("  inbox <name> | claim <name> <path> <reason> | release <name>");
         say("");
         say("Set AGENT_BUS_NAME to avoid passing your name each time.");
@@ -595,7 +743,12 @@ function registerCli(name) {
 if (process.argv.length > 2) {
   IS_CLI = true;
   runCli(process.argv.slice(2));
-  process.exit(process.exitCode ?? 0);
+  // Every verb here is one-shot and exits — except `dashboard`, which is a
+  // listener. Exiting on it would tear the socket down before the first
+  // request, so it opts out and Node stays alive on its own handle.
+  if (process.argv[2] !== "dashboard") {
+    process.exit(process.exitCode ?? 0);
+  }
 }
 
 /* ── JSON-RPC over stdio ──────────────────────────────────────────────────── */
