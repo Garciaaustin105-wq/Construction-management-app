@@ -614,7 +614,7 @@ function renderStatusHtml(state, opts = {}) {
     </div>`;
         })
         .join("")
-    : `<p class="mut">Nobody on the bus yet. An agent appears here after its first command.</p>`;
+    : "<p class=\"mut\">Nobody on the bus yet. An agent appears here after its first command.</p>";
 
   const boardRows = board.length
     ? board
@@ -624,7 +624,7 @@ function renderStatusHtml(state, opts = {}) {
       <p>${esc(v.value)}</p></details>`
         )
         .join("")
-    : `<p class="mut">The board is empty.</p>`;
+    : "<p class=\"mut\">The board is empty.</p>";
 
   const ruleGroups = readBuildRules();
   const ruleHtml = ruleGroups.length
@@ -635,7 +635,7 @@ function renderStatusHtml(state, opts = {}) {
             .join("")}</ul></div>`
         )
         .join("")
-    : `<p class="mut">docs/build-rules.md not found from here.</p>`;
+    : "<p class=\"mut\">docs/build-rules.md not found from here.</p>";
 
   // Forms only exist in the served app. The written-to-disk copy is a file://
   // page with nothing to POST to, and a dead button is worse than no button.
