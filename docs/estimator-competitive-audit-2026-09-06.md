@@ -5,8 +5,10 @@
 **Short answer:** the estimator moved us out of the market we were competing in.
 Against Jobber and Housecall Pro we were one more field-service CRM with a
 pricing story. Against LMN and Aspire we are now a **cheaper, narrower tool that
-does one thing none of them do** — and we are missing two things all of them
-have.
+does one thing none of them do** — and we are missing things all of them have.
+
+> **Updated 2026-09-07.** Purchasing, named here as the biggest gap against us,
+> was built and merged the day this was written. See 3.1. The rest stands.
 
 ---
 
