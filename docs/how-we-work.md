@@ -97,3 +97,31 @@ That is the whole reason the board exists.
   when it goes wrong, not by how hard it looks.
 - **Report what actually happened.** If a step was skipped, say so. If a claim
   was wrong, correct it and move on.
+
+---
+
+## The context budget
+
+Measured, not assumed. Run `node tools/agent-bus/context-cost.mjs` to reproduce
+every number here against the current transcripts.
+
+- **Everything in context is paid for on every turn, not once.** 98.6% of this
+  project's entire token spend is cache reads — the model re-reading the
+  conversation before answering. Putting something in context costs its size
+  multiplied by every turn that follows it.
+- **Pixels never enter the main working thread.** 51 image reads cost 1.79M
+  tokens; 414 text-file reads cost 537k. One image is worth about 27 source
+  files. Nine logo drafts, checked inline, cost roughly 700k tokens.
+- **Never downgrade the look — bound its lifetime instead.** A blurry render or
+  a small vision model returns a confident wrong answer, which rule C1 exists to
+  prevent. Look at full resolution in a subagent, carry back the sentence, and
+  let the pixels die with that context.
+- **Read structure before pixels, and a range before a whole file.**
+  `read_page` gives real text and clickable refs for a fraction of a screenshot.
+  A named range beats a whole file.
+- **End the session when the work changes.** One session reached 9,720 turns at
+  539k of context per turn — 5.2 billion tokens, 64% of everything this project
+  has ever spent. A fresh session runs at about 57k a turn.
+- **Measure before optimising.** Two confident "fixes" here — trimming MCP
+  connectors, then blaming repeated source-file reads — were both wrong by an
+  order of magnitude, and the transcripts had the answer the whole time.

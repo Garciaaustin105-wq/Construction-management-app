@@ -1373,6 +1373,17 @@ function runCli(argv) {
   const say = (t) => { process.stdout.write(String(t) + "\n"); };
   try {
     switch (cmd) {
+      // Spawned rather than imported, so a broken analyser can never stop the
+      // bus itself from starting. Synchronous on purpose: the CLI calls
+      // process.exit() the moment runCli returns, so anything async here would
+      // be torn down before it produced a line.
+      case "cost":
+        execFileSync(
+          process.execPath,
+          [path.join(import.meta.dirname, "context-cost.mjs"), ...rest0],
+          { stdio: "inherit" }
+        );
+        return;
       case "board":
         return say(callTool("board", {}));
       case "agents":
@@ -1431,6 +1442,7 @@ function runCli(argv) {
         say("agent-bus — usage:");
         say("  dashboard [port] | work [lane] [runner] | task <lane> <title> <prompt>");
         say("  tasks | runners | status | board | agents | note <key> <value> | send <to> <msg>");
+        say("  cost [--full]   where the tokens actually went");
         say("  inbox <name> | claim <name> <path> <reason> | release <name>");
         say("");
         say("Set AGENT_BUS_NAME to avoid passing your name each time.");
