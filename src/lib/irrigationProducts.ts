@@ -470,11 +470,38 @@ export function headLegendManHours(rows: HeadLegendRow[]): number {
   return Math.round((minutes / 60) * 100) / 100;
 }
 
-// True when nothing placed has a recorded radius. The UI must not draw
-// coverage in that case, and should say the catalogue is missing radii rather
-// than silently showing bare markers.
+/**
+ * Categories that throw water outward, and so have a radius at all.
+ *
+ * Drip and bubblers do NOT. Dripline emits along the tube and an emitter wets
+ * the ground it sits on, so a radius of 0 on those rows is the correct value
+ * rather than a missing one — 12 of the seeded rows are in exactly that state
+ * on purpose.
+ */
+const THROWING_CATEGORIES: readonly HeadCategory[] = [
+  "rotor",
+  "spray",
+  "mp_rotator",
+  "other",
+];
+
+export function throwsWater(category: HeadCategory): boolean {
+  return THROWING_CATEGORIES.includes(category);
+}
+
+/**
+ * True when nothing that SHOULD have a radius has one. The UI must not draw
+ * coverage then, and should say the catalogue is missing throw distances rather
+ * than showing bare markers with no explanation.
+ *
+ * Drip and bubbler rows are excluded from the judgement entirely. Counting them
+ * would make a drip-only plan report "no throw distances recorded" forever — a
+ * warning that can never be actioned, because there is nothing to record. A
+ * plan of nothing but dripline returns false: nothing is missing.
+ */
 export function radiusUnset(rows: HeadLegendRow[]): boolean {
-  return rows.length > 0 && rows.every((r) => r.radius_ft <= 0);
+  const relevant = rows.filter((r) => throwsWater(r.category));
+  return relevant.length > 0 && relevant.every((r) => r.radius_ft <= 0);
 }
 
 // Heads placed at a price of zero. A starter catalogue ships with real

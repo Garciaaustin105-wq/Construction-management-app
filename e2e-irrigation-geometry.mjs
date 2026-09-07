@@ -458,4 +458,35 @@ t("describeAdjustment returns one line each",
     "is why the column must be selected", noMin.radiusFt !== null);
 }
 
+{
+  // DRIP DOES NOT THROW. Dripline emits along the tube and an emitter wets the
+  // ground it sits on, so radius 0 on those rows is the CORRECT value, not a
+  // missing one — 12 of the seeded nozzles are in that state on purpose.
+  // Counting them made a drip-only plan report "no throw distances recorded"
+  // forever: a warning nobody can ever action, because there is nothing to
+  // record.
+  console.log("\n[radiusUnset judges only what actually throws]");
+  const { radiusUnset, throwsWater } = M;
+  const row = (category, radius_ft) => ({ key: category + radius_ft, name: "x",
+    category, nozzle: "n", radius_ft, arc_deg: 360, cost: 0, unit_price: 0,
+    install_minutes: 0, color: "#000", count: 1, total: 0, total_cost: 0,
+    total_minutes: 0 });
+
+  t("rotors, sprays and rotary nozzles throw", 
+    ["rotor", "spray", "mp_rotator"].every(throwsWater));
+  t("drip does not", throwsWater("drip") === false);
+  t("bubblers do not", throwsWater("bubbler") === false);
+
+  t("a rotor with no radius IS unset", radiusUnset([row("rotor", 0)]) === true);
+  t("a rotor with a radius is not", radiusUnset([row("rotor", 30)]) === false);
+  // The bug this fixes.
+  t("A DRIP-ONLY PLAN IS NOT MISSING ANYTHING", radiusUnset([row("drip", 0)]) === false);
+  t("...nor is a bubbler-only one", radiusUnset([row("bubbler", 0)]) === false);
+  t("drip does not mask a rotor that IS missing its radius",
+    radiusUnset([row("drip", 0), row("rotor", 0)]) === true);
+  t("...and does not drag down a rotor that has one",
+    radiusUnset([row("drip", 0), row("rotor", 30)]) === false);
+  t("an empty plan is not missing anything", radiusUnset([]) === false);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);

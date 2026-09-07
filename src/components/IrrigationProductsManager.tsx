@@ -69,6 +69,11 @@ type Draft = {
 type NozzleDraft = {
   nozzle: string;
   radius_ft: number;
+  // A throw distance is only true AT a pressure. 0 means not recorded, and for
+  // min_psi that is meaningful: no minimum recorded means the below-minimum
+  // refusal cannot fire, which is better than firing at a guessed threshold.
+  rated_psi: number;
+  min_psi: number;
   cost: number;
   unit_price: number;
   install_minutes: number;
@@ -87,6 +92,8 @@ const EMPTY: Draft = {
 const EMPTY_NOZZLE: NozzleDraft = {
   nozzle: "",
   radius_ft: 0,
+  rated_psi: 0,
+  min_psi: 0,
   cost: 0,
   unit_price: 0,
   install_minutes: 0,
@@ -185,6 +192,8 @@ export default function IrrigationProductsManager({
     setNozzleDraft({
       nozzle: n.nozzle,
       radius_ft: Number(n.radius_ft ?? 0),
+      rated_psi: Number(n.rated_psi ?? 0),
+      min_psi: Number(n.min_psi ?? 0),
       cost: Number(n.cost ?? 0),
       unit_price: Number(n.unit_price ?? 0),
       install_minutes: Number(n.install_minutes ?? 0),
@@ -275,6 +284,11 @@ export default function IrrigationProductsManager({
     const payload = {
       nozzle,
       radius_ft: nozzleDraft.radius_ft,
+      // null rather than 0 when blank: the columns are nullable, and null reads
+      // as "not recorded" everywhere downstream while 0 would read as a real
+      // pressure of zero.
+      rated_psi: nozzleDraft.rated_psi > 0 ? nozzleDraft.rated_psi : null,
+      min_psi: nozzleDraft.min_psi > 0 ? nozzleDraft.min_psi : null,
       cost: nozzleDraft.cost,
       unit_price: nozzleDraft.unit_price,
       install_minutes: nozzleDraft.install_minutes,
@@ -444,6 +458,60 @@ export default function IrrigationProductsManager({
                 {describeThrow(nozzleDraft.radius_ft)}
               </span>
             </label>
+
+            {/* THE PRESSURE PAIR. A throw distance is only true AT a pressure,
+                and without these two the app has to treat the radius as valid
+                everywhere.
+
+                min_psi is the one that matters most: below it a rotor stops
+                rotating and a spray breaks into mist, so adjustedRadius()
+                REFUSES to return a distance rather than quoting a shorter one.
+                Leave it blank if the manufacturer does not publish it — a
+                guessed minimum makes that refusal fire at the wrong threshold,
+                which is worse than it not firing. */}
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">
+                  Rated at (psi)
+                </span>
+                <NumberInput
+                  value={nozzleDraft.rated_psi}
+                  onChange={(n) =>
+                    setNozzleDraft({ ...nozzleDraft, rated_psi: n })
+                  }
+                  placeholder="0"
+                  className={`${field} mt-1`}
+                />
+                <span className="mt-1 block text-[11px] text-gray-400">
+                  The pressure the throw above was measured at. Usually on the
+                  same chart.
+                </span>
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-gray-600">
+                  Minimum (psi)
+                </span>
+                <NumberInput
+                  value={nozzleDraft.min_psi}
+                  onChange={(n) =>
+                    setNozzleDraft({ ...nozzleDraft, min_psi: n })
+                  }
+                  placeholder="0"
+                  className={`${field} mt-1`}
+                />
+                <span className="mt-1 block text-[11px] text-gray-400">
+                  Below this the nozzle stops working properly. Blank if the
+                  chart does not say.
+                </span>
+              </label>
+            </div>
+            {nozzleDraft.radius_ft > 0 && nozzleDraft.rated_psi <= 0 && (
+              <p className="rounded bg-amber-100 p-2 text-[11px] text-amber-800">
+                Without a rated pressure this throw is treated as correct at
+                every pressure. Record it and a site running low gets an honest
+                figure instead.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <span className="text-xs font-medium text-gray-600">
