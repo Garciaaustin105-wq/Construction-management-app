@@ -148,3 +148,20 @@ arrived with four defects in it.
 
 A failure is a RESULT, not a crash: it lands on the queue with the reason, so a
 task is never left stuck on "running" with no explanation.
+
+## Picking which agent runs the work
+
+`tools/agent-bus/runners.json` declares every agent the bus may invoke, and the
+hub picker offers exactly that list. Two kinds:
+
+- `ollama` — POSTed to `/api/generate`. The four local models are already listed.
+- `shell` — spawned with the prompt on **stdin**, for a command-line agent. This
+  is how GLM joins: it runs from PowerShell, which the bus can start.
+
+**The hub can only run what the file declares.** The form sends an `id`, never a
+command. A text box that could hand a shell string to a worker on your machine
+is a remote-execution hole with a form in front of it, loopback or not. `shell`
+runners are spawned with an argument LIST and no shell, so nothing in a prompt
+can be read as an extra argument — and prompts here are written by other agents.
+
+GLM is listed and `enabled: false` until its invocation is filled in.

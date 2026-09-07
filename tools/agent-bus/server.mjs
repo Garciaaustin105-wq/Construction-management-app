@@ -506,11 +506,17 @@ function callTool(name, args) {
           title: args.title,
           prompt: args.prompt,
           status: "queued",
+          runner_id: args.runner_id || null,
           by: myName || "cli",
           at: nowIso(),
         });
         return `Queued ${id} on lane "${args.lane || "local"}": ${args.title}`;
       });
+
+    case "runners":
+      return readRunners()
+        .map((r) => `${r.enabled ? "  " : "x "}${r.id} — ${r.label ?? r.type}` + (r.note ? `\n     ${r.note}` : ""))
+        .join("\n");
 
     case "tasks":
       return withState((state) => {
@@ -583,34 +589,111 @@ function nextTaskId(state) {
 }
 
 /**
- * Ask the local model. Returns its text, or throws with something a person can
- * act on — "ollama is not running" beats a stack trace on the board.
+ * The runners the bus may invoke, from runners.json beside this file.
+ *
+ * Read fresh each time rather than cached: adding a model or filling in the GLM
+ * command should take effect on the next task, not on the next restart of a
+ * worker that has been up for hours.
  */
-async function askLocalModel(model, prompt) {
+function readRunners() {
+  try {
+    const raw = fs.readFileSync(new URL("./runners.json", import.meta.url), "utf8");
+    const list = JSON.parse(raw).runners ?? [];
+    return list.filter((r) => r && r.id && r.type);
+  } catch {
+    // No config, or broken JSON. Fall back to the one model this project is
+    // known to use, so a typo in the file cannot take the whole lane down.
+    return [{ id: "gpt-oss", label: "gpt-oss:20b — local", type: "ollama", model: "gpt-oss:20b", enabled: true }];
+  }
+}
+
+function findRunner(id) {
+  const runners = readRunners();
+  const found = runners.find((r) => r.id === id) ?? runners.find((r) => r.enabled);
+  if (!found) throw new Error("No enabled runner in runners.json.");
+  if (!found.enabled) {
+    throw new Error(
+      `Runner "${found.id}" is disabled in runners.json. ${found.note ?? ""}`.trim()
+    );
+  }
+  return found;
+}
+
+/** Ask an ollama model over HTTP. */
+async function askOllama(runner, prompt) {
   let res;
   try {
     res = await fetch(`${OLLAMA}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model,
+        model: runner.model,
         prompt,
         stream: false,
         options: { temperature: 0.2, num_predict: 1200 },
       }),
     });
   } catch {
-    throw new Error(
-      `Cannot reach ollama at ${OLLAMA}. Is it running? (ollama serve)`
-    );
+    throw new Error(`Cannot reach ollama at ${OLLAMA}. Is it running? (ollama serve)`);
   }
-  if (!res.ok) {
-    throw new Error(`ollama returned ${res.status}. Is "${model}" pulled?`);
-  }
-  const body = await res.json();
-  const text = String(body.response ?? "").trim();
+  if (!res.ok) throw new Error(`ollama returned ${res.status}. Is "${runner.model}" pulled?`);
+  const text = String((await res.json()).response ?? "").trim();
   if (!text) throw new Error("The model returned nothing.");
   return text;
+}
+
+/**
+ * Run a command-line agent, prompt on stdin.
+ *
+ * spawn with an ARGUMENT LIST, never a joined string and never a shell. Nothing
+ * in a prompt can then be read as an extra argument or a second command — and
+ * prompts here are written by other agents, so that is not hypothetical.
+ */
+function askShell(runner, prompt) {
+  return import("node:child_process").then(
+    ({ spawn }) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(runner.command, runner.args ?? [], {
+          cwd: path.resolve(DIR, "..", ".."),
+          shell: false,
+        });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (c) => {
+          out += c;
+        });
+        child.stderr.on("data", (c) => {
+          err += c;
+        });
+        child.on("error", (e) =>
+          reject(new Error(`Could not start "${runner.command}": ${e.message}`))
+        );
+        // A CLI agent that hangs waiting for input would hold the lane forever.
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error("Runner timed out after 10 minutes."));
+        }, 10 * 60 * 1000);
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          const text = out.trim();
+          if (code !== 0 && !text) {
+            reject(new Error(`Exited ${code}. ${err.trim().slice(0, 400)}`));
+            return;
+          }
+          if (!text) {
+            reject(new Error("The runner produced no output."));
+            return;
+          }
+          resolve(text);
+        });
+        child.stdin.write(prompt);
+        child.stdin.end();
+      })
+  );
+}
+
+function askRunner(runner, prompt) {
+  return runner.type === "shell" ? askShell(runner, prompt) : askOllama(runner, prompt);
 }
 
 /**
@@ -648,8 +731,9 @@ function finishTask(id, patch) {
  * Poll rather than push because the queue is a JSON file on disk — there is no
  * socket to subscribe to, and a five second poll on a local file costs nothing.
  */
-async function runWorker(lane, model) {
-  process.stdout.write(`agent-bus worker: lane "${lane}", model "${model}"\n`);
+async function runWorker(lane, runnerId) {
+  const runner = findRunner(runnerId);
+  process.stdout.write(`agent-bus worker: lane "${lane}", runner "${runner.id}" (${runner.label ?? runner.type})\n`);
   process.stdout.write(`ollama at ${OLLAMA}. Ctrl+C to stop.\n`);
   let idleLogged = false;
   for (;;) {
@@ -665,14 +749,16 @@ async function runWorker(lane, model) {
     idleLogged = false;
     process.stdout.write(`\n[${task.id}] ${task.title}\n  running...\n`);
     try {
-      const answer = await askLocalModel(model, task.prompt);
-      finishTask(task.id, { status: "done", result: answer, model });
+      // A task may name its own runner; the worker's is the fallback.
+      const chosen = task.runner_id ? findRunner(task.runner_id) : runner;
+      const answer = await askRunner(chosen, task.prompt);
+      finishTask(task.id, { status: "done", result: answer, model: chosen.id });
       process.stdout.write(`  done (${answer.length} chars)\n`);
     } catch (err) {
       // A failure is a RESULT, not a crash. It goes on the queue so the person
       // reading the hub sees why, instead of finding a task stuck on "running"
       // forever with no explanation.
-      finishTask(task.id, { status: "failed", result: err.message, model });
+      finishTask(task.id, { status: "failed", result: err.message, model: task.runner_id ?? runner.id });
       process.stdout.write(`  failed: ${err.message}\n`);
     }
   }
@@ -821,6 +907,15 @@ function renderStatusHtml(state, opts = {}) {
         .join("")
     : "<p class=\"mut\">Nothing queued. Work added here is picked up by a running worker.</p>";
 
+  const runnerOptions = readRunners()
+    .map(
+      (r) =>
+        `<option value="${esc(r.id)}"${r.enabled ? "" : " disabled"}>${esc(
+          r.label ?? r.id
+        )}${r.enabled ? "" : " (not configured)"}</option>`
+    )
+    .join("");
+
   const workGroups = readWorkflow();
   const workHtml = workGroups.length
     ? workGroups
@@ -928,7 +1023,7 @@ ${interactive ? "" : '<meta http-equiv="refresh" content="5">'}
     padding:10px 14px; margin-bottom:6px; }
   summary { cursor:pointer; display:flex; gap:8px; align-items:center; }
   details p { margin:9px 0 2px; color:var(--mut); overflow-wrap:anywhere; }
-  input, textarea { width:100%; margin-top:7px; padding:7px 9px; border-radius:7px;
+  input, textarea, select { width:100%; margin-top:7px; padding:7px 9px; border-radius:7px;
     border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; font-size:13px; }
   textarea { resize:vertical; }
   button { margin-top:9px; padding:7px 14px; border-radius:7px; border:0;
@@ -959,7 +1054,8 @@ ${actions}
 
 <h2>Work queue (${tasks.length})</h2>
 <p class="mut">Queued work is executed by a worker, not by a person reading this.
-  Start one with <code>node tools/agent-bus/server.mjs work local</code> — it takes the
+  Start one with <code>node tools/agent-bus/server.mjs work local</code>, and pick which
+  agent runs it below — it takes the
   next queued task in its lane, runs it against the local model, and writes the answer
   back here. Output is a DRAFT: the worker never touches the repo.</p>
 ${taskHtml}
@@ -970,6 +1066,7 @@ ${
     <input type="hidden" name="action" value="task">
     <input name="actor" placeholder="from (default: desk)" value="desk">
     <input name="lane" placeholder="lane" value="local">
+    <select name="runner_id">${runnerOptions}</select>
     <input name="title" placeholder="short title" required>
     <textarea name="prompt" rows="3" placeholder="the whole task, written for someone with no context" required></textarea>
     <button>Queue it</button>
@@ -1071,6 +1168,7 @@ function runAction(action, form) {
       case "task":
         return callTool("task_add", {
           lane: form.get("lane") || "local",
+          runner_id: form.get("runner_id") || null,
           title: form.get("title"),
           prompt: form.get("prompt"),
         });
@@ -1152,6 +1250,8 @@ function runCli(argv) {
         return say(callTool("status", {}));
       case "tasks":
         return say(callTool("tasks", {}));
+      case "runners":
+        return say(callTool("runners", {}));
       case "task": {
         const [lane, title, ...rest] = rest0;
         myName = process.env.AGENT_BUS_NAME || "cli";
@@ -1198,8 +1298,8 @@ function runCli(argv) {
       }
       default:
         say("agent-bus — usage:");
-        say("  dashboard [port] | work [lane] [model] | task <lane> <title> <prompt>");
-        say("  tasks | status | board | agents | note <key> <value> | send <to> <msg>");
+        say("  dashboard [port] | work [lane] [runner] | task <lane> <title> <prompt>");
+        say("  tasks | runners | status | board | agents | note <key> <value> | send <to> <msg>");
         say("  inbox <name> | claim <name> <path> <reason> | release <name>");
         say("");
         say("Set AGENT_BUS_NAME to avoid passing your name each time.");

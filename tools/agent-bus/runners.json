@@ -1,0 +1,62 @@
+{
+  "_comment": [
+    "Which agents the bus can run, and how to invoke each one.",
+    "",
+    "THE HUB CAN ONLY RUN WHAT IS LISTED HERE. The web form picks an id from this",
+    "file; it never sends a command. That is deliberate — a form that could pass a",
+    "shell string to a worker on your machine is a remote-code-execution hole with a",
+    "text box in front of it, even on loopback. Adding a runner is editing this file.",
+    "",
+    "type 'ollama' — POSTed to /api/generate. Nothing to install beyond the model.",
+    "type 'shell'  — spawned with the prompt written to STDIN. args are passed as a",
+    "list, never joined into a string, so nothing in a prompt can be read as an",
+    "argument or a second command.",
+    "",
+    "GLM: fill in the command you use. It is launched from PowerShell on this",
+    "machine and Claude cannot see that session, so the exact invocation has to come",
+    "from you. Put the flags that select GLM 5.3 Flash in args, leave the prompt to",
+    "arrive on stdin, and set enabled to true."
+  ],
+  "runners": [
+    {
+      "id": "gpt-oss",
+      "label": "gpt-oss:20b — local",
+      "type": "ollama",
+      "model": "gpt-oss:20b",
+      "enabled": true,
+      "note": "The project's default local model."
+    },
+    {
+      "id": "qwen-coder",
+      "label": "qwen2.5-coder:14b — local",
+      "type": "ollama",
+      "model": "qwen2.5-coder:14b",
+      "enabled": true,
+      "note": "Code-weighted. Drafts schemas confidently and gets types wrong; review closely."
+    },
+    {
+      "id": "codestral",
+      "label": "codestral:22b — local",
+      "type": "ollama",
+      "model": "codestral:22b",
+      "enabled": true
+    },
+    {
+      "id": "qwen-small",
+      "label": "qwen2.5:7b — local, fast",
+      "type": "ollama",
+      "model": "qwen2.5:7b",
+      "enabled": true,
+      "note": "Fast and shallow. Good for extraction and summarising, not design."
+    },
+    {
+      "id": "glm",
+      "label": "GLM 5.3 Flash — PowerShell",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-Command", "REPLACE ME - the command that starts GLM 5.3 Flash and reads its prompt from stdin"],
+      "enabled": false,
+      "note": "Disabled until the invocation is filled in. See _comment above."
+    }
+  ]
+}
