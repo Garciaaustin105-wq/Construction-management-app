@@ -139,5 +139,37 @@ console.log("\n[status reads as a sentence, not a code]");
     .every((s) => describeStatus(s).length > 0));
 }
 
+console.log("");
+console.log("[the supplier document - what it is, and what it must not become]");
+{
+  const { describeSupplierDoc, orderSharePath, sendProblem } = M;
+
+  // Prices OFF is a REQUEST FOR A QUOTE. unit_cost is what the org expects to
+  // pay and may have come from a different supplier; showing it unasked is how
+  // a discount gets lost.
+  const quote = describeSupplierDoc({ show_prices: false });
+  t("with prices off it says it is NOT an order", quote.includes("not an order"));
+  t("...and asks them to quote", quote.toLowerCase().includes("quote us"));
+
+  const po = describeSupplierDoc({ show_prices: true });
+  t("with prices on it says it IS an order", po.startsWith("This is an order"));
+  t("...and invites a correction rather than asserting the price",
+    po.toLowerCase().includes("wrong before you ship"));
+  t("THE TWO DOCUMENTS DO NOT READ THE SAME", quote !== po);
+
+  t("the share path is the token, nothing else",
+    orderSharePath({ share_token: "abc-123" }) === "/o/abc-123");
+
+  // An empty document is a puzzle, and the supplier only discovers it by
+  // replying to ask what it is.
+  t("AN EMPTY ORDER CANNOT BE SENT", !!sendProblem({ status: "draft" }, 0));
+  t("...and says why", (sendProblem({ status: "draft" }, 0) || "").includes("no lines"));
+  t("a draft with lines can be sent", sendProblem({ status: "draft" }, 3) === null);
+  t("a placed order can be re-sent", sendProblem({ status: "placed" }, 3) === null);
+  t("a CANCELED order cannot be sent", !!sendProblem({ status: "canceled" }, 3));
+  t("...and says to raise a new one",
+    (sendProblem({ status: "canceled" }, 3) || "").includes("Raise a new one"));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

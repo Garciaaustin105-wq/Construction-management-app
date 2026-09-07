@@ -678,6 +678,7 @@ export function isPublicRoute(pathname: string): boolean {
     pathname.startsWith("/v/") || // customer lawn visit photo portal (token link)
     pathname.startsWith("/lead/") || // public lead capture form (token link)
     pathname.startsWith("/r/") || // public review-rating gate (token link)
+    pathname.startsWith("/o/") || // supplier material-order portal (token link)
     pathname.startsWith("/customer/") || // customer portal sub-routes
     pathname === "/isp/checkout/complete" // ISP subscriber's Stripe return page
   );

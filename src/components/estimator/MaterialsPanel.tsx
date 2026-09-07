@@ -9,7 +9,10 @@ import { useToast } from "@/components/Toast";
 import { formatMoney } from "@/lib/money";
 import {
   describeStatus,
+  describeSupplierDoc,
   draftFromTakeoff,
+  orderSharePath,
+  sendProblem,
   exclusionWarning,
   orderProblem,
   orderTotal,
@@ -147,6 +150,20 @@ export default function MaterialsPanel({
     setReloadKey((k) => k + 1);
   }
 
+  // Clipboard, not a mailto. The org sends it however they already talk to
+  // that supplier — and a copied link cannot half-send.
+  async function copyLink(order: MaterialOrderWithItems) {
+    const url = `${window.location.origin}${orderSharePath(order)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Supplier link copied");
+    } catch {
+      // A denied clipboard permission must not leave them with nothing, so the
+      // link goes where it can still be selected by hand.
+      toast.error(url);
+    }
+  }
+
   async function remove(order: MaterialOrderWithItems) {
     setBusy(true);
     const error = await deleteMaterialOrder(supabase, order);
@@ -184,6 +201,33 @@ export default function MaterialsPanel({
                 </p>
               </div>
             </div>
+            {/*
+              The supplier link. Copied rather than sent: this app does not
+              know the supplier's email, and inventing a send button that only
+              copies would be a lie about what happened.
+            */}
+            {canEdit && (
+              <div className="rounded border border-gray-200 bg-gray-50 p-2 space-y-1.5">
+                <p className="text-[11px] leading-snug text-gray-600">
+                  {describeSupplierDoc(o)}
+                </p>
+                {(() => {
+                  const problem = sendProblem(o, o.items.length);
+                  if (problem) {
+                    return <p className="text-[11px] text-amber-800">{problem}</p>;
+                  }
+                  return (
+                    <button
+                      onClick={() => void copyLink(o)}
+                      disabled={busy}
+                      className="text-[11px] font-semibold text-slate-700 bg-white border border-gray-300 rounded-lg px-2.5 py-1 active:bg-gray-100 disabled:opacity-50"
+                    >
+                      Copy supplier link
+                    </button>
+                  );
+                })()}
+              </div>
+            )}
             {unpriced > 0 && (
               <p className="text-[11px] text-amber-800">
                 {unpriced} line{unpriced === 1 ? "" : "s"} on this order have no
