@@ -25,6 +25,18 @@ const eslintConfig = defineConfig([
     ".*-build/**",
   ]),
   {
+    // The harnesses assert with `cond ? (pass++, log()) : (fail++, log())` —
+    // 33 files, hundreds of call sites, and eslint reads each one as an
+    // expression statement doing nothing.
+    //
+    // It is not doing nothing, and rewriting them to satisfy the rule would
+    // make every harness longer and worse to read for no defect found. Scoped
+    // off here rather than silenced line by line, because the pattern is the
+    // convention of these files, not an exception within them.
+    files: ["e2e-*.mjs", "tools/**/e2e-*.mjs"],
+    rules: { "no-unused-expressions": "off", "@typescript-eslint/no-unused-expressions": "off" },
+  },
+  {
     // Double quotes, and a template literal only when it earns its keep.
     //
     // Added after a DeepSource autofix PR sat open for three weeks proposing
