@@ -65,6 +65,7 @@ import {
   CheckCircle2,
   CircuitBoard,
   Trees,
+  Layers,
   Droplets,
   Tractor,
   Hammer,
@@ -72,10 +73,54 @@ import {
 import type { Role } from "@/lib/roles";
 import { isLawn } from "@/lib/variant";
 
+/**
+ * Sidebar grouping for the lawn office nav, from the design pass GLM built on
+ * 2026-09-06 (design/lawn-nav-regroup.html, design/lawn-desktop-home-v2.html).
+ *
+ * The office sidebar had grown to thirty-odd flat rows, and the two the office
+ * opens first — Overdue and Approvals — sat at positions nineteen and twenty.
+ * Grouping is what moves them up without deleting anything.
+ *
+ * ORDER MATTERS AND IS THE ORDER BELOW: the sections a person opens before 9am
+ * come first, and the ones nobody visits weekly come last.
+ */
+export type NavSection =
+  | "today"
+  | "money"
+  | "customers"
+  | "work"
+  | "catalogues"
+  | "chemical"
+  | "team"
+  | "ai"
+  | "system";
+
+/** Rendered order, with the label the sidebar shows. */
+export const NAV_SECTIONS: readonly { id: NavSection; label: string }[] = [
+  { id: "today", label: "Today" },
+  { id: "money", label: "Money" },
+  { id: "customers", label: "Customers" },
+  { id: "work", label: "Work" },
+  { id: "catalogues", label: "Catalogues" },
+  { id: "chemical", label: "Chemical" },
+  { id: "team", label: "Team" },
+  { id: "ai", label: "AI" },
+  { id: "system", label: "System" },
+] as const;
+
 export type NavItem = {
   href: string;
   label: string;
   Icon: LucideIcon;
+  /**
+   * Which sidebar group this row belongs to. OPTIONAL, and absent means the row
+   * renders above the groups — Home is the only one that does.
+   *
+   * Only the lawn office nav sets it. Crew, PM, sales and accountant navs are
+   * short enough that grouping four rows would be noise, and BottomNav ignores
+   * this field entirely because mobile already navigates by hub.
+   */
+  section?: NavSection;
   // "unread" => the consuming chrome renders the unread-notifications count
   // on this row (Home only).
   badge?: "unread";
@@ -140,61 +185,65 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
     // /dashboard still redirects to /lawn as a safety net for typed/old links.
     const items: NavItem[] = [
       { href: "/lawn", label: "Home", Icon: Home, badge: "unread" },
-      { href: "/lawn/jobs", label: "Jobs", Icon: CheckSquare },
+      { href: "/lawn/jobs", label: "Jobs", Icon: CheckSquare, section: "work" },
       // Property hub (/lawn/customers): one customer's whole history — visits,
       // photos, schedules, details — master–detail, no page navigation. Sits
       // next to Jobs, which lists each property's standing schedule; this is
       // the history those schedules produced. Read-only; editing links out to
       // /admin/customers. Office/admin only — matches the page gate (FIELD or
       // MANAGEMENT), this fallthrough block is office/admin.
-      { href: "/lawn/customers", label: "Properties", Icon: MapPin },
+      { href: "/lawn/customers", label: "Properties", Icon: MapPin, section: "customers" },
       // Office/admin get the GALLERY; field roles keep the uploader below,
       // which is what they actually need on a phone at a property. The gallery
       // links to the uploader, so neither audience loses the other's page.
-      { href: "/lawn/photos", label: "Photos", Icon: Camera },
+      { href: "/lawn/photos", label: "Photos", Icon: Camera, section: "work" },
       // Completed sits beside Overdue on purpose: work that got done and work
       // that did not are the two questions the office asks about the past, and
       // neither had a home before today.
-      { href: "/lawn/completed", label: "Completed", Icon: CheckCircle2 },
-      { href: "/crew/time", label: "Clock in/out", Icon: Clock },
-      { href: "/admin/customers", label: "Customers", Icon: Contact },
-      { href: "/admin/leads", label: "Leads", Icon: UserPlus },
-      { href: "/admin/reviews", label: "Reviews", Icon: Star },
+      { href: "/lawn/completed", label: "Completed", Icon: CheckCircle2, section: "work" },
+      { href: "/crew/time", label: "Clock in/out", Icon: Clock, section: "team" },
+      { href: "/admin/customers", label: "Customers", Icon: Contact, section: "customers" },
+      { href: "/admin/leads", label: "Leads", Icon: UserPlus, section: "customers" },
+      { href: "/admin/reviews", label: "Reviews", Icon: Star, section: "customers" },
       // Chemical application tracking (lawn compliance). Applications = the log
       // + CSV export (office/PM; crew log from the visit page, not this nav).
       // Products = the org's chemical catalog (office/PM manage).
-      { href: "/lawn/applications", label: "Applications", Icon: FlaskConical },
-      { href: "/lawn/products", label: "Products", Icon: Package },
+      { href: "/lawn/applications", label: "Applications", Icon: FlaskConical, section: "chemical" },
+      { href: "/lawn/products", label: "Products", Icon: Package, section: "chemical" },
       // Estimator catalogues (Lane A, office/PM manage): plants, sprinkler
       // heads, machinery and labor lines feed the map estimator's pricing.
       // All four page gates are OFFICE_OR_PM, matching this fallthrough
       // block. /lawn/plants shipped earlier without a nav entry — linked
       // here now alongside its siblings.
-      { href: "/lawn/plants", label: "Plants", Icon: Trees },
-      { href: "/lawn/irrigation", label: "Heads", Icon: Droplets },
-      { href: "/lawn/equipment", label: "Machines", Icon: Tractor },
-      { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer },
+      { href: "/lawn/plants", label: "Plants", Icon: Trees, section: "catalogues" },
+      { href: "/lawn/irrigation", label: "Heads", Icon: Droplets, section: "catalogues" },
+      { href: "/lawn/equipment", label: "Machines", Icon: Tractor, section: "catalogues" },
+      { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer, section: "catalogues" },
+      // Sod. Its contract and estimate panel shipped without a screen, so every
+      // sod product sat unpriced with no way to edit it. Page gate is
+      // OFFICE_OR_PM, matching this block and the sod_products RLS tier.
+      { href: "/lawn/sod", label: "Sod", Icon: Layers, section: "catalogues" },
       // Lane D: everything between the water source and the heads — POC,
       // backflow, valves, controller, wire, mainline, sleeving. Two units,
       // each and foot, which is why this is its own catalogue and not a
       // tab on Heads (which is per-each model→nozzle). Page gate
       // OFFICE_OR_PM, matching this block and the components RLS tier.
-      { href: "/lawn/irrigation-components", label: "Components", Icon: CircuitBoard },
+      { href: "/lawn/irrigation-components", label: "Components", Icon: CircuitBoard, section: "catalogues" },
       // Compliance records (RUP purchases/30-day rule, disposal, CEU,
       // noncertified training) — page gate is OFFICE_OR_PM; this entry sits in
       // the lawn office/admin fallthrough block so it matches.
-      { href: "/lawn/compliance", label: "Compliance", Icon: ShieldCheck },
-      { href: "/admin/crew-members", label: "Team", Icon: UsersRound },
+      { href: "/lawn/compliance", label: "Compliance", Icon: ShieldCheck, section: "chemical" },
+      { href: "/admin/crew-members", label: "Team", Icon: UsersRound, section: "team" },
       // Crew teams (lawn): the teams work is assigned to; the lead confirms
       // head count at shift start (crew_size) — that is what turns durations
       // into priced man-hours. Sits next to the roster it draws from. Office
       // fallthrough block = office/admin only, matching the page gate.
-      { href: "/lawn/crews", label: "Crews", Icon: Users },
+      { href: "/lawn/crews", label: "Crews", Icon: Users, section: "team" },
       // Reads those confirmed head counts back: what jobs actually took against
       // what they were quoted at, as proposed catalogue rates. Sits beside
       // Crews because crew_size recorded there is what makes it work at all.
       // Office fallthrough block = office/admin, matching the page gate.
-      { href: "/lawn/labor-feedback", label: "Labor feedback", Icon: AlarmClock },
+      { href: "/lawn/labor-feedback", label: "Labor feedback", Icon: AlarmClock, section: "team" },
       // "Measure & quote" (/estimates/quick) and Templates (/templates) used
       // to be separate top-of-nav tabs, but neither is a distinct top-level
       // concept — both are entry points/config that live inside Estimates
@@ -202,42 +251,52 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // per user request 2026-08-29: one Estimates tab, not three. The
       // routes themselves still work (quick-actions on /lawn still link
       // /estimates/quick directly; /templates redirects into the new view).
-      { href: "/estimates", label: "Estimates", Icon: FileText },
-      { href: "/invoices", label: "Invoices", Icon: Receipt },
-      { href: "/lawn/insights", label: "Insights", Icon: TrendingUp },
+      { href: "/estimates", label: "Estimates", Icon: FileText, section: "money" },
+      { href: "/invoices", label: "Invoices", Icon: Receipt, section: "money" },
+      // Insights sits with Money on the owner's call: it is the revenue story,
+      // read after the estimates and invoices that produced it.
+      { href: "/lawn/insights", label: "Insights", Icon: TrendingUp, section: "money" },
       // AI admin (slice 1: visit summarization). Office/admin only — the page
       // gate (src/app/lawn/ai/page.tsx) bounces super_admin + non-office; this
       // nav entry is in the lawn office/admin fallthrough block so it matches.
-      { href: "/lawn/ai", label: "AI admin", Icon: Sparkles },
+      // Its own section on the owner's call. Filed under System it read as an
+      // internal setting, which undersells the one feature nobody else ships.
+      { href: "/lawn/ai", label: "AI admin", Icon: Sparkles, section: "ai" },
       // Overdue backlog (pending visits past their due date) — the office is
       // meant to feel this one; the /lawn KPI + the daily digest both land
       // here. Office/admin only — matches the page gate, same fallthrough
       // block.
-      { href: "/lawn/overdue", label: "Overdue", Icon: AlarmClock },
+      { href: "/lawn/overdue", label: "Overdue", Icon: AlarmClock, section: "today" },
       // Completion approvals (gate 4 of the settlement gates): finished
       // visits the office signs off before the customer is emailed. Office/
       // admin only — matches the page gate, same fallthrough block.
-      { href: "/lawn/approvals", label: "Approvals", Icon: ClipboardCheck },
-      { href: "/lawn/notifications", label: "Customer notifications", Icon: Bell },
+      { href: "/lawn/approvals", label: "Approvals", Icon: ClipboardCheck, section: "today" },
+      // Customer-facing email, not system config — so it lives with the
+      // customers it goes to.
+      { href: "/lawn/notifications", label: "Customer notifications", Icon: Bell, section: "customers" },
       // Scheduling ops (weather auto-reschedule settings, batch reschedule,
       // blackouts, zones, crew time off) — page gate is OFFICE_LIKE, this
       // entry sits in the lawn office/admin fallthrough block to match.
-      { href: "/lawn/scheduling", label: "Scheduling", Icon: CalendarDays },
+      // FIRST in Today, and Calendar sits under it, on the owner's call:
+      // scheduling is the job and the calendar is one view of it, not the other
+      // way round.
+      { href: "/lawn/scheduling", label: "Scheduling", Icon: CalendarDays, section: "today" },
       // Live crew tracking. Sits next to Scheduling because it answers a
       // dispatch question ("how far out is he?"), not a reporting one. Page
       // gate is OFFICE_OR_PM and the crew_locations read policy is
       // me_is_office_or_pm, so this entry sits in the office/admin block to
       // match both. Free-plan orgs still see the tab and get the upgrade
       // panel — hiding it would make the feature undiscoverable.
-      { href: "/lawn/track", label: "Crew tracking", Icon: LocateFixed },
-      { href: "/admin/email-preview", label: "Email Preview", Icon: Mail },
+      { href: "/lawn/track", label: "Crew tracking", Icon: LocateFixed, section: "today" },
+      // A developer tool. Behind System with Account, on the owner's call.
+      { href: "/admin/email-preview", label: "Email Preview", Icon: Mail, section: "system" },
       // Points at the lawn dispatch board (Month/Week/Agenda, drag-to-
       // reschedule, filters, crew colors), not the generic org-wide /calendar
       // page — office/admin is exactly who /lawn/calendar admits (OFFICE_LIKE),
       // so this never dead-ends. PM/superintendent don't get this nav entry on
       // lawn (their nav is the small `base` set), so they still only ever
       // reach the generic /calendar (which they can access) — no dead link.
-      { href: "/lawn/calendar", label: "Calendar", Icon: Calendar },
+      { href: "/lawn/calendar", label: "Calendar", Icon: Calendar, section: "today" },
       // Account = the org-settings hub (/manage), replacing the separate
       // "Admin" and "Billing" tabs. Billing and user management both read as
       // account concerns, and two near-identical tabs at the end of a 20-item
@@ -249,7 +308,7 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // their own MFA page. /manage is already the org-level hub, is already
       // OFFICE_LIKE-gated, and already shows billing only to office/admin — so
       // this changes discoverability, not permissions.
-      { href: "/manage", label: "Account", Icon: Settings },
+      { href: "/manage", label: "Account", Icon: Settings, section: "system" },
     ];
     return items;
   }
@@ -508,6 +567,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/lawn/irrigation",
             "/lawn/equipment",
             "/lawn/labor-items",
+            "/lawn/sod",
             "/lawn/irrigation-components",
             "/lawn/scheduling",
             // Customers is an Office-hub card again (it was moved to the

@@ -6,8 +6,10 @@ import EmptyState from "@/components/EmptyState";
 import Card, { CardHeader } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import KpiTile from "@/components/charts/KpiTile";
+import DensityToggle from "@/components/ui/DensityToggle";
+import { formatMoney } from "@/lib/money";
 import { FIELD_MGMT, OFFICE_OR_PM, isOfficeLike } from "@/lib/roles";
-import { summarizeSchedule } from "@/lib/lawnRecurrence";
+import { generateDueDates, summarizeSchedule } from "@/lib/lawnRecurrence";
 import NotificationsFeed from "@/components/NotificationsFeed";
 import RoleOnboarding from "@/components/RoleOnboarding";
 import FieldReadinessBanner from "@/components/FieldReadinessBanner";
@@ -30,10 +32,55 @@ import {
   Snowflake,
   Bell,
   Ruler,
+  ClipboardCheck,
+  Receipt,
 } from "lucide-react";
 
 // Row shapes for the relation joins (Supabase types these loosely, so we cast
 // via `as unknown as Row[]` — same pattern as estimates/page.tsx).
+// "8:00a - 10:00a" from the two time columns, or null when the visit carries
+// no window. A start with no end is still worth showing - it is when the crew
+// is due - so it renders alone rather than being dropped.
+function visitWindow(v: {
+  scheduled_window_start: string | null;
+  scheduled_window_end: string | null;
+}): string | null {
+  const clock = (t: string | null) => {
+    if (!t) return null;
+    const [hRaw, m] = t.split(":");
+    const h = Number(hRaw);
+    if (!Number.isFinite(h)) return null;
+    const suffix = h < 12 ? "a" : "p";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${m ?? "00"}${suffix}`;
+  };
+  const start = clock(v.scheduled_window_start);
+  const end = clock(v.scheduled_window_end);
+  if (!start && !end) return null;
+  if (start && end) return `${start} - ${end}`;
+  return start ?? end;
+}
+
+// The next date this schedule actually lands, or null.
+//
+// A PAUSED schedule returns null rather than its would-be date: the column asks
+// when the crew is next going, and for a paused route the answer is not a date.
+// The 90-day window bounds the work — a monthly schedule needs more than a
+// fortnight to produce anything, and a schedule with nothing inside three
+// months is not something the office is planning around today.
+function nextDue(
+  s: ScheduleRow,
+  today: string
+): string | null {
+  if (!s.active) return null;
+  const horizon = new Date(
+    new Date(`${today}T00:00:00Z`).valueOf() + 90 * 24 * 60 * 60 * 1000
+  )
+    .toISOString()
+    .slice(0, 10);
+  return generateDueDates(s, today, horizon)[0] ?? null;
+}
+
 type VisitRow = {
   id: string;
   due_date: string;
@@ -46,6 +93,14 @@ type VisitRow = {
     address: string | null;
     customers: { name: string | null } | null;
   } | null;
+  // Desktop-table columns. All nullable: a visit created by hand has no
+  // schedule behind it, may not be assigned to a crew, and need not carry an
+  // arrival window. Each renders as an em dash rather than a guess.
+  route_order: number | null;
+  scheduled_window_start: string | null;
+  scheduled_window_end: string | null;
+  recurring_schedules: { service_type: string | null } | null;
+  crew_teams: { name: string | null } | null;
 };
 type ScheduleRow = {
   id: string;
@@ -122,16 +177,33 @@ export default async function LawnPage() {
   // /dashboard: lawn office users redirect to /lawn and never load /dashboard,
   // so the customer-action feed (estimate accepted/declined, invoice paid) is
   // surfaced here instead.
+  // Seven days back from the ORG's today, not the server's clock — a Florida
+  // office at 9pm and the machine running this are not always on the same date,
+  // and the tile says "last 7 days" so the window has to mean the org's days.
+  // Deriving it from `today` also keeps this pure, which is what
+  // react-hooks/purity wants: parsing a date string reads no clock.
+  const weekAgoIso = new Date(
+    new Date(`${today}T00:00:00Z`).valueOf() - 7 * 24 * 60 * 60 * 1000
+  ).toISOString();
+
   const [
     { data: visits },
     { data: schedules },
     { data: notificationsData },
     { count: crewCount },
     { count: unreadRaw },
+    { count: approvalsRaw },
+    { data: recentInvoices },
   ] = await Promise.all([
+    // The extra columns are for the DESKTOP table only (service, crew and the
+    // arrival window). They are on lawn_visits and its two FKs already, so this
+    // is a wider select on a query that was being made anyway - not a new
+    // round trip. Mobile ignores them.
     supabase
       .from("lawn_visits")
-      .select("id, due_date, status, jobs(name, address, customers(name))")
+      .select(
+        "id, due_date, status, route_order, scheduled_window_start, scheduled_window_end, jobs(name, address, customers(name)), recurring_schedules(service_type), crew_teams(name)"
+      )
       .eq("status", "pending")
       .lte("due_date", today)
       .order("due_date", { ascending: true }),
@@ -159,6 +231,23 @@ export default async function LawnPage() {
       .from("notifications")
       .select("id", { count: "exact", head: true })
       .is("read_at", null),
+    // Finished visits waiting on the office (gate 4). Same filter the
+    // approvals queue itself uses; head+count so this is a count, not a page
+    // of rows.
+    supabase
+      .from("lawn_visits")
+      .select("id", { count: "exact", head: true })
+      .not("awaiting_approval_since", "is", null),
+    // Invoiced in the last SEVEN DAYS - not "this week". There is no total
+    // column on invoices, so the figure is summed from line items, and the
+    // window is what keeps that cheap: /admin/insights pulls thirteen months
+    // for its charts and is the slowest page in the app. Seven days is also
+    // the honest label; a Monday-boundary "this week" reads as almost nothing
+    // every Monday morning.
+    supabase
+      .from("invoices")
+      .select("id, invoice_line_items(quantity, unit_price)")
+      .gte("created_at", weekAgoIso),
   ]);
 
   const visitRows = (visits as unknown as VisitRow[] | null) ?? [];
@@ -173,6 +262,25 @@ export default async function LawnPage() {
     created_at: string;
   }>;
   const unreadCount = unreadRaw ?? 0;
+  const approvalsCount = approvalsRaw ?? 0;
+
+  // Summed here rather than in SQL because the line items came back with the
+  // invoices. A quantity or price that is null counts as zero - a missing
+  // figure is not a negative one.
+  const invoicedWeek = (
+    (recentInvoices ?? []) as Array<{
+      invoice_line_items: Array<{ quantity: number | null; unit_price: number | null }> | null;
+    }>
+  ).reduce(
+    (sum, inv) =>
+      sum +
+      (inv.invoice_line_items ?? []).reduce(
+        (n, li) => n + (Number(li.quantity) || 0) * (Number(li.unit_price) || 0),
+        0
+      ),
+    0
+  );
+  const invoicedCount = (recentInvoices ?? []).length;
 
   // Solo-owner field mode (see crew_members count above). The office/admin
   // owner running the work with no crews gets a "Today's Route" link into the
@@ -218,10 +326,29 @@ export default async function LawnPage() {
                   rendered as reassurance, never a call to action (the rule is
                   enforced inside the component + the lib). */}
               <FieldReadinessBanner />
-              <p className="text-[11px] text-gray-400">
-                As of {dateStr} · live counts
-              </p>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* The row only becomes a row at lg. Below that it is an inert
+                  wrapper and the freshness line keeps exactly the classes it
+                  had, so the phone renders what it always did. */}
+              <div className="lg:flex lg:items-center lg:gap-2">
+                <p className="text-[11px] text-gray-400 lg:flex-1">
+                  As of {dateStr} · live counts
+                </p>
+                {/* Built in phase 1 of the desktop pass and never mounted —
+                    "phase 3 mounts it in the desktop page header". This is that
+                    header. It stamps data-density on <html>, so one click
+                    re-densifies every shared table at once; it hides itself
+                    below lg, where the tokens are not read at all. */}
+                {/* Desktop only. The density tokens are read by desktop
+                    tables alone, so offering the control on a phone would set
+                    something the viewer cannot see. */}
+                <DensityToggle className="hidden lg:inline-flex" />
+              </div>
+              {/* Six-up at lg, still 2-up on a phone. The desktop strip reads
+                  as one row of dispatch numbers; the phone keeps the grid it
+                  had. Approvals and Invoiced were added here because the row
+                  had space on a wide screen and both are questions the office
+                  asks before nine. */}
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-2.5">
                 <Link
                   href="/lawn/calendar"
                   className="block rounded-lg hover:shadow-md transition-shadow"
@@ -264,6 +391,38 @@ export default async function LawnPage() {
                   icon={Bell}
                   tone={unreadCount > 0 ? "blue" : "default"}
                 />
+                {/* Gate 4: finished work the customer is not told about until
+                    the office says so. Amber rather than red — it is a queue,
+                    not a failure. */}
+                {/* The two tiles below are DESKTOP ONLY. The desktop pass has
+                    one hard rule — lg and up, mobile unchanged — and a phone
+                    showing six tiles in a two-column grid is three rows of
+                    numbers before the day's work. */}
+                <Link
+                  href="/lawn/approvals"
+                  className="hidden lg:block rounded-lg hover:shadow-md transition-shadow"
+                >
+                  <KpiTile
+                    label="Approvals"
+                    value={String(approvalsCount)}
+                    sub="awaiting office"
+                    icon={ClipboardCheck}
+                    tone={approvalsCount > 0 ? "amber" : "default"}
+                  />
+                </Link>
+                {/* Seven days, and the label says seven days. "This week" would
+                    read as almost nothing every Monday morning. */}
+                <Link
+                  href="/invoices"
+                  className="hidden lg:block rounded-lg hover:shadow-md transition-shadow"
+                >
+                  <KpiTile
+                    label="Invoiced"
+                    value={formatMoney(invoicedWeek)}
+                    sub={`${invoicedCount} in last 7 days`}
+                    icon={Receipt}
+                  />
+                </Link>
               </div>
             </div>
           )}
@@ -304,9 +463,10 @@ export default async function LawnPage() {
                       jobName: v.jobs?.name ?? "—",
                       customerName: v.jobs?.customers?.name ?? null,
                       address: v.jobs?.address ?? null,
-                      serviceType: null,
-                      crewName: null,
-                      windowLabel: null,
+                      serviceType: v.recurring_schedules?.service_type ?? null,
+                      crewName: v.crew_teams?.name ?? null,
+                      windowLabel: visitWindow(v),
+                      routeOrder: v.route_order,
                       notes: null,
                     }))}
                   />
@@ -336,7 +496,93 @@ export default async function LawnPage() {
                     }
                   />
                 ) : (
-                  <div className="divide-y divide-gray-100">
+                  <>
+                  {/*
+                    DESKTOP TABLE. Five columns: what, how often, what it earns
+                    per visit, when it next lands, and whether it is running.
+                    Money is right-aligned and tabular so a column of prices
+                    can be read down, which is the entire reason a table beats
+                    the stacked list on a wide screen.
+
+                    Mobile keeps the list below, unchanged.
+                  */}
+                  <div className="hidden lg:block overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          {["Job", "Cadence", "Price / visit", "Next due", "Status"].map(
+                            (h, i) => (
+                              <th
+                                key={h}
+                                className={`py-2 pr-3 text-[10px] font-semibold uppercase tracking-wide text-gray-400 ${
+                                  i === 2 ? "text-right" : ""
+                                }`}
+                              >
+                                {h}
+                              </th>
+                            )
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {scheduleRows.map((s) => {
+                          const jobName = s.jobs?.name ?? "—";
+                          const custName = s.jobs?.customers?.name ?? null;
+                          const sched = {
+                            frequency: s.frequency,
+                            days_of_week: s.days_of_week,
+                            day_of_month: s.day_of_month,
+                            price_per_visit: Number(s.price_per_visit) || 0,
+                          };
+                          return (
+                            <tr key={s.id} className="hover:bg-gray-50">
+                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)]">
+                                <Link
+                                  href={`/lawn/schedules/${s.id}`}
+                                  className="font-semibold text-gray-900 hover:underline"
+                                >
+                                  {jobName}
+                                </Link>
+                                {custName && (
+                                  <span className="block text-xs text-gray-500 truncate">
+                                    {custName}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-gray-700">
+                                {summarizeSchedule(sched)}
+                              </td>
+                              {/* Right-aligned and tabular: a column of prices
+                                  is meant to be read down. 0 shows as a dash,
+                                  because a schedule with no price recorded is
+                                  not a free one. */}
+                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-right tabular-nums text-gray-900">
+                                {sched.price_per_visit > 0
+                                  ? formatMoney(sched.price_per_visit)
+                                  : "—"}
+                              </td>
+                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] tabular-nums text-gray-700">
+                                {nextDue(s, today) ?? "—"}
+                              </td>
+                              <td className="py-[var(--row-py)] text-[length:var(--row-fs)]">
+                                <span
+                                  className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${
+                                    s.active
+                                      ? "bg-green-100 text-green-700"
+                                      : "bg-gray-100 text-gray-500"
+                                  }`}
+                                >
+                                  {s.active ? "Active" : "Paused"}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="divide-y divide-gray-100 lg:hidden">
                     {scheduleRows.map((s) => {
                       const jobName = s.jobs?.name ?? "—";
                       const custName = s.jobs?.customers?.name ?? null;
@@ -378,6 +624,7 @@ export default async function LawnPage() {
                       );
                     })}
                   </div>
+                  </>
                 )}
               </Card>
             </div>
@@ -405,7 +652,7 @@ export default async function LawnPage() {
                   <CardHeader title="Quick actions" />
 
                   <p className={GROUP_LABEL}>Plan</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap">
                     {/* Headline lawn feature (user verdict, docs/handoff/handoff-
                         estimator-v2): first action in the rail, not buried.
                         Label matches the "Quick quote" naming used on the
@@ -452,7 +699,7 @@ export default async function LawnPage() {
                   {officeLike && (
                     <>
                       <p className={GROUP_LABEL}>Customers &amp; service</p>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap">
                         <LinkButton href="/admin/customers" variant="secondary" size="sm">
                           <Contact className="w-4 h-4" />
                           Customers
@@ -468,7 +715,7 @@ export default async function LawnPage() {
                   {officeLike && (
                     <>
                       <p className={GROUP_LABEL}>Money</p>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap">
                         <LinkButton href="/lawn/billing" variant="secondary" size="sm">
                           <FileText className="w-4 h-4" />
                           Billing
@@ -482,7 +729,7 @@ export default async function LawnPage() {
                   )}
 
                   <p className={GROUP_LABEL}>Insights</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap">
                     <LinkButton href="/lawn/insights" variant="secondary" size="sm">
                       <TrendingUp className="w-4 h-4" />
                       Insights

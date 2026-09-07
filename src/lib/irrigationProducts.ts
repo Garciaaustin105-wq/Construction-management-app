@@ -465,16 +465,75 @@ export function headLegendCost(rows: HeadLegendRow[]): number {
 
 // MAN-hours to install every head placed. Feeds the same labor total as
 // plants — trenching and mainline are separate line items, not this.
+/**
+ * Heads grouped the way a RATE is keyed: one row per nozzle in the catalogue.
+ *
+ * Deliberately NOT buildHeadLegend. That groups by arc and price because the
+ * legend is what gets quoted, and a 90-degree head and a 360-degree head of the
+ * same nozzle are two lines on a proposal. A rate does not care: the same
+ * nozzle takes the same time to fit either way, and leaving them split would
+ * hand the crew-feedback sample gate two observations for one job.
+ */
+export function headRateLines(
+  areas: Pick<EstimateArea, "kind" | "meta">[]
+): { nozzleId: string; label: string; count: number; minutes: number }[] {
+  const rows = new Map<string, { nozzleId: string; label: string; count: number; minutes: number }>();
+  for (const area of areas) {
+    const s = readHeadSnapshot(area);
+    if (!s) continue;
+    const found = rows.get(s.irrigation_nozzle_id);
+    if (found) {
+      found.count += 1;
+      found.minutes += s.install_minutes;
+      continue;
+    }
+    rows.set(s.irrigation_nozzle_id, {
+      nozzleId: s.irrigation_nozzle_id,
+      label: `${s.name} — ${s.nozzle}`,
+      count: 1,
+      minutes: s.install_minutes,
+    });
+  }
+  return [...rows.values()];
+}
+
 export function headLegendManHours(rows: HeadLegendRow[]): number {
   const minutes = rows.reduce((s, r) => s + r.total_minutes, 0);
   return Math.round((minutes / 60) * 100) / 100;
 }
 
-// True when nothing placed has a recorded radius. The UI must not draw
-// coverage in that case, and should say the catalogue is missing radii rather
-// than silently showing bare markers.
+/**
+ * Categories that throw water outward, and so have a radius at all.
+ *
+ * Drip and bubblers do NOT. Dripline emits along the tube and an emitter wets
+ * the ground it sits on, so a radius of 0 on those rows is the correct value
+ * rather than a missing one — 12 of the seeded rows are in exactly that state
+ * on purpose.
+ */
+const THROWING_CATEGORIES: readonly HeadCategory[] = [
+  "rotor",
+  "spray",
+  "mp_rotator",
+  "other",
+];
+
+export function throwsWater(category: HeadCategory): boolean {
+  return THROWING_CATEGORIES.includes(category);
+}
+
+/**
+ * True when nothing that SHOULD have a radius has one. The UI must not draw
+ * coverage then, and should say the catalogue is missing throw distances rather
+ * than showing bare markers with no explanation.
+ *
+ * Drip and bubbler rows are excluded from the judgement entirely. Counting them
+ * would make a drip-only plan report "no throw distances recorded" forever — a
+ * warning that can never be actioned, because there is nothing to record. A
+ * plan of nothing but dripline returns false: nothing is missing.
+ */
 export function radiusUnset(rows: HeadLegendRow[]): boolean {
-  return rows.length > 0 && rows.every((r) => r.radius_ft <= 0);
+  const relevant = rows.filter((r) => throwsWater(r.category));
+  return relevant.length > 0 && relevant.every((r) => r.radius_ft <= 0);
 }
 
 // Heads placed at a price of zero. A starter catalogue ships with real
@@ -1310,3 +1369,123 @@ export function adjustedRadius(
 export function describeAdjustment(a: AdjustedRadius): string {
   return a.note;
 }
+
+/* ── Throw distances the catalogue does not ship ──────────────────────────── */
+
+/**
+ * Orgs contributing figures for nozzles that shipped blank.
+ *
+ * 27 throwing nozzles have no radius because their manufacturer charts are not
+ * reachable — Toro T5, K-Rain PROPLUS, Irritrol 700 and the rotary sets. The
+ * people who install them have the charts on the box. This is how that gets
+ * back into the shipped catalogue.
+ *
+ * OPT-IN, ALWAYS. Submitting is a deliberate act, never a side effect of an org
+ * editing its own catalogue. Capturing what someone typed without asking would
+ * be taking their data, and it is the same rule that governs prices and rates:
+ * the values are theirs.
+ *
+ * `source_note` is the point of the record, not a nicety. A number with no
+ * provenance cannot be folded into a shipped catalogue — that would be exactly
+ * the guessing refused everywhere else in this project.
+ */
+export type NozzleSuggestion = {
+  id: string;
+  organization_id: string;
+  model_name: string;
+  nozzle_name: string;
+  radius_ft: number;
+  rated_psi: number | null;
+  min_psi: number | null;
+  source_note: string | null;
+  status: string;
+  created_at: string;
+};
+
+export type NewNozzleSuggestion = {
+  organization_id: string;
+  model_name: string;
+  nozzle_name: string;
+  radius_ft: number;
+  rated_psi?: number | null;
+  min_psi?: number | null;
+  source_note?: string | null;
+};
+
+const SUGGESTION_COLUMNS =
+  "id, organization_id, model_name, nozzle_name, radius_ft, rated_psi, min_psi, source_note, status, created_at";
+
+/**
+ * Is this figure worth recording?
+ *
+ * A suggestion with no radius is nothing, and one with no source cannot be
+ * acted on — it would have to be verified from scratch, at which point the
+ * suggestion saved nobody any work. Both are refused with a reason rather than
+ * stored and quietly ignored later.
+ */
+export function suggestionProblem(s: NewNozzleSuggestion): string | null {
+  if (!(s.radius_ft > 0)) {
+    return "Enter the throw distance before sharing it.";
+  }
+  if (!s.source_note || s.source_note.trim().length < 3) {
+    return "Say where the figure came from — a catalogue page, the box, a distributor sheet. A number with no source cannot be added to the shipped catalogue.";
+  }
+  return null;
+}
+
+export async function submitNozzleSuggestion(
+  supabase: SupabaseClient,
+  s: NewNozzleSuggestion
+): Promise<{ data: NozzleSuggestion | null; error: string | null }> {
+  const problem = suggestionProblem(s);
+  if (problem) return { data: null, error: problem };
+
+  const { data, error } = await supabase
+    .from("nozzle_suggestions")
+    .insert({
+      organization_id: s.organization_id,
+      model_name: s.model_name,
+      nozzle_name: s.nozzle_name,
+      radius_ft: s.radius_ft,
+      rated_psi: s.rated_psi ?? null,
+      min_psi: s.min_psi ?? null,
+      source_note: (s.source_note ?? "").trim() || null,
+    })
+    .select(SUGGESTION_COLUMNS)
+    .single();
+
+  return {
+    data: (data as unknown as NozzleSuggestion) ?? null,
+    error: error?.message ?? null,
+  };
+}
+
+export async function listNozzleSuggestions(
+  supabase: SupabaseClient,
+  organizationId: string
+): Promise<{ data: NozzleSuggestion[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from("nozzle_suggestions")
+    .select(SUGGESTION_COLUMNS)
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+  return {
+    data: (data as unknown as NozzleSuggestion[]) ?? [],
+    error: error?.message ?? null,
+  };
+}
+
+/**
+ * The standing caution on every seeded throw distance.
+ *
+ * Rendered on the catalogue screen rather than buried in a doc, because the
+ * figures LOOK authoritative — they came off manufacturer charts — and three
+ * things can still make them wrong for a given org:
+ *
+ *   - nozzle lines get revised, and a catalogue seeded once does not follow
+ *   - adjustable nozzles were seeded at the TOP of their range, which is what
+ *     they throw opened up, not what they throw as spaced
+ *   - every figure is at a stated pressure the site may not have
+ */
+export const THROW_VERIFY_NOTE =
+  "These throw distances came from manufacturer charts and are a starting point, not gospel. Check them against the nozzles you actually stock: product lines get revised, adjustable nozzles are recorded at the top of their range, and every figure is quoted at a pressure your site may not run.";

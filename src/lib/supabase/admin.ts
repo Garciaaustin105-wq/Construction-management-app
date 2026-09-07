@@ -1,9 +1,11 @@
+import "server-only";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 // Service-role (admin) Supabase client — bypasses RLS. Use ONLY in server
 // routes / webhooks for privileged writes: creating auth users, syncing Stripe
 // webhook events, etc. Never import this (or read SUPABASE_SERVICE_ROLE_KEY)
-// from client code. Factored out of the inline pattern that was duplicated
+// from client code — the `server-only` import above makes that a BUILD error,
+// not just a convention. Factored out of the inline pattern that was duplicated
 // across ~14 routes.
 export function createAdminClient() {
   return createSupabaseClient(

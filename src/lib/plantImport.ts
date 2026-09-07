@@ -254,7 +254,7 @@ export function buildImportRows(
         cost = parsed;
       }
     } else {
-      errors.push(`Could not read price ""`);
+      errors.push("Could not read price \"\"");
       cost = 0;
     }
 

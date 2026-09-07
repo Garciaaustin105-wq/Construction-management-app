@@ -458,4 +458,110 @@ t("describeAdjustment returns one line each",
     "is why the column must be selected", noMin.radiusFt !== null);
 }
 
+{
+  // DRIP DOES NOT THROW. Dripline emits along the tube and an emitter wets the
+  // ground it sits on, so radius 0 on those rows is the CORRECT value, not a
+  // missing one — 12 of the seeded nozzles are in that state on purpose.
+  // Counting them made a drip-only plan report "no throw distances recorded"
+  // forever: a warning nobody can ever action, because there is nothing to
+  // record.
+  console.log("\n[radiusUnset judges only what actually throws]");
+  const { radiusUnset, throwsWater } = M;
+  const row = (category, radius_ft) => ({ key: category + radius_ft, name: "x",
+    category, nozzle: "n", radius_ft, arc_deg: 360, cost: 0, unit_price: 0,
+    install_minutes: 0, color: "#000", count: 1, total: 0, total_cost: 0,
+    total_minutes: 0 });
+
+  t("rotors, sprays and rotary nozzles throw", 
+    ["rotor", "spray", "mp_rotator"].every(throwsWater));
+  t("drip does not", throwsWater("drip") === false);
+  t("bubblers do not", throwsWater("bubbler") === false);
+
+  t("a rotor with no radius IS unset", radiusUnset([row("rotor", 0)]) === true);
+  t("a rotor with a radius is not", radiusUnset([row("rotor", 30)]) === false);
+  // The bug this fixes.
+  t("A DRIP-ONLY PLAN IS NOT MISSING ANYTHING", radiusUnset([row("drip", 0)]) === false);
+  t("...nor is a bubbler-only one", radiusUnset([row("bubbler", 0)]) === false);
+  t("drip does not mask a rotor that IS missing its radius",
+    radiusUnset([row("drip", 0), row("rotor", 0)]) === true);
+  t("...and does not drag down a rotor that has one",
+    radiusUnset([row("drip", 0), row("rotor", 30)]) === false);
+  t("an empty plan is not missing anything", radiusUnset([]) === false);
+}
+
+console.log("");
+console.log("[nozzle suggestions - what may be folded into the shipped seed]");
+{
+  const { suggestionProblem, THROW_VERIFY_NOTE } = M;
+  const ok = {
+    organization_id: "org", model_name: "Hunter PGP", nozzle_name: "#4",
+    radius_ft: 32, rated_psi: 45, min_psi: 25,
+    source_note: "Hunter PGP performance chart, 2024 catalogue p.11",
+  };
+  t("a sourced figure is accepted", suggestionProblem(ok) === null);
+  t("NO RADIUS IS REFUSED - there is nothing to contribute",
+    !!suggestionProblem({ ...ok, radius_ft: 0 }));
+  t("...and a negative one too", !!suggestionProblem({ ...ok, radius_ft: -5 }));
+  // The whole point of the source note: this number ends up in a catalogue
+  // OTHER companies quote from, so an unattributable figure cannot be taken.
+  t("A FIGURE WITH NO SOURCE IS REFUSED",
+    !!suggestionProblem({ ...ok, source_note: "" }));
+  t("...nor does a token one count",
+    !!suggestionProblem({ ...ok, source_note: "x" }));
+  t("...whitespace is not a source",
+    !!suggestionProblem({ ...ok, source_note: "     " }));
+  t("the refusal says what to do instead",
+    (suggestionProblem({ ...ok, source_note: "" }) || "").toLowerCase().includes("came from"));
+  // Pressures are optional: plenty of charts printed on a box give a throw and
+  // nothing else, and refusing those would collect nothing at all.
+  t("pressures are optional",
+    suggestionProblem({ ...ok, rated_psi: null, min_psi: null }) === null);
+
+  t("the warning tells orgs to check the figures against their own stock",
+    THROW_VERIFY_NOTE.toLowerCase().includes("check") &&
+    THROW_VERIFY_NOTE.toLowerCase().includes("stock"));
+  t("...and that they are quoted at a pressure the site may not run",
+    THROW_VERIFY_NOTE.toLowerCase().includes("pressure"));
+}
+
+console.log("");
+console.log("[headRateLines - heads grouped the way a RATE is keyed]");
+{
+  const { headRateLines, buildHeadLegend } = M;
+  const h = (nozzleId, arc, price, minutes) => ({
+    kind: "point", polygon: [{ lat: 28, lng: -82.5 }],
+    meta: { irrigation_product_id: "pgp", irrigation_nozzle_id: nozzleId,
+      name: "Hunter PGP", category: "rotor", nozzle: "#4", radius_ft: 32,
+      arc_deg: arc, cost: 5, unit_price: price, install_minutes: minutes },
+  });
+
+  const mixed = [h("n1", 90, 12, 8), h("n1", 360, 12, 8), h("n1", 90, 18, 8)];
+  t("the LEGEND splits those three by arc and price", buildHeadLegend(mixed).length === 3);
+  t("THE RATE DOES NOT - one nozzle, one line", headRateLines(mixed).length === 1);
+  t("...counting every head", headRateLines(mixed)[0].count === 3);
+  t("...and summing the minutes", headRateLines(mixed)[0].minutes === 24);
+  t("...labelled by model and nozzle",
+    headRateLines(mixed)[0].label === "Hunter PGP — #4");
+  t("...keyed on the nozzle row, which is what Apply writes to",
+    headRateLines(mixed)[0].nozzleId === "n1");
+
+  t("two different nozzles stay two rows",
+    headRateLines([h("n1", 360, 12, 8), h("n2", 360, 12, 5)]).length === 2);
+
+  // Same guards as the legend: this reads areas off an estimate, and plants,
+  // sod and polygons share that table.
+  t("a plant is not a head",
+    headRateLines([{ kind: "point", polygon: [], meta: { plant_product_id: "p", name: "Holly" } }])
+      .length === 0);
+  t("a polygon is not a head",
+    headRateLines([{ kind: "area", polygon: [], meta: {} }]).length === 0);
+  t("no areas, no rows", headRateLines([]).length === 0);
+
+  // An untimed head still has to be counted. Dropping it would hide the head
+  // from the feedback screen, which is the whole failure being fixed.
+  const untimed = headRateLines([h("n3", 360, 12, 0), h("n3", 360, 12, 0)]);
+  t("A HEAD WITH NO INSTALL TIME IS STILL A LINE", untimed.length === 1);
+  t("...with its count intact and zero minutes", untimed[0].count === 2 && untimed[0].minutes === 0);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);

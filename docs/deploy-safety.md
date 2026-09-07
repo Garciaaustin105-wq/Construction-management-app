@@ -52,6 +52,76 @@ push code that depends on it. Never push code that queries a new column/table
 before the SQL has run. Migrations stay idempotent (`if not exists` /
 `drop policy if exists`).
 
+### 1a. New public function → always carry the EXECUTE block
+
+**The problem:** every `create function` in `public` grants EXECUTE to PUBLIC
+by default, so a new SECURITY DEFINER function is silently callable by `anon`
+(and any cross-tenant caller) the moment its migration runs. This is how the
+hardening regressed from 0 anon-reachable functions (v1–v3, 2026-08-25) back
+to 15 by 2026-09-05 — new migrations just omitted the REVOKEs. The 2026-09-06
+hardening v4 (the `function_execute_hardening_v4` migration) closed it; the
+lints are
+`0028_anon_security_definer_function_executable` and
+`0011_function_search_path_mutable` in the Supabase security advisor.
+
+**It keeps happening.** On 2026-09-07, the day after v4, the catalogue-seed
+migration revoked `seed_org_catalogue(uuid)` and missed its trigger WRAPPER,
+`seed_org_catalogue_trg()` — which shipped anon-executable for a few hours
+(migrations `revoke_seed_org_catalogue_trg`, then
+`grant_service_role_seed_org_catalogue_trg` for the service_role half of rule A
+below). A direct call fails on `new` being unset, so the exposure was small —
+but "it errors before it does damage" is not a boundary. Check BOTH halves when
+a function has a trigger wrapper.
+
+**Now checked, not just written.** Run this after any migration that creates
+or replaces a function:
+
+```sql
+select * from audit_function_grants();
+```
+
+Empty means clean. Any row is a violation, with the severity and what to add.
+It checks four things: SECURITY DEFINER functions anon can execute; ones
+`authenticated` can execute that take a caller-supplied argument with no org
+guard; a missing `search_path` pin; and rule A's easily-missed second half —
+revoking PUBLIC also strips `service_role`'s *implicit* grant, so an internal
+function ends up callable by nothing.
+
+The allowlist of deliberate exceptions lives inside that function with a reason
+on every entry — the six `me_*` RLS predicates and the parameterised helpers
+policies depend on are there, and revoking those breaks RLS. If a new finding is
+a real exception, add it to that allowlist with its reason rather than deleting
+the check.
+
+**The rule:** a migration that creates or replaces a function in `public` MUST
+end with exactly one of these blocks, with the function's real signature:
+
+```sql
+-- A. INTERNAL function (trigger fn, or RLS-policy helper, or anything the
+--    client should never call). Deny every client role, re-grant service_role
+--    (revoking PUBLIC strips its implicit grant):
+revoke execute on function public.<name>(<sig>) from public, anon, authenticated;
+grant execute on function public.<name>(<sig>) to service_role;
+
+-- B. INTENTIONALLY client-callable RPC (UI calls it via supabase.rpc()):
+--    revoke public/anon, grant authenticated explicitly, AND add an in-function
+--    org guard (JWT role claim via auth.jwt(), NEVER current_user — under
+--    SECURITY DEFINER current_user is the owner and cannot distinguish callers):
+revoke execute on function public.<name>(<sig>) from public, anon;
+grant execute on function public.<name>(<sig>) to authenticated, service_role;
+```
+
+Also pin the search path on every new function — `set search_path = public,
+extensions` in the definition (check the body doesn't reference `auth.*`
+unqualified first; qualify it if it does). **Exception:** `me_*` helpers and
+the other functions referenced by RLS policies keep their grants (35 policies
+reference them; revoking risks breaking RLS evaluation) — but they all
+self-guard via `auth.uid()` internally.
+
+**Verify after applying:** run the Supabase security advisor and confirm lint
+0028 stays at 6 (the `me_*` helpers only). Reference implementation:
+`function_execute_hardening_v4.sql` at the repo root.
+
 ---
 
 ## 2. Staging environment

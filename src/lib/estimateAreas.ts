@@ -51,6 +51,11 @@ export type EstimateArea = {
   // the new job's `obstacles` field by convert_estimate_on_invoice_paid at
   // conversion time (see estimate_areas_access_tags.sql).
   access_tags: string[];
+  // Where the measurement came from: map | moasure | gnss | drone | manual.
+  // A row is never rewritten by a different source — when the map says 4,200
+  // sqft and a rover says 3,850, that disagreement is the only signal anyone
+  // has about which properties the aerial gets wrong, so both are kept.
+  source: string;
   created_at: string;
 };
 
@@ -118,7 +123,7 @@ export function totalAreaSqft(areas: Pick<EstimateArea, "area_sqft">[]): number 
 // still claims it is present — which is silent, and exactly what happened to
 // kind/length_ft/meta between adding them and reading them back.
 const AREA_COLUMNS =
-  "id, estimate_id, name, color, polygon, area_sqft, kind, length_ft, meta, service_type, notes, access_tags, created_at";
+  "id, estimate_id, name, color, polygon, area_sqft, kind, length_ft, meta, source, service_type, notes, access_tags, created_at";
 
 export async function listEstimateAreas(
   supabase: SupabaseClient,
@@ -147,6 +152,9 @@ export type NewEstimateArea = {
   service_type?: string | null;
   notes?: string | null;
   access_tags?: string[];
+  // Omitted defaults to 'map' at the database, so every existing caller that
+  // draws on the map keeps working untouched.
+  source?: string;
 };
 
 export async function createEstimateArea(

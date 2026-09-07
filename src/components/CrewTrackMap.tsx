@@ -296,6 +296,6 @@ export default function CrewTrackMap({ orgId, viewerId }: Props) {
 // Green teardrop, matching the pin style GoogleRouteMap already uses so the two
 // lawn maps look like one system.
 function crewPinIcon(): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36"><path d="M14 1C7.1 1 1.5 6.6 1.5 13.5c0 9 12.5 21 12.5 21s12.5-12 12.5-21C26.5 6.6 20.9 1 14 1z" fill="#16a34a" stroke="#14532d" stroke-width="2"/><circle cx="14" cy="13.5" r="4.5" fill="#fff"/></svg>`;
+  const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"28\" height=\"36\" viewBox=\"0 0 28 36\"><path d=\"M14 1C7.1 1 1.5 6.6 1.5 13.5c0 9 12.5 21 12.5 21s12.5-12 12.5-21C26.5 6.6 20.9 1 14 1z\" fill=\"#16a34a\" stroke=\"#14532d\" stroke-width=\"2\"/><circle cx=\"14\" cy=\"13.5\" r=\"4.5\" fill=\"#fff\"/></svg>";
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
 }

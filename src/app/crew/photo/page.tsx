@@ -246,7 +246,7 @@ function PhotoUploadForm() {
       backHref={
         preselectedJob
           ? isLawn()
-            ? `/lawn/jobs`
+            ? "/lawn/jobs"
             : `/jobs/${preselectedJob}`
           : undefined
       }

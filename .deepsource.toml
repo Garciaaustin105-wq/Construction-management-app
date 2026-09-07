@@ -1,0 +1,71 @@
+# DeepSource configuration.
+#
+# WHY THIS FILE EXISTS. The JavaScript check has been failing on main for a
+# long time, and most of what it reported was not a defect: every .mjs file
+# fails to PARSE, because the analyzer reads them as classic scripts where a
+# top-level `import` is a syntax error. A permanently red light that is mostly
+# wrong is a light nobody reads, which is worse than no light at all.
+#
+# module_system = "es-modules" was the first attempt and it did NOT fix it —
+# the errors survive with that set, so whatever that option governs, it is not
+# the parse mode used for .mjs. It stays because it is true of this repo, but
+# the working fix is the exclusion below.
+#
+# Adding this file makes the repository the source of truth for analysis
+# configuration, so every analyzer that should run has to be listed here —
+# omitting one silently switches it off. Secrets in particular must stay on:
+# it caught a real credential committed to this public repo.
+version = 1
+
+exclude_patterns = [
+  # EVERY .mjs FILE, and this is a real trade rather than a shrug.
+  #
+  # What is lost: lint on 51 files. What is gained: the check stops reporting
+  # ~51 parse failures that are not defects and never were. Nothing shipped to
+  # a browser is .mjs — the app is .ts/.tsx. These are harnesses, one-off
+  # scripts and build config, and the harnesses are verified by being RUN,
+  # which is a stronger check than lint.
+  #
+  # If DeepSource later parses .mjs correctly, delete these three lines. The
+  # tell is that removing them stops producing "Unexpected token import".
+  "*.mjs",
+  "scripts/*.mjs",
+  "tools/**/*.mjs",
+
+  # Standalone contract compiles produced for the harnesses. Emitted output,
+  # never edited by hand.
+  ".irr-build/**",
+  ".feedback-build/**",
+  ".mat-build/**",
+  ".nav-build/**",
+  ".next/**",
+  "public/**",
+]
+
+[[analyzers]]
+name = "javascript"
+enabled = true
+
+  [analyzers.meta]
+  # THE FIX. Everything here is an ES module — the app, the config files and
+  # every harness. Declared as commonjs (the default when nothing is said) a
+  # top-level `import` is a parse error, which is exactly what was being
+  # reported 33 times.
+  module_system = "es-modules"
+  dialect = "typescript"
+  plugins = ["react"]
+  # Both, deliberately: server routes and scripts run under node, components
+  # run in a browser, and the harnesses are node.
+  environment = ["nodejs", "browser"]
+
+[[analyzers]]
+name = "sql"
+enabled = true
+
+[[analyzers]]
+name = "shell"
+enabled = true
+
+[[analyzers]]
+name = "secrets"
+enabled = true

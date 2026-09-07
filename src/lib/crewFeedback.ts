@@ -310,6 +310,30 @@ export type RateObservation = {
  * That is not a bug to route around — splitting a job's hours onto an item that
  * was estimated at nothing would be inventing the number, not observing it.
  */
+/**
+ * One catalogue row is ONE task on a job, however many lines it arrived as.
+ *
+ * Lines are built per estimate row, and several of those can share a rate key:
+ * two areas of the same plant quoted at different prices, or the same nozzle
+ * placed at 90 and at 180 degrees. Left unmerged each copy becomes its own
+ * observation, and sampleSize counts observations — so one job would report
+ * itself as "3 of 3 jobs" and clear a gate whose entire purpose is to refuse a
+ * single week's evidence.
+ */
+export function mergeTaskLines(lines: EstimateTaskLine[]): EstimateTaskLine[] {
+  const byKey = new Map<string, EstimateTaskLine>();
+  for (const l of lines) {
+    const found = byKey.get(l.key);
+    if (found) {
+      found.quantity += l.quantity;
+      found.manHours += l.manHours;
+    } else {
+      byKey.set(l.key, { ...l });
+    }
+  }
+  return [...byKey.values()];
+}
+
 export function observationsFor(job: JobRecord): RateObservation[] {
   const time = actualManHours(job.entries);
   if (time.manHours <= 0) return [];
@@ -322,7 +346,7 @@ export function observationsFor(job: JobRecord): RateObservation[] {
   // inventing a share would be worse than reporting none.
   if (attributable <= 0) return [];
 
-  const billable = job.lines.filter((l) => l.quantity > 0);
+  const billable = mergeTaskLines(job.lines).filter((l) => l.quantity > 0);
   if (billable.length === 0) return [];
 
   const make = (

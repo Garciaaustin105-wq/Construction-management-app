@@ -60,3 +60,10 @@ next-env.d.ts
 .sys-build/
 .labor-build/
 .feedback-build/
+.import-build/
+
+# standalone contract compiles for the harnesses
+.mat-build/
+
+# standalone nav compile for the harness
+.nav-build/
