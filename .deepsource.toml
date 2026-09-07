@@ -26,14 +26,21 @@ exclude_patterns = [
   # scripts and build config, and the harnesses are verified by being RUN,
   # which is a stronger check than lint.
   #
-  # If DeepSource later parses .mjs correctly, delete this line. The tell is
-  # that removing it stops producing "Unexpected token import".
+  # If DeepSource later parses .mjs correctly, delete these lines. The tell is
+  # that removing them stops producing "Unexpected token import".
   #
-  # ONE PATTERN, NOT THREE. It was "*.mjs" + "scripts/*.mjs" + "tools/**/*.mjs"
-  # and only the first worked: a root harness was excluded while
-  # scripts/check-function-grants.mjs still failed to parse. Whatever these
-  # globs are anchored against, a leading "**/" is what makes them match at
-  # depth — so match at every depth, once.
+  # ONLY THE ROOT PATTERN IS KNOWN TO WORK. "*.mjs" demonstrably excludes the
+  # root harnesses. "scripts/*.mjs" did not match, and neither did "**/*.mjs" —
+  # both were tried against a real file and both left the parse error standing.
+  # So whatever these globs are matched with, do not assume globstar.
+  #
+  # The rest are kept because they cost nothing and would start working if the
+  # matcher ever learns "**". Nothing depends on them: the one script that lives
+  # in a subdirectory is CommonJS (scripts/check-function-grants.cjs), which the
+  # analyzer parses fine and therefore actually lints.
+  "*.mjs",
+  "scripts/*.mjs",
+  "tools/**/*.mjs",
   "**/*.mjs",
 
   # Standalone contract compiles produced for the harnesses. Emitted output,

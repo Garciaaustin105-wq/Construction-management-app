@@ -12,7 +12,26 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Other agents' worktrees live here — whole checkouts of this repo nested
+    // inside it. Linting them reports the same file many times over and is
+    // never what anyone wants. (Adding a "**/*.cjs" config block below is what
+    // first made ESLint walk into them: in flat config the linted file set is
+    // the union of every block's `files`, so a new extension pattern widens the
+    // traversal.)
+    ".claude/**",
+    // Emitted output: the standalone tsc compiles the harnesses run against
+    // (.irr-build, .feedback-build, .mat-build, .nav-build, .br-build, ...).
+    // Gitignored, regenerated constantly, never hand-edited.
+    ".*-build/**",
   ]),
+  {
+    // A .cjs file IS CommonJS — require() is its module system, not a lapse.
+    // The repo has one: scripts/check-function-grants.cjs, written that way so
+    // DeepSource can parse it (its JS analyzer reads .mjs as a classic script
+    // and reports every top-level import as a syntax error).
+    files: ["**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
   {
     // Double quotes, and a template literal only when it earns its keep.
     //
