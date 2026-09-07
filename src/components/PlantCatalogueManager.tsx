@@ -327,10 +327,10 @@ export default function PlantCatalogueManager({
     if (
       !confirm(
         `Delete "${p.name}"?\n\nPlaced plants keep their own snapshot of name, ` +
-          `size and price, so past estimates stay intact — but this row can ` +
-          `never be placed again, and the catalog is your record of what you ` +
-          `sell. If you've stopped carrying it, deactivate it instead. ` +
-          `Its sizes are deleted with it.`
+          "size and price, so past estimates stay intact — but this row can " +
+          "never be placed again, and the catalog is your record of what you " +
+          "sell. If you've stopped carrying it, deactivate it instead. " +
+          "Its sizes are deleted with it."
       )
     ) {
       return;
@@ -423,8 +423,8 @@ export default function PlantCatalogueManager({
     if (
       !confirm(
         `Delete size "${s.size}"?\n\nPlaced plants keep their own snapshot of ` +
-          `name, size and price, so past estimates stay intact — but this ` +
-          `size can no longer be placed.`
+          "name, size and price, so past estimates stay intact — but this " +
+          "size can no longer be placed."
       )
     ) {
       return;

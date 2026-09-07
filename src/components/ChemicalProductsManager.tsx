@@ -188,8 +188,8 @@ export default function ChemicalProductsManager({
     if (
       !confirm(
         `Delete "${p.name}"?\n\nPast applications keep their own record of this product, ` +
-          `so history stays intact — but you won't be able to pick it again. ` +
-          `If you've used it, deactivate it instead.`
+          "so history stays intact — but you won't be able to pick it again. " +
+          "If you've used it, deactivate it instead."
       )
     ) {
       return;

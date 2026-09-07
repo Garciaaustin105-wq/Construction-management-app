@@ -152,7 +152,7 @@ async function resolveIncomeAccount(tokens: TokenSet): Promise<string> {
   // Any active Income account at all (user may have a custom-subtyped one).
   const anyR = await queryEntity(
     tokens,
-    `select Id from Account where AccountType='Income' and Active=true maxresults 1`
+    "select Id from Account where AccountType='Income' and Active=true maxresults 1"
   );
   const anyId = (anyR.QueryResponse as { Account?: Array<{ Id?: string }> } | undefined)?.Account?.[0]?.Id;
   if (anyId) return anyId;

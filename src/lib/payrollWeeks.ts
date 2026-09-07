@@ -42,7 +42,7 @@ export function weeksInRange(from: string, to: string): PayWeek[] {
     const week: PayWeek = {
       start: toISODate(start),
       end: toISODate(weekEnd),
-      label: `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${weekEnd.toLocaleDateString('en-US', { day: 'numeric' })}`
+      label: `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })}-${weekEnd.toLocaleDateString("en-US", { day: "numeric" })}`
     };
     weeks.push(week);
     start.setDate(start.getDate() + 7);

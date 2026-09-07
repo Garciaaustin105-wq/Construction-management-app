@@ -231,7 +231,7 @@ export async function getCalendarEvents(
       date: dateOf(inv.due_date),
       title: `Invoice due${cust ? ` · ${cust}` : ""}`,
       type: "invoice",
-      href: `/invoices`,
+      href: "/invoices",
     });
   }
 
@@ -244,7 +244,7 @@ export async function getCalendarEvents(
       date: dateOf(est.valid_until),
       title: `Estimate expires${cust ? ` · ${cust}` : ""}`,
       type: "estimate",
-      href: `/estimates`,
+      href: "/estimates",
     });
   }
 

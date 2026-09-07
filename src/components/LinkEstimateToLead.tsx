@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
-import { useToast } from '@/components/Toast';
-import { linkEstimateToLead, type Lead } from '@/lib/leads';
-import { Loader2, FileText, ChevronDown, X } from 'lucide-react';
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+import { useToast } from "@/components/Toast";
+import { linkEstimateToLead, type Lead } from "@/lib/leads";
+import { Loader2, FileText, ChevronDown, X } from "lucide-react";
 
 /** One row of the estimate picker. Matches the select in fetchEstimates —
  *  both queries share it, so a column added to one and not the other is a
@@ -31,10 +31,10 @@ export default function LinkEstimateToLead({
   const [showPicker, setShowPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [estimates, setEstimates] = useState<EstimateOption[] | null>(null);
-  const [pickedId, setPickedId] = useState('');
+  const [pickedId, setPickedId] = useState("");
 
   const field =
-    'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white';
+    "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white";
 
   useEffect(() => {
     if (!showPicker) return;
@@ -48,10 +48,10 @@ export default function LinkEstimateToLead({
 
         if (lead.converted_customer_id) {
           const { data: custData, error: custErr } = await supabase
-            .from('estimates')
-            .select('id, estimate_number, title, status')
-            .eq('customer_id', lead.converted_customer_id)
-            .order('created_at', { ascending: false })
+            .from("estimates")
+            .select("id, estimate_number, title, status")
+            .eq("customer_id", lead.converted_customer_id)
+            .order("created_at", { ascending: false })
             .limit(50);
 
           if (!custErr && custData && custData.length > 0) {
@@ -61,9 +61,9 @@ export default function LinkEstimateToLead({
 
         if (data.length === 0) {
           const { data: allData, error: allErr } = await supabase
-            .from('estimates')
-            .select('id, estimate_number, title, status')
-            .order('created_at', { ascending: false })
+            .from("estimates")
+            .select("id, estimate_number, title, status")
+            .order("created_at", { ascending: false })
             .limit(50);
 
           if (!allErr && allData) {
@@ -73,7 +73,7 @@ export default function LinkEstimateToLead({
 
         setEstimates(data);
       } catch (e) {
-        console.error('Failed to fetch estimates', e);
+        console.error("Failed to fetch estimates", e);
         setEstimates([]);
       }
     };
@@ -92,10 +92,10 @@ export default function LinkEstimateToLead({
     if (error) {
       toast.error(error);
     } else {
-      toast.success('Estimate linked');
+      toast.success("Estimate linked");
       setLinkedId(pickedId);
       setShowPicker(false);
-      setPickedId('');
+      setPickedId("");
       onLinked(pickedId);
     }
   };
@@ -103,7 +103,7 @@ export default function LinkEstimateToLead({
   const estimateLabel = () => {
     const est = estimates?.find((e) => e.id === linkedId);
     if (!est) return `Estimate ${linkedId?.slice(0, 8)}`;
-    return est.title || est.estimate_number || 'Untitled';
+    return est.title || est.estimate_number || "Untitled";
   };
 
   return (
@@ -153,7 +153,7 @@ export default function LinkEstimateToLead({
             <option value="">Select an estimate</option>
             {estimates?.map((e) => (
               <option key={e.id} value={e.id}>
-                {e.title || e.estimate_number || 'Untitled'} ({e.status})
+                {e.title || e.estimate_number || "Untitled"} ({e.status})
               </option>
             ))}
           </select>
@@ -166,13 +166,13 @@ export default function LinkEstimateToLead({
               {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                'Link'
+                "Link"
               )}
             </button>
             <button
               onClick={() => {
                 setShowPicker(false);
-                setPickedId('');
+                setPickedId("");
               }}
               className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
