@@ -82,6 +82,7 @@ import DripPanel from "@/components/estimator/DripPanel";
 import EquipmentPanel from "@/components/estimator/EquipmentPanel";
 import LaborItemsPanel from "@/components/estimator/LaborItemsPanel";
 import ComponentsPanel from "@/components/estimator/ComponentsPanel";
+import MaterialsPanel from "@/components/estimator/MaterialsPanel";
 import type { EquipmentRow } from "@/components/estimator/EquipmentPanel";
 import type { LaborRow } from "@/components/estimator/LaborItemsPanel";
 import type { ComponentRow } from "@/components/estimator/ComponentsPanel";
@@ -868,6 +869,7 @@ export default function LawnEstimateWorkspace({
     { key: "parts", label: "Parts" },
     { key: "labor", label: "Labor" },
     { key: "machines", label: "Machines" },
+    { key: "materials", label: "Materials" },
   ] as const;
 
   const estimatorPanel = (() => {
@@ -956,6 +958,9 @@ export default function LawnEstimateWorkspace({
             onRemove={removeLaborRow}
           />
         );
+      // Last on purpose: it reads every other tab and takes no input of its own.
+      case "materials":
+        return <MaterialsPanel areas={areas} components={componentRows} />;
       case "machines":
         return (
           <EquipmentPanel
