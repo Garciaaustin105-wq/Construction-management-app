@@ -465,6 +465,38 @@ export function headLegendCost(rows: HeadLegendRow[]): number {
 
 // MAN-hours to install every head placed. Feeds the same labor total as
 // plants — trenching and mainline are separate line items, not this.
+/**
+ * Heads grouped the way a RATE is keyed: one row per nozzle in the catalogue.
+ *
+ * Deliberately NOT buildHeadLegend. That groups by arc and price because the
+ * legend is what gets quoted, and a 90-degree head and a 360-degree head of the
+ * same nozzle are two lines on a proposal. A rate does not care: the same
+ * nozzle takes the same time to fit either way, and leaving them split would
+ * hand the crew-feedback sample gate two observations for one job.
+ */
+export function headRateLines(
+  areas: Pick<EstimateArea, "kind" | "meta">[]
+): { nozzleId: string; label: string; count: number; minutes: number }[] {
+  const rows = new Map<string, { nozzleId: string; label: string; count: number; minutes: number }>();
+  for (const area of areas) {
+    const s = readHeadSnapshot(area);
+    if (!s) continue;
+    const found = rows.get(s.irrigation_nozzle_id);
+    if (found) {
+      found.count += 1;
+      found.minutes += s.install_minutes;
+      continue;
+    }
+    rows.set(s.irrigation_nozzle_id, {
+      nozzleId: s.irrigation_nozzle_id,
+      label: `${s.name} — ${s.nozzle}`,
+      count: 1,
+      minutes: s.install_minutes,
+    });
+  }
+  return [...rows.values()];
+}
+
 export function headLegendManHours(rows: HeadLegendRow[]): number {
   const minutes = rows.reduce((s, r) => s + r.total_minutes, 0);
   return Math.round((minutes / 60) * 100) / 100;
