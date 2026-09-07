@@ -203,5 +203,100 @@ t("a path with no points is flagged rather than crashing",
   buildImport([{ name: "x", points: [], closed: false }],
     { unit: "ft", source: "gnss", frame: "local" })[0].issues.includes("too_few_points"));
 
+console.log("\n[anchoring — placing a local trace on the map]");
+{
+  const { solveAnchor, applyAnchor, localPoints } = M;
+  const FT_LAT = 364000;
+  const ftLng = (lat) => FT_LAT * Math.cos((lat * Math.PI) / 180);
+
+  // A real 100x150 ft rectangle near Tampa, corners in the world.
+  const base = { lat: 27.95, lng: -82.45 };
+  const world = [
+    base,
+    { lat: base.lat + 150 / FT_LAT, lng: base.lng },
+    { lat: base.lat + 150 / FT_LAT, lng: base.lng + 100 / ftLng(base.lat) },
+    { lat: base.lat, lng: base.lng + 100 / ftLng(base.lat) },
+  ];
+
+  // Now pretend a Moasure walked it: the same shape in feet from an arbitrary
+  // origin, rotated 37 degrees — which is what an inertial device hands you.
+  const ROT = 37, OX = 812, OY = -391;
+  const rad = (ROT * Math.PI) / 180;
+  const toLocal = (w) => {
+    const e = (w.lng - base.lng) * ftLng(base.lat);
+    const n = (w.lat - base.lat) * FT_LAT;
+    return { east: e * Math.cos(rad) - n * Math.sin(rad) + OX,
+             north: e * Math.sin(rad) + n * Math.cos(rad) + OY };
+  };
+  const local = world.map(toLocal);
+
+  const tf = solveAnchor({ local: local[0], world: world[0] },
+                         { local: local[1], world: world[1] });
+  t("a transform is solved from two correspondences", tf !== null);
+  t("...recovering the rotation", Math.abs(Math.abs(tf.rotationDeg) - ROT) < 0.5,
+    `got ${tf.rotationDeg}`);
+  t("...with a scale of 1, because the units were right",
+    Math.abs(tf.scale - 1) < 0.01, `got ${tf.scale}`);
+
+  // THE ROUND TRIP: place the local points back and see if they land on the
+  // real corners.
+  const placed = applyAnchor(local, tf);
+  const offBy = placed.map((p, i) =>
+    Math.hypot((p.lat - world[i].lat) * FT_LAT,
+               (p.lng - world[i].lng) * ftLng(base.lat)));
+  t("EVERY corner lands within a foot of where it really is",
+    Math.max(...offBy) < 1, `worst ${Math.max(...offBy).toFixed(2)} ft`);
+  t("...and the area survives the round trip",
+    Math.abs(ringAreaSqft(placed) - 15000) < 100, `got ${ringAreaSqft(placed)}`);
+
+  // The unit cross-check anchoring gives for free.
+  const asMetres = local.map((q) => ({ east: q.east / 3.2808, north: q.north / 3.2808 }));
+  const tBad = solveAnchor({ local: asMetres[0], world: world[0] },
+                           { local: asMetres[1], world: world[1] });
+  t("a unit mistake shows up as a scale near 3.28", Math.abs(tBad.scale - 3.2808) < 0.05,
+    `got ${tBad.scale}`);
+  t("...and is called out in words", tBad.warnings.some((w) => w.includes("metres")));
+  t("a correct scale carries no scale warning",
+    !tf.warnings.some((w) => w.includes("further apart") || w.includes("closer together")));
+  t("the mirror ambiguity is always disclosed",
+    tf.warnings.some((w) => w.includes("clockwise")));
+
+  const tooClose = solveAnchor(
+    { local: { east: 0, north: 0 }, world: base },
+    { local: { east: 2, north: 0 },
+      world: { lat: base.lat, lng: base.lng + 2 / ftLng(base.lat) } });
+  t("two points a couple of feet apart are REFUSED, not solved", tooClose === null);
+
+  const mk = (b) => ({ name: "x", closed: false,
+    points: [{ a: 0, b, z: null, pathName: null, label: null }] });
+  t("localPoints converts metres to feet on the way in",
+    Math.abs(localPoints(mk(10), "m")[0].east - 32.808) < 0.01);
+  t("...and leaves feet alone", localPoints(mk(10), "ft")[0].east === 10);
+
+  // buildImport with an anchor: the trace stops being unplaced.
+  const raw = local.map((q) => ({ a: q.north, b: q.east, z: null,
+    pathName: "Lot", label: null }));
+  const closedRaw = [...raw, raw[0]];
+  const unplaced = buildImport(groupPaths(closedRaw),
+    { unit: "ft", source: "moasure", frame: "local" });
+  t("without an anchor a local trace still has NO polygon",
+    unplaced[0].polygon.length === 0);
+  t("...and says why", unplaced[0].issues.includes("local_frame"));
+  const anchored = buildImport(groupPaths(closedRaw),
+    { unit: "ft", source: "moasure", frame: "local", anchor: tf });
+  t("WITH an anchor it gets a real polygon", anchored[0].polygon.length > 3);
+  t("...positioned on the actual site",
+    Math.abs(anchored[0].polygon[0].lat - base.lat) < 0.0001);
+  t("...the local_frame issue is gone", !anchored[0].issues.includes("local_frame"));
+  t("...and the area matches the real rectangle",
+    Math.abs(anchored[0].areaSqft - 15000) < 150, `got ${anchored[0].areaSqft}`);
+  // The number quoted and the shape drawn must be the same thing.
+  t("...the stored area is measured FROM the placed polygon",
+    Math.abs(anchored[0].areaSqft - ringAreaSqft(anchored[0].polygon)) < 1);
+  t("an anchor without a unit still refuses — the unit gate outranks it",
+    buildImport(groupPaths(closedRaw),
+      { unit: null, source: "moasure", frame: "local", anchor: tf })[0].importable === false);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
