@@ -237,6 +237,63 @@ on page render would make the hub unusable. Explicit button, progress shown,
 results cached in state with their timestamp, and a visible "measured 3 days ago"
 so a stale number is never mistaken for a fresh one.
 
+### 2f. Ask what each cloud agent costs, and save it
+
+Local models cost electricity. Cloud models cost money, and the hub cannot know
+the rate — it changes, it differs per account, and a wrong number here is worse
+than none.
+
+**Ask. Never seed a price** (rule 8: seed structure, never values). Ship the
+fields empty with a prompt, exactly as the catalogue does for labor rates.
+
+Stored in **state**, not in `runners.json`. `runners.json` declares *what a model
+is* and is meant to be shared or shipped; a price is *what it costs this org*
+and belongs beside their own data.
+
+```json
+"pricing": {
+  "glm": {
+    "currency": "USD",
+    "per_mtok_input":  null,
+    "per_mtok_output": null,
+    "per_mtok_cache_read": null,
+    "as_of": null
+  }
+}
+```
+
+- **`per_mtok_cache_read` is the field that matters.** 98.6% of this project's
+  spend is cache reads (rule G1). A pricing model that only tracks input and
+  output will understate real cost by roughly two orders of magnitude.
+- **`as_of` is required once a price is entered.** Prices change. Show
+  "entered 4 months ago" beside the figure — a stale price presented as current
+  is the same failure as a stale rule.
+- **A blank is not a zero** (rule 5). A runner with no price entered renders as
+  **"price not set"**, never as `$0.00`. A cost tool that silently reports paid
+  cloud work as free is worse than no cost tool. Refuse to total a column that
+  contains an unpriced runner; say which runner is missing instead.
+- Local runners render as **"no API cost"**, not `$0.00`. They are not free —
+  they cost time and electricity — and the hub should not imply otherwise.
+
+**Capture the tokens each task actually spends.** The bus currently throws this
+away: `askOllama` reads `response` and discards `prompt_eval_count` and
+`eval_count`, which ollama already returns. Record them on the finished task
+(`tokens_in`, `tokens_out`) so cost is measured rather than estimated. If a
+runner returns no counts, store `null` — do not infer from string length.
+
+**Extend `context-cost.mjs`** to report money alongside tokens, and keep the two
+streams separate. They are not the same spend:
+
+- **Claude Code sessions** — the transcripts the analyser already reads, billed
+  by Anthropic.
+- **Runner tasks** — work the bus dispatched to GLM or a local model.
+
+Totalling them into one number would hide which one is actually expensive, which
+is the whole point of the tool.
+
+This is also the screen that sells it. A buyer sees, on their own machine: what
+each agent costs, what it has spent, and which work went local for free.
+
 ---
 
 ## Stage 3 — Scopes
