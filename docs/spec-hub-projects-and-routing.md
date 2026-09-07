@@ -195,6 +195,48 @@ Tasks gain three optional fields so existing tasks keep working:
 `findRunner()` keeps its current behaviour for callers that pass an id. Add
 routing beside it; do not change what already works.
 
+### 2e. Benchmark the local models on *this* machine
+
+The third fact about a runner, after declared and reachable: how fast it
+actually is **here**. Model size tells you nothing useful — what matters is
+whether it fits in this machine's VRAM or spills to CPU, and that is a per-system
+answer no spec sheet gives you. On a 12GB card, `codestral:22b` (12.6GB) and
+`gpt-oss:20b` (13.8GB) may run an order of magnitude slower than
+`qwen2.5:7b` (4.7GB); on a 24GB card they may not. Measure, do not assume.
+
+`benchmark(runnerId)` → `{ loadMs, firstTokenMs, tokensPerSec, ok, at }`
+
+- Same fixed prompt to every runner. Never a prompt that varies between runs.
+- Measure **cold** (first call after load) and **warm** separately. Cold is where
+  the large models lose, and cold is what you actually pay on the first task.
+- **Three runs minimum, report the median** — rules 14 and 15, medians never
+  means, and gate on sample size. One run on a machine that was busy is noise.
+- **Say what you could not measure** and why (rule 16). A model that timed out is
+  not a model that scored zero.
+
+**A correctness floor, not a quality score.** Three deterministic questions with
+known answers — count something, extract a field, return a bare number. Record
+`ok: false` for a runner that is fast and returns unparseable garbage. This is
+not a quality ranking and must never be presented as one; it only separates
+"fast" from "fast and useless".
+
+**How speed may be used — and may not:**
+
+- It breaks ties in `pickRunner` step 5, **among runners already eligible**.
+- It never promotes an ineligible runner. Fast does not make a model safe.
+- It never overrides an explicit human pick or a standing preference.
+
+Label it in the UI as **speed on this machine, not a measure of whether the
+answer is right** (rule C2 — report measurements, do not render verdicts). A
+column of tokens/sec next to nothing else invites exactly the wrong conclusion,
+which is that `qwen2.5:7b` is the best model here because it wins the race.
+
+**Run it only when asked.** Benchmarking loads every declared model in turn —
+about 40GB of paging on this machine — and takes minutes. A benchmark that fires
+on page render would make the hub unusable. Explicit button, progress shown,
+results cached in state with their timestamp, and a visible "measured 3 days ago"
+so a stale number is never mistaken for a fresh one.
+
 ---
 
 ## Stage 3 — Scopes
