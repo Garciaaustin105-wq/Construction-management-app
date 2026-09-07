@@ -11,6 +11,10 @@
 // survives into the emitted JS) and rewrites the "@/lib" aliases Node cannot
 // resolve.
 //
+// Not linted by DeepSource: .mjs files are excluded in .deepsource.toml,
+// because the analyzer parses them as classic scripts and reports every
+// top-level `import` as a syntax error. Running this file IS its check.
+//
 // THE FAILURE THIS FILE EXISTS TO PREVENT is a nav row that belongs to no
 // group. The sidebar renders ungrouped rows above the sections and grouped
 // rows inside them, so a row assigned to a section that is not in NAV_SECTIONS
