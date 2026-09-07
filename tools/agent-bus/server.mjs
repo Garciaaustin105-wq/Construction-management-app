@@ -781,6 +781,83 @@ async function runWorker(lane, runnerId) {
   }
 }
 
+/* ── workers you can start from the window ────────────────────────────────── */
+
+// Workers run INSIDE the hub process rather than as spawned children.
+//
+// Two reasons. Spawning would mean tracking pids across a Windows/POSIX split
+// and inheriting orphans when the hub dies — the same class of problem the
+// working-tree lock already had to solve with kill(pid,0). And it matches what
+// the window means to a person: the hub is open, so the agents are working; you
+// close it, they stop. Nothing keeps running invisibly after the window is gone.
+//
+// Keyed by lane, because two workers on one lane would race for the same task.
+// claimNextTask is atomic so it would be *safe*, but it would also be pointless.
+const liveWorkers = new Map();
+
+async function workerLoop(lane) {
+  const entry = liveWorkers.get(lane);
+  if (!entry) return;
+  while (!entry.stop) {
+    let task = null;
+    try {
+      task = claimNextTask(lane);
+    } catch {
+      // A locked state file is transient. Wait rather than killing the worker.
+    }
+    if (!task) {
+      entry.status = "waiting";
+      await new Promise((r) => setTimeout(r, 4000));
+      continue;
+    }
+    entry.status = `running ${task.id}`;
+    entry.lastTask = task.id;
+    try {
+      const runner = findRunner(task.runner_id || entry.runnerId);
+      const answer = await askRunner(runner, task.prompt);
+      finishTask(task.id, { status: "done", result: answer, model: runner.id });
+      entry.done = (entry.done ?? 0) + 1;
+    } catch (err) {
+      finishTask(task.id, {
+        status: "failed",
+        result: err.message,
+        model: task.runner_id || entry.runnerId,
+      });
+      entry.failed = (entry.failed ?? 0) + 1;
+    }
+  }
+  liveWorkers.delete(lane);
+}
+
+function startLiveWorker(lane, runnerId) {
+  if (liveWorkers.has(lane)) {
+    return `A worker is already running on lane "${lane}". Stop it first.`;
+  }
+  // Resolve now, so a disabled or misspelled runner fails HERE with a message
+  // on screen instead of silently on the first task.
+  const runner = findRunner(runnerId);
+  liveWorkers.set(lane, {
+    lane,
+    runnerId: runner.id,
+    label: runner.label ?? runner.id,
+    status: "waiting",
+    startedAt: nowIso(),
+    stop: false,
+  });
+  void workerLoop(lane);
+  return `Worker started on "${lane}" using ${runner.label ?? runner.id}.`;
+}
+
+function stopLiveWorker(lane) {
+  const entry = liveWorkers.get(lane);
+  if (!entry) return `No worker running on "${lane}".`;
+  entry.stop = true;
+  entry.status = "stopping";
+  // It finishes the task in hand rather than abandoning it half-done, so a
+  // model call already in flight still gets its answer written back.
+  return `Worker on "${lane}" will stop after its current task.`;
+}
+
 /* ── dashboard ────────────────────────────────────────────────────────────── */
 
 // A page, because a status line you have to remember to run is not the same as
@@ -933,6 +1010,25 @@ function renderStatusHtml(state, opts = {}) {
     )
     .join("");
 
+  const workers = [...liveWorkers.values()];
+  const workerHtml = workers.length
+    ? workers
+        .map(
+          (w) => `<div class="card"><div class="row"><span class="dot"></span>
+            <b>${esc(w.lane)}</b><span class="mut">${esc(w.status)}</span></div>
+            <p class="lane">${esc(w.label)}</p>
+            <p class="mut">${w.done ?? 0} done${w.failed ? `, ${w.failed} failed` : ""}</p>
+            ${
+              interactive
+                ? `<form method="post"><input type="hidden" name="action" value="worker_stop">
+                   <input type="hidden" name="lane" value="${esc(w.lane)}">
+                   <button>Stop</button></form>`
+                : ""
+            }</div>`
+        )
+        .join("")
+    : "<p class=\"mut\">No worker running. Start one below and queued work begins moving.</p>";
+
   const workGroups = readWorkflow();
   const workHtml = workGroups.length
     ? workGroups
@@ -1069,10 +1165,24 @@ ${flash ? `<div class="flash">${esc(flash)}</div>` : ""}
 <div class="lock${held ? " held" : ""}">${esc(describeLock(lock))}</div>
 ${actions}
 
+<h2>Workers (${workers.length})</h2>
+<div class="grid">${workerHtml}</div>
+${
+  interactive
+    ? `<form method="post" class="card" style="margin-top:10px">
+    <b>Start a worker</b>
+    <p class="mut">It runs while this window is open and takes queued work in its lane.</p>
+    <input type="hidden" name="action" value="worker_start">
+    <input name="lane" placeholder="lane" value="local">
+    <select name="runner_id">${runnerOptions}</select>
+    <button>Start</button>
+  </form>`
+    : ""
+}
+
 <h2>Work queue (${tasks.length})</h2>
 <p class="mut">Queued work is executed by a worker, not by a person reading this.
-  Start one with <code>node tools/agent-bus/server.mjs work local</code>, and pick which
-  agent runs it below — it takes the
+  Start one above and pick which agent runs it — it takes the
   next queued task in its lane, runs it against the local model, and writes the answer
   back here. Output is a DRAFT: the worker never touches the repo.</p>
 ${taskHtml}
@@ -1182,6 +1292,10 @@ function runAction(action, form) {
         });
       case "release":
         return callTool("release_tree", {});
+      case "worker_start":
+        return startLiveWorker(form.get("lane") || "local", form.get("runner_id"));
+      case "worker_stop":
+        return stopLiveWorker(form.get("lane"));
       case "task":
         return callTool("task_add", {
           lane: form.get("lane") || "local",
