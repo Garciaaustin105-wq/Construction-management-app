@@ -133,3 +133,18 @@ every other agent, and the CLI smoke test found shell claims being stolen — bo
 defects in the first draft.
 
 State is isolated to a temp directory per run; it never touches the real bus.
+
+## The worker
+
+`node tools/agent-bus/server.mjs work local` runs a loop: it takes the next
+queued task in its lane, runs it against the local model (`gpt-oss:20b` by
+default), and writes the answer back to the queue. Queue work from the hub
+window or with `server.mjs task local "title" "the whole prompt"`.
+
+The worker never touches the repo. Local output is a DRAFT that a person or the
+orchestrator reviews — an unreviewed model writing into a codebase is how
+plausible wrong code gets merged at 3am, and one local draft here already
+arrived with four defects in it.
+
+A failure is a RESULT, not a crash: it lands on the queue with the reason, so a
+task is never left stuck on "running" with no explanation.

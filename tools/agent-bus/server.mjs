@@ -110,11 +110,12 @@ function withState(fn) {
       state = null;
     }
     if (!state || typeof state !== "object") {
-      state = { agents: {}, lock: null, messages: [], board: {} };
+      state = { agents: {}, lock: null, messages: [], board: {}, tasks: [], taskSeq: 0 };
     }
     state.agents ||= {};
     state.messages ||= [];
     state.board ||= {};
+    state.tasks ||= [];
 
     const result = fn(state);
 
@@ -494,6 +495,36 @@ function callTool(name, args) {
         return lines.join("\n");
       });
 
+    case "task_add":
+      return withState((state) => {
+        touch(state);
+        state.tasks ||= [];
+        const id = nextTaskId(state);
+        state.tasks.push({
+          id,
+          lane: args.lane || "local",
+          title: args.title,
+          prompt: args.prompt,
+          status: "queued",
+          by: myName || "cli",
+          at: nowIso(),
+        });
+        return `Queued ${id} on lane "${args.lane || "local"}": ${args.title}`;
+      });
+
+    case "tasks":
+      return withState((state) => {
+        touch(state);
+        const rows = (state.tasks ?? []).slice(-20).reverse();
+        if (!rows.length) return "No tasks queued.";
+        return rows
+          .map((t) => {
+            const head = `${t.id} [${t.status}] ${t.lane} — ${t.title}`;
+            return t.result ? `${head}\n  ${t.result.slice(0, 400)}` : head;
+          })
+          .join("\n");
+      });
+
     case "board":
       return withState((state) => {
         touch(state);
@@ -529,6 +560,124 @@ function callTool(name, args) {
 // rather than registering once. Its claims carry no pid, which means they fall
 // back to the TTL — a shell script cannot be probed for liveness the way a
 // server process can.
+/* ── the task queue ───────────────────────────────────────────────────────── */
+
+// The board holds facts. This holds WORK — and something actually runs it.
+//
+// A queue nobody executes is a to-do list, which is what the board already was.
+// `work` is the missing half: a loop that takes the next queued task for its
+// lane, runs it, and writes the answer back where everyone can see it.
+//
+// LOCAL OUTPUT IS A DRAFT, NEVER A COMMIT. The runner posts text to the queue.
+// It does not touch the repo, run git, or write a file into src/. That is not a
+// limitation to be lifted later — an unreviewed model writing to a codebase is
+// how you get plausible wrong code merged at 3am, and this project has already
+// had one local-model draft with four defects in it.
+
+const OLLAMA = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+const DEFAULT_MODEL = process.env.AGENT_BUS_MODEL || "gpt-oss:20b";
+
+function nextTaskId(state) {
+  state.taskSeq = (state.taskSeq ?? 0) + 1;
+  return `t${state.taskSeq}`;
+}
+
+/**
+ * Ask the local model. Returns its text, or throws with something a person can
+ * act on — "ollama is not running" beats a stack trace on the board.
+ */
+async function askLocalModel(model, prompt) {
+  let res;
+  try {
+    res = await fetch(`${OLLAMA}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        options: { temperature: 0.2, num_predict: 1200 },
+      }),
+    });
+  } catch {
+    throw new Error(
+      `Cannot reach ollama at ${OLLAMA}. Is it running? (ollama serve)`
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`ollama returned ${res.status}. Is "${model}" pulled?`);
+  }
+  const body = await res.json();
+  const text = String(body.response ?? "").trim();
+  if (!text) throw new Error("The model returned nothing.");
+  return text;
+}
+
+/**
+ * Take the next queued task for a lane and mark it running, atomically.
+ *
+ * Claiming inside withState is what stops two runners taking the same task —
+ * the same reason the working-tree lock exists. Returns null when the queue is
+ * empty, which is the normal case and not an error.
+ */
+function claimNextTask(lane) {
+  return withState((state) => {
+    state.tasks ||= [];
+    const task = state.tasks.find((t) => t.lane === lane && t.status === "queued");
+    if (!task) return null;
+    task.status = "running";
+    task.startedAt = nowIso();
+    task.runner = myName || "worker";
+    return { ...task };
+  });
+}
+
+function finishTask(id, patch) {
+  return withState((state) => {
+    state.tasks ||= [];
+    const task = state.tasks.find((t) => t.id === id);
+    if (!task) return null;
+    Object.assign(task, patch, { doneAt: nowIso() });
+    return { ...task };
+  });
+}
+
+/**
+ * The runner. Polls for work in its lane, runs it, writes the answer back.
+ *
+ * Poll rather than push because the queue is a JSON file on disk — there is no
+ * socket to subscribe to, and a five second poll on a local file costs nothing.
+ */
+async function runWorker(lane, model) {
+  process.stdout.write(`agent-bus worker: lane "${lane}", model "${model}"\n`);
+  process.stdout.write(`ollama at ${OLLAMA}. Ctrl+C to stop.\n`);
+  let idleLogged = false;
+  for (;;) {
+    const task = claimNextTask(lane);
+    if (!task) {
+      if (!idleLogged) {
+        process.stdout.write("waiting for work...\n");
+        idleLogged = true;
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    idleLogged = false;
+    process.stdout.write(`\n[${task.id}] ${task.title}\n  running...\n`);
+    try {
+      const answer = await askLocalModel(model, task.prompt);
+      finishTask(task.id, { status: "done", result: answer, model });
+      process.stdout.write(`  done (${answer.length} chars)\n`);
+    } catch (err) {
+      // A failure is a RESULT, not a crash. It goes on the queue so the person
+      // reading the hub sees why, instead of finding a task stuck on "running"
+      // forever with no explanation.
+      finishTask(task.id, { status: "failed", result: err.message, model });
+      process.stdout.write(`  failed: ${err.message}\n`);
+    }
+  }
+}
+
 /* ── dashboard ────────────────────────────────────────────────────────────── */
 
 // A page, because a status line you have to remember to run is not the same as
@@ -655,6 +804,22 @@ function renderStatusHtml(state, opts = {}) {
         )
         .join("")
     : "<p class=\"mut\">The board is empty.</p>";
+
+  const tasks = (state.tasks ?? []).slice(-12).reverse();
+  const taskHtml = tasks.length
+    ? tasks
+        .map((t) => {
+          const cls = t.status === "failed" ? " held" : "";
+          const body = t.result
+            ? `<p class="mut" style="white-space:pre-wrap">${esc(t.result.slice(0, 1200))}</p>`
+            : `<p class="mut">${esc(t.prompt || "").slice(0, 200)}</p>`;
+          return `<details class="lock${cls}"><summary><b>${esc(t.id)}</b>
+            <span>${esc(t.title || "")}</span>
+            <span class="mut">${esc(t.lane)} · ${esc(t.status)}${t.model ? " · " + esc(t.model) : ""}</span>
+          </summary>${body}</details>`;
+        })
+        .join("")
+    : "<p class=\"mut\">Nothing queued. Work added here is picked up by a running worker.</p>";
 
   const workGroups = readWorkflow();
   const workHtml = workGroups.length
@@ -792,6 +957,26 @@ ${flash ? `<div class="flash">${esc(flash)}</div>` : ""}
 <div class="lock${held ? " held" : ""}">${esc(describeLock(lock))}</div>
 ${actions}
 
+<h2>Work queue (${tasks.length})</h2>
+<p class="mut">Queued work is executed by a worker, not by a person reading this.
+  Start one with <code>node tools/agent-bus/server.mjs work local</code> — it takes the
+  next queued task in its lane, runs it against the local model, and writes the answer
+  back here. Output is a DRAFT: the worker never touches the repo.</p>
+${taskHtml}
+${
+  interactive
+    ? `<form method="post" class="card" style="margin-top:10px">
+    <b>Queue work</b>
+    <input type="hidden" name="action" value="task">
+    <input name="actor" placeholder="from (default: desk)" value="desk">
+    <input name="lane" placeholder="lane" value="local">
+    <input name="title" placeholder="short title" required>
+    <textarea name="prompt" rows="3" placeholder="the whole task, written for someone with no context" required></textarea>
+    <button>Queue it</button>
+  </form>`
+    : ""
+}
+
 <h2>Board (${board.length})</h2>
 ${boardRows}
 
@@ -883,6 +1068,12 @@ function runAction(action, form) {
         });
       case "release":
         return callTool("release_tree", {});
+      case "task":
+        return callTool("task_add", {
+          lane: form.get("lane") || "local",
+          title: form.get("title"),
+          prompt: form.get("prompt"),
+        });
       default:
         throw new Error(`Unknown action: ${action}`);
     }
@@ -949,6 +1140,7 @@ function runDashboard(port) {
 
 function runCli(argv) {
   const [cmd, ...rest] = argv;
+  const rest0 = rest;
   const say = (t) => { process.stdout.write(String(t) + "\n"); };
   try {
     switch (cmd) {
@@ -958,6 +1150,20 @@ function runCli(argv) {
         return say(callTool("agents", {}));
       case "status":
         return say(callTool("status", {}));
+      case "tasks":
+        return say(callTool("tasks", {}));
+      case "task": {
+        const [lane, title, ...rest] = rest0;
+        myName = process.env.AGENT_BUS_NAME || "cli";
+        registerCli(myName);
+        return say(callTool("task_add", { lane, title, prompt: rest.join(" ") }));
+      }
+      case "work": {
+        // Long-running, like dashboard.
+        myName = process.env.AGENT_BUS_NAME || "worker";
+        registerCli(myName);
+        return runWorker(rest0[0] || "local", rest0[1] || DEFAULT_MODEL);
+      }
       case "dashboard":
         // Long-running, unlike every other verb here, so it returns the
         // listener rather than falling through to the process exit below.
@@ -992,7 +1198,8 @@ function runCli(argv) {
       }
       default:
         say("agent-bus — usage:");
-        say("  dashboard [port] | status | board | agents | note <key> <value> | send <to> <msg>");
+        say("  dashboard [port] | work [lane] [model] | task <lane> <title> <prompt>");
+        say("  tasks | status | board | agents | note <key> <value> | send <to> <msg>");
         say("  inbox <name> | claim <name> <path> <reason> | release <name>");
         say("");
         say("Set AGENT_BUS_NAME to avoid passing your name each time.");
@@ -1026,7 +1233,7 @@ if (process.argv.length > 2) {
   // Every verb here is one-shot and exits — except `dashboard`, which is a
   // listener. Exiting on it would tear the socket down before the first
   // request, so it opts out and Node stays alive on its own handle.
-  if (process.argv[2] !== "dashboard") {
+  if (process.argv[2] !== "dashboard" && process.argv[2] !== "work") {
     process.exit(process.exitCode ?? 0);
   }
 }
