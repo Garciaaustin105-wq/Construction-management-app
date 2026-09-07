@@ -73,6 +73,16 @@ below). A direct call fails on `new` being unset, so the exposure was small —
 but "it errors before it does damage" is not a boundary. Check BOTH halves when
 a function has a trigger wrapper.
 
+**Now checked, not just written.** `node scripts/check-function-grants.mjs`
+runs the rule against the LIVE database and exits non-zero on a HIGH finding.
+Run it after any migration that creates or replaces a function. The query lives
+in the `audit_function_grants()` function so the allowlist of deliberate
+exceptions sits in the database next to what it describes, each entry carrying
+its reason — the six `me_*` RLS predicates and the parameterised helpers that
+policies depend on are there, and revoking those breaks RLS. If a new finding is
+a real exception, add it to that allowlist with a reason rather than deleting
+the check.
+
 **The rule:** a migration that creates or replaces a function in `public` MUST
 end with exactly one of these blocks, with the function's real signature:
 
