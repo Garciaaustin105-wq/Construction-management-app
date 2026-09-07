@@ -1,8 +1,28 @@
 "use client";
 
-import { useMemo } from "react";
-import { AlertTriangle, PackageSearch } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle, ClipboardList, Loader2, PackageSearch, Trash2,
+} from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { useToast } from "@/components/Toast";
 import { formatMoney } from "@/lib/money";
+import {
+  describeStatus,
+  draftFromTakeoff,
+  exclusionWarning,
+  orderProblem,
+  orderTotal,
+  unpricedItems,
+  type MaterialOrderStatus,
+  type MaterialOrderWithItems,
+} from "@/lib/materialOrders";
+import {
+  createMaterialOrder,
+  deleteMaterialOrder,
+  listMaterialOrders,
+  setMaterialOrderStatus,
+} from "@/lib/materialOrdersData";
 import {
   buildMaterialTakeoff,
   sodLeftoverSqft,
@@ -13,18 +33,28 @@ import {
 
 // What has to be BOUGHT for this estimate — the shopping list, not the quote.
 //
-// READ-ONLY BY DESIGN. Everything here is derived from what is already on the
-// estimate; there is no field to edit, because editing a quantity here would
-// silently disagree with the map. Change the estimate and this follows.
+// TWO THINGS ON ONE SCREEN, and the difference between them is the point.
 //
-// Computed from props rather than fetched. The workspace already holds the
-// areas and the component rows, so a query here would add a round trip, a
-// second RLS surface, and a window where the list disagrees with the screen it
-// sits on.
+// The TAKE-OFF is live and has no editable field: it is derived from what is on
+// the estimate, so change the estimate and it follows. Letting someone type a
+// quantity here would put a number on screen that silently disagrees with the
+// map. It is computed from props rather than fetched, because the workspace
+// already holds the areas and component rows — querying again would add a round
+// trip, a second RLS surface, and a window where the list disagrees with the
+// screen it sits on.
+//
+// An ORDER is a copy, frozen. Once a supplier is holding the paperwork the
+// numbers stopped being ours to change, so orders are read from their own rows
+// and never recomputed. They render ABOVE the take-off: a document someone is
+// acting on outranks a list that is still moving.
 
 type Props = {
   areas: TakeoffInput["areas"];
   components: TakeoffInput["components"];
+  organizationId: string;
+  estimateId: string;
+  /** Estimates lock when they leave draft; so does raising orders against them. */
+  canEdit: boolean;
 };
 
 const UNIT_LABEL: Record<MaterialLine["unit"], string> = {
@@ -40,7 +70,41 @@ const SOURCE_LABEL: Record<MaterialLine["source"], string> = {
   component: "Parts",
 };
 
-export default function MaterialsPanel({ areas, components }: Props) {
+export default function MaterialsPanel({
+  areas,
+  components,
+  organizationId,
+  estimateId,
+  canEdit,
+}: Props) {
+  const supabase = useMemo(() => createClient(), []);
+  const toast = useToast();
+  const [orders, setOrders] = useState<MaterialOrderWithItems[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [supplier, setSupplier] = useState("");
+
+  // Bumped after every write instead of calling a loader directly, matching the
+  // async-IIFE pattern the workspace already uses. A `void reload()` in the
+  // effect body trips react-hooks/set-state-in-effect, and the cancelled guard
+  // is what stops a slow response from a previous estimate landing on this one.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await listMaterialOrders(supabase, estimateId);
+      if (cancelled) return;
+      if (error) {
+        toast.error(error);
+        return;
+      }
+      setOrders(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, estimateId, toast, reloadKey]);
+
   const takeoff = useMemo(
     () => buildMaterialTakeoff({ areas, components }),
     [areas, components]
@@ -50,15 +114,141 @@ export default function MaterialsPanel({ areas, components }: Props) {
     [areas, components]
   );
   const warning = takeoffWarning(takeoff);
+  const draft = useMemo(() => draftFromTakeoff(takeoff), [takeoff]);
+  const cannotOrder = orderProblem(draft);
+  const willExclude = exclusionWarning(draft);
+
+  async function raiseOrder() {
+    setBusy(true);
+    const { error } = await createMaterialOrder(supabase, {
+      organizationId,
+      estimateId,
+      draft,
+      supplier,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    setSupplier("");
+    toast.success("Order drafted — nothing has been sent yet");
+    setReloadKey((k) => k + 1);
+  }
+
+  async function move(order: MaterialOrderWithItems, to: MaterialOrderStatus) {
+    setBusy(true);
+    const error = await setMaterialOrderStatus(supabase, order, to);
+    setBusy(false);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    setReloadKey((k) => k + 1);
+  }
+
+  async function remove(order: MaterialOrderWithItems) {
+    setBusy(true);
+    const error = await deleteMaterialOrder(supabase, order);
+    setBusy(false);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    setReloadKey((k) => k + 1);
+  }
+
+  // Orders already raised. Rendered above the live take-off, because a document
+  // a supplier is holding matters more than a list that is still moving.
+  const ordersBlock = orders.length > 0 && (
+    <div className="space-y-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+        Orders
+      </p>
+      {orders.map((o) => {
+        const total = orderTotal(o.items);
+        const unpriced = unpricedItems(o.items);
+        return (
+          <div key={o.id} className="rounded-lg border border-gray-200 bg-white p-2.5 space-y-1.5">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-gray-900">
+                  {o.supplier || "No supplier named"}
+                </p>
+                <p className="text-[11px] text-gray-500">{describeStatus(o.status)}</p>
+              </div>
+              <div className="shrink-0 text-right tabular-nums">
+                <p className="text-xs font-semibold text-gray-900">{formatMoney(total)}</p>
+                <p className="text-[11px] text-gray-500">
+                  {o.items.length} line{o.items.length === 1 ? "" : "s"}
+                </p>
+              </div>
+            </div>
+            {unpriced > 0 && (
+              <p className="text-[11px] text-amber-800">
+                {unpriced} line{unpriced === 1 ? "" : "s"} on this order have no
+                cost, so {formatMoney(total)} is not the whole bill.
+              </p>
+            )}
+            {canEdit && (
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                {o.status === "draft" && (
+                  <button
+                    onClick={() => void move(o, "placed")}
+                    disabled={busy}
+                    className="text-[11px] font-semibold text-white bg-slate-900 rounded-lg px-2.5 py-1 active:bg-slate-800 disabled:opacity-50"
+                  >
+                    Mark placed
+                  </button>
+                )}
+                {o.status === "placed" && (
+                  <button
+                    onClick={() => void move(o, "received")}
+                    disabled={busy}
+                    className="text-[11px] font-semibold text-white bg-slate-900 rounded-lg px-2.5 py-1 active:bg-slate-800 disabled:opacity-50"
+                  >
+                    Mark received
+                  </button>
+                )}
+                {(o.status === "draft" || o.status === "placed") && (
+                  <button
+                    onClick={() => void move(o, "canceled")}
+                    disabled={busy}
+                    className="text-[11px] font-semibold text-gray-600 border border-gray-300 rounded-lg px-2.5 py-1 active:bg-gray-100 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                )}
+                {/* Only a draft can be deleted. A placed order is a record. */}
+                {o.status === "draft" && (
+                  <button
+                    onClick={() => void remove(o)}
+                    disabled={busy}
+                    className="ml-auto text-gray-300 hover:text-red-600 disabled:opacity-50"
+                    aria-label="Delete draft order"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   if (takeoff.lines.length === 0) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
-        <PackageSearch className="mx-auto h-5 w-5 text-gray-400" />
-        <p className="mt-2 text-xs text-gray-500">
-          Nothing to buy yet. Place plants, sod or heads on the map, or add
-          parts, and the order list builds itself.
-        </p>
+      <div className="space-y-3">
+        {ordersBlock}
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
+          <PackageSearch className="mx-auto h-5 w-5 text-gray-400" />
+          <p className="mt-2 text-xs text-gray-500">
+            Nothing to buy yet. Place plants, sod or heads on the map, or add
+            parts, and the order list builds itself.
+          </p>
+        </div>
       </div>
     );
   }
@@ -74,6 +264,8 @@ export default function MaterialsPanel({ areas, components }: Props) {
 
   return (
     <div className="space-y-3">
+      {ordersBlock}
+
       <p className="text-xs text-gray-500">
         What this job has to buy, from the quantities already on the estimate.
         Costs are yours, not the customer&apos;s price.
@@ -160,6 +352,45 @@ export default function MaterialsPanel({ areas, components }: Props) {
           {takeoff.unpricedCount === 1 ? "" : "s"} with no cost recorded. It is
           not the whole bill.
         </p>
+      )}
+
+      {/*
+        Raising an order COPIES these lines. The list above is live and follows
+        the estimate; an order does not, which is the entire point of having
+        one. Everything that is about to be left off is said BEFORE the button,
+        so the decision is made knowing it.
+      */}
+      {canEdit && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-2.5 space-y-2">
+          <p className="text-[11px] leading-snug text-gray-600">
+            An order takes a copy of these lines. Editing the estimate afterwards
+            will not change it.
+          </p>
+          {willExclude && (
+            <p className="text-[11px] leading-snug text-amber-800">{willExclude}</p>
+          )}
+          <input
+            value={supplier}
+            onChange={(e) => setSupplier(e.target.value)}
+            placeholder="Supplier (optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+          />
+          <button
+            onClick={() => void raiseOrder()}
+            disabled={busy || !!cannotOrder}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg px-3 py-1.5 active:bg-slate-800 disabled:opacity-50"
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ClipboardList className="h-3.5 w-3.5" />
+            )}
+            Draft an order
+          </button>
+          {cannotOrder && (
+            <p className="text-[11px] leading-snug text-amber-800">{cannotOrder}</p>
+          )}
+        </div>
       )}
     </div>
   );
