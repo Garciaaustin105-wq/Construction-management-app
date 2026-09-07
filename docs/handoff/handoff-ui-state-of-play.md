@@ -1,62 +1,46 @@
-# HANDOFF — state of play, 2026-09-06
+# HANDOFF — state of play, 2026-09-06 (evening)
 
-> **UPDATE, later on 2026-09-06 — WORK FROM `feat/desktop-ui-pass`.**
-> It contains every estimator commit (`feat/plant-catalogue` is 0 ahead of it)
-> plus the desktop UI pass phases 1 and 2. `feat/plant-catalogue` is now behind
-> and building there means missing `DataTable` entirely.
->
-> **The desktop table pattern changed after the lane specs were written.**
-> `src/components/ui/DataTable.tsx` is the house pattern — 12 files migrated —
-> and any NEW screen with a desktop table uses it rather than hand-rolling
-> `hidden lg:block` markup. `PlantCatalogueManager.tsx` has not been migrated
-> yet, so copying it copies the old shape; copy
-> `src/components/ChemicalProductsManager.tsx` instead. Its CRUD and drawer
-> conventions are unchanged and still the ones to follow.
->
-> The desktop pass owns `navItems.ts`, the shared layout and the remaining
-> table migrations — including `PlantCatalogueManager.tsx`, which is Lane A’s
-> file. Whoever reaches it second rebases.
+**Read this before the lane docs.** All four lane specs, and the earlier version
+of this file, describe a world that no longer exists: they were written when the
+backend was five catalogues ahead of the UI. **That gap is closed.** Every claim
+below was checked against `origin/main` at `d443dc7`, not remembered.
 
-**Read this before the lane docs.** Four of them were written days ago and three
-are now partly stale. This says what is actually true today, what changed under
-them, and which rules are new and non-negotiable.
+Where a lane doc and this file disagree, this file wins.
 
 ---
 
-## 1. The headline: the backend is five catalogues ahead of the UI
+## 1. The lanes are done
 
-Everything below is built, tested, seeded and **unreachable from the app**.
+The previous version of this document led with *"nothing anywhere writes
+`estimate_labor_items` or `estimate_components`"* and called that the single
+most important line in it. It is no longer true. Everything below ships:
 
-| Contract | Rows seeded | Screens importing it |
+| Contract | Seeded in the test org | Reachable from |
 |---|---|---|
-| `plantProducts.ts` | 223 species / 690 sizes | 5 |
-| `crewFeedback.ts` | — | 2 |
-| `irrigationProducts.ts` | 20 models / 145 nozzles | **0** |
-| `irrigationSystem.ts` | 73 components | **0** |
-| `laborItems.ts` | 38 labor lines | **0** |
-| `sodProducts.ts` | 11 products | **0** |
-| `equipmentProducts.ts` | 15 machines | **0** |
+| `plantProducts.ts` | 223 species / 690 sizes | `/lawn/plants`, estimator |
+| `irrigationProducts.ts` | 20 models / 145 nozzles | `/lawn/irrigation`, the map |
+| `irrigationSystem.ts` | 73 components | `/lawn/irrigation-components`, `ComponentsPanel` |
+| `laborItems.ts` | 40 labor lines | `/lawn/labor-items`, `LaborItemsPanel` |
+| `sodProducts.ts` | 11 products | `/lawn/sod`, `SodPanel` |
+| `equipmentProducts.ts` | 18 machines | `/lawn/equipment`, `EquipmentPanel` |
+| `crewFeedback.ts` | — | `/lawn/labor-feedback` |
+| `siteImport.ts` | — | `/lawn/estimate/[id]/import` |
 
-Screens that exist: `/lawn/plants`, `/lawn/products`, `/lawn/labor-feedback`.
-Screens that do NOT exist: `/lawn/sod`, `/lawn/equipment`, `/lawn/irrigation`,
-`/lawn/labor-items`, `/lawn/irrigation-components`.
+Six estimator panels exist under `src/components/estimator/`: `SodPanel`,
+`PipePanel`, `DripPanel`, `EquipmentPanel`, `LaborItemsPanel`, `ComponentsPanel`.
+`LawnEstimateWorkspace.tsx` writes `estimate_labor_items` and
+`estimate_components` with full snapshots.
 
-**And nothing anywhere writes `estimate_labor_items` or `estimate_components`.**
-That is the single most important line in this document. It means a labor item
-or an irrigation component cannot reach an estimate at all, which in turn means
-the feedback screen can never learn a rate for one. The chain is built end to
-end and has a gap in the middle.
+**Do not start a lane from its spec.** Read the files first — three of the four
+lane docs will send you to build something that is already there.
 
-**Priority order, and it is not the lane letters.** Highest value first:
-
-1. A way to ADD a labor item or component to an estimate (Lane C). Without it,
-   two whole catalogues and the feedback loop are inert.
-2. The catalogue screens for the five with none (Lane A + Lane D).
-3. Heads on the map (Lane B) — big, self-contained, unblocked.
+`src/components/ui/DataTable.tsx` is the house desktop-table pattern. Any NEW
+screen with a desktop table uses it rather than hand-rolling `hidden lg:block`
+markup. Copy `ChemicalProductsManager.tsx` or `IrrigationProductsManager.tsx`.
 
 ---
 
-## 2. New rules, since the lane docs were written
+## 2. Rules. None of these have been relaxed
 
 ### 2.1 Values belong to the org. Research is a suggestion.
 
@@ -78,7 +62,22 @@ Two standing exceptions, both decided by the owner: plant install minutes stay
 seeded (validated against independent sources), and `sqft_per_pallet` stays at
 450 (zero there produces no estimate at all, not a cautious one).
 
-### 2.2 A blank is not a zero, and there are now TWO kinds of blank
+### 2.2 A seeded MEASUREMENT is a starting point, and must say so
+
+Nozzle throw distances are seeded, because a radius is a physical fact rather
+than an opinion — but it is a fact about a chart, not about the box in the van.
+Product lines get revised, adjustable nozzles are recorded at the top of their
+range, and every figure is quoted at a pressure the site may not run.
+
+`THROW_VERIFY_NOTE` says exactly that, on the catalogue screen where the numbers
+are edited. Any screen shipping a measured default carries the same warning
+where it is edited, not in a doc nobody opens.
+
+Orgs can send a figure back: `nozzle_suggestions`, opt-in, separate from saving
+to their own catalogue, `source_note` required. **A number with no provenance
+cannot be folded into a catalogue other companies quote from.**
+
+### 2.3 A blank is not a zero, and there are TWO kinds of blank
 
 `unpriced` — no price recorded. Not the same as free.
 `untimed` — no man-minutes recorded. Not the same as instant.
@@ -86,7 +85,11 @@ seeded (validated against independent sources), and `sqft_per_pallet` stays at
 They are separate flags on `LaborCharge` and a row can be either. Surface them
 separately; "0" in a rate column is a lie either way.
 
-### 2.3 Units are the whole game
+The same rule reaches further than the catalogues. `headRateLines()` keeps an
+untimed head as a line rather than dropping it, because a head with no rate is
+exactly the row the feedback screen exists to learn.
+
+### 2.4 Units are the whole game
 
 Nine units across two contracts: `each foot sqft msqft cubic_yard ton hour job`
 plus components' `each|foot`. Rules that are not guessable:
@@ -98,11 +101,14 @@ plus components' `each|foot`. Rules that are not guessable:
   thousand-fold error that looks perfectly correct.
 - **An `hour` row's quantity IS the man-hours.** `install_minutes` is ignored on
   it, deliberately.
-- `install_minutes` is NUMERIC, not integer. Per-foot and per-area rates are
-  fractional — 0.5 man-min/ft of wire is real, and the integer column that used
-  to hold it silently rounded. Do not put `step="1"` on that input.
+- `install_minutes` is NUMERIC on `labor_items` and `irrigation_components` —
+  0.5 man-min/ft of wire is real, and the integer column that used to hold it
+  silently rounded. Do not put `step="1"` on those inputs. It is still INTEGER on
+  `irrigation_product_nozzles` and `plant_product_sizes`; anything applying a
+  rate there rounds to the minute and should say so rather than implying
+  resolution the column cannot hold.
 
-### 2.4 Line items carry PER-UNIT money
+### 2.5 Line items carry PER-UNIT money
 
 `componentLineItem` and `laborLineItem` return `unit_price` and `internal_cost`
 **per unit**, not extended. The quote consumer multiplies by quantity. Handing
@@ -111,83 +117,124 @@ extended figures in the panel; let the line item do its own thing.
 
 ---
 
-## 3. What changed under each lane
-
-### Lane A — `docs/handoff/handoff-ui-lane-a-catalogues.md`
-Still accurate for plants, sod and equipment. **Now also owns two catalogues it
-does not mention:** `/lawn/labor-items` (38 rows, `laborItems.ts`) and, if Lane D
-does not take it, `/lawn/irrigation-components` (73 rows). Both are flat
-name/category/unit/cost/price/minutes tables — the same screen shape as
-`PlantCatalogueManager`, minus the species/size split.
-
-`PlantCatalogueManager` still has no search or filter and now shows **223
-species in one scroll**. That is the oldest open item in this project.
-
-Render `LABOR_SCOPE_NOTE` on the labor-items screen. It stops someone adding a
-"sod install" row that double-bills hours the sod catalogue already prices.
-
-### Lane B — `docs/handoff/handoff-ui-lane-b-heads-on-map.md`
-**Unchanged and fully accurate.** Nothing has touched
-`LawnMeasurementMap.tsx`. Contract is stable, 76 assertions green. This lane can
-start today with no rebase.
-
-### Lane C — `docs/handoff/handoff-ui-lane-c-estimator-panels.md`
-**Now the highest-value lane**, and it gained scope: the panel must be able to
-add a **labor item** and an **irrigation component** to an estimate, writing
-`estimate_labor_items` and `estimate_components` with a full snapshot. Those two
-tables exist, have RLS, and have never been written to.
-
-Snapshot rule as everywhere: store a copy, so re-pricing the catalogue never
-moves a quote already sent.
-
-### Lane D — `docs/handoff/handoff-ui-lane-d-controls-and-mainline.md`
-**Already updated.** Contract and migration are merged; Lane D is UI only. Two
-categories were added after that doc: `lateral`, `drip` (so `pipeEstimate`
-footage and dripline have somewhere to be priced) and `trenching` (per linear
-foot, labor-only, the one component group carrying install minutes).
-
----
-
-## 4. New since the lane docs: the feedback loop
+## 3. The feedback loop, and the trap inside it
 
 `/lawn/labor-feedback` reads crew time back against what jobs were quoted at and
 proposes catalogue rates. `crewFeedback.ts` (pure math) + `crewFeedbackData.ts`
-(I/O), 84 assertions green.
+(I/O). **98 assertions green**, verified 2026-09-06.
 
-Two things any UI touching it must not undo:
+It now covers every catalogue that carries an install rate: **labor items,
+components, plants, sod and heads.**
+
+Three things any UI touching it must not undo:
 
 - **Man-hours are duration TIMES heads.** An entry with no crew size is excluded
-  and counted, never defaulted to a crew of one. Only 1 of 7 closed entries
-  carries a crew size today, so this is the live case.
+  and counted, never defaulted to a crew of one. 1 of 3 closed entries in the
+  test org carries a crew size, so this is the live case, not a hypothetical.
 - **Nothing applies itself.** Every proposal shows its sample size and spread;
   Apply writes one row. There is deliberately no bulk endpoint.
+- **A missing task line is not an absence, it is a wrong number.** This is the
+  trap, and it cost a real defect. `observationsFor` splits a job's hours across
+  the lines it HAS, so a task the loader forgot to build donates its hours to
+  whatever else was on the estimate — and the result is labelled `direct`, the
+  kind the screen trusts most, because a single-task job needs no assumption.
+  Heads were missing for exactly this reason: an irrigation job with one
+  trenching line credited that line with the whole day, at twice its real rate,
+  and offered it for one-click apply. **Anything new that can appear on an
+  estimate and take time must appear in `loadFeedbackData`, or it will corrupt
+  its neighbours rather than simply be absent.**
 
-It is also why Lane C matters most: until something writes
-`estimate_labor_items`, this screen can never learn a labor rate.
+Related: `mergeTaskLines()` collapses lines sharing a rate key before any
+attribution. `sampleSize` counts observations and the message reads "N of 3
+jobs", so an unmerged duplicate let ONE job clear a gate built to refuse a
+single week of evidence.
 
 ---
 
-## 5. Rules that have not changed
+## 4. What each lane actually left behind
 
-- **Own your files.** Lane A is in the catalogue screens, B in
-  `LawnMeasurementMap.tsx`, C in `LawnEstimateWorkspace.tsx`, D in the component
-  UI. If you edit a file another lane owns, that is a rebase, not a merge. This
-  bit us once already.
-- **A separate desktop-UI pass is live** and owns `navItems.ts` and the shared
-  layout. Add a nav entry if your screen needs one, but expect to rebase, and do
-  not restructure that file.
-- Import from the contracts. Re-derive nothing. If a contract looks wrong, say
-  so in your report — do not edit it.
+### Lane A — catalogue screens
+Shipped, including the two the spec never mentioned (`/lawn/labor-items`,
+`/lawn/sod`). `PlantCatalogueManager` gained search and a category filter, so the
+"223 species in one scroll" item is closed. It is still the one catalogue **not**
+migrated to `DataTable`.
+
+`LABOR_SCOPE_NOTE` renders on the labor-items screen. It stops someone adding a
+"sod install" row that double-bills hours the sod catalogue already prices.
+
+### Lane B — heads on the map
+Shipped. `LawnMeasurementMap.tsx` places heads and draws coverage arcs. The
+geometry is checked against known ground distances rather than against itself —
+25 ft north and 25 ft east must both be 25 ft on the ground while spanning
+different numbers of degrees. **193 assertions green**, verified 2026-09-06.
+
+### Lane C — estimator panels
+Shipped. Six panels; both estimate tables written with snapshots.
+
+### Lane D — components UI
+Shipped. Categories `lateral`, `drip` and `trenching` were added after the spec
+was written (so `pipeEstimate` footage and dripline have somewhere to be priced;
+trenching is per linear foot, labor-only, and is the one component group
+carrying install minutes).
+
+### Not a lane, shipped anyway
+The **site importer** (`/lawn/estimate/[id]/import`, linked from the estimator)
+takes Moasure / GNSS / surveyor CSV alongside the map, with two-point anchoring
+for local coordinate frames. `handoff-site-import.md` is now a record, not a
+task.
+
+---
+
+## 5. What is actually open
+
+- **27 nozzles on throwing models still have no radius.** 35 rows are blank, but
+  8 of those are strip and corner patterns, where a single radius is the wrong
+  model — those are correct as they stand. Orgs can now contribute the rest
+  through `nozzle_suggestions`.
+- **`PlantCatalogueManager.tsx` is not on `DataTable`.** The last hand-rolled
+  `hidden lg:block` table in the lawn app.
+- **DeepSource: JavaScript is failing on `main`** and has been for a while. Most
+  of what it reports on these files is a browser-script rule applied to ES
+  modules. Do not read a red JS check on your PR as proof you broke something —
+  compare against `main` first, and read the inline comments for what is
+  genuinely yours. Seven `deepsource-autofix` PRs (#2–#8) are open and untriaged.
+- **PR #14** migrates the construction and shared desktop tables onto
+  `DataTable`. Construction is deferred by the owner; it will conflict with lawn
+  work in the shared layout when it lands.
+- **The two E2E account passwords need rotating.** Sessions were revoked, but the
+  old password still authenticates. Owner action — not an agent's.
+
+---
+
+## 6. Rules that have not changed
+
+- **Own your files.** If you edit a file another lane owns, that is a rebase, not
+  a merge. This bit us once already.
+- **Take your own worktree, or claim the shared checkout first.** The shared
+  checkout is frequently mid-merge on someone else's branch — check `git status`
+  before assuming a `pull` will work. `agent-bus` is on `main` (`.mcp.json`,
+  `tools/agent-bus/`) and gives you a lock, a noticeboard and messaging.
+- Import from the contracts. Re-derive nothing. If a contract looks wrong, say so
+  in your report — do not edit it.
 - `kind` is GEOMETRY, `meta` is WHAT THE THING IS. Anything reading
-  `estimate_areas` points discriminates on meta.
+  `estimate_areas` points discriminates on meta. Plants, sod and heads all live
+  there.
+- **Snapshot anything already sent.** Re-pricing must never move a quote that is
+  already in a customer's hands.
 - Empty renders empty. Every write busy-gated. Tailwind + lucide-react only.
-- `npx tsc --noEmit` exit 0 and `npx eslint` clean before you report.
-- Commit a harness. Copy the isolation discipline from
-  `e2e-plant-placement.mjs`: deactivate the org's real catalogue, scope every
-  delete and REST read to `E2E%`, restore on the failure path. An earlier
-  version of these harnesses wiped a whole org silently.
+- `npx tsc --noEmit` exit 0, `npx eslint` clean, and a real `next build` before
+  you report. Compile pure contracts standalone too — a harness that was never
+  run is not a passing harness, and one here sat unrunnable for days while being
+  cited as green.
+- Commit a harness, and **test the failure you fear, not the happy path.** Copy
+  the isolation discipline from `e2e-plant-placement.mjs`: deactivate the org's
+  real catalogue, scope every delete and REST read to `E2E%`, restore on the
+  failure path. An earlier version of these harnesses wiped a whole org silently.
 
-## 6. Test org
+The full list, with the incident behind each rule, is in
+[`../build-rules.md`](../build-rules.md).
+
+## 7. Test org
 
 Terra Verde Test Co, `600d02fa-fae2-440b-99ab-42e96997da91`. Everything above is
 seeded there and it is safe to write to.

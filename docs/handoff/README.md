@@ -9,19 +9,23 @@ what has changed underneath the lane specs and which rules were added after they
 were written. Where a lane doc and the state-of-play note disagree, the note
 wins.
 
-## Live — the quick estimator UI
+## The quick estimator UI — all four lanes SHIPPED
 
 | Doc | Lane | State |
 |---|---|---|
 | [state-of-play](handoff-ui-state-of-play.md) | — | **Read first.** What is actually true as of 2026-09-06 |
-| [lane C](handoff-ui-lane-c-estimator-panels.md) | Estimator panels | **Highest value.** Nothing yet writes `estimate_labor_items` or `estimate_components` |
-| [lane A](handoff-ui-lane-a-catalogues.md) | Catalogue screens | Gained labor items and irrigation components |
-| [lane B](handoff-ui-lane-b-heads-on-map.md) | Heads on the map | Unchanged, can start cold |
-| [lane D](handoff-ui-lane-d-controls-and-mainline.md) | Components UI | Contract merged; UI only |
+| [lane A](handoff-ui-lane-a-catalogues.md) | Catalogue screens | Shipped — every catalogue has a screen |
+| [lane B](handoff-ui-lane-b-heads-on-map.md) | Heads on the map | Shipped |
+| [lane C](handoff-ui-lane-c-estimator-panels.md) | Estimator panels | Shipped — six panels, both estimate tables written |
+| [lane D](handoff-ui-lane-d-controls-and-mainline.md) | Components UI | Shipped |
 
-The lanes own disjoint files — A the catalogue screens, B
+**These are records now, not tasks.** Each lane also has a `-report.md`
+alongside it. Read the code before acting on any of these specs: three of the
+four will send you to build something that already exists.
+
+The lanes owned disjoint files — A the catalogue screens, B
 `LawnMeasurementMap.tsx`, C `LawnEstimateWorkspace.tsx`, D the component UI. If
-a lane edits a file another lane owns, that is a rebase, not a merge.
+you edit a file another lane owns, that is a rebase, not a merge.
 
 ## Live — the desktop UI pass
 
@@ -36,11 +40,11 @@ one, expect to rebase, and do not restructure that file. It also migrates the
 hand-rolled `hidden lg:block` tables — including `PlantCatalogueManager.tsx`,
 which is Lane A's file — so coordinate before Phase 2 lands there.
 
-## Spec'd, not started
+## Also shipped
 
 | Doc | What it is |
 |---|---|
-| [site import](handoff-site-import.md) | Field measurements (Moasure, GNSS rover, drone/surveyor files) alongside the map. One CSV importer, not a per-device integration. Independent of every UI lane. |
+| [site import](handoff-site-import.md) | Field measurements (Moasure, GNSS rover, drone/surveyor files) alongside the map. One CSV importer, not a per-device integration. Live at `/lawn/estimate/[id]/import`, with two-point anchoring. |
 
 ## Background for the estimator work
 
