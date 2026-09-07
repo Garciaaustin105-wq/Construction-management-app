@@ -23,11 +23,19 @@
 // none. `git rev-parse --git-common-dir` resolves to the MAIN repo's .git from
 // inside any worktree, so all agents agree on one location without configuring
 // anything.
+//
+// THE HUB LIVES IN hub.mjs, BESIDE THIS FILE — the dashboard page, its HTTP
+// server, the workers started from the window, and the status.html snapshot.
+// It is SPAWNED (`server.mjs dashboard` runs it as a child process), never
+// imported, so a render bug in the hub can never take down the MCP tool list —
+// the same reasoning as context-cost.cjs. This file exports the surface the hub
+// needs and knows nothing else about it.
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
 const VERSION = "1.0.0";
 const PROTOCOL = "2024-11-05";
@@ -58,9 +66,6 @@ function stateDir() {
 const DIR = stateDir();
 const STATE = path.join(DIR, "state.json");
 const LOCK = path.join(DIR, ".lock");
-// Lives beside the state, not in the repo tree: it is generated, per-machine,
-// and nobody should be tempted to commit it.
-const STATUS_PAGE = path.join(DIR, "status.html");
 
 /* ── atomic state access ──────────────────────────────────────────────────── */
 
@@ -123,9 +128,6 @@ function withState(fn) {
     const tmp = `${STATE}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
     fs.renameSync(tmp, STATE);
-    // Refresh the page every time the bus changes, so an open browser tab is
-    // never behind the tools. Defined below; hoisting makes that fine.
-    writeStatusPage(state);
     return result;
   } finally {
     try { fs.closeSync(fd); } catch { /* already closed */ }
@@ -152,6 +154,28 @@ function requireName() {
     );
   }
   return myName;
+}
+
+/**
+ * Lend this process's identity to a caller for the length of `fn`.
+ *
+ * The hub's window (hub.mjs) and the CLI both act on behalf of a name without
+ * being a registered session — the web UI borrows "desk", a shell passes its
+ * name per command. myName and IS_CLI are module state on purpose: callTool()
+ * reads them for attribution and for whether a tree claim should carry a pid.
+ * Exported so the hub can borrow WITHOUT reaching into this module's internals.
+ */
+function asActor(actor, fn) {
+  const prevName = myName;
+  const prevCli = IS_CLI;
+  myName = actor;
+  IS_CLI = true;
+  try {
+    return fn();
+  } finally {
+    myName = prevName;
+    IS_CLI = prevCli;
+  }
 }
 
 const nowIso = () => new Date().toISOString();
@@ -781,592 +805,6 @@ async function runWorker(lane, runnerId) {
   }
 }
 
-/* ── workers you can start from the window ────────────────────────────────── */
-
-// Workers run INSIDE the hub process rather than as spawned children.
-//
-// Two reasons. Spawning would mean tracking pids across a Windows/POSIX split
-// and inheriting orphans when the hub dies — the same class of problem the
-// working-tree lock already had to solve with kill(pid,0). And it matches what
-// the window means to a person: the hub is open, so the agents are working; you
-// close it, they stop. Nothing keeps running invisibly after the window is gone.
-//
-// Keyed by lane, because two workers on one lane would race for the same task.
-// claimNextTask is atomic so it would be *safe*, but it would also be pointless.
-const liveWorkers = new Map();
-
-async function workerLoop(lane) {
-  const entry = liveWorkers.get(lane);
-  if (!entry) return;
-  while (!entry.stop) {
-    let task = null;
-    try {
-      task = claimNextTask(lane);
-    } catch {
-      // A locked state file is transient. Wait rather than killing the worker.
-    }
-    if (!task) {
-      entry.status = "waiting";
-      await new Promise((r) => setTimeout(r, 4000));
-      continue;
-    }
-    entry.status = `running ${task.id}`;
-    entry.lastTask = task.id;
-    try {
-      const runner = findRunner(task.runner_id || entry.runnerId);
-      const answer = await askRunner(runner, task.prompt);
-      finishTask(task.id, { status: "done", result: answer, model: runner.id });
-      entry.done = (entry.done ?? 0) + 1;
-    } catch (err) {
-      finishTask(task.id, {
-        status: "failed",
-        result: err.message,
-        model: task.runner_id || entry.runnerId,
-      });
-      entry.failed = (entry.failed ?? 0) + 1;
-    }
-  }
-  liveWorkers.delete(lane);
-}
-
-function startLiveWorker(lane, runnerId) {
-  if (liveWorkers.has(lane)) {
-    return `A worker is already running on lane "${lane}". Stop it first.`;
-  }
-  // Resolve now, so a disabled or misspelled runner fails HERE with a message
-  // on screen instead of silently on the first task.
-  const runner = findRunner(runnerId);
-  liveWorkers.set(lane, {
-    lane,
-    runnerId: runner.id,
-    label: runner.label ?? runner.id,
-    status: "waiting",
-    startedAt: nowIso(),
-    stop: false,
-  });
-  void workerLoop(lane);
-  return `Worker started on "${lane}" using ${runner.label ?? runner.id}.`;
-}
-
-function stopLiveWorker(lane) {
-  const entry = liveWorkers.get(lane);
-  if (!entry) return `No worker running on "${lane}".`;
-  entry.stop = true;
-  entry.status = "stopping";
-  // It finishes the task in hand rather than abandoning it half-done, so a
-  // model call already in flight still gets its answer written back.
-  return `Worker on "${lane}" will stop after its current task.`;
-}
-
-/* ── dashboard ────────────────────────────────────────────────────────────── */
-
-// A page, because a status line you have to remember to run is not the same as
-// a window you leave open on a second monitor.
-//
-// SERVED LOCALLY, and it has to be: the bus state is a JSON file in this repo's
-// .git directory. Nothing hosted could read it, so this renders on each request
-// from the same withState() the tools use — no cache, no sync, no way for the
-// page to disagree with the bus.
-//
-// Server-rendered with a meta refresh rather than client-side polling. It is a
-// status board on a local socket; five lines of HTML beat a fetch loop, and it
-// keeps the no-dependencies rule this file has kept from the start.
-/**
- * The build rules, read from docs/build-rules.md at render time.
- *
- * NOT copied into this file. The rules change as incidents happen — they are up
- * to 26 and were 12 — and a hub showing a stale copy of the rules would be
- * exactly the failure the rules exist to prevent. DIR is <repo>/.git/agent-bus,
- * so two levels up is the repo.
- */
-function readBuildRules() {
-  try {
-    const md = fs.readFileSync(path.resolve(DIR, "..", "..", "docs", "build-rules.md"), "utf8");
-    const groups = [];
-    let current = null;
-    for (const raw of md.split("\n")) {
-      const line = raw.trim();
-      // "## A. The shape of the work" — a group.
-      const head = line.match(/^##\s+[A-Z]\.\s+(.+)$/);
-      if (head) {
-        current = { title: head[1], rules: [] };
-        groups.push(current);
-        continue;
-      }
-      // "### A1. Contract, then harness, then UI. In that order."
-      const rule = line.match(/^###\s+([A-Z]\d+)\.\s+(.+)$/);
-      if (rule && current) current.rules.push({ n: rule[1], text: rule[2] });
-    }
-    return groups.filter((g) => g.rules.length);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The operating model, read from docs/how-we-work.md at render time.
- *
- * Live for the same reason the rules are: this describes how work is actually
- * split between the orchestrator, the implementing agents and the person, and a
- * hub showing last month's version of that is worse than showing none.
- * Sections are "## Heading" with "- " bullets under them.
- */
-function readWorkflow() {
-  try {
-    const md = fs.readFileSync(path.resolve(DIR, "..", "..", "docs", "how-we-work.md"), "utf8");
-    const groups = [];
-    let current = null;
-    for (const raw of md.split("\n")) {
-      const line = raw.trim();
-      const head = line.match(/^##\s+(.+)$/);
-      if (head) {
-        current = { title: head[1], items: [] };
-        groups.push(current);
-        continue;
-      }
-      const item = line.match(/^-\s+(.+)$/);
-      if (item && current) current.items.push(item[1]);
-    }
-    return groups.filter((g) => g.items.length);
-  } catch {
-    return [];
-  }
-}
-
-function renderStatusHtml(state, opts = {}) {
-  const { flash = null, interactive = false } = opts;
-  pruneAgents(state);
-  const now = Date.now();
-  const ago = (iso) => {
-    const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-    if (s < 60) return `${s}s ago`;
-    if (s < 3600) return `${Math.round(s / 60)}m ago`;
-    return `${Math.round(s / 3600)}h ago`;
-  };
-  // Everything below is text other processes wrote. All of it is escaped.
-  const esc = (v) =>
-    String(v ?? "").replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-    );
-
-  const agents = Object.entries(state.agents).sort(
-    (a, b) => Date.parse(b[1].lastSeen ?? 0) - Date.parse(a[1].lastSeen ?? 0)
-  );
-  const lock = state.lock;
-  const held = lockIsLive(lock);
-  const board = Object.entries(state.board).sort(
-    (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
-  );
-  const repo = path.resolve(DIR, "..", "..");
-
-  const agentCards = agents.length
-    ? agents
-        .map(([name, a]) => {
-          // Two minutes without a bus call reads as idle. Called "quiet", not
-          // "offline": the bus cannot tell the difference and must not pretend.
-          const quiet = now - Date.parse(a.lastSeen ?? 0) > 120_000;
-          return `<div class="card${quiet ? " quiet" : ""}">
-      <div class="row"><span class="dot"></span><b>${esc(name)}</b>
-        <span class="mut">${esc(ago(a.lastSeen ?? new Date(0).toISOString()))}</span></div>
-      <p class="lane">${esc(a.lane || "no lane stated")}</p>
-      <p class="path">${esc(a.cwd || "")}</p>
-    </div>`;
-        })
-        .join("")
-    : "<p class=\"mut\">Nobody on the bus yet. An agent appears here after its first command.</p>";
-
-  const boardRows = board.length
-    ? board
-        .map(
-          ([k, v]) => `<details><summary><b>${esc(k)}</b>
-      <span class="mut">${esc(v.by)} · ${esc(ago(v.at))}</span></summary>
-      <p>${esc(v.value)}</p></details>`
-        )
-        .join("")
-    : "<p class=\"mut\">The board is empty.</p>";
-
-  const tasks = (state.tasks ?? []).slice(-12).reverse();
-  const taskHtml = tasks.length
-    ? tasks
-        .map((t) => {
-          const cls = t.status === "failed" ? " held" : "";
-          const body = t.result
-            ? `<p class="mut" style="white-space:pre-wrap">${esc(t.result.slice(0, 1200))}</p>`
-            : `<p class="mut">${esc(t.prompt || "").slice(0, 200)}</p>`;
-          return `<details class="lock${cls}"><summary><b>${esc(t.id)}</b>
-            <span>${esc(t.title || "")}</span>
-            <span class="mut">${esc(t.lane)} · ${esc(t.status)}${t.model ? " · " + esc(t.model) : ""}</span>
-          </summary>${body}</details>`;
-        })
-        .join("")
-    : "<p class=\"mut\">Nothing queued. Work added here is picked up by a running worker.</p>";
-
-  const runnerOptions = readRunners()
-    .map(
-      (r) =>
-        `<option value="${esc(r.id)}"${r.enabled ? "" : " disabled"}>${esc(
-          r.label ?? r.id
-        )}${r.enabled ? "" : " (not configured)"}</option>`
-    )
-    .join("");
-
-  const workers = [...liveWorkers.values()];
-  const workerHtml = workers.length
-    ? workers
-        .map(
-          (w) => `<div class="card"><div class="row"><span class="dot"></span>
-            <b>${esc(w.lane)}</b><span class="mut">${esc(w.status)}</span></div>
-            <p class="lane">${esc(w.label)}</p>
-            <p class="mut">${w.done ?? 0} done${w.failed ? `, ${w.failed} failed` : ""}</p>
-            ${
-              interactive
-                ? `<form method="post"><input type="hidden" name="action" value="worker_stop">
-                   <input type="hidden" name="lane" value="${esc(w.lane)}">
-                   <button>Stop</button></form>`
-                : ""
-            }</div>`
-        )
-        .join("")
-    : "<p class=\"mut\">No worker running. Start one below and queued work begins moving.</p>";
-
-  const workGroups = readWorkflow();
-  const workHtml = workGroups.length
-    ? workGroups
-        .map(
-          (g) => `<div class="rulegroup"><h3>${esc(g.title)}</h3><ul>${g.items
-            .map((i) => `<li>${esc(i.replace(/[`*]/g, ""))}</li>`)
-            .join("")}</ul></div>`
-        )
-        .join("")
-    : "<p class=\"mut\">docs/how-we-work.md not found from here.</p>";
-
-  const ruleGroups = readBuildRules();
-  const ruleHtml = ruleGroups.length
-    ? ruleGroups
-        .map(
-          (g) => `<div class="rulegroup"><h3>${esc(g.title)}</h3><ul>${g.rules
-            .map((r) => `<li><b>${esc(r.n)}</b> ${esc(r.text.replace(/[`*]/g, ""))}</li>`)
-            .join("")}</ul></div>`
-        )
-        .join("")
-    : "<p class=\"mut\">docs/build-rules.md not found from here.</p>";
-
-  // Forms only exist in the served app. The written-to-disk copy is a file://
-  // page with nothing to POST to, and a dead button is worse than no button.
-  const actions = interactive
-    ? `
-<h2>Do something</h2>
-<div class="grid2">
-  <form method="post" class="card">
-    <b>Post a note to the board</b>
-    <p class="mut">Durable. Reaches agents who were not listening when you wrote it.</p>
-    <input type="hidden" name="action" value="note">
-    <input name="actor" placeholder="from (default: desk)" value="desk">
-    <input name="key" placeholder="key, e.g. table-pattern" required>
-    <textarea name="value" rows="3" placeholder="the fact, written for someone who was not here" required></textarea>
-    <button>Post note</button>
-  </form>
-
-  <form method="post" class="card">
-    <b>Send a message</b>
-    <p class="mut">Only reaches an agent that is listening now. Use a note for anything that must outlive the moment.</p>
-    <input type="hidden" name="action" value="send">
-    <input name="actor" placeholder="from (default: desk)" value="desk">
-    <input name="to" placeholder="to — an agent name, or all" required>
-    <textarea name="message" rows="3" placeholder="message" required></textarea>
-    <button>Send</button>
-  </form>
-
-  <form method="post" class="card">
-    <b>${held ? "Release the working tree" : "Claim the working tree"}</b>
-    <p class="mut">${
-      held
-        ? "Only the holder can release it."
-        : "Claim before any git operation in a shared checkout."
-    }</p>
-    <input type="hidden" name="action" value="${held ? "release" : "claim"}">
-    <input name="actor" placeholder="your name" value="${esc(held && lock ? lock.holder : "desk")}">
-    ${
-      held
-        ? ""
-        : `<input name="path" placeholder="path" value="${esc(repo)}" required>
-    <input name="reason" placeholder="what you are doing" required>
-    <input name="minutes" placeholder="minutes (default 30)" value="30">`
-    }
-    <button>${held ? "Release" : "Claim"}</button>
-  </form>
-</div>`
-    : `<h2>Do something</h2>
-<p class="mut">This is the saved copy of the page — read-only. Launch <b>Agent Bus</b>
-from the desktop to run commands.</p>`;
-
-  return `<!doctype html>
-<meta charset="utf-8"><title>Agent Bus — command hub</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-${interactive ? "" : '<meta http-equiv="refresh" content="5">'}
-<style>
-  :root { color-scheme: light dark; --bg:#f6f7f5; --fg:#16201a; --mut:#5d6b5f;
-    --card:#fff; --line:#dfe4dc; --ok:#2f6b3f; --warn:#b4530a; --code:#eef1ec; }
-  @media (prefers-color-scheme: dark) { :root {
-    --bg:#11150f; --fg:#e4ebe2; --mut:#93a094; --card:#181e16; --line:#2a3329;
-    --code:#1e2620; } }
-  * { box-sizing:border-box; }
-  body { margin:0; padding:26px 30px 60px; background:var(--bg); color:var(--fg);
-    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif; }
-  h1 { font-size:16px; margin:0; letter-spacing:.02em; }
-  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
-    color:var(--mut); margin:30px 0 9px; font-weight:600; }
-  h3 { font-size:12px; margin:0 0 6px; }
-  .mut { color:var(--mut); font-size:12px; margin:4px 0 0; }
-  .grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); }
-  .grid2 { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
-  .card.quiet { opacity:.5; }
-  .row { display:flex; align-items:center; gap:7px; }
-  .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto; }
-  .quiet .dot { background:var(--mut); }
-  .row .mut { margin-left:auto; }
-  .lane { margin:6px 0 0; }
-  .path { margin:3px 0 0; color:var(--mut); font-size:11px;
-    overflow-wrap:anywhere; font-family:ui-monospace,monospace; }
-  .lock { background:var(--card); border:1px solid var(--line);
-    border-left:3px solid var(--ok); border-radius:10px; padding:12px 14px; }
-  .lock.held { border-left-color:var(--warn); }
-  details { background:var(--card); border:1px solid var(--line); border-radius:10px;
-    padding:10px 14px; margin-bottom:6px; }
-  summary { cursor:pointer; display:flex; gap:8px; align-items:center; }
-  details p { margin:9px 0 2px; color:var(--mut); overflow-wrap:anywhere; }
-  input, textarea, select { width:100%; margin-top:7px; padding:7px 9px; border-radius:7px;
-    border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; font-size:13px; }
-  textarea { resize:vertical; }
-  button { margin-top:9px; padding:7px 14px; border-radius:7px; border:0;
-    background:var(--ok); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
-  pre { background:var(--code); border:1px solid var(--line); border-radius:8px;
-    padding:9px 11px; overflow-x:auto; font-size:12px; margin:6px 0 0; }
-  .flash { background:var(--card); border:1px solid var(--ok); border-left:3px solid var(--ok);
-    border-radius:9px; padding:10px 13px; margin:14px 0 0; white-space:pre-wrap; font-size:13px; }
-  .rulegroup { background:var(--card); border:1px solid var(--line); border-radius:10px;
-    padding:12px 14px; }
-  .rulegroup ul { margin:0; padding-left:0; list-style:none; }
-  .rulegroup li { margin:3px 0; color:var(--mut); }
-  .head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
-</style>
-
-<div class="head">
-  <h1>Agent Bus</h1>
-  <span class="mut">command hub · ${esc(new Date().toLocaleTimeString())}</span>
-</div>
-${flash ? `<div class="flash">${esc(flash)}</div>` : ""}
-
-<h2>Connected (${agents.length})</h2>
-<div class="grid">${agentCards}</div>
-
-<h2>Working tree</h2>
-<div class="lock${held ? " held" : ""}">${esc(describeLock(lock))}</div>
-${actions}
-
-<h2>Workers (${workers.length})</h2>
-<div class="grid">${workerHtml}</div>
-${
-  interactive
-    ? `<form method="post" class="card" style="margin-top:10px">
-    <b>Start a worker</b>
-    <p class="mut">It runs while this window is open and takes queued work in its lane.</p>
-    <input type="hidden" name="action" value="worker_start">
-    <input name="lane" placeholder="lane" value="local">
-    <select name="runner_id">${runnerOptions}</select>
-    <button>Start</button>
-  </form>`
-    : ""
-}
-
-<h2>Work queue (${tasks.length})</h2>
-<p class="mut">Queued work is executed by a worker, not by a person reading this.
-  Start one above and pick which agent runs it — it takes the
-  next queued task in its lane, runs it against the local model, and writes the answer
-  back here. Output is a DRAFT: the worker never touches the repo.</p>
-${taskHtml}
-${
-  interactive
-    ? `<form method="post" class="card" style="margin-top:10px">
-    <b>Queue work</b>
-    <input type="hidden" name="action" value="task">
-    <input name="actor" placeholder="from (default: desk)" value="desk">
-    <input name="lane" placeholder="lane" value="local">
-    <select name="runner_id">${runnerOptions}</select>
-    <input name="title" placeholder="short title" required>
-    <textarea name="prompt" rows="3" placeholder="the whole task, written for someone with no context" required></textarea>
-    <button>Queue it</button>
-  </form>`
-    : ""
-}
-
-<h2>Board (${board.length})</h2>
-${boardRows}
-
-<h2>Connect another AI</h2>
-<div class="grid2">
-  <div class="card">
-    <b>Anything that can run a command</b>
-    <p class="mut">A PowerShell session, an ollama-driven script, a person at a terminal.
-      No install, no MCP. Run it from the repo.</p>
-    <pre>cd ${esc(repo)}
-node tools/agent-bus/server.mjs board
-node tools/agent-bus/server.mjs note my-status "what I am doing"</pre>
-    <p class="mut">Set a name once so you do not pass it every time:</p>
-    <pre>$env:AGENT_BUS_NAME = "your-agent-name"</pre>
-  </div>
-  <div class="card">
-    <b>A Claude session</b>
-    <p class="mut">Already wired — <code>.mcp.json</code> in the repo root starts the bus
-      as an MCP server, so the tools appear on their own. Nothing to do.</p>
-    <pre>{ "mcpServers": { "agent-bus": {
-    "command": "node",
-    "args": ["tools/agent-bus/server.mjs"] } } }</pre>
-    <p class="mut">First call should be <code>register(name, lane)</code>, then
-      <code>board()</code>.</p>
-  </div>
-</div>
-<p class="mut">Running <code>server.mjs</code> with no arguments starts the stdio MCP
-  server and blocks — that is for editors, not for you. Any verb prints usage.</p>
-
-<h2>How we work</h2>
-<p class="mut">The operating model, read live from <code>docs/how-we-work.md</code>.
-  The expensive model plans and verifies, cheaper agents implement, and this board is
-  how they stay out of each other's way.</p>
-<div class="grid2">${workHtml}</div>
-
-<h2>How to build here — ${ruleGroups.reduce((n, g) => n + g.rules.length, 0)} rules</h2>
-<p class="mut">Read live from <code>docs/build-rules.md</code>. Every one was written after
-  something went wrong; the reasoning and the incident behind each is in that file.</p>
-<div class="grid2">${ruleHtml}</div>
-`;
-}
-
-// THE PAGE, as a file rather than a server.
-//
-// Written beside the state on every change, so a browser tab left open on
-// .git/agent-bus/status.html stays current with no command to run. Read-only:
-// a file:// page has nothing to POST to, so the action forms are omitted rather
-// than rendered dead.
-function writeStatusPage(state) {
-  try {
-    const tmp = `${STATUS_PAGE}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, renderStatusHtml(state, { interactive: false }));
-    fs.renameSync(tmp, STATUS_PAGE);
-  } catch {
-    // Never let the page break the bus. A failed write here is cosmetic; the
-    // tools agents depend on must still return.
-  }
-}
-
-function dashboardHtml(flash) {
-  return withState((state) => renderStatusHtml(state, { flash, interactive: true }));
-}
-
-/**
- * Run one action on behalf of the person at the window.
- *
- * The web UI has no session of its own, so it borrows an identity for the
- * length of the call the same way the CLI does. `actor` defaults to "desk" so
- * anything done from the app is attributable to the desk rather than appearing
- * to come from whichever agent happened to be listed first.
- */
-function runAction(action, form) {
-  const actor = (form.get("actor") || "desk").trim() || "desk";
-  const prev = myName;
-  myName = actor;
-  IS_CLI = true; // a browser POST is as short-lived as a CLI call: no pid to trust
-  try {
-    registerCli(actor);
-    switch (action) {
-      case "note":
-        return callTool("note", { key: form.get("key"), value: form.get("value") });
-      case "send":
-        return callTool("send", { to: form.get("to"), message: form.get("message") });
-      case "claim":
-        return callTool("claim_tree", {
-          path: form.get("path"),
-          reason: form.get("reason"),
-          minutes: Number(form.get("minutes")) || 30,
-        });
-      case "release":
-        return callTool("release_tree", {});
-      case "worker_start":
-        return startLiveWorker(form.get("lane") || "local", form.get("runner_id"));
-      case "worker_stop":
-        return stopLiveWorker(form.get("lane"));
-      case "task":
-        return callTool("task_add", {
-          lane: form.get("lane") || "local",
-          runner_id: form.get("runner_id") || null,
-          title: form.get("title"),
-          prompt: form.get("prompt"),
-        });
-      default:
-        throw new Error(`Unknown action: ${action}`);
-    }
-  } finally {
-    myName = prev;
-  }
-}
-
-function runDashboard(port) {
-  // Imported here, not at the top: every other path in this file is a stdio
-  // server or a one-shot command that has no business opening a socket.
-  return import("node:http").then(({ default: http }) => {
-    const server = http.createServer((req, res) => {
-      try {
-        if (req.method === "POST") {
-          let body = "";
-          req.on("data", (c) => {
-            body += c;
-            // A form post is a few hundred bytes. Anything much larger is not
-            // this UI, and an unbounded read on a local socket is how a tiny
-            // server becomes a memory bug.
-            if (body.length > 64_000) req.destroy();
-          });
-          req.on("end", () => {
-            const form = new URLSearchParams(body);
-            let flash;
-            try {
-              flash = runAction(form.get("action"), form);
-            } catch (err) {
-              flash = `FAILED: ${err.message}`;
-            }
-            // POST-then-redirect, so a refresh does not repeat the action.
-            res.writeHead(303, {
-              location: `/?flash=${encodeURIComponent(String(flash).slice(0, 400))}`,
-            });
-            res.end();
-          });
-          return;
-        }
-        const url = new URL(req.url, "http://127.0.0.1");
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(dashboardHtml(url.searchParams.get("flash")));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "text/plain" });
-        res.end(String(err.message));
-      }
-    });
-    // Loopback only. This exposes who is working on what and where their
-    // worktrees are; it is for the machine it runs on.
-    server.listen(port, "127.0.0.1", () => {
-      process.stdout.write(`agent-bus dashboard: http://127.0.0.1:${port}\n`);
-      process.stdout.write("Ctrl+C to stop.\n");
-    });
-    server.on("error", (err) => {
-      process.stdout.write(
-        err.code === "EADDRINUSE"
-          ? `Port ${port} is busy — try: node server.mjs dashboard ${port + 1}\n`
-          : `dashboard failed: ${err.message}\n`
-      );
-      process.exitCode = 1;
-    });
-  });
-}
-
 function runCli(argv) {
   const [cmd, ...rest] = argv;
   const rest0 = rest;
@@ -1408,9 +846,19 @@ function runCli(argv) {
         return runWorker(rest0[0] || "local", rest0[1] || DEFAULT_MODEL);
       }
       case "dashboard":
-        // Long-running, unlike every other verb here, so it returns the
-        // listener rather than falling through to the process exit below.
-        return runDashboard(Number(rest[0]) || 7777);
+        // The hub lives in hub.mjs and runs as a CHILD PROCESS, not here —
+        // a render bug in the hub must never take down the bus (see the header).
+        // Long-running, like the child: this process waits on it, and the exit
+        // skip at the bottom keeps Node alive on the child's handle.
+        {
+          const child = spawn(
+            process.execPath,
+            [path.join(import.meta.dirname, "hub.mjs"), ...rest0],
+            { stdio: "inherit" }
+          );
+          child.on("exit", (code) => { process.exitCode = code ?? 0; });
+          return;
+        }
       case "note": {
         const [key, ...v] = rest;
         myName = process.env.AGENT_BUS_NAME || "cli";
@@ -1471,12 +919,37 @@ function registerCli(name) {
   });
 }
 
-if (process.argv.length > 2) {
+// The bus's public surface — what hub.mjs imports. The hub is a separate
+// process (spawned by the dashboard verb, never imported here); these are the
+// pieces it needs to render state, run actions and start workers.
+export {
+  DIR,
+  asActor,
+  askRunner,
+  callTool,
+  claimNextTask,
+  describeLock,
+  finishTask,
+  findRunner,
+  lockIsLive,
+  pruneAgents,
+  readRunners,
+  registerCli,
+  withState,
+};
+
+// True only when THIS file is the entrypoint. hub.mjs imports this module for
+// the surface above, and an import must neither start a CLI nor a stdio server.
+const IS_MAIN = Boolean(
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+);
+
+if (IS_MAIN && process.argv.length > 2) {
   IS_CLI = true;
   runCli(process.argv.slice(2));
-  // Every verb here is one-shot and exits — except `dashboard`, which is a
-  // listener. Exiting on it would tear the socket down before the first
-  // request, so it opts out and Node stays alive on its own handle.
+  // Every verb here is one-shot and exits — except `dashboard`, which waits on
+  // its child process, and `work`, which loops. Exiting on either would tear
+  // it down before the first result, so they opt out and Node stays alive.
   if (process.argv[2] !== "dashboard" && process.argv[2] !== "work") {
     process.exit(process.exitCode ?? 0);
   }
@@ -1535,37 +1008,42 @@ function handle(req) {
   }
 }
 
-let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let nl;
-  while ((nl = buffer.indexOf("\n")) >= 0) {
-    const line = buffer.slice(0, nl).trim();
-    buffer = buffer.slice(nl + 1);
-    if (!line) continue;
-    let req;
-    try {
-      req = JSON.parse(line);
-    } catch {
-      continue; // Not our problem to fix; skip the malformed line.
+// The stdio loop and the exit handlers below run only when this file IS the
+// entrypoint (an MCP session spawns it with no arguments). An import — hub.mjs
+// is the only one — must not touch stdin or install process handlers here.
+if (IS_MAIN && process.argv.length <= 2) {
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      let req;
+      try {
+        req = JSON.parse(line);
+      } catch {
+        continue; // Not our problem to fix; skip the malformed line.
+      }
+      handle(req);
     }
-    handle(req);
-  }
-});
+  });
 
-// Release the lock on the way out so a clean exit never leaves the tree claimed.
-function releaseOnExit() {
-  try {
-    if (!myName) return;
-    withState((state) => {
-      if (state.lock && state.lock.holder === myName) state.lock = null;
-    });
-  } catch {
-    /* best effort — the TTL covers us */
-  }
+  // Release the lock on the way out so a clean exit never leaves the tree claimed.
+  const releaseOnExit = () => {
+    try {
+      if (!myName) return;
+      withState((state) => {
+        if (state.lock && state.lock.holder === myName) state.lock = null;
+      });
+    } catch {
+      /* best effort — the TTL covers us */
+    }
+  };
+  process.on("exit", releaseOnExit);
+  process.on("SIGINT", () => { releaseOnExit(); process.exit(0); });
+  process.on("SIGTERM", () => { releaseOnExit(); process.exit(0); });
+  process.stdin.on("end", () => { releaseOnExit(); process.exit(0); });
 }
-process.on("exit", releaseOnExit);
-process.on("SIGINT", () => { releaseOnExit(); process.exit(0); });
-process.on("SIGTERM", () => { releaseOnExit(); process.exit(0); });
-process.stdin.on("end", () => { releaseOnExit(); process.exit(0); });
