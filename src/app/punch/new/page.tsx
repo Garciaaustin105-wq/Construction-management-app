@@ -70,7 +70,7 @@ function PunchForm() {
     }).select().single();
     if (error || !data) { toast.error(`Failed: ${error?.message ?? "error"}`); setLoading(false); return; }
     if (photo) {
-      const path = `${jobId}/${crypto.randomUUID()}.${photo.name.split('.').pop()}`;
+      const path = `${jobId}/${crypto.randomUUID()}.${photo.name.split(".").pop()}`;
       await supabase.storage.from("job-photos").upload(path, photo);
       await supabase.from("photos").insert({ job_id: jobId, storage_path: path, punch_item_id: data.id, uploaded_by: user.id });
     }

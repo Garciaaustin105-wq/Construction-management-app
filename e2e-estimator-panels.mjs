@@ -410,7 +410,7 @@ try {
   // ================= PHASE A — SOD =========================================
   console.log("\n[A] sod: assign to measured area, pallets ceil up, per-job override");
   await openTab(page, "Sod");
-  await page.selectOption('select[aria-label="Area to sod"]', { label: `E2E Lawn (4,620 sq ft)` });
+  await page.selectOption('select[aria-label="Area to sod"]', { label: "E2E Lawn (4,620 sq ft)" });
   await page.selectOption('select[aria-label="Sod product"]', { label: SOD_NAME });
   await page.getByRole("button", { name: "Assign sod" }).click();
   const grossStr = GROSS_SQFT.toLocaleString("en-US");

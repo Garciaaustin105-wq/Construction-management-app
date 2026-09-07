@@ -156,7 +156,7 @@ async function addNozzle(page, card, { nozzle, radius, cost, price, minutes }) {
   await page.waitForTimeout(300);
   const hint0 = (await form.locator("label", { hasText: "Throw from the head" }).textContent().catch(() => "")) ?? "";
   if (!radius) {
-    check(`live hint for radius 0 says 'throw not recorded' (never "0 ft")`,
+    check("live hint for radius 0 says 'throw not recorded' (never \"0 ft\")",
       hint0.includes("throw not recorded") && !hint0.includes("0 ft from the head"),
       hint0.trim().slice(0, 160));
   }

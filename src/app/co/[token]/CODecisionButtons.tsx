@@ -76,7 +76,7 @@ export default function CODecisionButtons({ token }: { token: string }) {
         Decline Change Order
       </button>
       <p className="text-center text-[11px] text-gray-400">
-        Your decision is sent to {`the office`} immediately.
+        Your decision is sent to {"the office"} immediately.
       </p>
     </div>
   );

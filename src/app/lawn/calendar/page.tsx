@@ -329,7 +329,7 @@ export default async function LawnCalendarPage({
         month,
         1,
       )}`,
-      todayHref: `/lawn/calendar?view=month`,
+      todayHref: "/lawn/calendar?view=month",
       isCurrentMonth: iso === todayIso.slice(0, 7),
     };
   }
@@ -370,7 +370,7 @@ export default async function LawnCalendarPage({
         weekStart,
         7,
       ))}`,
-      todayHref: `/lawn/calendar?view=week`,
+      todayHref: "/lawn/calendar?view=week",
     };
   }
 
@@ -396,7 +396,7 @@ export default async function LawnCalendarPage({
       label,
       prevHref: `/lawn/calendar?view=day&date=${toISODate(addDays(d, -1))}`,
       nextHref: `/lawn/calendar?view=day&date=${toISODate(addDays(d, 1))}`,
-      todayHref: `/lawn/calendar?view=day`,
+      todayHref: "/lawn/calendar?view=day",
       isToday: dayIso === todayIso,
     };
   }

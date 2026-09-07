@@ -112,7 +112,7 @@ console.log("\n[grouping is lawn-office only]");
     const nav = buildNavItems(role);
     t(`${role} keeps a flat nav`, nav.every((i) => !i.section),
       nav.filter((i) => i.section).map((i) => i.label).join(", "));
-    t(`  ...and it stays short`, nav.length <= 8, `got ${nav.length}`);
+    t("  ...and it stays short", nav.length <= 8, `got ${nav.length}`);
   }
 }
 

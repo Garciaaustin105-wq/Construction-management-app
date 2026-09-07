@@ -82,7 +82,7 @@ export default function InvoiceActions({
   async function syncToProvider(providerId: string, label: string) {
     setSyncing(providerId);
     try {
-      const res = await fetch(`/api/accounting/sync`, {
+      const res = await fetch("/api/accounting/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: providerId, entity: "invoice", id: invoiceId }),

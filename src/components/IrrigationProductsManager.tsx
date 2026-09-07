@@ -429,8 +429,8 @@ export default function IrrigationProductsManager({
     if (
       !confirm(
         `Delete nozzle "${n.nozzle}"?\n\nPlaced heads keep their own snapshot ` +
-          `of model, nozzle and price, so past estimates stay intact — but ` +
-          `this nozzle can no longer be placed.`
+          "of model, nozzle and price, so past estimates stay intact — but " +
+          "this nozzle can no longer be placed."
       )
     ) {
       return;

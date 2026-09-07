@@ -424,7 +424,7 @@ export default function LawnNotificationsPage() {
             className="block w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm"
           />
           <p className="text-[11px] text-gray-400 mt-1">
-            Used by the “Review request” template&rsquo;s <code>{`{{review_link}}`}</code>,
+            Used by the “Review request” template&rsquo;s <code>{"{{review_link}}"}</code>,
             and as the fallback destination when no review platforms are set
             below.
           </p>

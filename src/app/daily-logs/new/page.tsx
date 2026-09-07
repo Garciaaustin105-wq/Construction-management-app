@@ -15,7 +15,7 @@ function DailyLogForm() {
   const toast = useToast();
   const [jobId, setJobId] = useState(preselectedJob);
   const [jobs, setJobs] = useState<{ id: string; name: string }[]>([]);
-  const [logDate, setLogDate] = useState(new Date().toISOString().split('T')[0]);
+  const [logDate, setLogDate] = useState(new Date().toISOString().split("T")[0]);
   const [weather, setWeather] = useState("");
   const [workPerformed, setWorkPerformed] = useState("");
   const [equipment, setEquipment] = useState("");
@@ -66,7 +66,7 @@ function DailyLogForm() {
       return;
     }
     if (photoFile) {
-      const ext = photoFile.name.split('.').pop() || "jpg";
+      const ext = photoFile.name.split(".").pop() || "jpg";
       const path = `${jobId}/${crypto.randomUUID()}.${ext}`;
       await supabase.storage.from("job-photos").upload(path, photoFile);
       await supabase.from("photos").insert({ job_id: jobId, storage_path: path, daily_log_id: data.id, uploaded_by: user.id });

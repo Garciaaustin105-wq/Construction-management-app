@@ -254,8 +254,8 @@ try {
   await page.getByRole("button", { name: "Add component" }).first().click();
   await page.getByPlaceholder("Component name *").fill(WIRE_NAME);
   // Scope to the drawer: the page's category-filter select is nth=0 unscoped.
-  await page.selectOption('aside select >> nth=0', { label: "wire" });
-  await page.selectOption('aside select >> nth=1', {
+  await page.selectOption("aside select >> nth=0", { label: "wire" });
+  await page.selectOption("aside select >> nth=1", {
     label: "foot (quantity IS feet — wire, mainline, sleeving)",
   });
   // NumberInput renders inputmode="decimal" — plain `aside input` would also

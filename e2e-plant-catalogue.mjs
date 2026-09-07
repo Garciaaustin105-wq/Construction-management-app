@@ -304,7 +304,7 @@ async function main() {
   // Active toggle: the seeded catalogue was all deactivated for isolation,
   // so hiding inactive species should leave exactly the active E2E row.
   await searchInput.fill("");
-  await page.locator('label', { hasText: "Show inactive" }).locator("input").uncheck();
+  await page.locator("label", { hasText: "Show inactive" }).locator("input").uncheck();
   await page.waitForTimeout(500);
   const activeCount = (await countP.textContent().catch(() => "")) ?? "";
   check(
@@ -314,7 +314,7 @@ async function main() {
   );
 
   // Category filter narrows without text; the E2E holly is a shrub.
-  await page.locator('label', { hasText: "Show inactive" }).locator("input").check();
+  await page.locator("label", { hasText: "Show inactive" }).locator("input").check();
   await page.locator('select[aria-label="Filter plants by category"]').selectOption("palm");
   await page.waitForTimeout(500);
   const palmCount = (await countP.textContent().catch(() => "")) ?? "";
