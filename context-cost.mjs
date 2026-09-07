@@ -12,10 +12,20 @@
  * something into context is not its size. It is its size multiplied by every
  * turn that comes after it.
  *
- *   node tools/agent-bus/context-cost.mjs          summary for this repo
- *   node tools/agent-bus/context-cost.mjs --full   plus per-tool attribution
+ *   node context-cost.mjs          summary for this repo
+ *   node context-cost.mjs --full   plus per-tool attribution
  *
  * No dependencies, by the same rule as the rest of the bus.
+ *
+ * WHY THIS SITS AT THE REPO ROOT and not in tools/agent-bus/ with the rest of
+ * the bus: DeepSource's JavaScript analyser cannot parse an ES module, so every
+ * .mjs is excluded in .deepsource.toml — but its exclude patterns only take
+ * effect at the ROOT. A recursive tools glob is in that file and does NOT
+ * work; five
+ * attempts at excluding a .mjs at depth failed (see docs/build-rules.md and
+ * commit b4e5b8f, which moved the grant checker here for exactly this reason).
+ * Left in tools/agent-bus/ this file fails CI on a parse error that is not a
+ * defect. Move it back the day DeepSource parses .mjs, and not before.
  */
 
 import fs from "node:fs";
@@ -24,7 +34,7 @@ import path from "node:path";
 
 // Claude Code stores transcripts under a directory named after the working
 // directory with every non-alphanumeric character replaced by a dash.
-const REPO = path.resolve(import.meta.dirname, "..", "..");
+const REPO = path.resolve(import.meta.dirname);
 const SESSION_DIR = path.join(
   os.homedir(),
   ".claude",

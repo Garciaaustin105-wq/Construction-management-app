@@ -268,7 +268,7 @@ surface it.
 
 ## G. The context budget
 
-Every number in this section is reproducible: `node tools/agent-bus/context-cost.mjs`.
+Every number in this section is reproducible: `node context-cost.mjs`.
 
 ### G1. Everything in context is paid for on every turn, not once.
 

@@ -1380,7 +1380,9 @@ function runCli(argv) {
       case "cost":
         execFileSync(
           process.execPath,
-          [path.join(import.meta.dirname, "context-cost.mjs"), ...rest0],
+          // At the repo root, two levels up: DeepSource only honours its
+          // .mjs excludes there. The reason is on the file itself.
+          [path.join(import.meta.dirname, "..", "..", "context-cost.mjs"), ...rest0],
           { stdio: "inherit" }
         );
         return;
