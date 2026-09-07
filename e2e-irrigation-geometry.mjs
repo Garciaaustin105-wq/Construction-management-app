@@ -489,4 +489,39 @@ t("describeAdjustment returns one line each",
   t("an empty plan is not missing anything", radiusUnset([]) === false);
 }
 
+console.log("");
+console.log("[nozzle suggestions - what may be folded into the shipped seed]");
+{
+  const { suggestionProblem, THROW_VERIFY_NOTE } = M;
+  const ok = {
+    organization_id: "org", model_name: "Hunter PGP", nozzle_name: "#4",
+    radius_ft: 32, rated_psi: 45, min_psi: 25,
+    source_note: "Hunter PGP performance chart, 2024 catalogue p.11",
+  };
+  t("a sourced figure is accepted", suggestionProblem(ok) === null);
+  t("NO RADIUS IS REFUSED - there is nothing to contribute",
+    !!suggestionProblem({ ...ok, radius_ft: 0 }));
+  t("...and a negative one too", !!suggestionProblem({ ...ok, radius_ft: -5 }));
+  // The whole point of the source note: this number ends up in a catalogue
+  // OTHER companies quote from, so an unattributable figure cannot be taken.
+  t("A FIGURE WITH NO SOURCE IS REFUSED",
+    !!suggestionProblem({ ...ok, source_note: "" }));
+  t("...nor does a token one count",
+    !!suggestionProblem({ ...ok, source_note: "x" }));
+  t("...whitespace is not a source",
+    !!suggestionProblem({ ...ok, source_note: "     " }));
+  t("the refusal says what to do instead",
+    (suggestionProblem({ ...ok, source_note: "" }) || "").toLowerCase().includes("came from"));
+  // Pressures are optional: plenty of charts printed on a box give a throw and
+  // nothing else, and refusing those would collect nothing at all.
+  t("pressures are optional",
+    suggestionProblem({ ...ok, rated_psi: null, min_psi: null }) === null);
+
+  t("the warning tells orgs to check the figures against their own stock",
+    THROW_VERIFY_NOTE.toLowerCase().includes("check") &&
+    THROW_VERIFY_NOTE.toLowerCase().includes("stock"));
+  t("...and that they are quoted at a pressure the site may not run",
+    THROW_VERIFY_NOTE.toLowerCase().includes("pressure"));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
