@@ -61,3 +61,6 @@ next-env.d.ts
 .labor-build/
 .feedback-build/
 .import-build/
+
+# standalone contract compiles for the harnesses
+.mat-build/
