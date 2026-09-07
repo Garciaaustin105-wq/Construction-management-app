@@ -5,6 +5,7 @@ import {
 import { readComponentSnapshot, componentCharge, updateComponent } from "./irrigationSystem";
 import { buildPlantLegend, isPlantArea, updatePlantSize } from "./plantProducts";
 import { isSodArea, sodEstimateForArea, updateSodProduct } from "./sodProducts";
+import { headRateLines, updateIrrigationNozzle } from "./irrigationProducts";
 import type { EstimateArea } from "./estimateAreas";
 import type { JobRecord, EstimateTaskLine, ClockEntry } from "./crewFeedback";
 
@@ -139,6 +140,21 @@ export async function loadFeedbackData(
       });
     }
 
+    // Sprinkler heads are areas too, told apart by meta like the other two.
+    // They were missing here entirely, and the cost was not a gap but a WRONG
+    // NUMBER: a job's hours are split across the lines it has, so head time was
+    // handed to whatever else was on the estimate. An irrigation job with one
+    // trenching line credited that line with the whole day.
+    for (const h of headRateLines(areas)) {
+      push(estimateId, {
+        key: `head:${h.nozzleId}`,
+        label: h.label,
+        unit: "EA",
+        quantity: h.count,
+        manHours: Math.round((h.minutes / 60) * 100) / 100,
+      });
+    }
+
     for (const area of areas.filter(isSodArea)) {
       const sod = sodEstimateForArea(area);
       if (!sod) continue;
@@ -218,6 +234,14 @@ export async function applySuggestion(
   if (kind === "component") {
     return updateComponent(supabase, id, { install_minutes: manMinutesPerUnit });
   }
+  if (kind === "head") {
+    // The column is an integer, so the applied figure is rounded to the minute.
+    // A per-head install is minutes, not seconds; pretending to more resolution
+    // than the column holds would show a number that is not what was stored.
+    return updateIrrigationNozzle(supabase, id, {
+      install_minutes: Math.round(manMinutesPerUnit),
+    });
+  }
   if (kind === "sod") {
     return updateSodProduct(supabase, id, {
       install_minutes_per_1000_sqft: Math.round(manMinutesPerUnit),
@@ -258,13 +282,15 @@ export async function loadCurrentRates(
 ): Promise<Map<string, number>> {
   const rates = new Map<string, number>();
 
-  const [labor, components, plantSizes, sod] = await Promise.all([
+  const [labor, components, plantSizes, sod, nozzles] = await Promise.all([
     supabase.from("labor_items").select("id, install_minutes").eq("organization_id", organizationId),
     supabase.from("irrigation_components").select("id, install_minutes").eq("organization_id", organizationId),
     supabase.from("plant_product_sizes")
       .select("plant_product_id, size, install_minutes").eq("organization_id", organizationId),
     supabase.from("sod_products")
       .select("id, install_minutes_per_1000_sqft").eq("organization_id", organizationId),
+    supabase.from("irrigation_product_nozzles")
+      .select("id, install_minutes").eq("organization_id", organizationId),
   ]);
 
   const num = (v: unknown) => {
@@ -285,6 +311,10 @@ export async function loadCurrentRates(
   for (const r of (sod.data ?? []) as
     { id: string; install_minutes_per_1000_sqft: unknown }[]) {
     rates.set(`sod:${r.id}`, num(r.install_minutes_per_1000_sqft));
+  }
+
+  for (const r of (nozzles.data ?? []) as { id: string; install_minutes: unknown }[]) {
+    rates.set(`head:${r.id}`, num(r.install_minutes));
   }
 
   return rates;

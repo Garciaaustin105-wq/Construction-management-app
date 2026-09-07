@@ -23,6 +23,7 @@
 // one task. Everything else is an assumption and has to be labelled as one.
 const { classifyEntry, entryManHours, actualManHours, jobVariance, calibration,
         observationsFor, collectObservations, rateSuggestion, rankSuggestions,
+        mergeTaskLines,
         MIN_SAMPLE, SPREAD_LIMIT } = await import("./.feedback-build/crewFeedback.js");
 let pass=0,fail=0;
 const t=(n,c,d="")=>{c?(pass++,console.log("  PASS "+n)):(fail++,console.log(`  FAIL ${n}${d?" — "+d:""}`))};
@@ -231,6 +232,68 @@ t("the input array is not mutated", ranked.length===4);
 console.log("\n[nothing here writes]");
 t("a suggestion is a value, not an action", typeof good.suggested==="number");
 t("the current rate is untouched by suggesting against it", good.currentRate===28);
+
+console.log("");
+console.log("[one catalogue row is one task, however many lines it arrived as]");
+{
+  const merged = mergeTaskLines([
+    line({ key: "plant:a|3g", quantity: 4, manHours: 2 }),
+    line({ key: "plant:a|3g", quantity: 6, manHours: 3 }),
+    line({ key: "head:n1", quantity: 12, manHours: 1 }),
+  ]);
+  t("duplicate keys collapse to one line", merged.length === 2);
+  t("...summing quantity", merged[0].quantity === 10);
+  t("...and estimated hours", near(merged[0].manHours, 5));
+  t("a different key is left alone", merged[1].key === "head:n1" && merged[1].quantity === 12);
+  t("the input lines are not mutated",
+    mergeTaskLines([line({ quantity: 1 }), line({ quantity: 1 })]).length === 1);
+
+  // Why this matters, and it is not tidiness. sampleSize counts OBSERVATIONS,
+  // and the message says "N of 3 jobs". Unmerged, one job reports itself as
+  // three and walks through a gate built to refuse a single week of evidence.
+  const dup = job({
+    lines: [
+      line({ key: "plant:a|3g", quantity: 5, manHours: 2 }),
+      line({ key: "plant:a|3g", quantity: 5, manHours: 2 }),
+      line({ key: "plant:a|3g", quantity: 5, manHours: 2 }),
+    ],
+    entries: [entry({ crewSize: 2 })],
+  });
+  const obsDup = observationsFor(dup);
+  t("ONE JOB YIELDS ONE OBSERVATION, not one per line", obsDup.length === 1);
+  t("...and it is direct, because after merging there was only one task",
+    obsDup[0].kind === "direct");
+  t("...over the whole quantity", obsDup[0].quantity === 15);
+  const gated = rateSuggestion("plant:a|3g", "A", "ea", obsDup, 10);
+  t("...so one job still reads as one job at the gate", gated.sampleSize === 1);
+  t("...and proposes nothing", gated.suggested === null);
+}
+
+console.log("");
+console.log("[a task left off the lines does not vanish - it lands on the others]");
+{
+  // The reason heads had to be added to the feedback data. Hours are split
+  // across the lines a job HAS, so a missing task is not an absence, it is a
+  // wrong number attached to whatever remains.
+  const both = observationsFor(job({
+    lines: [line({ key: "head:n1", quantity: 20, manHours: 4 }),
+            line({ key: "component:c1", quantity: 100, manHours: 4 })],
+    entries: [entry({ crewSize: 1 })],
+  }));
+  const comp = both.find((o) => o.key === "component:c1");
+  t("with both tasks present each takes its share", both.length === 2);
+  t("...half the eight hours to the component", near(comp.manHours, 4));
+
+  const onlyOne = observationsFor(job({
+    lines: [line({ key: "component:c1", quantity: 100, manHours: 4 })],
+    entries: [entry({ crewSize: 1 })],
+  }));
+  t("DROP THE HEAD LINE AND THE COMPONENT IS CREDITED WITH THE WHOLE DAY",
+    near(onlyOne[0].manHours, 8));
+  t("...at double the rate per unit, presented as directly measured",
+    onlyOne[0].manMinutesPerUnit === 2 * comp.manMinutesPerUnit &&
+    onlyOne[0].kind === "direct");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

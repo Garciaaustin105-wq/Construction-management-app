@@ -524,4 +524,44 @@ console.log("[nozzle suggestions - what may be folded into the shipped seed]");
     THROW_VERIFY_NOTE.toLowerCase().includes("pressure"));
 }
 
+console.log("");
+console.log("[headRateLines - heads grouped the way a RATE is keyed]");
+{
+  const { headRateLines, buildHeadLegend } = M;
+  const h = (nozzleId, arc, price, minutes) => ({
+    kind: "point", polygon: [{ lat: 28, lng: -82.5 }],
+    meta: { irrigation_product_id: "pgp", irrigation_nozzle_id: nozzleId,
+      name: "Hunter PGP", category: "rotor", nozzle: "#4", radius_ft: 32,
+      arc_deg: arc, cost: 5, unit_price: price, install_minutes: minutes },
+  });
+
+  const mixed = [h("n1", 90, 12, 8), h("n1", 360, 12, 8), h("n1", 90, 18, 8)];
+  t("the LEGEND splits those three by arc and price", buildHeadLegend(mixed).length === 3);
+  t("THE RATE DOES NOT - one nozzle, one line", headRateLines(mixed).length === 1);
+  t("...counting every head", headRateLines(mixed)[0].count === 3);
+  t("...and summing the minutes", headRateLines(mixed)[0].minutes === 24);
+  t("...labelled by model and nozzle",
+    headRateLines(mixed)[0].label === "Hunter PGP — #4");
+  t("...keyed on the nozzle row, which is what Apply writes to",
+    headRateLines(mixed)[0].nozzleId === "n1");
+
+  t("two different nozzles stay two rows",
+    headRateLines([h("n1", 360, 12, 8), h("n2", 360, 12, 5)]).length === 2);
+
+  // Same guards as the legend: this reads areas off an estimate, and plants,
+  // sod and polygons share that table.
+  t("a plant is not a head",
+    headRateLines([{ kind: "point", polygon: [], meta: { plant_product_id: "p", name: "Holly" } }])
+      .length === 0);
+  t("a polygon is not a head",
+    headRateLines([{ kind: "area", polygon: [], meta: {} }]).length === 0);
+  t("no areas, no rows", headRateLines([]).length === 0);
+
+  // An untimed head still has to be counted. Dropping it would hide the head
+  // from the feedback screen, which is the whole failure being fixed.
+  const untimed = headRateLines([h("n3", 360, 12, 0), h("n3", 360, 12, 0)]);
+  t("A HEAD WITH NO INSTALL TIME IS STILL A LINE", untimed.length === 1);
+  t("...with its count intact and zero minutes", untimed[0].count === 2 && untimed[0].minutes === 0);
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed`);
