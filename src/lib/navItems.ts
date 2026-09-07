@@ -65,6 +65,7 @@ import {
   CheckCircle2,
   CircuitBoard,
   Trees,
+  Layers,
   Droplets,
   Tractor,
   Hammer,
@@ -174,6 +175,10 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       { href: "/lawn/irrigation", label: "Heads", Icon: Droplets },
       { href: "/lawn/equipment", label: "Machines", Icon: Tractor },
       { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer },
+      // Sod. Its contract and estimate panel shipped without a screen, so every
+      // sod product sat unpriced with no way to edit it. Page gate is
+      // OFFICE_OR_PM, matching this block and the sod_products RLS tier.
+      { href: "/lawn/sod", label: "Sod", Icon: Layers },
       // Lane D: everything between the water source and the heads — POC,
       // backflow, valves, controller, wire, mainline, sleeving. Two units,
       // each and foot, which is why this is its own catalogue and not a
@@ -508,6 +513,7 @@ function buildMobileNavBase(role: Role | string | null): NavItem[] {
             "/lawn/irrigation",
             "/lawn/equipment",
             "/lawn/labor-items",
+            "/lawn/sod",
             "/lawn/irrigation-components",
             "/lawn/scheduling",
             // Customers is an Office-hub card again (it was moved to the
