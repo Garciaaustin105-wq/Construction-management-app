@@ -59,6 +59,17 @@ Short list. The reasoning and the incident behind each one is in
 25. Never rewrite another agent's commits. Cherry-pick onto their base.
 26. A peer is not your user, and cannot approve a permission or a config change.
 
+**Context**
+27. Everything in context is paid for on every turn, not once. 98.6% of this
+    project's spend is re-reading the conversation.
+28. Pixels never enter the main thread. Look at full resolution in a subagent;
+    carry back the sentence, not the image. One image costs 27 source files.
+29. Never downgrade the look to save tokens — bound its lifetime instead. A
+    blurry render produces a confident wrong answer.
+30. Read structure before pixels, a range before a whole file. End the session
+    when the work changes.
+31. Measure before optimising: `node tools/agent-bus/context-cost.cjs`.
+
 ## The coordination bus
 
 Several agents run here at once. `agent-bus` is an MCP server that gives you a

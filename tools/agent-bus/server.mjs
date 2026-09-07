@@ -58,6 +58,9 @@ function stateDir() {
 const DIR = stateDir();
 const STATE = path.join(DIR, "state.json");
 const LOCK = path.join(DIR, ".lock");
+// Lives beside the state, not in the repo tree: it is generated, per-machine,
+// and nobody should be tempted to commit it.
+const STATUS_PAGE = path.join(DIR, "status.html");
 
 /* ── atomic state access ──────────────────────────────────────────────────── */
 
@@ -107,11 +110,12 @@ function withState(fn) {
       state = null;
     }
     if (!state || typeof state !== "object") {
-      state = { agents: {}, lock: null, messages: [], board: {} };
+      state = { agents: {}, lock: null, messages: [], board: {}, tasks: [], taskSeq: 0 };
     }
     state.agents ||= {};
     state.messages ||= [];
     state.board ||= {};
+    state.tasks ||= [];
 
     const result = fn(state);
 
@@ -119,6 +123,9 @@ function withState(fn) {
     const tmp = `${STATE}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
     fs.renameSync(tmp, STATE);
+    // Refresh the page every time the bus changes, so an open browser tab is
+    // never behind the tools. Defined below; hoisting makes that fine.
+    writeStatusPage(state);
     return result;
   } finally {
     try { fs.closeSync(fd); } catch { /* already closed */ }
@@ -443,6 +450,87 @@ function callTool(name, args) {
       });
     }
 
+    // Everything at a glance. `agents` answers who is here and `board` answers
+    // what they left behind; needing both to know the state of the bus is what
+    // made it confusing to look at.
+    case "status":
+      return withState((state) => {
+        pruneAgents(state);
+        touch(state);
+        const now = Date.now();
+        const ago = (iso) => {
+          const secs = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+          if (secs < 60) return `${secs}s ago`;
+          if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+          return `${Math.round(secs / 3600)}h ago`;
+        };
+        const agents = Object.entries(state.agents);
+        const lines = ["CONNECTED"];
+        if (!agents.length) {
+          lines.push("  nobody — an agent appears here after its first bus command");
+        } else {
+          for (const [n, a] of agents) {
+            const mine = a.sessionKey === SESSION_KEY ? "  <- you" : "";
+            // lastSeen is refreshed by touch() on every bus call, and
+            // pruneAgents drops anyone an hour cold — so this is the honest
+            // answer to "is that one still there?" rather than a guess.
+            const seen = a.lastSeen ? ago(a.lastSeen) : "unknown";
+            lines.push(`  ${n}${mine}`);
+            lines.push(`     ${a.lane || "no lane stated"}`);
+            lines.push(`     last seen ${seen}`);
+          }
+        }
+        lines.push("", "WORKING TREE", "  " + describeLock(state.lock));
+        const board = Object.entries(state.board).sort(
+          (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
+        );
+        lines.push("", `BOARD (${board.length})`);
+        if (!board.length) lines.push("  empty");
+        for (const [k, v] of board) {
+          // Keys and authors only. The values are paragraphs; `board` prints
+          // those in full and this is meant to fit on one screen.
+          lines.push(`  ${k} — ${v.by}, ${ago(v.at)}`);
+        }
+        if (board.length) lines.push("", "  full text: node server.mjs board");
+        return lines.join("\n");
+      });
+
+    case "task_add":
+      return withState((state) => {
+        touch(state);
+        state.tasks ||= [];
+        const id = nextTaskId(state);
+        state.tasks.push({
+          id,
+          lane: args.lane || "local",
+          title: args.title,
+          prompt: args.prompt,
+          status: "queued",
+          runner_id: args.runner_id || null,
+          by: myName || "cli",
+          at: nowIso(),
+        });
+        return `Queued ${id} on lane "${args.lane || "local"}": ${args.title}`;
+      });
+
+    case "runners":
+      return readRunners()
+        .map((r) => `${r.enabled ? "  " : "x "}${r.id} — ${r.label ?? r.type}` + (r.note ? `\n     ${r.note}` : ""))
+        .join("\n");
+
+    case "tasks":
+      return withState((state) => {
+        touch(state);
+        const rows = (state.tasks ?? []).slice(-20).reverse();
+        if (!rows.length) return "No tasks queued.";
+        return rows
+          .map((t) => {
+            const head = `${t.id} [${t.status}] ${t.lane} — ${t.title}`;
+            return t.result ? `${head}\n  ${t.result.slice(0, 400)}` : head;
+          })
+          .join("\n");
+      });
+
     case "board":
       return withState((state) => {
         touch(state);
@@ -478,15 +566,851 @@ function callTool(name, args) {
 // rather than registering once. Its claims carry no pid, which means they fall
 // back to the TTL — a shell script cannot be probed for liveness the way a
 // server process can.
+/* ── the task queue ───────────────────────────────────────────────────────── */
+
+// The board holds facts. This holds WORK — and something actually runs it.
+//
+// A queue nobody executes is a to-do list, which is what the board already was.
+// `work` is the missing half: a loop that takes the next queued task for its
+// lane, runs it, and writes the answer back where everyone can see it.
+//
+// LOCAL OUTPUT IS A DRAFT, NEVER A COMMIT. The runner posts text to the queue.
+// It does not touch the repo, run git, or write a file into src/. That is not a
+// limitation to be lifted later — an unreviewed model writing to a codebase is
+// how you get plausible wrong code merged at 3am, and this project has already
+// had one local-model draft with four defects in it.
+
+const OLLAMA = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+const DEFAULT_MODEL = process.env.AGENT_BUS_MODEL || "gpt-oss:20b";
+
+function nextTaskId(state) {
+  state.taskSeq = (state.taskSeq ?? 0) + 1;
+  return `t${state.taskSeq}`;
+}
+
+/**
+ * The runners the bus may invoke, from runners.json beside this file.
+ *
+ * Read fresh each time rather than cached: adding a model or filling in the GLM
+ * command should take effect on the next task, not on the next restart of a
+ * worker that has been up for hours.
+ */
+function readRunners() {
+  try {
+    const raw = fs.readFileSync(new URL("./runners.json", import.meta.url), "utf8");
+    const list = JSON.parse(raw).runners ?? [];
+    return list.filter((r) => r && r.id && r.type);
+  } catch {
+    // No config, or broken JSON. Fall back to the one model this project is
+    // known to use, so a typo in the file cannot take the whole lane down.
+    return [{ id: "gpt-oss", label: "gpt-oss:20b — local", type: "ollama", model: "gpt-oss:20b", enabled: true }];
+  }
+}
+
+function findRunner(id) {
+  const runners = readRunners();
+  const found = runners.find((r) => r.id === id) ?? runners.find((r) => r.enabled);
+  if (!found) throw new Error("No enabled runner in runners.json.");
+  if (!found.enabled) {
+    throw new Error(
+      `Runner "${found.id}" is disabled in runners.json. ${found.note ?? ""}`.trim()
+    );
+  }
+  return found;
+}
+
+/** Ask an ollama model over HTTP. */
+async function askOllama(runner, prompt) {
+  let res;
+  try {
+    res = await fetch(`${OLLAMA}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: runner.model,
+        prompt,
+        stream: false,
+        options: {
+          temperature: 0.2,
+          // A THINKING model spends output tokens reasoning BEFORE it answers,
+          // so a budget sized for the answer alone returns an empty response
+          // with the reasoning stranded in `thinking`. Found the hard way:
+          // GLM at 80 tokens produced nothing at all.
+          num_predict: runner.thinking ? 4000 : 1200,
+        },
+      }),
+    });
+  } catch {
+    throw new Error(`Cannot reach ollama at ${OLLAMA}. Is it running? (ollama serve)`);
+  }
+  if (!res.ok) throw new Error(`ollama returned ${res.status}. Is "${runner.model}" pulled?`);
+  const body = await res.json();
+  const text = String(body.response ?? "").trim();
+  if (text) return text;
+  // Ran out of budget mid-thought. Say so, and hand back the reasoning rather
+  // than an empty result — a partial answer is worth more than "returned
+  // nothing", and it tells you exactly why.
+  const thinking = String(body.thinking ?? "").trim();
+  if (thinking) {
+    return `[no final answer — the model was still reasoning when it ran out of output budget. Its thinking so far:]
+
+${thinking}`;
+  }
+  throw new Error("The model returned nothing.");
+}
+
+/**
+ * Run a command-line agent, prompt on stdin.
+ *
+ * spawn with an ARGUMENT LIST, never a joined string and never a shell. Nothing
+ * in a prompt can then be read as an extra argument or a second command — and
+ * prompts here are written by other agents, so that is not hypothetical.
+ */
+function askShell(runner, prompt) {
+  return import("node:child_process").then(
+    ({ spawn }) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(runner.command, runner.args ?? [], {
+          cwd: path.resolve(DIR, "..", ".."),
+          shell: false,
+        });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (c) => {
+          out += c;
+        });
+        child.stderr.on("data", (c) => {
+          err += c;
+        });
+        child.on("error", (e) =>
+          reject(new Error(`Could not start "${runner.command}": ${e.message}`))
+        );
+        // A CLI agent that hangs waiting for input would hold the lane forever.
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error("Runner timed out after 10 minutes."));
+        }, 10 * 60 * 1000);
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          const text = out.trim();
+          if (code !== 0 && !text) {
+            reject(new Error(`Exited ${code}. ${err.trim().slice(0, 400)}`));
+            return;
+          }
+          if (!text) {
+            reject(new Error("The runner produced no output."));
+            return;
+          }
+          resolve(text);
+        });
+        child.stdin.write(prompt);
+        child.stdin.end();
+      })
+  );
+}
+
+function askRunner(runner, prompt) {
+  return runner.type === "shell" ? askShell(runner, prompt) : askOllama(runner, prompt);
+}
+
+/**
+ * Take the next queued task for a lane and mark it running, atomically.
+ *
+ * Claiming inside withState is what stops two runners taking the same task —
+ * the same reason the working-tree lock exists. Returns null when the queue is
+ * empty, which is the normal case and not an error.
+ */
+function claimNextTask(lane) {
+  return withState((state) => {
+    state.tasks ||= [];
+    const task = state.tasks.find((t) => t.lane === lane && t.status === "queued");
+    if (!task) return null;
+    task.status = "running";
+    task.startedAt = nowIso();
+    task.runner = myName || "worker";
+    return { ...task };
+  });
+}
+
+function finishTask(id, patch) {
+  return withState((state) => {
+    state.tasks ||= [];
+    const task = state.tasks.find((t) => t.id === id);
+    if (!task) return null;
+    Object.assign(task, patch, { doneAt: nowIso() });
+    return { ...task };
+  });
+}
+
+/**
+ * The runner. Polls for work in its lane, runs it, writes the answer back.
+ *
+ * Poll rather than push because the queue is a JSON file on disk — there is no
+ * socket to subscribe to, and a five second poll on a local file costs nothing.
+ */
+async function runWorker(lane, runnerId) {
+  const runner = findRunner(runnerId);
+  process.stdout.write(`agent-bus worker: lane "${lane}", runner "${runner.id}" (${runner.label ?? runner.type})\n`);
+  process.stdout.write(`ollama at ${OLLAMA}. Ctrl+C to stop.\n`);
+  let idleLogged = false;
+  for (;;) {
+    const task = claimNextTask(lane);
+    if (!task) {
+      if (!idleLogged) {
+        process.stdout.write("waiting for work...\n");
+        idleLogged = true;
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    idleLogged = false;
+    process.stdout.write(`\n[${task.id}] ${task.title}\n  running...\n`);
+    try {
+      // A task may name its own runner; the worker's is the fallback.
+      const chosen = task.runner_id ? findRunner(task.runner_id) : runner;
+      const answer = await askRunner(chosen, task.prompt);
+      finishTask(task.id, { status: "done", result: answer, model: chosen.id });
+      process.stdout.write(`  done (${answer.length} chars)\n`);
+    } catch (err) {
+      // A failure is a RESULT, not a crash. It goes on the queue so the person
+      // reading the hub sees why, instead of finding a task stuck on "running"
+      // forever with no explanation.
+      finishTask(task.id, { status: "failed", result: err.message, model: task.runner_id ?? runner.id });
+      process.stdout.write(`  failed: ${err.message}\n`);
+    }
+  }
+}
+
+/* ── workers you can start from the window ────────────────────────────────── */
+
+// Workers run INSIDE the hub process rather than as spawned children.
+//
+// Two reasons. Spawning would mean tracking pids across a Windows/POSIX split
+// and inheriting orphans when the hub dies — the same class of problem the
+// working-tree lock already had to solve with kill(pid,0). And it matches what
+// the window means to a person: the hub is open, so the agents are working; you
+// close it, they stop. Nothing keeps running invisibly after the window is gone.
+//
+// Keyed by lane, because two workers on one lane would race for the same task.
+// claimNextTask is atomic so it would be *safe*, but it would also be pointless.
+const liveWorkers = new Map();
+
+async function workerLoop(lane) {
+  const entry = liveWorkers.get(lane);
+  if (!entry) return;
+  while (!entry.stop) {
+    let task = null;
+    try {
+      task = claimNextTask(lane);
+    } catch {
+      // A locked state file is transient. Wait rather than killing the worker.
+    }
+    if (!task) {
+      entry.status = "waiting";
+      await new Promise((r) => setTimeout(r, 4000));
+      continue;
+    }
+    entry.status = `running ${task.id}`;
+    entry.lastTask = task.id;
+    try {
+      const runner = findRunner(task.runner_id || entry.runnerId);
+      const answer = await askRunner(runner, task.prompt);
+      finishTask(task.id, { status: "done", result: answer, model: runner.id });
+      entry.done = (entry.done ?? 0) + 1;
+    } catch (err) {
+      finishTask(task.id, {
+        status: "failed",
+        result: err.message,
+        model: task.runner_id || entry.runnerId,
+      });
+      entry.failed = (entry.failed ?? 0) + 1;
+    }
+  }
+  liveWorkers.delete(lane);
+}
+
+function startLiveWorker(lane, runnerId) {
+  if (liveWorkers.has(lane)) {
+    return `A worker is already running on lane "${lane}". Stop it first.`;
+  }
+  // Resolve now, so a disabled or misspelled runner fails HERE with a message
+  // on screen instead of silently on the first task.
+  const runner = findRunner(runnerId);
+  liveWorkers.set(lane, {
+    lane,
+    runnerId: runner.id,
+    label: runner.label ?? runner.id,
+    status: "waiting",
+    startedAt: nowIso(),
+    stop: false,
+  });
+  void workerLoop(lane);
+  return `Worker started on "${lane}" using ${runner.label ?? runner.id}.`;
+}
+
+function stopLiveWorker(lane) {
+  const entry = liveWorkers.get(lane);
+  if (!entry) return `No worker running on "${lane}".`;
+  entry.stop = true;
+  entry.status = "stopping";
+  // It finishes the task in hand rather than abandoning it half-done, so a
+  // model call already in flight still gets its answer written back.
+  return `Worker on "${lane}" will stop after its current task.`;
+}
+
+/* ── dashboard ────────────────────────────────────────────────────────────── */
+
+// A page, because a status line you have to remember to run is not the same as
+// a window you leave open on a second monitor.
+//
+// SERVED LOCALLY, and it has to be: the bus state is a JSON file in this repo's
+// .git directory. Nothing hosted could read it, so this renders on each request
+// from the same withState() the tools use — no cache, no sync, no way for the
+// page to disagree with the bus.
+//
+// Server-rendered with a meta refresh rather than client-side polling. It is a
+// status board on a local socket; five lines of HTML beat a fetch loop, and it
+// keeps the no-dependencies rule this file has kept from the start.
+/**
+ * The build rules, read from docs/build-rules.md at render time.
+ *
+ * NOT copied into this file. The rules change as incidents happen — they are up
+ * to 26 and were 12 — and a hub showing a stale copy of the rules would be
+ * exactly the failure the rules exist to prevent. DIR is <repo>/.git/agent-bus,
+ * so two levels up is the repo.
+ */
+function readBuildRules() {
+  try {
+    const md = fs.readFileSync(path.resolve(DIR, "..", "..", "docs", "build-rules.md"), "utf8");
+    const groups = [];
+    let current = null;
+    for (const raw of md.split("\n")) {
+      const line = raw.trim();
+      // "## A. The shape of the work" — a group.
+      const head = line.match(/^##\s+[A-Z]\.\s+(.+)$/);
+      if (head) {
+        current = { title: head[1], rules: [] };
+        groups.push(current);
+        continue;
+      }
+      // "### A1. Contract, then harness, then UI. In that order."
+      const rule = line.match(/^###\s+([A-Z]\d+)\.\s+(.+)$/);
+      if (rule && current) current.rules.push({ n: rule[1], text: rule[2] });
+    }
+    return groups.filter((g) => g.rules.length);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The operating model, read from docs/how-we-work.md at render time.
+ *
+ * Live for the same reason the rules are: this describes how work is actually
+ * split between the orchestrator, the implementing agents and the person, and a
+ * hub showing last month's version of that is worse than showing none.
+ * Sections are "## Heading" with "- " bullets under them.
+ */
+function readWorkflow() {
+  try {
+    const md = fs.readFileSync(path.resolve(DIR, "..", "..", "docs", "how-we-work.md"), "utf8");
+    const groups = [];
+    let current = null;
+    for (const raw of md.split("\n")) {
+      const line = raw.trim();
+      const head = line.match(/^##\s+(.+)$/);
+      if (head) {
+        current = { title: head[1], items: [] };
+        groups.push(current);
+        continue;
+      }
+      const item = line.match(/^-\s+(.+)$/);
+      if (item && current) current.items.push(item[1]);
+    }
+    return groups.filter((g) => g.items.length);
+  } catch {
+    return [];
+  }
+}
+
+function renderStatusHtml(state, opts = {}) {
+  const { flash = null, interactive = false } = opts;
+  pruneAgents(state);
+  const now = Date.now();
+  const ago = (iso) => {
+    const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
+  };
+  // Everything below is text other processes wrote. All of it is escaped.
+  const esc = (v) =>
+    String(v ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+    );
+
+  const agents = Object.entries(state.agents).sort(
+    (a, b) => Date.parse(b[1].lastSeen ?? 0) - Date.parse(a[1].lastSeen ?? 0)
+  );
+  const lock = state.lock;
+  const held = lockIsLive(lock);
+  const board = Object.entries(state.board).sort(
+    (a, b) => Date.parse(b[1].at) - Date.parse(a[1].at)
+  );
+  const repo = path.resolve(DIR, "..", "..");
+
+  const agentCards = agents.length
+    ? agents
+        .map(([name, a]) => {
+          // Two minutes without a bus call reads as idle. Called "quiet", not
+          // "offline": the bus cannot tell the difference and must not pretend.
+          const quiet = now - Date.parse(a.lastSeen ?? 0) > 120_000;
+          return `<div class="card${quiet ? " quiet" : ""}">
+      <div class="row"><span class="dot"></span><b>${esc(name)}</b>
+        <span class="mut">${esc(ago(a.lastSeen ?? new Date(0).toISOString()))}</span></div>
+      <p class="lane">${esc(a.lane || "no lane stated")}</p>
+      <p class="path">${esc(a.cwd || "")}</p>
+    </div>`;
+        })
+        .join("")
+    : "<p class=\"mut\">Nobody on the bus yet. An agent appears here after its first command.</p>";
+
+  const boardRows = board.length
+    ? board
+        .map(
+          ([k, v]) => `<details><summary><b>${esc(k)}</b>
+      <span class="mut">${esc(v.by)} · ${esc(ago(v.at))}</span></summary>
+      <p>${esc(v.value)}</p></details>`
+        )
+        .join("")
+    : "<p class=\"mut\">The board is empty.</p>";
+
+  const tasks = (state.tasks ?? []).slice(-12).reverse();
+  const taskHtml = tasks.length
+    ? tasks
+        .map((t) => {
+          const cls = t.status === "failed" ? " held" : "";
+          const body = t.result
+            ? `<p class="mut" style="white-space:pre-wrap">${esc(t.result.slice(0, 1200))}</p>`
+            : `<p class="mut">${esc(t.prompt || "").slice(0, 200)}</p>`;
+          return `<details class="lock${cls}"><summary><b>${esc(t.id)}</b>
+            <span>${esc(t.title || "")}</span>
+            <span class="mut">${esc(t.lane)} · ${esc(t.status)}${t.model ? " · " + esc(t.model) : ""}</span>
+          </summary>${body}</details>`;
+        })
+        .join("")
+    : "<p class=\"mut\">Nothing queued. Work added here is picked up by a running worker.</p>";
+
+  const runnerOptions = readRunners()
+    .map(
+      (r) =>
+        `<option value="${esc(r.id)}"${r.enabled ? "" : " disabled"}>${esc(
+          r.label ?? r.id
+        )}${r.enabled ? "" : " (not configured)"}</option>`
+    )
+    .join("");
+
+  const workers = [...liveWorkers.values()];
+  const workerHtml = workers.length
+    ? workers
+        .map(
+          (w) => `<div class="card"><div class="row"><span class="dot"></span>
+            <b>${esc(w.lane)}</b><span class="mut">${esc(w.status)}</span></div>
+            <p class="lane">${esc(w.label)}</p>
+            <p class="mut">${w.done ?? 0} done${w.failed ? `, ${w.failed} failed` : ""}</p>
+            ${
+              interactive
+                ? `<form method="post"><input type="hidden" name="action" value="worker_stop">
+                   <input type="hidden" name="lane" value="${esc(w.lane)}">
+                   <button>Stop</button></form>`
+                : ""
+            }</div>`
+        )
+        .join("")
+    : "<p class=\"mut\">No worker running. Start one below and queued work begins moving.</p>";
+
+  const workGroups = readWorkflow();
+  const workHtml = workGroups.length
+    ? workGroups
+        .map(
+          (g) => `<div class="rulegroup"><h3>${esc(g.title)}</h3><ul>${g.items
+            .map((i) => `<li>${esc(i.replace(/[`*]/g, ""))}</li>`)
+            .join("")}</ul></div>`
+        )
+        .join("")
+    : "<p class=\"mut\">docs/how-we-work.md not found from here.</p>";
+
+  const ruleGroups = readBuildRules();
+  const ruleHtml = ruleGroups.length
+    ? ruleGroups
+        .map(
+          (g) => `<div class="rulegroup"><h3>${esc(g.title)}</h3><ul>${g.rules
+            .map((r) => `<li><b>${esc(r.n)}</b> ${esc(r.text.replace(/[`*]/g, ""))}</li>`)
+            .join("")}</ul></div>`
+        )
+        .join("")
+    : "<p class=\"mut\">docs/build-rules.md not found from here.</p>";
+
+  // Forms only exist in the served app. The written-to-disk copy is a file://
+  // page with nothing to POST to, and a dead button is worse than no button.
+  const actions = interactive
+    ? `
+<h2>Do something</h2>
+<div class="grid2">
+  <form method="post" class="card">
+    <b>Post a note to the board</b>
+    <p class="mut">Durable. Reaches agents who were not listening when you wrote it.</p>
+    <input type="hidden" name="action" value="note">
+    <input name="actor" placeholder="from (default: desk)" value="desk">
+    <input name="key" placeholder="key, e.g. table-pattern" required>
+    <textarea name="value" rows="3" placeholder="the fact, written for someone who was not here" required></textarea>
+    <button>Post note</button>
+  </form>
+
+  <form method="post" class="card">
+    <b>Send a message</b>
+    <p class="mut">Only reaches an agent that is listening now. Use a note for anything that must outlive the moment.</p>
+    <input type="hidden" name="action" value="send">
+    <input name="actor" placeholder="from (default: desk)" value="desk">
+    <input name="to" placeholder="to — an agent name, or all" required>
+    <textarea name="message" rows="3" placeholder="message" required></textarea>
+    <button>Send</button>
+  </form>
+
+  <form method="post" class="card">
+    <b>${held ? "Release the working tree" : "Claim the working tree"}</b>
+    <p class="mut">${
+      held
+        ? "Only the holder can release it."
+        : "Claim before any git operation in a shared checkout."
+    }</p>
+    <input type="hidden" name="action" value="${held ? "release" : "claim"}">
+    <input name="actor" placeholder="your name" value="${esc(held && lock ? lock.holder : "desk")}">
+    ${
+      held
+        ? ""
+        : `<input name="path" placeholder="path" value="${esc(repo)}" required>
+    <input name="reason" placeholder="what you are doing" required>
+    <input name="minutes" placeholder="minutes (default 30)" value="30">`
+    }
+    <button>${held ? "Release" : "Claim"}</button>
+  </form>
+</div>`
+    : `<h2>Do something</h2>
+<p class="mut">This is the saved copy of the page — read-only. Launch <b>Agent Bus</b>
+from the desktop to run commands.</p>`;
+
+  return `<!doctype html>
+<meta charset="utf-8"><title>Agent Bus — command hub</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+${interactive ? "" : '<meta http-equiv="refresh" content="5">'}
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f5; --fg:#16201a; --mut:#5d6b5f;
+    --card:#fff; --line:#dfe4dc; --ok:#2f6b3f; --warn:#b4530a; --code:#eef1ec; }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#11150f; --fg:#e4ebe2; --mut:#93a094; --card:#181e16; --line:#2a3329;
+    --code:#1e2620; } }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:26px 30px 60px; background:var(--bg); color:var(--fg);
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif; }
+  h1 { font-size:16px; margin:0; letter-spacing:.02em; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--mut); margin:30px 0 9px; font-weight:600; }
+  h3 { font-size:12px; margin:0 0 6px; }
+  .mut { color:var(--mut); font-size:12px; margin:4px 0 0; }
+  .grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); }
+  .grid2 { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card.quiet { opacity:.5; }
+  .row { display:flex; align-items:center; gap:7px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:0 0 auto; }
+  .quiet .dot { background:var(--mut); }
+  .row .mut { margin-left:auto; }
+  .lane { margin:6px 0 0; }
+  .path { margin:3px 0 0; color:var(--mut); font-size:11px;
+    overflow-wrap:anywhere; font-family:ui-monospace,monospace; }
+  .lock { background:var(--card); border:1px solid var(--line);
+    border-left:3px solid var(--ok); border-radius:10px; padding:12px 14px; }
+  .lock.held { border-left-color:var(--warn); }
+  details { background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:10px 14px; margin-bottom:6px; }
+  summary { cursor:pointer; display:flex; gap:8px; align-items:center; }
+  details p { margin:9px 0 2px; color:var(--mut); overflow-wrap:anywhere; }
+  input, textarea, select { width:100%; margin-top:7px; padding:7px 9px; border-radius:7px;
+    border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; font-size:13px; }
+  textarea { resize:vertical; }
+  button { margin-top:9px; padding:7px 14px; border-radius:7px; border:0;
+    background:var(--ok); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:8px;
+    padding:9px 11px; overflow-x:auto; font-size:12px; margin:6px 0 0; }
+  .flash { background:var(--card); border:1px solid var(--ok); border-left:3px solid var(--ok);
+    border-radius:9px; padding:10px 13px; margin:14px 0 0; white-space:pre-wrap; font-size:13px; }
+  .rulegroup { background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:12px 14px; }
+  .rulegroup ul { margin:0; padding-left:0; list-style:none; }
+  .rulegroup li { margin:3px 0; color:var(--mut); }
+  .head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+</style>
+
+<div class="head">
+  <h1>Agent Bus</h1>
+  <span class="mut">command hub · ${esc(new Date().toLocaleTimeString())}</span>
+</div>
+${flash ? `<div class="flash">${esc(flash)}</div>` : ""}
+
+<h2>Connected (${agents.length})</h2>
+<div class="grid">${agentCards}</div>
+
+<h2>Working tree</h2>
+<div class="lock${held ? " held" : ""}">${esc(describeLock(lock))}</div>
+${actions}
+
+<h2>Workers (${workers.length})</h2>
+<div class="grid">${workerHtml}</div>
+${
+  interactive
+    ? `<form method="post" class="card" style="margin-top:10px">
+    <b>Start a worker</b>
+    <p class="mut">It runs while this window is open and takes queued work in its lane.</p>
+    <input type="hidden" name="action" value="worker_start">
+    <input name="lane" placeholder="lane" value="local">
+    <select name="runner_id">${runnerOptions}</select>
+    <button>Start</button>
+  </form>`
+    : ""
+}
+
+<h2>Work queue (${tasks.length})</h2>
+<p class="mut">Queued work is executed by a worker, not by a person reading this.
+  Start one above and pick which agent runs it — it takes the
+  next queued task in its lane, runs it against the local model, and writes the answer
+  back here. Output is a DRAFT: the worker never touches the repo.</p>
+${taskHtml}
+${
+  interactive
+    ? `<form method="post" class="card" style="margin-top:10px">
+    <b>Queue work</b>
+    <input type="hidden" name="action" value="task">
+    <input name="actor" placeholder="from (default: desk)" value="desk">
+    <input name="lane" placeholder="lane" value="local">
+    <select name="runner_id">${runnerOptions}</select>
+    <input name="title" placeholder="short title" required>
+    <textarea name="prompt" rows="3" placeholder="the whole task, written for someone with no context" required></textarea>
+    <button>Queue it</button>
+  </form>`
+    : ""
+}
+
+<h2>Board (${board.length})</h2>
+${boardRows}
+
+<h2>Connect another AI</h2>
+<div class="grid2">
+  <div class="card">
+    <b>Anything that can run a command</b>
+    <p class="mut">A PowerShell session, an ollama-driven script, a person at a terminal.
+      No install, no MCP. Run it from the repo.</p>
+    <pre>cd ${esc(repo)}
+node tools/agent-bus/server.mjs board
+node tools/agent-bus/server.mjs note my-status "what I am doing"</pre>
+    <p class="mut">Set a name once so you do not pass it every time:</p>
+    <pre>$env:AGENT_BUS_NAME = "your-agent-name"</pre>
+  </div>
+  <div class="card">
+    <b>A Claude session</b>
+    <p class="mut">Already wired — <code>.mcp.json</code> in the repo root starts the bus
+      as an MCP server, so the tools appear on their own. Nothing to do.</p>
+    <pre>{ "mcpServers": { "agent-bus": {
+    "command": "node",
+    "args": ["tools/agent-bus/server.mjs"] } } }</pre>
+    <p class="mut">First call should be <code>register(name, lane)</code>, then
+      <code>board()</code>.</p>
+  </div>
+</div>
+<p class="mut">Running <code>server.mjs</code> with no arguments starts the stdio MCP
+  server and blocks — that is for editors, not for you. Any verb prints usage.</p>
+
+<h2>How we work</h2>
+<p class="mut">The operating model, read live from <code>docs/how-we-work.md</code>.
+  The expensive model plans and verifies, cheaper agents implement, and this board is
+  how they stay out of each other's way.</p>
+<div class="grid2">${workHtml}</div>
+
+<h2>How to build here — ${ruleGroups.reduce((n, g) => n + g.rules.length, 0)} rules</h2>
+<p class="mut">Read live from <code>docs/build-rules.md</code>. Every one was written after
+  something went wrong; the reasoning and the incident behind each is in that file.</p>
+<div class="grid2">${ruleHtml}</div>
+`;
+}
+
+// THE PAGE, as a file rather than a server.
+//
+// Written beside the state on every change, so a browser tab left open on
+// .git/agent-bus/status.html stays current with no command to run. Read-only:
+// a file:// page has nothing to POST to, so the action forms are omitted rather
+// than rendered dead.
+function writeStatusPage(state) {
+  try {
+    const tmp = `${STATUS_PAGE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, renderStatusHtml(state, { interactive: false }));
+    fs.renameSync(tmp, STATUS_PAGE);
+  } catch {
+    // Never let the page break the bus. A failed write here is cosmetic; the
+    // tools agents depend on must still return.
+  }
+}
+
+function dashboardHtml(flash) {
+  return withState((state) => renderStatusHtml(state, { flash, interactive: true }));
+}
+
+/**
+ * Run one action on behalf of the person at the window.
+ *
+ * The web UI has no session of its own, so it borrows an identity for the
+ * length of the call the same way the CLI does. `actor` defaults to "desk" so
+ * anything done from the app is attributable to the desk rather than appearing
+ * to come from whichever agent happened to be listed first.
+ */
+function runAction(action, form) {
+  const actor = (form.get("actor") || "desk").trim() || "desk";
+  const prev = myName;
+  myName = actor;
+  IS_CLI = true; // a browser POST is as short-lived as a CLI call: no pid to trust
+  try {
+    registerCli(actor);
+    switch (action) {
+      case "note":
+        return callTool("note", { key: form.get("key"), value: form.get("value") });
+      case "send":
+        return callTool("send", { to: form.get("to"), message: form.get("message") });
+      case "claim":
+        return callTool("claim_tree", {
+          path: form.get("path"),
+          reason: form.get("reason"),
+          minutes: Number(form.get("minutes")) || 30,
+        });
+      case "release":
+        return callTool("release_tree", {});
+      case "worker_start":
+        return startLiveWorker(form.get("lane") || "local", form.get("runner_id"));
+      case "worker_stop":
+        return stopLiveWorker(form.get("lane"));
+      case "task":
+        return callTool("task_add", {
+          lane: form.get("lane") || "local",
+          runner_id: form.get("runner_id") || null,
+          title: form.get("title"),
+          prompt: form.get("prompt"),
+        });
+      default:
+        throw new Error(`Unknown action: ${action}`);
+    }
+  } finally {
+    myName = prev;
+  }
+}
+
+function runDashboard(port) {
+  // Imported here, not at the top: every other path in this file is a stdio
+  // server or a one-shot command that has no business opening a socket.
+  return import("node:http").then(({ default: http }) => {
+    const server = http.createServer((req, res) => {
+      try {
+        if (req.method === "POST") {
+          let body = "";
+          req.on("data", (c) => {
+            body += c;
+            // A form post is a few hundred bytes. Anything much larger is not
+            // this UI, and an unbounded read on a local socket is how a tiny
+            // server becomes a memory bug.
+            if (body.length > 64_000) req.destroy();
+          });
+          req.on("end", () => {
+            const form = new URLSearchParams(body);
+            let flash;
+            try {
+              flash = runAction(form.get("action"), form);
+            } catch (err) {
+              flash = `FAILED: ${err.message}`;
+            }
+            // POST-then-redirect, so a refresh does not repeat the action.
+            res.writeHead(303, {
+              location: `/?flash=${encodeURIComponent(String(flash).slice(0, 400))}`,
+            });
+            res.end();
+          });
+          return;
+        }
+        const url = new URL(req.url, "http://127.0.0.1");
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(dashboardHtml(url.searchParams.get("flash")));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "text/plain" });
+        res.end(String(err.message));
+      }
+    });
+    // Loopback only. This exposes who is working on what and where their
+    // worktrees are; it is for the machine it runs on.
+    server.listen(port, "127.0.0.1", () => {
+      process.stdout.write(`agent-bus dashboard: http://127.0.0.1:${port}\n`);
+      process.stdout.write("Ctrl+C to stop.\n");
+    });
+    server.on("error", (err) => {
+      process.stdout.write(
+        err.code === "EADDRINUSE"
+          ? `Port ${port} is busy — try: node server.mjs dashboard ${port + 1}\n`
+          : `dashboard failed: ${err.message}\n`
+      );
+      process.exitCode = 1;
+    });
+  });
+}
+
 function runCli(argv) {
   const [cmd, ...rest] = argv;
+  const rest0 = rest;
   const say = (t) => { process.stdout.write(String(t) + "\n"); };
   try {
     switch (cmd) {
+      // Spawned rather than imported, so a broken analyser can never stop the
+      // bus itself from starting. Synchronous on purpose: the CLI calls
+      // process.exit() the moment runCli returns, so anything async here would
+      // be torn down before it produced a line.
+      case "cost":
+        execFileSync(
+          process.execPath,
+          // .cjs, not .mjs, so DeepSource can parse it. Reason on the file.
+          [path.join(import.meta.dirname, "context-cost.cjs"), ...rest0],
+          { stdio: "inherit" }
+        );
+        return;
       case "board":
         return say(callTool("board", {}));
       case "agents":
         return say(callTool("agents", {}));
+      case "status":
+        return say(callTool("status", {}));
+      case "tasks":
+        return say(callTool("tasks", {}));
+      case "runners":
+        return say(callTool("runners", {}));
+      case "task": {
+        const [lane, title, ...rest] = rest0;
+        myName = process.env.AGENT_BUS_NAME || "cli";
+        registerCli(myName);
+        return say(callTool("task_add", { lane, title, prompt: rest.join(" ") }));
+      }
+      case "work": {
+        // Long-running, like dashboard.
+        myName = process.env.AGENT_BUS_NAME || "worker";
+        registerCli(myName);
+        return runWorker(rest0[0] || "local", rest0[1] || DEFAULT_MODEL);
+      }
+      case "dashboard":
+        // Long-running, unlike every other verb here, so it returns the
+        // listener rather than falling through to the process exit below.
+        return runDashboard(Number(rest[0]) || 7777);
       case "note": {
         const [key, ...v] = rest;
         myName = process.env.AGENT_BUS_NAME || "cli";
@@ -517,7 +1441,9 @@ function runCli(argv) {
       }
       default:
         say("agent-bus — usage:");
-        say("  board | agents | note <key> <value> | send <to> <msg>");
+        say("  dashboard [port] | work [lane] [runner] | task <lane> <title> <prompt>");
+        say("  tasks | runners | status | board | agents | note <key> <value> | send <to> <msg>");
+        say("  cost [--full]   where the tokens actually went");
         say("  inbox <name> | claim <name> <path> <reason> | release <name>");
         say("");
         say("Set AGENT_BUS_NAME to avoid passing your name each time.");
@@ -548,7 +1474,12 @@ function registerCli(name) {
 if (process.argv.length > 2) {
   IS_CLI = true;
   runCli(process.argv.slice(2));
-  process.exit(process.exitCode ?? 0);
+  // Every verb here is one-shot and exits — except `dashboard`, which is a
+  // listener. Exiting on it would tear the socket down before the first
+  // request, so it opts out and Node stays alive on its own handle.
+  if (process.argv[2] !== "dashboard" && process.argv[2] !== "work") {
+    process.exit(process.exitCode ?? 0);
+  }
 }
 
 /* ── JSON-RPC over stdio ──────────────────────────────────────────────────── */

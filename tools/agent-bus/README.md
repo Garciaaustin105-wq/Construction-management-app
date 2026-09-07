@@ -18,6 +18,21 @@ tool in the tool list gets used and a convention in a README gets skipped —
 which is the same lesson that produced rule A4 in
 [`docs/build-rules.md`](../../docs/build-rules.md).
 
+## Which AI is connected right now
+
+```
+node tools/agent-bus/server.mjs status
+```
+
+One screen: who is on the bus and how long since each was heard from, who holds
+the working tree and until when, and what the board is carrying. `agents` and
+`board` each answer half of that, and needing both is what made the bus
+confusing to look at.
+
+"Last seen" is real rather than a guess — every bus call refreshes it, and an
+agent an hour cold is dropped so its name frees up for a restarted session.
+
+
 ## Using it from a Claude session
 
 Configured in `.mcp.json`, so it loads automatically. **MCP config is read at
@@ -118,3 +133,35 @@ every other agent, and the CLI smoke test found shell claims being stolen — bo
 defects in the first draft.
 
 State is isolated to a temp directory per run; it never touches the real bus.
+
+## The worker
+
+`node tools/agent-bus/server.mjs work local` runs a loop: it takes the next
+queued task in its lane, runs it against the local model (`gpt-oss:20b` by
+default), and writes the answer back to the queue. Queue work from the hub
+window or with `server.mjs task local "title" "the whole prompt"`.
+
+The worker never touches the repo. Local output is a DRAFT that a person or the
+orchestrator reviews — an unreviewed model writing into a codebase is how
+plausible wrong code gets merged at 3am, and one local draft here already
+arrived with four defects in it.
+
+A failure is a RESULT, not a crash: it lands on the queue with the reason, so a
+task is never left stuck on "running" with no explanation.
+
+## Picking which agent runs the work
+
+`tools/agent-bus/runners.json` declares every agent the bus may invoke, and the
+hub picker offers exactly that list. Two kinds:
+
+- `ollama` — POSTed to `/api/generate`. The four local models are already listed.
+- `shell` — spawned with the prompt on **stdin**, for a command-line agent. This
+  is how GLM joins: it runs from PowerShell, which the bus can start.
+
+**The hub can only run what the file declares.** The form sends an `id`, never a
+command. A text box that could hand a shell string to a worker on your machine
+is a remote-execution hole with a form in front of it, loopback or not. `shell`
+runners are spawned with an argument LIST and no shell, so nothing in a prompt
+can be read as an extra argument — and prompts here are written by other agents.
+
+GLM is listed and `enabled: false` until its invocation is filled in.

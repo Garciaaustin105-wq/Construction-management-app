@@ -1,0 +1,64 @@
+{
+  "_comment": [
+    "Which agents the bus can run, and how to invoke each one.",
+    "",
+    "THE HUB CAN ONLY RUN WHAT IS LISTED HERE. The web form picks an id from this",
+    "file; it never sends a command. That is deliberate — a form that could pass a",
+    "shell string to a worker on your machine is a remote-code-execution hole with a",
+    "text box in front of it, even on loopback. Adding a runner is editing this file.",
+    "",
+    "type 'ollama' — POSTed to /api/generate. Nothing to install beyond the model.",
+    "type 'shell'  — spawned with the prompt written to STDIN. args are passed as a",
+    "list, never joined into a string, so nothing in a prompt can be read as an",
+    "argument or a second command.",
+    "",
+    "GLM turned out NOT to need a shell runner. `ollama launch claude` presents a",
+    "model menu, and GLM 5.3 Flash in that menu is an ollama CLOUD model — so it",
+    "answers /api/generate like any local one, under the name glm-5.3-flash:cloud.",
+    "It is not in `ollama list` because nothing was pulled.",
+    "",
+    "The shell type stays for a genuine command-line agent, if one is ever added."
+  ],
+  "runners": [
+    {
+      "id": "gpt-oss",
+      "label": "gpt-oss:20b — local",
+      "type": "ollama",
+      "model": "gpt-oss:20b",
+      "enabled": true,
+      "note": "The project's default local model."
+    },
+    {
+      "id": "qwen-coder",
+      "label": "qwen2.5-coder:14b — local",
+      "type": "ollama",
+      "model": "qwen2.5-coder:14b",
+      "enabled": true,
+      "note": "Code-weighted. Drafts schemas confidently and gets types wrong; review closely."
+    },
+    {
+      "id": "codestral",
+      "label": "codestral:22b — local",
+      "type": "ollama",
+      "model": "codestral:22b",
+      "enabled": true
+    },
+    {
+      "id": "qwen-small",
+      "label": "qwen2.5:7b — local, fast",
+      "type": "ollama",
+      "model": "qwen2.5:7b",
+      "enabled": true,
+      "note": "Fast and shallow. Good for extraction and summarising, not design."
+    },
+    {
+      "id": "glm",
+      "label": "GLM 5.3 Flash — cloud",
+      "type": "ollama",
+      "model": "glm-5.3-flash:cloud",
+      "enabled": true,
+      "thinking": true,
+      "note": "Served by ollama as a CLOUD model, so it is not in `ollama list` and needs no pull. A THINKING model: it spends output tokens reasoning before it answers, so num_predict has to be generous or `response` comes back empty with the reasoning stranded in `thinking`."
+    }
+  ]
+}

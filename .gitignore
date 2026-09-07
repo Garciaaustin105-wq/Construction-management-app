@@ -67,3 +67,6 @@ next-env.d.ts
 
 # standalone nav compile for the harness
 .nav-build/
+
+# personal Claude Code overrides for this checkout
+.claude/settings.local.json
