@@ -50,7 +50,14 @@ exclude_patterns = [
   # the global scope" for a CommonJS module whose top-level functions are
   # module-scoped, and console calls in a program whose entire output is
   # console.
-  "scripts/check-function-grants.cjs",
+  #
+  # BASENAME, not a path. Four attempts at a path-shaped pattern all failed
+  # ("scripts/*.mjs", "tools/**/*.mjs", "**/*.mjs", and the exact path
+  # "scripts/check-function-grants.cjs"), while the bare "*.mjs" worked. The
+  # one thing those four have in common is a "/" — so these patterns appear to
+  # be matched against the FILE NAME, not the path. That also explains why
+  # "*.mjs" excludes harnesses at the root and nothing at depth.
+  "check-function-grants.cjs",
 
   # Standalone contract compiles produced for the harnesses. Emitted output,
   # never edited by hand.
