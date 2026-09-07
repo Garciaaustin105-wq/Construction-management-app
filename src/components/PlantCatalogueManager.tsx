@@ -17,6 +17,10 @@ import {
 import { AREA_COLORS } from "@/lib/estimateAreas";
 import { formatMoney } from "@/lib/money";
 import {
+  CATALOGUE_REGION_NOTE,
+  CATALOGUE_STARTING_POINT_NOTE,
+} from "@/lib/catalogueReadiness";
+import {
   PLANT_CATEGORIES,
   createPlantProduct,
   createPlantSize,
@@ -149,6 +153,19 @@ export default function PlantCatalogueManager({
   // PLANT_CATEGORIES is in planting-plan order, the same index buildPlantLegend
   // sorts by, so a legend and this list read the same way: canopy down to
   // groundcover, name within category.
+  // "No price anywhere" is the day-one signal. Deliberately not a count or a
+  // percentage: a progress bar over 690 rows would restate the cliff as a
+  // graphic, when the true answer is that most of those rows never need a price
+  // at all.
+  const nothingPricedYet = useMemo(
+    () =>
+      products.length > 0 &&
+      !products.some((p) =>
+        p.sizes.some((z) => Number(z.unit_price ?? 0) > 0 || Number(z.cost ?? 0) > 0)
+      ),
+    [products]
+  );
+
   const sorted = useMemo(() => {
     const order = new Map<string, number>(
       PLANT_CATEGORIES.map((c, i) => [c, i])
@@ -169,6 +186,7 @@ export default function PlantCatalogueManager({
   // sort is kept INSIDE the filtered set — filtering never re-orders, and
   // filtering never paginates: the whole filtered list renders.
   const [query, setQuery] = useState("");
+
   const [categoryFilter, setCategoryFilter] = useState<"all" | PlantCategory>(
     "all"
   );
@@ -574,6 +592,24 @@ export default function PlantCatalogueManager({
 
   return (
     <div className="space-y-3">
+      {/*
+        Shown only until the org prices its FIRST size, then never again.
+        A permanent banner becomes wallpaper, and this one has a job that ends:
+        the shipped catalogue arrives with 690 blank prices, which reads as 690
+        units of homework, and a person who believes that closes the tab. It is
+        a list to pick from. Once they have priced one thing they know that, and
+        the banner is in the way.
+      */}
+      {nothingPricedYet && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 space-y-1.5">
+          <p className="text-[11px] leading-snug text-slate-700">
+            {CATALOGUE_STARTING_POINT_NOTE}
+          </p>
+          <p className="text-[11px] leading-snug text-slate-500">
+            {CATALOGUE_REGION_NOTE}
+          </p>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <p className="text-sm text-gray-600 flex-1">
           {filtered.length === products.length
