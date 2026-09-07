@@ -122,14 +122,35 @@ declared runner that is not installed is not a runner that does not exist
 
 The human picks the agent. The bus decides who is *eligible* to be picked.
 
-When queueing work, the hub shows every runner with an explicit verdict:
+When queueing work, the hub shows every runner with an explicit verdict.
+
+These are the five runners this machine actually has — four local models, all
+installed, plus GLM as a cloud model. **`gpt-oss:20b` is the default local
+model**; it leads the local list and is the standing preference for local work.
+
+An ordinary implementation task, `kind: implement`, no restricted subject:
 
 ```
-  ● GLM 5.3 Flash      eligible        implement, cloud
-  ● qwen2.5-coder:14b  eligible        implement, local — cheaper
-  ○ qwen2.5:7b         not eligible    cannot take: touches rls
-  ○ codestral:22b      unreachable     declared, not installed
+  ● gpt-oss:20b        eligible     local, default — preferred
+  ● qwen2.5-coder:14b  eligible     local, code-weighted
+  ● codestral:22b      eligible     local
+  ● GLM 5.3 Flash      eligible     cloud — costs money, prefer local
+  ○ qwen2.5:7b         not eligible cannot take: kind 'implement' not in `can`
 ```
+
+The same queue, for a task tagged `subject: ["rls"]`:
+
+```
+  ○ gpt-oss:20b        not eligible cannot take: touches rls
+  ○ qwen2.5-coder:14b  not eligible cannot take: touches rls
+  ○ codestral:22b      not eligible cannot take: touches rls
+  ○ GLM 5.3 Flash      not eligible cannot take: touches rls
+  ○ qwen2.5:7b         not eligible cannot take: touches rls
+
+  Nothing here can safely take this task. Needs a human.
+```
+
+That second screen is the feature. It is not an error state.
 
 - **Show the ineligible ones, greyed, with the reason.** Do not hide them.
   Seeing *"cannot take: touches rls"* teaches the limits of the tool; an option
@@ -139,8 +160,15 @@ When queueing work, the hub shows every runner with an explicit verdict:
   queued. A human choosing badly from a dropdown is still a bad route.
 
 **Standing preference.** Answering per task is friction. Store a preference map
-in state — `{ implement: "glm", research: "qwen-small", audit: "gpt-oss" }` —
-editable from the hub, applied automatically when it names an eligible runner,
+in state, seeded to match how this machine is actually set up — `gpt-oss` is the
+default local model and should be the default answer for local work:
+
+```json
+{ "implement": "gpt-oss", "research": "gpt-oss",
+  "audit": "qwen-small", "migrate": "glm", "review": "glm" }
+```
+
+Editable from the hub, applied automatically when it names an eligible runner,
 and quietly skipped when it does not. Show which preference fired, so an
 automatic choice is never mysterious.
 
