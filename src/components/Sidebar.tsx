@@ -126,8 +126,18 @@ export default function Sidebar() {
     router.refresh();
   }
 
+  // Accordion: opening a section collapses every other one, so the sidebar
+  // never grows to fill with more than one open group at a time. Closing the
+  // open section just closes it - it does not reopen anything else.
   function toggleSection(id: NavSection) {
-    writeCollapsed({ ...collapsed, [id]: !collapsed[id] });
+    const opening = !!collapsed[id];
+    if (!opening) {
+      writeCollapsed({ ...collapsed, [id]: true });
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const section of NAV_SECTIONS) next[section.id] = section.id !== id;
+    writeCollapsed(next);
   }
 
   const items = buildNavItems(role);
