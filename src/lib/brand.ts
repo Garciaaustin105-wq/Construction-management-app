@@ -13,8 +13,15 @@
 // "Terra Verde Lawn Management" (lawn, green). The theme colors + logo/icon
 // paths here feed the runtime CSS vars (--brand/--brand-dark/--brand-bg) set in
 // the root layout, so identity surfaces (chrome, auth pages, customer docs,
-// emails) recolor per deploy with no per-file branching. Internal in-app
-// buttons keep Tailwind blue-600 for v1. See src/lib/variant.ts.
+// emails) recolor per deploy with no per-file branching.
+//
+// "Internal in-app buttons keep Tailwind blue-600 for v1" was the rule here
+// until the Terra Verde UI redesign. It still holds for CONSTRUCTION, whose
+// primary buttons remain blue-600. It is SUPERSEDED for LAWN: the lawn deploy's
+// primary buttons now paint from --brand, so a green app no longer has blue
+// CTAs. The switch is made once, at the variant boundary in
+// src/components/ui/Button.tsx — not by editing call sites, of which there are
+// hundreds. See src/lib/variant.ts.
 
 import { APP_VARIANT, isLawn, isConstruction, type AppVariant } from "@/lib/variant";
 
@@ -65,9 +72,15 @@ const LAWN: BrandConfig = {
   shortName: "Terra Verde",
   company: "Terra Verde Lawn Management",
   tagline: "Lawn maintenance, routes & billing",
-  themeColor: "#15803d",
-  themeColorDark: "#166534",
-  brandBg: "#dcfce7",
+  // Deepened for the UI redesign. Was green-700/800/100 (#15803d/#166534/
+  // #dcfce7) — a bright Tailwind green that read as generic and, at #dcfce7,
+  // was too saturated to sit a dark label on. These are a deeper, less minty
+  // green with a calmer tint, so active nav rows and primary buttons carry the
+  // brand without shouting. themeColor also drives the browser theme-color meta
+  // and the focus-visible outline, so it has to stay legible on white.
+  themeColor: "#1f5d3c",
+  themeColorDark: "#123825",
+  brandBg: "#e3efe0",
   logoPath: "/terra-verde-logo.svg",
   iconPath: "/terra-verde-icon.svg",
   appleIconPath: "/terra-verde-apple-icon.png",
