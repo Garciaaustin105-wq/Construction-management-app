@@ -281,13 +281,13 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // scheduling is the job and the calendar is one view of it, not the other
       // way round.
       { href: "/lawn/scheduling", label: "Scheduling", Icon: CalendarDays, section: "today" },
-      // Live crew tracking. Sits next to Scheduling because it answers a
-      // dispatch question ("how far out is he?"), not a reporting one. Page
+      // Live crew tracking. Filed under Team, not Today — it's a question
+      // about a crew ("where is he?"), not a scheduling/dispatch view. Page
       // gate is OFFICE_OR_PM and the crew_locations read policy is
       // me_is_office_or_pm, so this entry sits in the office/admin block to
       // match both. Free-plan orgs still see the tab and get the upgrade
       // panel — hiding it would make the feature undiscoverable.
-      { href: "/lawn/track", label: "Crew tracking", Icon: LocateFixed, section: "today" },
+      { href: "/lawn/track", label: "Crew tracking", Icon: LocateFixed, section: "team" },
       // A developer tool. Behind System with Account, on the owner's call.
       { href: "/admin/email-preview", label: "Email Preview", Icon: Mail, section: "system" },
       // Points at the lawn dispatch board (Month/Week/Agenda, drag-to-
