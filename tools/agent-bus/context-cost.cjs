@@ -46,7 +46,12 @@ const path = require("node:path");
 
 // Claude Code stores transcripts under a directory named after the working
 // directory with every non-alphanumeric character replaced by a dash.
-const REPO = path.resolve(__dirname, "..", "..");
+// AGENT_BUS_PROJECT names a project root when this script's location is not
+// the repo it reports on (after the hub moves to its own repo) — the same
+// override server.mjs honors, so the transcript dir hashes the right repo.
+const REPO = process.env.AGENT_BUS_PROJECT
+  ? path.resolve(process.env.AGENT_BUS_PROJECT)
+  : path.resolve(__dirname, "..", "..");
 const SESSION_DIR = path.join(
   os.homedir(),
   ".claude",

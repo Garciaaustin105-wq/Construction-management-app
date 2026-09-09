@@ -44,19 +44,26 @@ const PROTOCOL = "2024-11-05";
 
 function stateDir() {
   let base;
-  try {
-    // Resolves to the main repo's .git from inside any worktree — the whole
-    // reason worktrees share one bus.
-    const common = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    base = path.resolve(process.cwd(), common);
-  } catch {
-    // Not a git checkout. Fall back to a temp dir so the server still runs
-    // rather than dying and taking the session's tool list with it.
-    base = path.join(process.env.TEMP || process.env.TMPDIR || ".", "agent-bus-fallback");
+  if (process.env.AGENT_BUS_PROJECT) {
+    // A configured project root IS the repo — state lives at its .git and no
+    // git query runs at all. This is how the hub (after it moves to its own
+    // repo) points the bus at a checkout it does not live in.
+    base = path.resolve(process.env.AGENT_BUS_PROJECT, ".git");
+  } else {
+    try {
+      // Resolves to the main repo's .git from inside any worktree — the whole
+      // reason worktrees share one bus.
+      const common = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      base = path.resolve(process.cwd(), common);
+    } catch {
+      // Not a git checkout. Fall back to a temp dir so the server still runs
+      // rather than dying and taking the session's tool list with it.
+      base = path.join(process.env.TEMP || process.env.TMPDIR || ".", "agent-bus-fallback");
+    }
   }
   const dir = path.join(base, "agent-bus");
   fs.mkdirSync(dir, { recursive: true });
@@ -64,8 +71,24 @@ function stateDir() {
 }
 
 const DIR = stateDir();
+// The project root — the repo the bus serves. Derived the same way in every
+// case above: state always sits at <root>/.git/agent-bus, so the root is
+// exactly two levels up, and every consumer below uses this one name instead
+// of re-deriving it. (After the hub moves to its own repo, AGENT_BUS_PROJECT
+// is what names this root from outside it.)
+const PROJECT_ROOT = path.resolve(DIR, "..", "..");
 const STATE = path.join(DIR, "state.json");
 const LOCK = path.join(DIR, ".lock");
+
+// Where the hub reads build-rules.md / how-we-work.md. Defaults to the
+// project root's docs/ — today's layout. After the docs move to the hub's own
+// repo, AGENT_BUS_PROJECT will still point the bus at the shared checkout, so
+// AGENT_BUS_DOCS_DIR is what names the docs' new home from outside it.
+function docsDir() {
+  return process.env.AGENT_BUS_DOCS_DIR
+    ? path.resolve(process.env.AGENT_BUS_DOCS_DIR)
+    : path.join(PROJECT_ROOT, "docs");
+}
 
 /* ── atomic state access ──────────────────────────────────────────────────── */
 
@@ -695,7 +718,7 @@ function askShell(runner, prompt) {
     ({ spawn }) =>
       new Promise((resolve, reject) => {
         const child = spawn(runner.command, runner.args ?? [], {
-          cwd: path.resolve(DIR, "..", ".."),
+          cwd: PROJECT_ROOT,
           shell: false,
         });
         let out = "";
@@ -924,6 +947,8 @@ function registerCli(name) {
 // pieces it needs to render state, run actions and start workers.
 export {
   DIR,
+  PROJECT_ROOT,
+  docsDir,
   asActor,
   askRunner,
   callTool,
