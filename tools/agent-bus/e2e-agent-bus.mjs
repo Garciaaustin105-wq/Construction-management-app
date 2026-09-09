@@ -196,6 +196,29 @@ t("...and then another can take it", cli("claim", "other", "C:/cli", "my turn").
 cli("release", "other");
 t("an unknown CLI verb prints usage rather than crashing", cli("wat").includes("usage"));
 
+console.log("\n[a configured project root — the extraction seam]");
+// AGENT_BUS_PROJECT names the repo the bus serves without this file living in
+// it — after the hub moves to its own repo, this is how it points back here.
+// Two processes naming the same root share one bus; the default sessions above
+// run on the temp fallback and must see neither it nor be seen by it.
+const proj = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-proj-"));
+const projCli = (...a) => {
+  const r = spawnSync(process.execPath, [SERVER, ...a],
+    { cwd: HOME, env: { ...process.env, TEMP: HOME, TMPDIR: HOME, AGENT_BUS_PROJECT: proj },
+      encoding: "utf8" });
+  return (r.stdout || "") + (r.stderr || "");
+};
+t("state lands at the configured root's .git", (() => {
+  projCli("note", "from-configured", "posted on the configured bus");
+  return fs.existsSync(path.join(proj, ".git", "agent-bus", "state.json"));
+})());
+t("a second process on the same root shares that bus", projCli("board").includes("from-configured"));
+t("the default bus does NOT see the configured one",
+  !(await a.call("board")).text.includes("from-configured"));
+t("...and the configured bus does not see the default one",
+  !projCli("board").includes("hello from powershell"));
+fs.rmSync(proj, { recursive: true, force: true });
+
 console.log("\n[bad input never takes the server down]");
 t("unknown tool errors without dying", (await a.call("no_such_tool")).isError);
 t("missing args error without dying", (await a.call("note", { key: "x" })).isError);
