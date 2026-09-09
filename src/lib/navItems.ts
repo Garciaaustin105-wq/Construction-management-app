@@ -86,10 +86,10 @@ import { isLawn } from "@/lib/variant";
  */
 export type NavSection =
   | "today"
+  | "estimator"
   | "money"
   | "customers"
   | "work"
-  | "catalogues"
   | "chemical"
   | "team"
   | "ai"
@@ -98,10 +98,14 @@ export type NavSection =
 /** Rendered order, with the label the sidebar shows. */
 export const NAV_SECTIONS: readonly { id: NavSection; label: string }[] = [
   { id: "today", label: "Today" },
+  // The pitch: everything that prices a job lives in one tab — the estimate
+  // screen itself, plus every catalogue that feeds it. Second position, right
+  // after Today, on the owner's call: it's the selling point, not a filing
+  // cabinet to find on your third click.
+  { id: "estimator", label: "Estimator" },
   { id: "money", label: "Money" },
   { id: "customers", label: "Customers" },
   { id: "work", label: "Work" },
-  { id: "catalogues", label: "Catalogues" },
   { id: "chemical", label: "Chemical" },
   { id: "team", label: "Team" },
   { id: "ai", label: "AI" },
@@ -210,25 +214,36 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // Products = the org's chemical catalog (office/PM manage).
       { href: "/lawn/applications", label: "Applications", Icon: FlaskConical, section: "chemical" },
       { href: "/lawn/products", label: "Products", Icon: Package, section: "chemical" },
+      // "Measure & quote" (/estimates/quick) and Templates (/templates) used
+      // to be separate top-of-nav tabs, but neither is a distinct top-level
+      // concept — both are entry points/config that live inside Estimates
+      // (the New menu and a Templates sub-view respectively). Consolidated
+      // per user request 2026-08-29: one Estimates tab, not three. The
+      // routes themselves still work (quick-actions on /lawn still link
+      // /estimates/quick directly; /templates redirects into the new view).
+      // Filed under Estimator (not Money) per owner request 2026-09-08, and
+      // first in the group: it's the screen the rest of Estimator feeds.
+      { href: "/estimates", label: "Estimates", Icon: FileText, section: "estimator" },
       // Estimator catalogues (Lane A, office/PM manage): plants, sprinkler
       // heads, machinery and labor lines feed the map estimator's pricing.
       // All four page gates are OFFICE_OR_PM, matching this fallthrough
       // block. /lawn/plants shipped earlier without a nav entry — linked
-      // here now alongside its siblings.
-      { href: "/lawn/plants", label: "Plants", Icon: Trees, section: "catalogues" },
-      { href: "/lawn/irrigation", label: "Heads", Icon: Droplets, section: "catalogues" },
-      { href: "/lawn/equipment", label: "Machines", Icon: Tractor, section: "catalogues" },
-      { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer, section: "catalogues" },
+      // here now alongside its siblings. Filed under Estimator, not a
+      // separate Catalogues tab — they only exist to feed that one screen.
+      { href: "/lawn/plants", label: "Plants", Icon: Trees, section: "estimator" },
+      { href: "/lawn/irrigation", label: "Heads", Icon: Droplets, section: "estimator" },
+      { href: "/lawn/equipment", label: "Machines", Icon: Tractor, section: "estimator" },
+      { href: "/lawn/labor-items", label: "Labor items", Icon: Hammer, section: "estimator" },
       // Sod. Its contract and estimate panel shipped without a screen, so every
       // sod product sat unpriced with no way to edit it. Page gate is
       // OFFICE_OR_PM, matching this block and the sod_products RLS tier.
-      { href: "/lawn/sod", label: "Sod", Icon: Layers, section: "catalogues" },
+      { href: "/lawn/sod", label: "Sod", Icon: Layers, section: "estimator" },
       // Lane D: everything between the water source and the heads — POC,
       // backflow, valves, controller, wire, mainline, sleeving. Two units,
       // each and foot, which is why this is its own catalogue and not a
       // tab on Heads (which is per-each model→nozzle). Page gate
       // OFFICE_OR_PM, matching this block and the components RLS tier.
-      { href: "/lawn/irrigation-components", label: "Components", Icon: CircuitBoard, section: "catalogues" },
+      { href: "/lawn/irrigation-components", label: "Components", Icon: CircuitBoard, section: "estimator" },
       // Compliance records (RUP purchases/30-day rule, disposal, CEU,
       // noncertified training) — page gate is OFFICE_OR_PM; this entry sits in
       // the lawn office/admin fallthrough block so it matches.
@@ -244,14 +259,6 @@ function buildNavItemsBase(role: Role | string | null): NavItem[] {
       // Crews because crew_size recorded there is what makes it work at all.
       // Office fallthrough block = office/admin, matching the page gate.
       { href: "/lawn/labor-feedback", label: "Labor feedback", Icon: AlarmClock, section: "team" },
-      // "Measure & quote" (/estimates/quick) and Templates (/templates) used
-      // to be separate top-of-nav tabs, but neither is a distinct top-level
-      // concept — both are entry points/config that live inside Estimates
-      // (the New menu and a Templates sub-view respectively). Consolidated
-      // per user request 2026-08-29: one Estimates tab, not three. The
-      // routes themselves still work (quick-actions on /lawn still link
-      // /estimates/quick directly; /templates redirects into the new view).
-      { href: "/estimates", label: "Estimates", Icon: FileText, section: "money" },
       { href: "/invoices", label: "Invoices", Icon: Receipt, section: "money" },
       // Insights sits with Money on the owner's call: it is the revenue story,
       // read after the estimates and invoices that produced it.
