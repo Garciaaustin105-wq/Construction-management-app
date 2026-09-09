@@ -90,6 +90,32 @@
   --clay: #b1502f;    --clay-bg: #f5e2d8;
   --caution: #c77d1d; --caution-bg: #f7e9d2;
   --report: #5a5f8a;  --report-bg: #e6e6f2;
+
+  /* Gray→token remap for the long tail of raw Tailwind grays across the lawn
+     pages and their managers. Tailwind v4 utilities resolve at RUNTIME through
+     the default-theme variables (.text-gray-900 { color: var(--color-gray-900) }),
+     so re-pointing those vars here retints every raw gray in this deploy —
+     text, bg, borders, divides, rings, placeholders, hover:/active: variants
+     and /opacity mixes — with zero JSX churn, and construction (which carries
+     no data-variant attribute) keeps the literal Tailwind palette.
+     Same mapping the isLawn() ternaries in Card/DataTable/TopBar encode by
+     hand; those stay (they predate this remap and are equivalent in value).
+     NOT remapped: green-600 (the CTA green is deliberately kept raw — see the
+     Home dashboard's solo-owner CTA) and the slate scale (74 call sites whose
+     exact shades are doing deliberate work; retiring them is its own pass). */
+  --color-gray-900: var(--foreground);
+  --color-gray-800: var(--foreground);
+  --color-gray-700: var(--muted-strong);
+  --color-gray-600: var(--muted-strong);
+  --color-gray-500: var(--muted);
+  --color-gray-400: var(--muted);
+  --color-gray-300: var(--line);
+  --color-gray-200: var(--line);
+  --color-gray-100: var(--line-soft);
+  --color-gray-50: var(--surface-muted);
+  --color-green-100: color-mix(in oklab, var(--success) 15%, var(--surface));
+  --color-green-50: color-mix(in oklab, var(--success) 10%, var(--surface));
+  --color-green-700: var(--success);
 }
 
 /* Compact density (per-user, applied at <html> by DensityToggle). */

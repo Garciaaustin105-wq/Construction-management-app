@@ -9,8 +9,8 @@ import type {
 import { isLawn } from "@/lib/variant";
 
 // Input text colors pick up the lawn foreground/muted tokens; the border
-// (border-gray-300) is deliberately left alone — inputs need the darker
-// contrast and neither variant's line tokens are a like-for-like swap.
+// stays border-gray-300 in both variants (lawn resolves it to the warm hairline
+// via the palette remap in globals.css; construction keeps literal gray-300).
 // Construction keeps every original class verbatim.
 const INPUT_BASE = `mt-1 block w-full px-3 py-2 border rounded-lg text-base ${
   isLawn()
