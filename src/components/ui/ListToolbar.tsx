@@ -3,6 +3,14 @@
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { LayoutGrid, Table as TableIcon, Columns3 } from "lucide-react";
+import { isLawn } from "@/lib/variant";
+
+// Active switcher chip: lawn uses the foreground ink instead of gray-900 so
+// the pill reads on the Terra Verde paper ground; construction unchanged.
+const MODE_ON = isLawn() ? "bg-foreground text-white" : "bg-gray-900 text-white";
+const MODE_OFF = isLawn()
+  ? "text-muted hover:bg-surface-muted hover:text-foreground"
+  : "text-muted hover:bg-surface-muted hover:text-gray-900";
 
 // Salesforce list-view header: a count line + a Cards/Table/Kanban view-mode
 // switcher + a filter slot + a primary-action slot. The switcher writes
@@ -83,9 +91,7 @@ export default function ListToolbar({
                     onClick={() => setMode(m)}
                     aria-pressed={on}
                     className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      on
-                        ? "bg-gray-900 text-white"
-                        : "text-muted hover:bg-surface-muted hover:text-gray-900"
+                      on ? MODE_ON : MODE_OFF
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5" />

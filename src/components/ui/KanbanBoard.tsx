@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 import StatusBadge from "./StatusBadge";
+import { isLawn } from "@/lib/variant";
 
 // Grouped card lanes — the Salesforce kanban list-view pattern: items grouped
 // by status (or any group key) into lanes. Desktop renders lanes side by side
@@ -55,7 +56,9 @@ export default function KanbanBoard<T>({
         return (
           <div key={lane.key} className="lg:min-w-[18rem] lg:w-[18rem] lg:flex-shrink-0">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-sm font-semibold text-gray-900">{lane.title}</h3>
+              <h3 className={`text-sm font-semibold ${isLawn() ? "text-foreground" : "text-gray-900"}`}>
+                {lane.title}
+              </h3>
               <StatusBadge tone={lane.tone ?? "neutral"}>{bucket.length}</StatusBadge>
             </div>
             <div className="space-y-2 bg-surface-muted lg:bg-transparent rounded-lg lg:rounded-none p-2 lg:p-0 min-h-[3rem]">

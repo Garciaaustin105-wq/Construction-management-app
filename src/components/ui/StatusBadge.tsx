@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { isLawn } from "@/lib/variant";
 
 // Shared status pill. Collapses the `text-[10px] font-medium px-1.5 py-0.5
 // rounded bg-gray-100 text-gray-600` idiom that's duplicated across the
@@ -19,13 +20,16 @@ export type BadgeTone =
   | "danger"
   | "muted";
 
+// Neutral/muted pills pick up the Terra Verde paper tint + warm text on the
+// lawn deploy; construction keeps its original gray classes verbatim (same
+// convention as Card.tsx/KpiTile.tsx).
 const TONES: Record<BadgeTone, string> = {
-  neutral: "bg-gray-100 text-gray-700",
+  neutral: isLawn() ? "bg-surface-muted text-muted-strong" : "bg-gray-100 text-gray-700",
   brand: "bg-brand-bg text-brand-dark",
   success: "bg-green-50 text-success",
   warning: "bg-amber-50 text-warning",
   danger: "bg-red-50 text-danger",
-  muted: "bg-gray-50 text-muted",
+  muted: isLawn() ? "bg-surface-muted text-muted" : "bg-gray-50 text-muted",
 };
 
 const SIZES = {

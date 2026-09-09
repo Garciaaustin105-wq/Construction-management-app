@@ -2,6 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { isLawn } from "@/lib/variant";
 
 // Shared modal. Replaces the 7 hand-rolled `fixed inset-0` patterns with one
 // consistent implementation:
@@ -97,12 +98,16 @@ export function ModalHeader({
         (className ? ` ${className}` : "")
       }
     >
-      <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+      {/* Title + close X pick up the lawn foreground/muted tokens; construction
+          keeps its original gray classes verbatim. */}
+      <h2 className={`text-base font-semibold ${isLawn() ? "text-foreground" : "text-gray-900"}`}>
+        {title}
+      </h2>
       {onClose && (
         <button
           type="button"
           onClick={onClose}
-          className="text-gray-400 p-1 hover:text-gray-600"
+          className={`p-1 ${isLawn() ? "text-muted hover:text-muted-strong" : "text-gray-400 hover:text-gray-600"}`}
           aria-label="Close"
         >
           <X className="w-5 h-5" />

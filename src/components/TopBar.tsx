@@ -7,6 +7,16 @@ import { createClient } from "@/lib/supabase/client";
 import { BRAND } from "@/lib/brand";
 import { useOrgBranding } from "@/lib/useOrgBranding";
 import OrgLogo from "@/components/OrgLogo";
+import { isLawn } from "@/lib/variant";
+
+// Terra Verde chrome (lawn deploy only — construction keeps its original
+// gray-* classes verbatim via the ternaries below; see Card.tsx precedent).
+const TOPBAR_SHELL = isLawn() ? "bg-surface border-line-soft" : "bg-white border-gray-200";
+const TOPBAR_TITLE = isLawn() ? "text-foreground" : "text-gray-900";
+const TOPBAR_SUB = isLawn() ? "text-muted" : "text-gray-500";
+const TOPBAR_SIGNOUT = isLawn()
+  ? "text-muted-strong hover:bg-surface-muted"
+  : "text-gray-600 hover:bg-gray-100";
 
 export default function TopBar({
   title,
@@ -35,7 +45,9 @@ export default function TopBar({
   }
 
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+    <header
+      className={`sticky top-0 z-40 border-b px-4 py-3 flex items-center justify-between ${TOPBAR_SHELL}`}
+    >
       <div className="flex items-center gap-2 min-w-0">
         {backHref ? (
           <Link
@@ -56,16 +68,16 @@ export default function TopBar({
           />
         )}
         <div className="min-w-0">
-          <h1 className="text-lg font-bold text-gray-900 truncate">{title}</h1>
+          <h1 className={`text-lg font-bold truncate ${TOPBAR_TITLE}`}>{title}</h1>
           {subtitle && (
-            <p className="text-xs text-gray-500 truncate">{subtitle}</p>
+            <p className={`text-xs truncate ${TOPBAR_SUB}`}>{subtitle}</p>
           )}
         </div>
       </div>
       {showSignOut && (
         <button
           onClick={handleSignOut}
-          className="text-xs text-gray-600 px-3 py-2 rounded hover:bg-gray-100 flex items-center gap-1"
+          className={`text-xs px-3 py-2 rounded flex items-center gap-1 ${TOPBAR_SIGNOUT}`}
         >
           <LogOut className="w-4 h-4" />
           Sign Out

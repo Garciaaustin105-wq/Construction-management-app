@@ -6,6 +6,20 @@ import type {
   TextareaHTMLAttributes,
   ReactNode,
 } from "react";
+import { isLawn } from "@/lib/variant";
+
+// Input text colors pick up the lawn foreground/muted tokens; the border
+// (border-gray-300) is deliberately left alone — inputs need the darker
+// contrast and neither variant's line tokens are a like-for-like swap.
+// Construction keeps every original class verbatim.
+const INPUT_BASE = `mt-1 block w-full px-3 py-2 border rounded-lg text-base ${
+  isLawn()
+    ? "bg-surface text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand disabled:bg-surface-muted disabled:text-muted"
+    : "bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand disabled:bg-gray-50 disabled:text-gray-400"
+}`;
+const LABEL_TEXT = isLawn()
+  ? "text-sm font-medium text-muted-strong"
+  : "text-sm font-medium text-gray-700";
 
 // Shared form field primitives. Collapses the repeated
 //   <label><span className="text-sm font-medium text-gray-700">Label</span>
@@ -13,9 +27,6 @@ import type {
 //   rounded-lg text-base"/></label>
 // idiom, and adds error/hint slots so mobile forms can show what's required and
 // why it failed inline (the "forms feel cramped/confusing" pain).
-
-const INPUT_BASE =
-  "mt-1 block w-full px-3 py-2 border rounded-lg text-base bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand disabled:bg-gray-50 disabled:text-gray-400";
 
 const ERR_BORDER = "border-red-400";
 const OK_BORDER = "border-gray-300";
@@ -43,7 +54,7 @@ export function FormField({
 }) {
   const root = variant === "inline" ? "block lg:flex lg:items-start lg:gap-3" : "block";
   const labelText =
-    "text-sm font-medium text-gray-700" +
+    LABEL_TEXT +
     (variant === "inline" ? " block lg:w-40 lg:flex-shrink-0 lg:pt-2" : "");
   // Inline wraps the control + its error/hint so they sit in the right column.
   const Inner = variant === "inline" ? "lg:flex-1" : "";
