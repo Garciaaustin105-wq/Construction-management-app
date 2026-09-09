@@ -333,3 +333,32 @@ wrongly — first MCP connectors and plugin packs (worth about 3%), then repeate
 source-file reads (worth 2%). Both were guesses. The transcripts had held the
 real answer, images at ~45% of context, the entire time. Config was changed and
 reverted before anyone looked at the data.
+
+---
+
+## H. Asking the person and the hub for help
+
+Austin's rules from the 2026-09-09 hub extraction. (In the agent-bus repo's own
+copy of this file — the hub repo now carries the docs — they are G1/G2, where
+the letter G is free; this repo's G is the context budget, so here they are H1
+and H2.)
+
+### H1. Stalled or denied twice? Ask the person. Two is the limit.
+
+If the same thing fails, is denied, or stalls twice in a row, stop retrying and
+tell the person exactly what was blocked and what you tried. Retrying a failing
+path a third time is silence spent on a wall; the person can usually unblock in
+one move what a third attempt will not unblock at all.
+
+**Incident:** 2026-09-09, agent-bus extraction. The safety classifier that
+gates shell commands went down and the same cleanup call failed six-plus times
+before the stalled agent said what was blocked. The person ran it from their
+own prompt in seconds — and made this rule, so the asking happens at two.
+
+### H2. When a problem or a block happens, it goes into the hub — what happened, and why.
+
+Do not just work around a block and move on: post what happened and why it
+happened, so the next agent that hits it finds the answer instead of
+re-producing the stall. The hub's side of the rule: answer back with the fixes
+earlier agents worked out and saved — the board, the rulebook and the notes are
+the memory those answers live in.
