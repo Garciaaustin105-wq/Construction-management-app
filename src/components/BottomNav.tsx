@@ -10,6 +10,7 @@ import { useIsDesktop } from "@/lib/useIsDesktop";
 import { buildMobileNav, isPublicRoute, type NavItem } from "@/lib/navItems";
 import { isOfficeLike } from "@/lib/roles";
 import { useRole } from "@/lib/useRole";
+import { isLawn } from "@/lib/variant";
 
 export default function BottomNav() {
   const pathname = usePathname();
@@ -61,7 +62,9 @@ export default function BottomNav() {
 
   return (
     <nav
-      className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 transition-transform duration-200 lg:hidden ${
+      className={`fixed bottom-0 left-0 right-0 ${
+        isLawn() ? "bg-surface border-t border-line" : "bg-white border-t border-gray-200"
+      } z-50 transition-transform duration-200 lg:hidden ${
         hidden ? "translate-y-full" : "translate-y-0"
       }`}
     >
@@ -84,9 +87,17 @@ export default function BottomNav() {
               // parse every prefetched payload.
               prefetch={false}
               className={`flex-1 flex flex-col items-center justify-center py-3 text-xs relative ${
-                active ? "text-brand" : "text-gray-600"
+                active ? "text-brand" : isLawn() ? "text-muted" : "text-gray-600"
               }`}
             >
+              {/* Lawn only: a short bar on the active tab's top edge. Colour
+                  alone is a weak "you are here" on a sunlit phone outdoors. */}
+              {isLawn() && active && (
+                <span
+                  aria-hidden
+                  className="absolute top-0 left-1/2 -translate-x-1/2 h-[3px] w-8 rounded-b bg-brand"
+                />
+              )}
               <Icon
                 className={`w-6 h-6 mb-0.5 ${active ? "stroke-[2.5]" : ""}`}
                 strokeWidth={active ? 2.5 : 2}

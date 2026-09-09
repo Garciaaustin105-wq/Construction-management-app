@@ -7,6 +7,54 @@ import { isLawn } from "@/lib/variant";
 import PageContainer from "@/components/PageContainer";
 import Link from "next/link";
 import { Receipt, FileText, Calendar, ClipboardList, CheckSquare, FileDiff, FileSpreadsheet, Clock, TrendingUp, Bell, Images, Camera, Contact, Briefcase, Tag } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+
+// --- Lawn Office hub building blocks -----------------------------------------
+// The hub was a flat 2-column grid of nine identical white buttons: everything
+// equally loud, so nothing was findable and the one thing a crew lead opens the
+// app to do (clock in) took the same scan as Reports. These give the lawn hub a
+// hierarchy — one hero action, then named groups that each carry a colour.
+// Construction is untouched and keeps the flat grid.
+
+/** Group heading. Quiet by design; the colour lives on the tiles. */
+function HubGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h2 className="text-[11.5px] font-bold uppercase tracking-[0.07em] text-muted mb-2">
+        {label}
+      </h2>
+      <div className="grid grid-cols-2 gap-2">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One hub destination. `accent` is the section's colour pair (chip background +
+ * icon colour) so a tile is identifiable by colour before its label is read.
+ */
+function HubTile({
+  href,
+  label,
+  Icon,
+  accent,
+}: {
+  href: string;
+  label: string;
+  Icon: LucideIcon;
+  accent: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-2.5 bg-surface border border-line-soft rounded-[14px] px-3 py-3.5 font-semibold text-foreground active:bg-surface-muted"
+    >
+      <span className={`w-8 h-8 rounded-[9px] flex items-center justify-center shrink-0 ${accent}`}>
+        <Icon className="w-[18px] h-[18px]" />
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+    </Link>
+  );
+}
 
 export default async function OfficePage() {
   const me = await getMe();
@@ -200,63 +248,61 @@ export default async function OfficePage() {
           )}
         </section>
       )}
-      <div className="grid grid-cols-2 gap-2">
-        {isLawn() ? (
-          <>
-            <Link href="/estimates" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <FileText className="w-5 h-5" />
-              Estimates
-            </Link>
-            {/* Customers lives HERE, not on the Account hub. It is an
-                operational entity, and Account is for your login, your people
-                and your billing. It was previously only reachable from the
-                Account (Manage) hub card — so when that card was removed,
-                mobile lost its only route to Customers entirely: admins get
-                just Home / Office / Account there, and Customers is not a tab. */}
-            <Link href="/admin/customers" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Contact className="w-5 h-5" />
-              Customers
-            </Link>
-            <Link href="/invoices" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Receipt className="w-5 h-5" />
-              Invoices
-            </Link>
-            {showReports && (
-              <Link href="/admin/reports" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-                <FileSpreadsheet className="w-5 h-5" />
-                Reports
-              </Link>
-            )}
-            <Link href="/calendar" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Calendar className="w-5 h-5" />
-              Calendar
-            </Link>
-            {/* Photos (/crew/photo) — lawn has no Field hub (construction
-                reaches it from Field), so the photo capture page lives on
-                the Office hub for mobile. Matches the desktop sidebar, which
-                already gives office/admin a Photos tab. */}
-            <Link href="/crew/photo" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Camera className="w-5 h-5" />
-              Photos
-            </Link>
-            {/* Customers lives on the Manage tab only — it was duplicated
-                here too (Office AND Manage both linking to /admin/customers),
-                which read as "two customer tabs doing the same thing." */}
-            <Link href="/crew/time" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
+      {isLawn() ? (
+        /* Same nine destinations as before, same hrefs, same showReports gate —
+           regrouped and ranked. Clock in/out is promoted out of the grid because
+           it is the highest-frequency action on this screen by a wide margin. */
+        <div className="space-y-5">
+          <Link
+            href="/crew/time"
+            className="flex items-center gap-3 bg-brand-dark text-white rounded-[14px] px-4 py-4 active:opacity-95"
+          >
+            <span className="w-10 h-10 rounded-[11px] bg-white/15 flex items-center justify-center shrink-0">
               <Clock className="w-5 h-5" />
-              Clock in/out
-            </Link>
-            <Link href="/lawn/insights" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <TrendingUp className="w-5 h-5" />
-              Insights
-            </Link>
-            <Link href="/lawn/notifications" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
-              <Bell className="w-5 h-5" />
-              Notifications
-            </Link>
-          </>
-        ) : (
-          <>
+            </span>
+            <span className="min-w-0">
+              <span className="block font-bold leading-tight">Clock in/out</span>
+              <span className="block text-[12px] text-white/70 leading-tight">
+                Start or end your day
+              </span>
+            </span>
+          </Link>
+
+          <HubGroup label="Money">
+            <HubTile href="/estimates" label="Estimates" Icon={FileText} accent="bg-gold-bg text-gold" />
+            <HubTile href="/invoices" label="Invoices" Icon={Receipt} accent="bg-gold-bg text-gold" />
+          </HubGroup>
+
+          {/* Customers lives HERE, not on the Account hub. It is an
+              operational entity, and Account is for your login, your people
+              and your billing. It was previously only reachable from the
+              Account (Manage) hub card — so when that card was removed,
+              mobile lost its only route to Customers entirely: admins get
+              just Home / Office / Account there, and Customers is not a tab. */}
+          <HubGroup label="Customers">
+            <HubTile href="/admin/customers" label="Customers" Icon={Contact} accent="bg-water-bg text-water" />
+            <HubTile href="/lawn/notifications" label="Notifications" Icon={Bell} accent="bg-water-bg text-water" />
+          </HubGroup>
+
+          {/* Photos (/crew/photo) — lawn has no Field hub (construction
+              reaches it from Field), so the photo capture page lives on
+              the Office hub for mobile. Matches the desktop sidebar, which
+              already gives office/admin a Photos tab. */}
+          <HubGroup label="Work">
+            <HubTile href="/calendar" label="Calendar" Icon={Calendar} accent="bg-clay-bg text-clay" />
+            <HubTile href="/crew/photo" label="Photos" Icon={Camera} accent="bg-clay-bg text-clay" />
+          </HubGroup>
+
+          <HubGroup label="Insights">
+            <HubTile href="/lawn/insights" label="Insights" Icon={TrendingUp} accent="bg-brand-bg text-brand-dark" />
+            {/* Unchanged gate: /admin/reports excludes super_admin. */}
+            {showReports && (
+              <HubTile href="/admin/reports" label="Reports" Icon={FileSpreadsheet} accent="bg-report-bg text-report" />
+            )}
+          </HubGroup>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
             <Link href="/admin/customers" className="block bg-white border border-gray-300 text-gray-900 text-center py-3 rounded-lg font-semibold active:bg-gray-50 flex items-center justify-center gap-2">
               <Contact className="w-5 h-5" />
               Customers
@@ -311,9 +357,8 @@ export default async function OfficePage() {
               <Calendar className="w-5 h-5" />
               Calendar
             </Link>
-          </>
-        )}
-      </div>
+        </div>
+      )}
     </PageContainer>
   );
 }

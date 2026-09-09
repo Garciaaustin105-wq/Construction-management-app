@@ -1,5 +1,11 @@
 import type { ReactNode } from "react";
 import StatusBadge, { type BadgeTone } from "./StatusBadge";
+import { isLawn } from "@/lib/variant";
+
+// Record title + field values pick up the lawn foreground token; construction
+// keeps text-gray-900 verbatim. Accent bar tones are left alone (they are
+// deliberate Tailwind tints, not text colors).
+const HL_TITLE = isLawn() ? "text-foreground" : "text-gray-900";
 
 // Pinned record-header panel — the Salesforce "highlights panel" that sits
 // at the top of a detail page: an accent bar, the record title + subtitle, a
@@ -50,7 +56,7 @@ export default function HighlightsHeader({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-gray-900 truncate">{title}</h1>
+              <h1 className={`text-lg font-bold truncate ${HL_TITLE}`}>{title}</h1>
               {status && <StatusBadge tone={status.tone ?? "neutral"} size="md">{status.label}</StatusBadge>}
             </div>
             {subtitle && <p className="text-sm text-muted truncate mt-0.5">{subtitle}</p>}
@@ -65,7 +71,7 @@ export default function HighlightsHeader({
                 <dt className="text-[11px] font-medium text-muted uppercase tracking-wide truncate">
                   {f.label}
                 </dt>
-                <dd className="text-sm font-semibold text-gray-900 truncate mt-0.5">
+                <dd className={`text-sm font-semibold truncate mt-0.5 ${HL_TITLE}`}>
                   {f.value}
                 </dd>
               </div>

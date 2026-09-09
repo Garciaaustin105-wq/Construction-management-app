@@ -16,6 +16,7 @@ import FieldReadinessBanner from "@/components/FieldReadinessBanner";
 import { getMe } from "@/lib/tenant";
 import { todayInZone } from "@/lib/orgDate";
 import { TodayVisitPeekList } from "@/components/VisitPeekModal";
+import { isLawn } from "@/lib/variant";
 import Link from "next/link";
 import {
   Plus,
@@ -119,6 +120,32 @@ type ScheduleRow = {
 // Overline for a Quick Actions group — matches /dashboard's sidebar.
 const GROUP_LABEL =
   "text-[11px] font-semibold text-gray-400 uppercase tracking-wide mt-3 first:mt-0";
+
+// Desktop hero greeting (lawn only — construction renders nothing here, see
+// the isLawn() gate at the call site, so no construction equivalent needed).
+const GREETING_TITLE =
+  "font-display text-[26px] font-semibold text-foreground tracking-[-0.01em] leading-tight";
+const GREETING_SUB = "text-sm text-muted mt-1";
+
+// "Recurring schedules" DESKTOP table styling. This table sits inside a
+// `hidden lg:block` wrapper only — the mobile list a few lines down is a
+// separate element with its own hardcoded classes — so retinting it here
+// cannot change what a phone renders in either variant. Construction keeps
+// the original gray-* Tailwind classes verbatim; lawn switches to the
+// surface/border/text tokens already established in Card.tsx/KpiTile.tsx.
+const TABLE_HEAD_ROW = isLawn() ? "border-b border-line-soft" : "border-b border-gray-200";
+const TABLE_HEAD_CELL = isLawn() ? "text-muted" : "text-gray-400";
+const TABLE_BODY_DIVIDE = isLawn() ? "divide-y divide-line-soft" : "divide-y divide-gray-100";
+const TABLE_ROW_HOVER = isLawn() ? "hover:bg-surface-muted" : "hover:bg-gray-50";
+const TABLE_JOB_LINK = isLawn()
+  ? "font-semibold text-foreground hover:underline"
+  : "font-semibold text-gray-900 hover:underline";
+const TABLE_CUST_SUB = isLawn() ? "text-muted" : "text-gray-500";
+const TABLE_CADENCE = isLawn() ? "text-muted-strong" : "text-gray-700";
+const TABLE_PRICE = isLawn() ? "font-num text-foreground" : "text-gray-900";
+const TABLE_NEXT_DUE = isLawn() ? "font-num text-muted-strong" : "text-gray-700";
+const TABLE_STATUS_ACTIVE = isLawn() ? "bg-success/15 text-success" : "bg-green-100 text-green-700";
+const TABLE_STATUS_PAUSED = isLawn() ? "bg-surface-muted text-muted" : "bg-gray-100 text-gray-500";
 
 export default async function LawnPage() {
   const supabase = await createClient();
@@ -305,6 +332,20 @@ export default async function LawnPage() {
 
   const showHubTools = officeLike || officeOrPm;
 
+  // Desktop hero greeting (lawn only, see render below). Reads data already
+  // fetched by getMe() for this render — no new query. Server-local clock,
+  // same convention as `dateStr` above (SSR, recomputed each navigation).
+  const greetHour = new Date().getHours();
+  const greeting =
+    greetHour < 12 ? "Good morning" : greetHour < 18 ? "Good afternoon" : "Good evening";
+  const firstName = (me.user.user_metadata as { full_name?: string } | undefined)
+    ?.full_name?.split(" ")[0];
+  const greetingDateStr = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
   return (
     <PageContainer
       title="Lawn"
@@ -315,6 +356,23 @@ export default async function LawnPage() {
       <RoleOnboarding role={role} variant="lawn" />
       <ClientPullToRefresh>
         <div className="space-y-6">
+          {/* Desktop hero — Fraunces greeting naming the person and the day.
+              Lawn only, lg and up: the phone keeps its existing compact
+              TopBar ("Lawn" / "Recurring routes & today's visits") and
+              construction is untouched. Purely presentational — no new
+              query, name/org come from getMe(), already fetched above. */}
+          {isLawn() && (
+            <div className="hidden lg:block">
+              <h1 className={GREETING_TITLE}>
+                {greeting}
+                {firstName ? `, ${firstName}` : ""}
+              </h1>
+              <p className={GREETING_SUB}>
+                {greetingDateStr} · {me.orgName}
+              </p>
+            </div>
+          )}
+
           {/* KPI strip — the dispatch numbers that decide what to do next.
               Tone flags the exception (overdue work, unread customer actions);
               a clean board stays visually quiet. */}
@@ -509,12 +567,12 @@ export default async function LawnPage() {
                   <div className="hidden lg:block overflow-x-auto">
                     <table className="w-full text-left">
                       <thead>
-                        <tr className="border-b border-gray-200">
+                        <tr className={TABLE_HEAD_ROW}>
                           {["Job", "Cadence", "Price / visit", "Next due", "Status"].map(
                             (h, i) => (
                               <th
                                 key={h}
-                                className={`py-2 pr-3 text-[10px] font-semibold uppercase tracking-wide text-gray-400 ${
+                                className={`py-2 pr-3 text-[10px] font-semibold uppercase tracking-wide ${TABLE_HEAD_CELL} ${
                                   i === 2 ? "text-right" : ""
                                 }`}
                               >
@@ -524,7 +582,7 @@ export default async function LawnPage() {
                           )}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
+                      <tbody className={TABLE_BODY_DIVIDE}>
                         {scheduleRows.map((s) => {
                           const jobName = s.jobs?.name ?? "—";
                           const custName = s.jobs?.customers?.name ?? null;
@@ -535,41 +593,39 @@ export default async function LawnPage() {
                             price_per_visit: Number(s.price_per_visit) || 0,
                           };
                           return (
-                            <tr key={s.id} className="hover:bg-gray-50">
+                            <tr key={s.id} className={TABLE_ROW_HOVER}>
                               <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)]">
                                 <Link
                                   href={`/lawn/schedules/${s.id}`}
-                                  className="font-semibold text-gray-900 hover:underline"
+                                  className={TABLE_JOB_LINK}
                                 >
                                   {jobName}
                                 </Link>
                                 {custName && (
-                                  <span className="block text-xs text-gray-500 truncate">
+                                  <span className={`block text-xs truncate ${TABLE_CUST_SUB}`}>
                                     {custName}
                                   </span>
                                 )}
                               </td>
-                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-gray-700">
+                              <td className={`py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] ${TABLE_CADENCE}`}>
                                 {summarizeSchedule(sched)}
                               </td>
                               {/* Right-aligned and tabular: a column of prices
                                   is meant to be read down. 0 shows as a dash,
                                   because a schedule with no price recorded is
                                   not a free one. */}
-                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-right tabular-nums text-gray-900">
+                              <td className={`py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] text-right tabular-nums ${TABLE_PRICE}`}>
                                 {sched.price_per_visit > 0
                                   ? formatMoney(sched.price_per_visit)
                                   : "—"}
                               </td>
-                              <td className="py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] tabular-nums text-gray-700">
+                              <td className={`py-[var(--row-py)] pr-3 text-[length:var(--row-fs)] tabular-nums ${TABLE_NEXT_DUE}`}>
                                 {nextDue(s, today) ?? "—"}
                               </td>
                               <td className="py-[var(--row-py)] text-[length:var(--row-fs)]">
                                 <span
                                   className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${
-                                    s.active
-                                      ? "bg-green-100 text-green-700"
-                                      : "bg-gray-100 text-gray-500"
+                                    s.active ? TABLE_STATUS_ACTIVE : TABLE_STATUS_PAUSED
                                   }`}
                                 >
                                   {s.active ? "Active" : "Paused"}

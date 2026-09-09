@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
+import { isLawn } from "@/lib/variant";
 
 // Desktop dense table + mobile card list from one column config — the
 // Salesforce list-view pattern: a real <table> at `lg` (scannable, aligned
@@ -119,7 +120,10 @@ export default function DataTable<T>({
           <thead>
             <tr
               className={`text-xs uppercase tracking-wide text-muted border-b border-line ${
-                framed ? "bg-gray-50" : ""
+                // Framed header band: lawn gets its warm paper tint; construction
+                // keeps gray-50 verbatim (tokens resolve per-variant via
+                // globals.css, but the raw class stays so nothing shifts there).
+                framed ? (isLawn() ? "bg-surface-muted" : "bg-gray-50") : ""
               }`}
             >
               {columns.map((c) => (
@@ -181,7 +185,11 @@ export default function DataTable<T>({
             <div className="flex justify-between items-start gap-2">
               <div className="min-w-0 flex-1">
                 {titleCol && (
-                  <p className="font-semibold text-gray-900 truncate">
+                  <p
+                    className={`font-semibold ${
+                      isLawn() ? "text-foreground" : "text-gray-900"
+                    } truncate`}
+                  >
                     {titleCol.cell(row)}
                   </p>
                 )}
@@ -202,7 +210,7 @@ export default function DataTable<T>({
               <Link
                 key={i}
                 href={href}
-                className={`block ${padFor(row)} active:bg-gray-50`}
+                className={`block ${padFor(row)} ${isLawn() ? "active:bg-surface-muted" : "active:bg-gray-50"}`}
               >
                 {inner}
               </Link>

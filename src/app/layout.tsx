@@ -1,8 +1,10 @@
 import type { CSSProperties } from "react";
 import type { Metadata, Viewport } from "next";
+import { Fraunces, Public_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/Providers";
 import { BRAND } from "@/lib/brand";
+import { isLawn } from "@/lib/variant";
 import { getMe } from "@/lib/tenant";
 import type { Role } from "@/lib/roles";
 import { SpeedInsights } from "@vercel/speed-insights/next";
@@ -18,6 +20,37 @@ const brandVars = {
   "--brand-dark": BRAND.themeColorDark,
   "--brand-bg": BRAND.brandBg,
 } as CSSProperties;
+
+// Typefaces for the lawn (Terra Verde) redesign. Three roles, deliberately:
+// Fraunces carries page/card titles, Public Sans carries UI and body, and IBM
+// Plex Mono carries KPI values and currency so digits align in a column
+// (tabular figures) instead of shimmying as numbers change.
+//
+// `variable:` mode only DEFINES a CSS custom property — it does not apply a
+// font-family to anything. So these are inert until a .variable class is put on
+// an element, which is what makes the variant gate below airtight.
+//
+// Loader calls must be module-scope constants (next/font is a build-time
+// transform, so they cannot sit inside the component or behind an `if`). The
+// gate is therefore on APPLICATION, not declaration: `fontClasses` is the empty
+// string in the construction build, so construction renders no font vars, gets
+// no <link rel=preload>, and keeps its system-stack chrome exactly as-is. It
+// pays for a few unreferenced font files in the build output; that is the price
+// of a static import and it changes nothing a user sees.
+const fraunces = Fraunces({ subsets: ["latin"], display: "swap", variable: "--font-fraunces" });
+const publicSans = Public_Sans({ subsets: ["latin"], display: "swap", variable: "--font-public-sans" });
+// IBM Plex Mono is a static family, so next/font requires explicit weights.
+// 500 for KPI values, 600 for the rare emphasized figure.
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["500", "600"],
+  variable: "--font-plex-mono",
+});
+
+const fontClasses = isLawn()
+  ? `${fraunces.variable} ${publicSans.variable} ${plexMono.variable}`
+  : "";
 
 export const metadata: Metadata = {
   title: BRAND.name,
@@ -66,8 +99,19 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   }
 
   return (
-    <html lang="en" className="h-full antialiased" style={brandVars}>
-      <body className="min-h-full bg-gray-50 text-gray-900">
+    // data-variant is what scopes the lawn palette in globals.css. APP_VARIANT
+    // is a build-time constant, so the construction bundle emits the literal
+    // `undefined` (attribute omitted) and its :root tokens are untouched.
+    <html
+      lang="en"
+      className={`h-full antialiased ${fontClasses}`.trimEnd()}
+      data-variant={isLawn() ? "lawn" : undefined}
+      style={brandVars}
+    >
+      {/* bg-surface-muted / text-foreground resolve to #f9fafb / #111827 in
+          construction — byte-identical to the bg-gray-50 text-gray-900 they
+          replace — and to the warm paper + warm ink under data-variant=lawn. */}
+      <body className="min-h-full bg-surface-muted text-foreground">
         <Providers initialRole={initialRole} initialOrgId={initialOrgId}>
           {children}
         </Providers>
