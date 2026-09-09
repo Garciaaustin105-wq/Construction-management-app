@@ -17,7 +17,22 @@ import {
 } from "@/lib/navItems";
 import { useOrgBranding } from "@/lib/useOrgBranding";
 import { useRole } from "@/lib/useRole";
+import { isLawn } from "@/lib/variant";
 import OrgLogo from "@/components/OrgLogo";
+
+// Lawn only: one colour per nav section, matching the mobile Office hub so the
+// two chromes teach the same vocabulary. Partial on purpose — Catalogues, Team,
+// AI and System are absent and therefore stay grey. The redesign gives colour
+// to the sections an operator moves between all day and withholds it from the
+// ones they configure once, which is what stops the sidebar reading as a
+// rainbow of equally urgent things.
+const SECTION_TINT: Partial<Record<NavSection, string>> = {
+  today: "text-brand",
+  money: "text-gold",
+  customers: "text-water",
+  work: "text-clay",
+  chemical: "text-caution",
+};
 
 // Desktop primary navigation. Persistent fixed-left sidebar, visible only at
 // lg+ (the mobile BottomNav takes over below that). Shares the nav item source
@@ -145,9 +160,14 @@ export default function Sidebar() {
     rows: items.filter((i) => i.section === section.id),
   })).filter((g) => g.rows.length > 0);
 
-  function renderRow({ href, label, Icon, badge }: NavItem) {
+  function renderRow({ href, label, Icon, badge, section }: NavItem) {
     const active = isActive(href);
     const showBadge = badge === "unread" && unread > 0;
+    // Lawn only: an inactive row's icon carries its section's colour, so the
+    // eye can find "the money area" without reading every label. Sections not
+    // in the map (Catalogues, Team, AI, System) stay deliberately colourless —
+    // if everything claims a colour, colour stops meaning anything.
+    const sectionTint = isLawn() && !active && section ? SECTION_TINT[section] ?? "" : "";
     return (
       <Link
         key={href}
@@ -172,13 +192,30 @@ export default function Sidebar() {
         // Little is lost: these are authed, force-dynamic pages, so a
         // prefetched payload is stale by the time it's clicked anyway.
         prefetch={false}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm ${
-          active
-            ? "bg-brand-bg text-brand-dark font-semibold"
-            : "text-gray-700 hover:bg-gray-100"
-        }`}
+        className={
+          isLawn()
+            ? `relative flex items-center gap-3 px-3 py-2 rounded-[9px] text-sm ${
+                active
+                  ? "bg-brand-bg text-brand-dark font-bold"
+                  : "text-muted-strong hover:bg-surface-muted"
+              }`
+            : `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm ${
+                active
+                  ? "bg-brand-bg text-brand-dark font-semibold"
+                  : "text-gray-700 hover:bg-gray-100"
+              }`
+        }
       >
-        <Icon className="w-5 h-5 shrink-0" strokeWidth={active ? 2.5 : 2} />
+        {/* Lawn only: a short brand bar on the active row's leading edge, so
+            "where am I" survives even when the tinted background is washed out
+            by a bright screen outdoors. */}
+        {isLawn() && active && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r bg-brand"
+          />
+        )}
+        <Icon className={`w-5 h-5 shrink-0 ${sectionTint}`} strokeWidth={active ? 2.5 : 2} />
         <span className="truncate">{label}</span>
         {showBadge && (
           <span className="ml-auto bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center">
@@ -190,7 +227,13 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-200 z-30 flex-col">
+    <aside
+      className={
+        isLawn()
+          ? "hidden lg:flex fixed inset-y-0 left-0 w-64 bg-surface border-r border-line z-30 flex-col"
+          : "hidden lg:flex fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-200 z-30 flex-col"
+      }
+    >
       {/* Brand header - sits under the sticky per-page TopBar (z-40 > z-30). */}
       <div className="h-14 flex items-center gap-2 px-4 border-b border-gray-200 shrink-0">
         <OrgLogo
@@ -219,7 +262,11 @@ export default function Sidebar() {
               <button
                 onClick={() => toggleSection(group.id)}
                 aria-expanded={open}
-                className="w-full flex items-center gap-1 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600"
+                className={
+                  isLawn()
+                    ? "w-full flex items-center gap-1 px-3 py-1 text-[10.5px] font-bold uppercase tracking-[0.07em] text-muted hover:text-muted-strong"
+                    : "w-full flex items-center gap-1 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600"
+                }
               >
                 <span className="truncate">{group.label}</span>
                 <ChevronDown
