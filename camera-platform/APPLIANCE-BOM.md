@@ -3,18 +3,52 @@
 For 16 AVYCON 5MP @ 30 fps cameras and dual 8 TB, running Debian + ffmpeg +
 Node + SQLite. Roughly **$800 a store**.
 
-## The build
+## You are not buying an NVR
 
-| Part | Spec | ~Cost |
-|---|---|---|
-| Motherboard + CPU | **Intel N150 mini-ITX NAS board** — 6× SATA, 2× M.2 NVMe, 2–4× Intel i226-V 2.5GbE, DDR5 SODIMM. Sold as "6-bay NAS motherboard" by Topton / CWWK / HKUXZR | $200 |
-| RAM | 16 GB DDR5 SODIMM | $45 |
-| OS drive | 256 GB NVMe — **never** the surveillance drives | $25 |
-| Recording | **2× WD Purple 8 TB** (see below) | $340 |
-| Case + PSU | Mini-ITX NAS case, 4 bays, filtered intake, 120 mm slow fan | $120 |
-| UPS | ~600 VA with USB | $70 |
-| *Optional* | Hailo-8L M.2 (13 TOPS) if detection runs on-box | +$70 |
-| | **Total** | **~$800** |
+There is no NVR to buy. The recorder is the software in this repo; what you order
+is a small server to run it on. Buying an OpenEye, Hikvision or Synology NVR
+would mean paying for their recording software and then not using it.
+
+So the order is a short parts list, and the assembly is about 20 minutes a unit.
+
+## What to order — one store
+
+| # | Item | Notes | ~Cost |
+|---|---|---|---|
+| 1 | **Topton / CWWK / HKUXZR N150 6-bay NAS motherboard**, mini-ITX | Board + CPU in one. 6× SATA, 2× M.2 NVMe, 2–4× Intel i226-V 2.5GbE, 1× DDR5 SODIMM. Sold on Amazon (HKUXZR listing), toptonpc.com and AliExpress. All three are the same reference design | $200 |
+| 2 | 16 GB DDR5 SODIMM, 4800 MHz | One slot, so one stick | $45 |
+| 3 | 256 GB NVMe M.2 2280 | OS only | $25 |
+| 4 | **Jonsbo N2** (5-bay) or **N3** (8-bay) mini-ITX NAS case + SFX PSU | Hot-swap trays, filtered intake. N2 is the right size for two drives with room to grow | $120–150 |
+| 5 | **2× WD Purple 8 TB** | Not desktop drives — see below | $340 |
+| 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
+| | | **Total** | **~$800** |
+
+Optional: **Hailo-8L M.2** (13 TOPS, ~$70) in the second M.2 slot, only when
+detection moves on-box. Nothing in Phase 1–3 needs it.
+
+### The prebuilt alternative, and why not
+
+**Aoostar N150 4-bay NAS barebone**, about $500–590, is the closest thing to a
+ready-made box: same N150, 4 SATA bays, 2× 2.5GbE, add RAM and drives.
+
+Not recommended, for three reasons: it is **$200–300 more** for the same compute;
+it has **one M.2 slot**, so the OS drive and a future Hailo cannot coexist; and
+it is currently **marketplace-only with the vendor's own product page 404ing**,
+which is a poor foundation for a rollout that needs identical spares for years.
+The board route costs less, expands further, and you control the spec.
+
+### Buy one first
+
+Nothing here has been measured against a real camera yet. **Order a single unit**,
+run the bench session — `camctl probe` for the real bitrate, then the recorder
+against a live AVYCON camera — and confirm the numbers before ordering the rest.
+One unit is $800 to de-risk a decision you will repeat many times.
+
+## The build in detail
+
+Measured power on this platform: **9.3 W idle with no drives, 14.3 W with two,
+18.7 W with four.** That is what makes a small UPS give a long runtime, and it is
+why fan noise in a store office is not an issue.
 
 ## Why this shape
 
