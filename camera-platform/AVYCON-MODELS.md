@@ -141,6 +141,57 @@ to come in nearly twice as high as modelled and still hold 30 days. **It does
 mean the first `camctl probe` on a real camera stops being a nice-to-have.**
 Measure before the fleet is configured, not after.
 
+### Chosen: 5MP @ 30 fps — and it is right on the line
+
+On 2× 8 TB the budget is **2,361 kbps per camera** for 30 days. A generic 5MP
+@ 30 fps H.265+ VBR figure is about 2,500 kbps.
+
+| If 5MP@30 measures at | Utilisation | Projected | |
+|---|---|---|---|
+| 1,800 kbps | 76% | 39.4 d | holds |
+| 2,000 kbps | 85% | 35.4 d | holds |
+| 2,200 kbps | 93% | 32.2 d | holds |
+| **2,361 kbps** | **100%** | **30.0 d** | **break-even** |
+| 2,500 kbps — the untuned estimate | 106% | **28.3 d** | **misses by ~2 days** |
+| 2,800 kbps | 119% | 25.3 d | misses |
+
+**Untuned, this misses 30 days by about two days.** Tuned, it clears with room.
+The gap is small enough that the encoder profile decides it, not the hardware.
+
+#### Four settings that close the gap, in order of effect
+
+1. **I-frame interval (GOP).** The one most often left wrong. Many cameras
+   default to a GOP of 1× the frame rate — an I-frame every second. Setting it to
+   **2× the frame rate (60 at 30 fps)** typically takes **15–25%** off the
+   bitrate with no visible loss on a static corridor. On its own this can move
+   2,500 → ~2,000.
+2. **H.265+ / smart codec on.** If it is off, everything above is wrong anyway.
+3. **VBR max cap.** Set the ceiling near 4096 kbps rather than leaving it at
+   8192. VBR spends up to its cap when a scene gets busy; a lower cap bounds the
+   worst hour without touching the quiet ones.
+4. **3D noise reduction on.** Sensor noise is expensive to encode and worst at
+   night under IR — exactly when a storage corridor is least busy and should be
+   cheapest. DNR off is why night bitrate sometimes exceeds day.
+
+#### If tuning does not get there
+
+| Option | Result | Cost |
+|---|---|---|
+| **5MP @ 25 fps** | 31.5 days | imperceptible against 30 fps |
+| 5MP @ 20 fps | 35.4 days | still fluid for people walking |
+| 2× 10 TB instead | 35.4 days at the untuned 2,500 | ~$60–80/store |
+| Accept 28 days | — | free, if nothing requires exactly 30 |
+
+That last row deserves a straight question: **is 30 days a real requirement, or a
+round number?** If no lease, insurer or statute names it, 28 days at 5MP/30fps is
+a perfectly good system and this whole section is moot.
+
+Check any configuration against the ceiling:
+
+```
+camctl budget --cameras 16 --disk-tb 16 --kbps 2000,2500,3000
+```
+
 ### 4MP is the floor — what going above it costs
 
 Days on the recommended 2× 12 TB, 16 identical cameras, H.265+ VBR:

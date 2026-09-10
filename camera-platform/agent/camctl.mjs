@@ -15,6 +15,7 @@ import { probeStream, measureBitrate } from "./media.mjs";
 import { buildRtspUrl, redactRtspUrl, candidatePaths, urlForPath } from "../dist/rtsp.js";
 import { vendorFromMac, normaliseMac } from "../dist/camera.js";
 import { computeRetentionDays, requiredBytesForDays, usableBytesFromRaw, TERABYTE } from "../dist/retention.js";
+import { computePerCameraBudget, checkAgainstBudget, withRingHeadroom } from "../dist/budget.js";
 
 const [, , command, ...args] = process.argv;
 
@@ -202,7 +203,39 @@ async function cmdSize() {
   console.log(`\nEvery figure assumes the bitrate is MEASURED. Run \`camctl probe\` first —\na datasheet number is a setting, not a measurement.`);
 }
 
-const commands = { preflight: cmdPreflight, discover: cmdDiscover, probe: cmdProbe, size: cmdSize };
+async function cmdBudget() {
+  const cameras = Number(flag("cameras", "16"));
+  const days = Number(flag("days", "30"));
+  const rawTb = Number(flag("disk-tb", "16"));
+  const fill = Number(flag("fill", "0.85"));
+
+  const usable = withRingHeadroom(usableBytesFromRaw(rawTb * TERABYTE), fill);
+  const budget = computePerCameraBudget(days, usable, cameras);
+  if (budget.kind !== "ok") { console.error(budget.reason); process.exit(1); }
+
+  console.log(`${cameras} cameras, ${rawTb} TB raw, ${(fill * 100).toFixed(0)}% fill, ${days}-day target`);
+  console.log(`usable ${(usable / TERABYTE).toFixed(1)} TB`);
+  console.log(`\n  BUDGET: ${budget.perCameraKbps.toFixed(0)} kbps per camera  (${(budget.totalKbps / 1000).toFixed(1)} Mbps fleet)\n`);
+
+  const measured = flag("kbps");
+  if (!measured) {
+    console.log("pass --kbps a,b,c to check candidate bitrates against it, or");
+    console.log("--kbps <single> to model every camera at that rate.");
+    return;
+  }
+  const rates = measured.split(",").map(Number);
+  console.log("bitrate      utilisation   projected   verdict");
+  for (const kbps of rates) {
+    const cams = Array.from({ length: cameras }, (_, i) => ({ cameraId: `cam-${i + 1}`, bitrateKbps: kbps }));
+    const r = checkAgainstBudget(cams, budget);
+    if (r.kind !== "ok") { console.log(`${kbps} kbps: refused — ${r.reason}`); continue; }
+    console.log(
+      `${(kbps + " kbps").padStart(10)}   ${(r.utilisation * 100).toFixed(0).padStart(10)}%   ${(r.projectedDays.toFixed(1) + " d").padStart(9)}   ${r.projectedDays >= days ? "holds" : "MISSES"}`,
+    );
+  }
+}
+
+const commands = { preflight: cmdPreflight, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -211,6 +244,7 @@ if (!handler) {
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention
   size [options]                disk sizing table for a store
+  budget [options]              per-camera bitrate ceiling for a retention target
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS
@@ -226,7 +260,12 @@ size options:
   --kbps a,b,c                  bitrates to tabulate (default 2000,3000,4000,6000)
   --disks-tb a,b,c              raw disk sizes (default 16,24,32,48,64)
 
+budget options:
+  --cameras N  --days N  --disk-tb N  --fill 0.85
+  --kbps a,b,c                  check candidate bitrates against the ceiling
+
 example:
+  node agent/camctl.mjs budget --cameras 16 --disk-tb 16 --kbps 2000,2500,3000
   node agent/camctl.mjs size --cameras 16 --kbps 3000,4000,6000
   node agent/camctl.mjs discover 192.168.1.0/24 --raw-dir ./sadp-raw
   node agent/camctl.mjs probe 192.168.1.64 --user admin --pass '...' --cameras 23 --disk-tb 16`);
