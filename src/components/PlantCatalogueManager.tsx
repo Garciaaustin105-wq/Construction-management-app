@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { AREA_COLORS } from "@/lib/estimateAreas";
+import DataTable from "@/components/ui/DataTable";
 import { formatMoney } from "@/lib/money";
 import {
   CATALOGUE_REGION_NOTE,
@@ -689,114 +690,196 @@ export default function PlantCatalogueManager({
           catalog.
         </p>
       ) : (
-        <>
-          {/* Mobile: stacked cards */}
-          <ul className="space-y-2 lg:hidden">
-            {filtered.map((p) => (
-              <li
-                key={p.id}
-                className={`bg-white rounded-lg p-3 shadow-sm ${p.active ? "" : "opacity-60"}`}
-              >
-                <div className="flex items-start gap-2">
-                  <Trees className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      <span
-                        className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full border border-black/10 align-middle"
-                        style={{ backgroundColor: p.color }}
-                      />
-                      {p.name}
-                      {!p.active && (
-                        <span className="ml-2 text-[11px] font-normal text-gray-500">
-                          (inactive)
-                        </span>
-                      )}
-                    </p>
-                    {p.botanical_name && (
-                      <p className="text-xs text-gray-400 italic truncate">
-                        {p.botanical_name}
-                      </p>
+        // Desktop UI pass: the mobile card JSX moved verbatim into mobileCard
+        // (bare — per-row dimming kept via the function form of
+        // mobileCardClassName; the size editor renders inside the card when
+        // expanded) and the desktop table joined the shared DataTable idiom.
+        // The species' size editor is also the lg+ rowExpansion. No rowHref:
+        // rows don't navigate, actions are the affordance. mobileListClassName
+        // pins the pre-migration wrapper class order ("space-y-2 lg:hidden")
+        // so the mobile DOM is byte-identical, not merely equivalent.
+        <DataTable
+          columns={[
+            {
+              key: "name",
+              header: "Plant",
+              cell: (p) => (
+                <span className="font-medium text-gray-900">
+                  <span
+                    className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full border border-black/10 align-middle"
+                    style={{ backgroundColor: p.color }}
+                  />
+                  {p.name}
+                  {p.botanical_name && (
+                    <span className="ml-2 text-xs font-normal text-gray-400 italic">
+                      {p.botanical_name}
+                    </span>
+                  )}
+                  {!p.active && (
+                    <span className="ml-2 text-xs font-normal text-gray-500">
+                      (inactive)
+                    </span>
+                  )}
+                </span>
+              ),
+            },
+            {
+              key: "category",
+              header: "Category",
+              cell: (p) => <span className="text-gray-600 capitalize">{p.category}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "sizes",
+              header: "Sizes",
+              cell: (p) => (
+                <span
+                  className={
+                    p.sizes.length === 0
+                      ? "font-medium text-amber-700"
+                      : "text-gray-600"
+                  }
+                >
+                  {sizeSummary(p)}
+                </span>
+              ),
+            },
+            {
+              key: "notes",
+              header: "Notes",
+              cell: (p) => (
+                <span className="text-gray-500 truncate block max-w-56">
+                  {p.notes ?? ""}
+                </span>
+              ),
+              hideOnMobile: true,
+            },
+            {
+              key: "actions",
+              header: "",
+              align: "right",
+              cell: (p) => (
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => openSizes(p)}
+                    className="text-gray-400 hover:text-gray-700"
+                    aria-label={
+                      expanded === p.id
+                        ? `Hide sizes for ${p.name}`
+                        : `Show sizes for ${p.name}`
+                    }
+                  >
+                    {expanded === p.id ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
                     )}
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
-                      <span className="capitalize">{p.category}</span>
-                      <span
-                        className={
-                          p.sizes.length === 0
-                            ? "font-medium text-amber-700"
-                            : ""
-                        }
-                      >
-                        {sizeSummary(p)}
+                  </button>
+                  <button
+                    onClick={() => toggleActive(p)}
+                    disabled={busyId === p.id}
+                    className="text-xs text-slate-600 hover:underline disabled:opacity-50"
+                  >
+                    {p.active ? "Deactivate" : "Activate"}
+                  </button>
+                  <button
+                    onClick={() => openEdit(p)}
+                    className="text-gray-400 hover:text-gray-700"
+                    aria-label={`Edit ${p.name}`}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => remove(p)}
+                    disabled={busyId === p.id}
+                    className="text-gray-300 hover:text-red-600 disabled:opacity-50"
+                    aria-label={`Delete ${p.name}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ),
+            },
+          ]}
+          rows={filtered}
+          framed
+          rowExpansion={(p) => (expanded === p.id ? sizesBlock(p) : null)}
+          mobileListClassName="space-y-2 lg:hidden"
+          mobileCardBare
+          mobileCardClassName={(p) =>
+            `bg-white rounded-lg p-3 shadow-sm ${p.active ? "" : "opacity-60"}`
+          }
+          mobileCard={(p) => (
+            <>
+              <div className="flex items-start gap-2">
+                <Trees className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">
+                    <span
+                      className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full border border-black/10 align-middle"
+                      style={{ backgroundColor: p.color }}
+                    />
+                    {p.name}
+                    {!p.active && (
+                      <span className="ml-2 text-[11px] font-normal text-gray-500">
+                        (inactive)
                       </span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <button
-                      onClick={() => openSizes(p)}
-                      className="text-gray-400 hover:text-gray-700"
-                      aria-label={
-                        expanded === p.id
-                          ? `Hide sizes for ${p.name}`
-                          : `Show sizes for ${p.name}`
+                    )}
+                  </p>
+                  {p.botanical_name && (
+                    <p className="text-xs text-gray-400 italic truncate">
+                      {p.botanical_name}
+                    </p>
+                  )}
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                    <span className="capitalize">{p.category}</span>
+                    <span
+                      className={
+                        p.sizes.length === 0
+                          ? "font-medium text-amber-700"
+                          : ""
                       }
                     >
-                      {expanded === p.id ? (
-                        <ChevronUp className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => openEdit(p)}
-                      className="text-gray-400 hover:text-gray-700"
-                      aria-label={`Edit ${p.name}`}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => toggleActive(p)}
-                      disabled={busyId === p.id}
-                      className="text-[11px] text-slate-600 hover:underline disabled:opacity-50"
-                    >
-                      {p.active ? "Deactivate" : "Activate"}
-                    </button>
+                      {sizeSummary(p)}
+                    </span>
                   </div>
                 </div>
-                {expanded === p.id && sizesBlock(p)}
-              </li>
-            ))}
-          </ul>
-
-          {/* Desktop: table */}
-          <div className="hidden lg:block bg-white rounded-lg shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left">
-                <tr className="text-xs uppercase tracking-wide text-gray-500">
-                  <th className="px-3 py-2 font-medium">Plant</th>
-                  <th className="px-3 py-2 font-medium">Category</th>
-                  <th className="px-3 py-2 font-medium">Sizes</th>
-                  <th className="px-3 py-2 font-medium">Notes</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filtered.map((p) => (
-                  <FragmentRow
-                    key={p.id}
-                    p={p}
-                    expanded={expanded === p.id}
-                    onToggle={() => openSizes(p)}
-                    onEdit={() => openEdit(p)}
-                    onToggleActive={() => toggleActive(p)}
-                    onDelete={() => remove(p)}
-                    busy={busyId === p.id}
-                    sizesBlock={expanded === p.id ? sizesBlock(p) : null}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <button
+                    onClick={() => openSizes(p)}
+                    className="text-gray-400 hover:text-gray-700"
+                    aria-label={
+                      expanded === p.id
+                        ? `Hide sizes for ${p.name}`
+                        : `Show sizes for ${p.name}`
+                    }
+                  >
+                    {expanded === p.id ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => openEdit(p)}
+                    className="text-gray-400 hover:text-gray-700"
+                    aria-label={`Edit ${p.name}`}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => toggleActive(p)}
+                    disabled={busyId === p.id}
+                    className="text-[11px] text-slate-600 hover:underline disabled:opacity-50"
+                  >
+                    {p.active ? "Deactivate" : "Activate"}
+                  </button>
+                </div>
+              </div>
+              {expanded === p.id && sizesBlock(p)}
+            </>
+          )}
+        />
       )}
 
       {/* Add / edit drawer */}
@@ -926,106 +1009,3 @@ export default function PlantCatalogueManager({
   );
 }
 
-// One species = two <tr>s when expanded (the species row + a colSpan cell
-// carrying the size editor). A component rather than inline JSX because
-// <tr> fragments can't live in a plain map without a key on the fragment.
-function FragmentRow({
-  p,
-  expanded,
-  onToggle,
-  onEdit,
-  onToggleActive,
-  onDelete,
-  busy,
-  sizesBlock,
-}: {
-  p: PlantWithSizes;
-  expanded: boolean;
-  onToggle: () => void;
-  onEdit: () => void;
-  onToggleActive: () => void;
-  onDelete: () => void;
-  busy: boolean;
-  sizesBlock: React.ReactNode;
-}) {
-  return (
-    <>
-      <tr className={p.active ? "" : "opacity-55"}>
-        <td className="px-3 py-2 font-medium text-gray-900">
-          <span
-            className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full border border-black/10 align-middle"
-            style={{ backgroundColor: p.color }}
-          />
-          {p.name}
-          {p.botanical_name && (
-            <span className="ml-2 text-xs font-normal text-gray-400 italic">
-              {p.botanical_name}
-            </span>
-          )}
-          {!p.active && (
-            <span className="ml-2 text-xs font-normal text-gray-500">
-              (inactive)
-            </span>
-          )}
-        </td>
-        <td className="px-3 py-2 text-gray-600 capitalize">{p.category}</td>
-        <td
-          className={`px-3 py-2 text-gray-600 ${
-            p.sizes.length === 0 ? "font-medium text-amber-700" : ""
-          }`}
-        >
-          {sizeSummary(p)}
-        </td>
-        <td className="px-3 py-2 text-gray-500 max-w-[220px] truncate">
-          {p.notes ?? ""}
-        </td>
-        <td className="px-3 py-2">
-          <div className="flex items-center justify-end gap-3">
-            <button
-              onClick={onToggle}
-              className="text-gray-400 hover:text-gray-700"
-              aria-label={
-                expanded ? `Hide sizes for ${p.name}` : `Show sizes for ${p.name}`
-              }
-            >
-              {expanded ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </button>
-            <button
-              onClick={onToggleActive}
-              disabled={busy}
-              className="text-xs text-slate-600 hover:underline disabled:opacity-50"
-            >
-              {p.active ? "Deactivate" : "Activate"}
-            </button>
-            <button
-              onClick={onEdit}
-              className="text-gray-400 hover:text-gray-700"
-              aria-label={`Edit ${p.name}`}
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
-            <button
-              onClick={onDelete}
-              disabled={busy}
-              className="text-gray-300 hover:text-red-600 disabled:opacity-50"
-              aria-label={`Delete ${p.name}`}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        </td>
-      </tr>
-      {expanded && (
-        <tr>
-          <td colSpan={5} className="bg-gray-50 px-3 pb-3">
-            {sizesBlock}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
