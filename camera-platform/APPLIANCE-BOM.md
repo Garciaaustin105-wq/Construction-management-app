@@ -26,6 +26,63 @@ So the order is a short parts list, and the assembly is about 20 minutes a unit.
 Optional: **Hailo-8L M.2** (13 TOPS, ~$70) in the second M.2 slot, only when
 detection moves on-box. Nothing in Phase 1–3 needs it.
 
+### Best bang for the buck
+
+Three tiers, cheapest first.
+
+#### Tier 1 — free, and worth more than any component swap
+
+**Tune the encoder before you spend anything.** Setting the I-frame interval to
+2× the frame rate takes 15–25% off the bitrate with no visible loss on a static
+corridor. On the same dual 8 TB that is roughly **28 days becoming 34**.
+
+To buy those six days with hardware you would spend $150+ on larger drives. The
+setting is free and takes a minute per camera. Do this first, every time.
+
+#### Tier 2 — real savings, no capability lost
+
+| Swap | From | To | Saves |
+|---|---|---|---|
+| Case | Jonsbo N2 | generic mini-ITX NAS case + SFX PSU | **$60** |
+| Drives | 2× WD Purple 8 TB | **2× Seagate SkyHawk 8 TB** | **$60** |
+| Board | N150 | N100, same 6-bay board | $30 |
+| OS drive | 256 GB NVMe | 128 GB | $7 |
+| UPS | 600 VA | 350 VA (draw is only 14 W) | $20 |
+| | | **Value build total** | **~$633** |
+
+**SkyHawk is the standout.** It is rated 180 TB/year against our 79 — 44%
+utilisation, comfortable headroom. WD Purple's 360 TB/year is 4.5× our load;
+that is headroom we will never use, bought at $30 a drive. Purple stays the
+recommendation only if you want the extra margin for its own sake.
+
+Hot-swap trays are the only thing lost with the cheaper case, and drive swaps are
+a site visit regardless.
+
+#### Tier 3 — recertified enterprise drives, with eyes open
+
+Manufacturer-recertified **Seagate Exos 8 TB** runs well under new surveillance
+drives and carries a 550 TB/year rating with a typical 2-year warranty. Tempting,
+and genuinely used this way — but they are enterprise drives, not surveillance
+drives:
+
+- **No ATA streaming command support.** Surveillance firmware prefers dropping a
+  frame to stalling on a retry; enterprise firmware retries. In an NVR that shows
+  up as occasional hiccups rather than data loss, but it is a real difference.
+- **7200 rpm: hotter, louder, ~2× the power.** In a dusty, unconditioned store
+  office, heat is what kills drives.
+- **Shorter warranty**, and an RMA is a site visit.
+
+Worth it if you are price-driven and the stores are climate-controlled. I would
+not, at this scale — see the next paragraph.
+
+#### The number that should govern all of this
+
+**One truck roll is ~$150.** The entire Tier 2 saving is $167 — about one avoided
+site visit. So value engineering here should never touch anything that affects
+reliability: **cut the case, not the drives.** A desktop drive saves $120 a store
+and runs at 143% of its rating; it fails inside 6–18 months and the callout costs
+more than the saving, twice over.
+
 ### The prebuilt alternative, and why not
 
 **Aoostar N150 4-bay NAS barebone**, about $500–590, is the closest thing to a
