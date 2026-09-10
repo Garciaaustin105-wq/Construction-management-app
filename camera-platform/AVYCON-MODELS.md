@@ -102,6 +102,46 @@ a full 4 Mbps.
 gives 24 days and misses the promise. **The whole gap is about $120 a store** —
 cheap insurance against a bitrate nobody has measured yet.
 
+### 4MP is the floor — what going above it costs
+
+Days on the recommended 2× 12 TB, 16 identical cameras, H.265+ VBR:
+
+| Config | Avg | GB/day | 30-day disk | Days on 2× 12 TB |
+|---|---|---|---|---|
+| **4MP 2688×1520 @ 15 fps** | **1.3 Mbps** | 225 | 6.7 TB | **82 days** |
+| 4MP @ 20 fps | 1.6 Mbps | 276 | 8.3 TB | 66 days |
+| 4MP @ 30 fps | 2.0 Mbps | 346 | 10.4 TB | 53 days |
+| 5MP 2592×1944 @ 15 fps | 1.6 Mbps | 276 | 8.3 TB | 66 days |
+| 5MP @ 30 fps | 2.5 Mbps | 432 | 13.0 TB | 43 days |
+| 8MP 3840×2160 @ 15 fps | 2.6 Mbps | 449 | 13.5 TB | 41 days |
+| 8MP @ 30 fps | 4.0 Mbps | 691 | 20.7 TB | 27 days |
+
+**8MP roughly doubles the disk against 4MP at the same frame rate**, and it is
+the only row that misses 30 days on 2× 12 TB.
+
+### Frame rate is a free lever worth as much as resolution
+
+Look down the table rather than across it. **4MP at 15 fps and 8MP at 30 fps
+differ by three times on disk** — but the resolution decides whether you can
+identify someone, and the frame rate mostly does not.
+
+Storage corridors are people walking. 15 fps is ample to identify a person, read
+a face, and follow a route. 30 fps buys smoother playback of motion nobody is
+analysing frame by frame. Dropping 30 → 15 fps takes roughly a third off the
+bitrate (not half — I-frame overhead does not scale with frame rate), for no loss
+in the thing the footage is actually for.
+
+So **4MP at 15 fps meets "at least 4MP quality" and gives 82 days on 2× 12 TB.**
+That is the configuration to start from: it satisfies the quality floor, leaves
+the largest margin for the bitrate estimate being wrong, and leaves headroom to
+raise frame rate later on the cameras that turn out to need it — the gate above
+all, where a vehicle crossing the frame is the one genuinely fast subject on the
+site.
+
+Do not confuse the two axes. "4MP quality" is a statement about pixels. It does
+not imply 30 fps, and paying for 30 fps everywhere is how a 12 TB appliance
+quietly becomes a 20 TB one.
+
 ### One SKU is worth more than the storage maths
 
 All-identical cameras buy things that never show up in a capacity table:
