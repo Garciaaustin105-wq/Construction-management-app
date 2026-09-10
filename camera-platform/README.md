@@ -21,6 +21,14 @@ contracts/     pure TypeScript, compiled standalone by tsconfig.json
   store.ts     what the recorder believes is on its disk
   eviction.ts  the ring buffer — what to delete when the disk fills
   recovery.ts  crash reconciliation: the index versus an actual directory scan
+  budget.ts    per-camera bitrate ceiling for a retention target
+  net.ts       CIDR arithmetic for subnet sweeps
+  ffprobe.ts   interpreting ffprobe output into measured stream facts
+agent/         the I/O the contracts deliberately lack — plain .mjs, no deps
+  camctl.mjs   field tool: preflight, discover, probe, size, budget
+  segindex.mjs the segment index, on node:sqlite (built in, no dependency)
+  segstore.mjs the store on disk: scan, seal, evict, recover, quarantine
+  recorder.mjs per-camera ffmpeg supervision
 harness/       standalone runners, plain node, no test framework
 dist/          emitted; gitignored
 ```
@@ -30,7 +38,7 @@ dist/          emitted; gitignored
 ```bash
 cd camera-platform
 npx tsc -p tsconfig.json     # compiles standalone — `"types": []` proves purity
-node harness/run-all.mjs     # 69 checks
+node harness/run-all.mjs     # 125 checks
 ```
 
 `tsconfig.json` sets `"types": []` deliberately: if a contract ever reaches for
@@ -74,14 +82,38 @@ for a human, not a licence to delete the evidence. `planRecovery` adopts orphan
 files instead of deleting them, and quarantines anything it cannot parse, because
 *"I do not understand this"* is not *"this is rubbish"*.
 
-## A note on the harness
+## Two things the recorder gets right
 
-One check failed on first run — and the bug was in the test helper, not the
-contract. `opts.bitrateKbps ?? 2000` coalesces an explicit `null` back to the
-default, so the case asserting "refuses to invent an end time without a measured
-bitrate" was quietly testing the opposite. It is the same blank-is-not-a-zero
-mistake these contracts exist to prevent, committed in the scaffolding built to
-prove they prevent it. The helper now keys on presence rather than nullishness.
+**Fragmented mp4.** ffmpeg writes with `+frag_keyframe+empty_moov`. A plain MP4
+keeps its index at the *end* of the file, so one truncated by a power cut is
+unplayable in its entirety. A fragmented one plays up to the last complete
+fragment. That flag is the difference between losing the last minute and losing
+the last minute plus everything before it in that segment.
+
+**`.inprogress/` is a directory, not a flag.** The segment being written lives in
+`<cameraId>/.inprogress/`, and is moved to `<cameraId>/<epochMs>.mp4` only once
+complete. After a crash the index may itself be stale, and a partial identifiable
+only by consulting the index is a partial you can lose. Here the filesystem says
+it structurally, whatever the index believes.
+
+## Two notes on the harness
+
+**A default that ate a null.** `opts.bitrateKbps ?? 2000` coalesces an explicit
+`null` back to the default, so the case asserting "refuses to invent an end time
+without a measured bitrate" was quietly testing the opposite. The same
+blank-is-not-a-zero mistake these contracts exist to prevent, committed in the
+scaffolding built to prove they prevent it. The helper now keys on presence
+rather than nullishness.
+
+**A helper that did not await.** `check()` called `fn()` and caught
+synchronously, so an async check resolved to a pending promise, printed `ok`
+before its assertions ran, and surfaced rejections later out of order — every
+async check in a suite passing vacuously. Fixed, and fixing it immediately
+exposed a real wrong assertion in the recorder suite. `mustAwait()` exists so
+the bug cannot come back silently.
+
+The lesson both share: **a green suite is evidence only if the harness itself is
+under suspicion too.**
 
 ## Conventions
 

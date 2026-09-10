@@ -1,15 +1,47 @@
 let passed = 0;
 const failures = [];
 
+/**
+ * Run one check. Returns a promise, so an async check MUST be awaited.
+ *
+ * This originally called fn() and caught synchronously, which meant an async
+ * check resolved to a pending promise, reported "ok" before its assertions ran,
+ * and surfaced any rejection later as an unhandled error — with the checks
+ * themselves interleaving out of order. Every async check in a suite was
+ * passing vacuously. Hence `mustAwait` below.
+ */
 export function check(name, fn) {
-  try {
-    fn();
+  const succeed = () => {
     passed++;
     console.log(`  ok   ${name}`);
-  } catch (err) {
+  };
+  const fail = (err) => {
     failures.push({ name, err });
     console.log(`  FAIL ${name}\n       ${err.message}`);
+  };
+  try {
+    const result = fn();
+    if (result && typeof result.then === "function") {
+      return result.then(succeed, fail);
+    }
+    succeed();
+    return Promise.resolve();
+  } catch (err) {
+    fail(err);
+    return Promise.resolve();
   }
+}
+
+/**
+ * Guard against the bug above coming back: fails loudly if an async check was
+ * called without await, rather than silently passing.
+ */
+export function mustAwait(name, fn) {
+  const result = check(name, fn);
+  if (!result || typeof result.then !== "function") {
+    throw new Error(`check("${name}") did not return a promise — the helper is broken`);
+  }
+  return result;
 }
 
 export function eq(actual, expected, what = "value") {
