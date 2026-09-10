@@ -3,3 +3,6 @@ export * from "./segment.js";
 export * from "./retention.js";
 export * from "./camera.js";
 export * from "./rtsp.js";
+export * from "./store.js";
+export * from "./eviction.js";
+export * from "./recovery.js";

@@ -18,6 +18,9 @@ contracts/     pure TypeScript, compiled standalone by tsconfig.json
   retention.ts how many days fit on a disk, or a refusal
   camera.ts    camera identity (MAC + serial, never IP) and discovery records
   rtsp.ts      per-vendor RTSP URL templating and credential redaction
+  store.ts     what the recorder believes is on its disk
+  eviction.ts  the ring buffer — what to delete when the disk fills
+  recovery.ts  crash reconciliation: the index versus an actual directory scan
 harness/       standalone runners, plain node, no test framework
 dist/          emitted; gitignored
 ```
@@ -27,7 +30,7 @@ dist/          emitted; gitignored
 ```bash
 cd camera-platform
 npx tsc -p tsconfig.json     # compiles standalone — `"types": []` proves purity
-node harness/run-all.mjs     # 48 checks
+node harness/run-all.mjs     # 69 checks
 ```
 
 `tsconfig.json` sets `"types": []` deliberately: if a contract ever reaches for
@@ -60,7 +63,25 @@ happens constantly and must never raise an alert. Conflicting serials return
 
 **Refuse rather than guess.** An unknown camera vendor returns
 `{ kind: "unsupported" }` with a message, not a plausible RTSP path that fails at
-3am. Every refusal names what was missing.
+3am. A segment sealed after a crash reports `estimatedEndUtc: null` when the
+bitrate was never measured, rather than inventing a timestamp. Every refusal
+names what was missing.
+
+**Destroying footage is the one thing that must never be casual.** `planEviction`
+returns `insufficient` rather than reaching into a segment under evidence hold or
+one whose cloud copy is unconfirmed — a disk full of held evidence is a problem
+for a human, not a licence to delete the evidence. `planRecovery` adopts orphan
+files instead of deleting them, and quarantines anything it cannot parse, because
+*"I do not understand this"* is not *"this is rubbish"*.
+
+## A note on the harness
+
+One check failed on first run — and the bug was in the test helper, not the
+contract. `opts.bitrateKbps ?? 2000` coalesces an explicit `null` back to the
+default, so the case asserting "refuses to invent an end time without a measured
+bitrate" was quietly testing the opposite. It is the same blank-is-not-a-zero
+mistake these contracts exist to prevent, committed in the scaffolding built to
+prove they prevent it. The helper now keys on presence rather than nullishness.
 
 ## Conventions
 
