@@ -148,10 +148,13 @@ test per model turns the whole fleet's onboarding into a known quantity.
 |---|---|---|---|---|
 | *(fill in from `--try-all`)* | | | | |
 
-**Still to confirm:** whether the models chosen support **H.265+ / smart codec**.
-Per the table above that setting is worth 2x on storage — it is the difference
-between 2x 8 TB and 2x 16 TB per appliance, so it belongs in the purchase
-decision rather than being discovered afterwards.
+**H.265+ is supported across the AVYCON range** — confirmed from distributor
+listings. That closes the smart-codec question and puts the cheap end of the disk
+table in reach. What is still open is the *default rate control* (CBR or VBR),
+which is worth 2x on its own.
+
+Model-by-model selection is in [`AVYCON-MODELS.md`](AVYCON-MODELS.md), including
+the model-number scheme and a table to fill in from the bench.
 
 ## Why #2 needs the raw captures
 
