@@ -2,11 +2,85 @@
 
 > **Status:** plan, not a spec. Nothing has been built. Written 2026-09-10.
 >
-> **v2 — retargeted.** v1 aimed this at construction sites with crew/job linkage
-> and AI as a headline feature. The human corrected both: **the customers are
-> self-storage facilities**, and AI is not a priority. Crew tracking, job linkage,
-> PPE detection and the Terra Vista integration are **cut entirely**. The
-> economics in §2 survived the pivot unchanged; almost nothing else did.
+> **v3 — the build is now conditional.** v1 targeted construction sites; v2
+> retargeted to self-storage. v3 responds to one hard number from the human: a
+> working camera installer pays **$3.25 per camera per month** in dealer license
+> cost. That is the price of *not* building this, and §0 shows it makes the
+> platform unprofitable to build until roughly 50–75 facilities.
+>
+> **Recommendation: become a dealer now. Build this when §0's trigger fires.**
+> The build plan below is kept intact and current so it is ready when that
+> happens — it is not abandoned, it is scheduled.
+
+---
+
+## 0. Read this first — should you build this at all?
+
+A friend who installs cameras pays **$3.25/camera/month** for a dealer license.
+Dealer terms are never public, so that is better evidence than anything findable
+online — and it is the number the whole business case turns on.
+
+**Building your own platform saves you the license fee and nothing else.**
+
+| | Per camera / month |
+|---|---|
+| Dealer license cost avoided | $3.25 |
+| AWS cost of goods incurred instead (§11) | −$1.38 |
+| **Net saving from owning the platform** | **$1.87** |
+
+Now size that against a real footprint, at 40 cameras per facility:
+
+| Facilities | Cameras | Annual saving from building |
+|---|---|---|
+| 5 | 200 | $4,488 |
+| 10 | 400 | $8,976 |
+| 20 | 800 | $17,952 |
+| **50** | 2,000 | **$44,880** |
+| 100 | 4,000 | $89,760 |
+
+Against that: 6–9 months to v1 (§12), and then **the platform never stops
+costing.** On-call, security patching, camera-firmware regressions, OS updates
+across a fleet, and someone reachable at 2am when a facility is being broken
+into. Call that $30–60k/year of somebody's time even part-time.
+
+**So the platform runs at a loss until ~50 facilities and is only clearly
+worth it past ~75–100.** At 10 or 20 facilities you would spend most of a year
+building something that saves less than $18,000 annually and adds a permanent
+operating burden. That is not a close call.
+
+### 0.1 The counter-argument, stated fairly
+
+Opex saving was never the real reason to own a platform. Three things are:
+
+1. **Enterprise value.** A dealer's book and a vertical SaaS sell on different
+   multiples — recurring monitoring revenue is valued on RMR multiples, and
+   platform ARR usually more richly still. If you reach 50 facilities, what you
+   own matters more than what you earned along the way.
+2. **Vendor risk.** Dealer terms change, prices rise, and nothing stops your
+   vendor going direct to your customer. Today that is a real dependency.
+3. **You keep the retail spread either way.** Reselling at $8 on a $3.25 cost is
+   $4.75/camera/month of margin *with no engineering at all.* Building does not
+   add that margin — it only converts $3.25 of cost into $1.38.
+
+Points 1 and 2 are genuine and they are why this document still exists. They are
+strategic and long-dated; they do not pay for eight months of engineering at 20
+facilities.
+
+### 0.2 The trigger
+
+Start building — or seriously re-scope — when **any** of these is true:
+
+- You pass **~50 facilities** (≈2,000 cameras) under contract or in reach.
+- Your vendor raises dealer pricing materially or changes terms against you.
+- You hit a capability the platform genuinely cannot do and customers will pay
+  for — most likely deep access-control correlation (§8) on a gate system your
+  vendor does not integrate.
+- You are raising money or preparing to sell, and platform ownership changes the
+  valuation more than the engineering costs.
+
+Until then: **§3 path A.** Everything from §4 onward is the plan for the day the
+trigger fires, and Phase 0 (§12) is designed to be run on installs you are doing
+anyway, so the information keeps accruing at no extra cost.
 
 ---
 
@@ -56,33 +130,38 @@ tune the GOP before you optimise a single line of cloud code.**
 
 ---
 
-## 3. The honest strategic advice, before the build plan
+## 3. The two businesses
 
-You are not primarily short of technology. You are short of nothing at all on the
-hard part — **you already have the customers**, which is the thing that kills
-almost every entrant in this category.
+You are not short of technology. You are short of nothing at all on the hard part
+— **you already have the customers**, which is what kills almost every entrant in
+this category.
 
-That creates two genuinely different businesses:
-
-| | **A — Be the integrator** | **B — Build the platform** |
+| | **A — Be the dealer/integrator** | **B — Build the platform** |
 |---|---|---|
-| What you do | Resell OpenEye / Eagle Eye / Rhombus, install it, service it | Everything in §5–§9 |
-| Time to first revenue | **Weeks** | 6–12 months |
-| Engineering | None | A team |
-| One-time margin | 30–40% on a $10–24k install | Same |
-| Recurring | 20–40% share of ~$300/site/mo | **~90%** of it |
-| Biggest risk | You never own the recurring revenue | You spend a year and learn storage operators wanted something else |
+| What you do | Buy licenses at $3.25, install, service, resell | Everything in §4–§12 |
+| Time to first revenue | **Weeks** | 6–9 months |
+| Engineering | None | A team, then forever |
+| Install margin | 30–40% of $10–24k = **$3,000–9,600/site** | Identical |
+| Recurring margin | $4.75/cam at $8 retail = **$190/site/mo** | $6.62/cam = $265/site/mo |
+| **Delta** | — | **+$75/site/month** |
+| Biggest risk | Vendor changes terms or goes direct | You spend a year to save $75/site/month |
 
-**Recommendation: do A now, and let it fund and specify B.** Not as a hedge — as
-the cheapest possible way to buy the information B needs. Ten installs teaches you
-what a storage operator actually calls support about, what the install labour
-really costs, which cameras fail in a Florida summer, and whether the recurring
-line is worth owning. Every one of those sites is a future migration target for
-your own platform. And the money arrives while you learn.
+That bottom row is §0 restated: **the entire economic gain from building is $75
+per facility per month.** Twenty facilities is $1,500/month — less than the cost
+of maintaining what you built.
 
-If you want to start building B in parallel anyway, the rest of this document is
-that plan. **Phase 0 in §10 is designed to be run on your first A install**, so
-the two paths share their first month of work rather than competing.
+**Recommendation: run A. Revisit B at §0.2's trigger.**
+
+And notice what A already gives you without a line of code: at 20 facilities,
+**$3,800/month of recurring margin plus $60,000–190,000 of install revenue.**
+The install is the business; the recurring is an annuity that compounds and that
+carries real value if you ever sell. Neither requires you to own a platform.
+
+Ten installs also buy the information B needs — what storage operators actually
+call support about, what install labour really costs, which cameras survive a
+Florida summer, which gate systems your customers actually run. **Phase 0 (§12)
+is written to be run on installs you are doing anyway**, so the two paths share
+their first month rather than competing.
 
 ---
 
@@ -357,32 +436,44 @@ keyframes to cloud (~15 GB/camera/month), us-east-1.
 WebRTC signalling/TURN $0.15 · CloudFront egress $0.43 · compute share $0.40 →
 **~$1.38 AWS cost of goods.** Per 40-camera site: **~$55/month.**
 
-**Per-camera pricing breaks down in this vertical**, and it is worth seeing why:
+**The three prices that matter**, per camera per month:
 
-| Price/channel | 40-cam site | 60-cam site | Plausible? |
+| | Amount | Source |
+|---|---|---|
+| Dealer license cost | **$3.25** | A working installer's actual invoice |
+| Your AWS COGS if you build instead | **$1.38** | §11 above |
+| Retail you can charge | **$8–15** | Category runs $5–20 for cloud retention, $15–40 for premium cloud VMS |
+
+Per 40-camera facility:
+
+| Path | Cost/mo | Revenue at $8/cam | **Gross/mo** |
 |---|---|---|---|
-| $5 | $200/mo | $300/mo | **Yes — the market rate** |
-| $10 | $400/mo | $600/mo | Stretching |
-| $25 | $1,000/mo | $1,500/mo | No |
-| $99 (Spot AI) | $3,960/mo | $5,940/mo | Not in this vertical |
+| **A — resell** | $130 license | $320 | **$190** |
+| **B — build** | $55 AWS | $320 | **$265** |
 
-v1 concluded "don't compete at $5". **That was reasoned on 8-camera sites and is
-wrong here.** At 40–70 cameras, $5/channel *is* the right number — it lands at
-$200–300/month, which is a real facility security budget. OpenEye's entry price
-exists precisely because high-channel-count verticals like this one set it.
+**The difference is $75/site/month, and that is the whole prize for building.**
 
-At $5 × 40 = $200/month against $55 COGS, that is **$145/site/month gross**. Twenty
-sites is $2,900/month. That is a genuine business but it is not the near-term money:
+Note also that per-camera pricing has a ceiling here that it does not have
+elsewhere: at 40–70 cameras, Spot AI's $99/camera would be $4,000–6,000/month for
+one facility. Nobody in self-storage pays that. High channel counts are exactly
+why entry pricing in this vertical sits where it does — and why $8–15 retail on a
+$3.25 cost is a comfortable, defensible place to stand.
+
+The recurring is real but it is not the near-term money:
 
 **A 40–60 camera install at $250–400/camera fitted is $10,000–24,000, at 30–40%
 margin — $3,000–9,600 per site, once.** One install is worth two to five years of
 that site's recurring revenue. The install pays now; the recurring compounds.
 Which is §3's argument stated in dollars.
 
-**The number that actually decides profitability is the truck roll.** At $145/site
-gross, one $150 site visit costs a month. Remote diagnosis is therefore a Phase 2
-feature, not a Phase 6 one — every fault you can resolve without driving is a
-month of that site's margin.
+**The number that actually decides profitability is the truck roll.** At
+$190/site/month gross, one $150 site visit costs most of a month. That is true on
+*both* paths, which is worth sitting with: the operational discipline that makes
+this business work — remote diagnosis, good camera selection, clean installs — has
+nothing to do with who owns the software. Build it into how you install, now.
+
+If you do eventually build (§0.2), that is why remote diagnosis is a Phase 2
+feature and not a Phase 6 one.
 
 ---
 
@@ -435,8 +526,10 @@ Cross-site console, talk-down speakers, monitoring-centre handoff.
 
 ## 13. Open decisions
 
-1. **Path A, path B, or both?** (§3.) The one that matters. Everything else waits
-   on it.
+1. **How many facilities can you actually reach?** (§0.) This is now the only
+   question that decides whether B ever happens. Under ~50, run A. If your
+   customer base plus your friend's install pipeline plausibly reaches 50+, the
+   build case reopens and §0.2 tells you when.
 2. **Do you sell hardware, or spec it?** Selling means inventory and RMAs;
    specifying means a lighter company and a worse install experience.
 3. **Which access-control vendor first?** PTI is the most deployed. Storable/Nokē
