@@ -2,13 +2,21 @@
 
 > **Status:** plan, not a spec. Nothing built. Last revised 2026-09-10.
 >
-> **v5 — internal only.** Earlier drafts assumed this was a product to sell:
-> first to construction sites, then to self-storage operators, with tenants,
-> billing and a dealer motion. **It is none of those.** It is an internal
-> platform for our own estate — 150+ stores, ~3,450 cameras — which we install
-> and service ourselves. That deletes about a third of the work and, for the
-> first time in five drafts, makes building the right answer. With one condition,
-> in §2.
+> **v6 — go, and the shape is settled.** It is an internal platform for our own
+> estate — 150+ stores, ~3,450 cameras — which we install and service ourselves.
+> Not a product: no tenants, no billing, no customers.
+>
+> **The decision is made: keep the existing cameras, replace the OpenEye NVRs
+> with our own appliance.** That resolves v5's gating condition — the recorders
+> are being replaced by choice, so the appliance is not new capital, it is the
+> recorder we were buying anyway.
+>
+> It also happens to be the correct sequencing. Industry guidance for escaping a
+> Hikvision estate is exactly this: **move the recording platform first, phase the
+> cameras over 12–24 months.** We are doing the hard half first and inheriting a
+> clean path for the rest.
+>
+> Two things now gate the work, and neither is commercial. They are in §5.
 
 ---
 
@@ -49,18 +57,26 @@ Not because a regulator forces it — because parts and firmware are ending.
 |---|---|---|
 | At $250–400/camera installed | $600,000 | $1,800,000 |
 
-Since we do our own installs, that is a cost line, not a revenue line — but it is
-happening across the next 12–24 months regardless, and **it is the single most
-important fact for timing the build (§2.3).**
+Since we do our own installs, that is a cost line, not a revenue line. It is
+happening across the next 12–24 months regardless.
 
-**Our VMS is not the problem.** Standard advice is to move to an ONVIF platform
-first, then phase hardware. OpenEye is already NDAA-clean and takes ONVIF, so this
-is a **camera-by-camera swap onto recorders we already own** — phaseable store by
-store, no forklift, no retraining.
+**Recorder first, cameras after — which is what we are doing.** Standard guidance
+for escaping a Hikvision estate is to move the recording platform to something
+ONVIF-native first, then phase the cameras. Replacing the NVRs now and keeping the
+Hikvision cameras for the moment is therefore the correct order, not a compromise.
 
-Specify NDAA-compliant, ONVIF, **smart-codec** cameras (Axis, Avigilon, Hanwha all
-give written 889 attestations). Smart codec matters more than it sounds: it halves
-storage (§4) and therefore halves the disk in every appliance we might build.
+Two things follow. First, **the cameras stay vulnerable until they are replaced**,
+so §5.3's isolation is doing real work in the meantime — it is the control that
+makes keeping them defensible. Second, once the appliance is in, swapping a camera
+is a one-line configuration change instead of a platform migration, so the refresh
+can go at whatever pace the budget allows, camera by camera, store by store.
+
+When they are replaced: NDAA-compliant, ONVIF, smart-codec.
+
+Axis, Avigilon and Hanwha all give written 889 attestations. Smart codec matters
+more than it sounds: it halves storage (§4) and therefore halves the disk in every
+appliance we buy — so **specify it now**, while sizing the appliances, even though
+the cameras arrive later.
 
 ---
 
@@ -96,25 +112,17 @@ Positive, finally — but not by enough to ignore the capital cost:
 $27–52k/year net, that is a **3–6 year payback on hardware alone**, before
 counting six to nine months of build.
 
-### 2.3 The condition that decides it
+### 2.3 The condition is met
 
-> **Build this only if the OpenEye NVRs are being replaced anyway — and time it
-> with the camera refresh.**
+v5 gated this on whether the NVRs were being replaced anyway. **They are — by
+decision.** So the appliance is not $135–210k of new capital; it is the difference
+against a recorder we were buying regardless, which is close to a wash. Payback on
+the $77k/year runs from roughly year one.
 
-If those recorders are aging out inside the 12–24 month refresh window, we are
-buying *something* for every store regardless. Then the appliance is not
-$135–210k of new capital, it is the **difference** between an appliance and the
-NVR we would have bought — close to a wash. Payback collapses from 3–6 years to
-roughly one, and the $77k/year runs clean after that.
-
-If the NVRs are young and healthy, building means buying 150 boxes we did not need
-in order to save $77k/year. **Then don't.** Negotiate the license down instead —
-at 3,450 cameras and a $600k–1.8M camera purchase in hand, we have real leverage,
-and $3.25 → $2.25 is $41,400/year for a phone call.
-
-**So the first thing to establish is the age and replacement schedule of the
-OpenEye recorders.** That single fact decides this, not any argument in this
-document.
+**The remaining financial risk is not the appliance. It is §5.2** — if the cameras
+turn out to sit on the OpenEye recorders' built-in PoE ports, the project carries
+$60–120k of switches and several hundred hours of re-cabling that nobody has
+budgeted. That is the number to establish before ordering anything.
 
 ---
 
@@ -166,43 +174,109 @@ Cloud (AWS) holds the index, incident clips and keyframes only — roughly
 
 ---
 
-## 5. The migration — parallel-run, never big-bang
+## 5. The two things that gate this
 
-This is the most important engineering decision in the document, and internal-only
-is what makes it available.
+Both are estate facts we do not yet know, and both are cheap to establish. Neither
+is a reason not to proceed; one of them is a reason to budget differently.
 
-**IP cameras serve multiple concurrent RTSP clients** (typically 2–4 streams). So a
-new appliance can pull the *same cameras* the OpenEye NVR is already recording,
+### 5.1 Getting video out of Hikvision cameras — easier than expected
+
+Since firmware **v5.5.0, Hikvision ships with ONVIF disabled by default**, and
+enabling it means creating a dedicated ONVIF user in each camera's web interface.
+Across 3,450 cameras that is a per-device touch nobody wants.
+
+**We can skip it entirely. RTSP does not require ONVIF.** Hikvision's URL pattern
+is stable and documented:
+
+```
+rtsp://<user>:<pass>@<ip>:554/Streaming/Channels/101   # channel 1, main stream
+rtsp://<user>:<pass>@<ip>:554/Streaming/Channels/102   # channel 1, substream
+```
+
+Pattern is `/Streaming/Channels/CCS` — `CC` the channel, `S` the stream.
+
+**So the appliance must accept templated RTSP URLs as a first-class camera source,
+not merely as a fallback behind ONVIF discovery.** Point it at an IP range with a
+vendor template and credentials and it adopts the whole store. ONVIF stays
+supported for auto-discovery and PTZ on new NDAA-compliant cameras later — but it
+is a convenience, never the migration path. Building discovery-first would create
+a 3,450-camera configuration job out of nothing.
+
+### 5.2 Where are the cameras plugged in? — the expensive unknown
+
+**This is the question that can swing the project by six figures.**
+
+Cameras plugged into an NVR's **built-in PoE ports** sit on the recorder's own
+private, isolated subnet (typically `192.168.254.x` or `192.168.253.x`),
+unreachable from the store LAN. Cameras on an **external PoE switch** take an
+address on the normal network like any other device.
+
+| If cameras are on… | Swapping the recorder means |
+|---|---|
+| **An external PoE switch** | Rack the appliance, point it at the camera subnet, done. A morning per store. |
+| **The OpenEye NVR's own PoE ports** | Every camera must move to an external PoE switch and be re-addressed. **$60–120k of switches across 150 stores, plus roughly 3–6 hours per store — 450–900 hours.** |
+
+Third-party cameras are also not plug-and-play on a recorder's PoE ports even when
+they physically fit, so "just plug them into the new box" is not an escape.
+
+**Establish this before ordering anything.** It may well differ store to store.
+Bulk re-addressing is at least tractable — Hikvision's SADP and Batch Configuration
+tools do it in batches rather than camera by camera — but the switches and the
+labour are real money and must be in the budget from the start, not discovered at
+store 40.
+
+### 5.3 Design consequence: the appliance is dual-NIC
+
+Whichever topology we find, the appliance gets **two network interfaces**: one to
+the store LAN and internet, one to a camera-only segment. That makes the appliance
+the **security boundary around the Hikvision cameras** — which matters more than
+usual here, because we are keeping those cameras for now and they carry an
+actively-exploited vulnerability (§1.1).
+
+Done properly this is a genuine security *improvement* over what is deployed today:
+cameras on an isolated segment, no route to the internet, no inbound path except
+through our own appliance. **Owning the recorder is what makes that enforceable.**
+
+### 5.4 Migrate by parallel-run, never big-bang
+
+IP cameras serve **multiple concurrent RTSP clients** (typically 2–4 streams). So
+a new appliance can pull the *same cameras* the OpenEye NVR is already recording,
 at the same time, without touching the existing system.
 
-That gives a migration with no risk window:
+1. One appliance, one store. Both record. **OpenEye stays authoritative.**
+2. Thirty days. Compare segment by segment. Prove retention, gap handling, and that
+   a power cut loses nothing.
+3. Only then make the appliance authoritative. Keep OpenEye alive as fallback
+   another 30 days.
+4. Store by store. **Never more than a handful in flight.**
 
-1. Put one appliance in one store. Both systems record. OpenEye stays authoritative.
-2. Run for 30 days. Compare recordings segment by segment. Prove retention, prove
-   gap handling, prove nothing is lost through a power cut.
-3. Only then make the appliance authoritative at that store. Keep OpenEye alive as
-   the fallback for another 30 days.
-4. Repeat store by store. **Never more than a handful in flight.**
-
-If the platform is wrong, we find out at one store with a working NVR beside it —
-not across 150 stores with the footage already gone. Any plan that does not
-parallel-run is not worth executing.
-
----
+If the platform is wrong we find out at one store with a working NVR beside it —
+not across 150 stores with the footage already gone. Any plan without a parallel
+run is not worth executing.
 
 ## 6. The appliance
 
 | Store size | Compute | Detector | Disk | ~Cost |
 |---|---|---|---|---|
-| 16–24 cams | Intel N100/N150, 16 GB | Hailo-8L | 2× 8 TB | ~$900 |
-| 25–30 cams | Core i3, 32 GB | Hailo-8 | 2× 12 TB | ~$1,200–1,400 |
+| 16–24 cams | Intel N100/N150, 16 GB, **2× 2.5GbE** | Hailo-8L | 2× 8 TB | ~$900 |
+| 25–30 cams | Core i3, 32 GB, **2× 2.5GbE** | Hailo-8 | 2× 12 TB | ~$1,200–1,400 |
 
-Plus a UPS. LTE failover optional per store — worth it where cutting the line is a
-plausible burglary step.
+**Dual NIC is not optional** (§5.3). N100 boxes with two to four 2.5GbE ports are
+standard and add nothing to the price.
 
-**Adopt, don't build:** go2rtc (MIT) for ONVIF/RTSP ingest and WebRTC; ffmpeg
+Plus a UPS, and — where §5.2 requires it — a managed PoE switch at $400–800.
+LTE failover optional per store, worth it where cutting the line is a plausible
+burglary step.
+
+**Do not put PoE in the appliance itself.** A separate managed switch is more
+reliable, independently replaceable, and keeps a switch failure from taking the
+recorder down with it. Repeating OpenEye's built-in-PoE mistake would leave the
+next person swapping our box with the same §5.2 problem.
+
+**Adopt, don't build:** go2rtc (MIT) for RTSP/ONVIF ingest and WebRTC; ffmpeg
 `-c copy` for segmenting; Frigate (MIT) as the detector; AWS IoT Greengrass v2 for
-fleet OTA and identity.
+fleet OTA and identity. **Camera onboarding is templated RTSP first (§5.1)** —
+vendor URL template plus an IP range plus credentials adopts a whole store.
 
 **Never transcode.** Stream-copy H.264/H.265. Only the low-res substream is decoded,
 and only on cameras with a detector assigned — **perimeter, gate and entry doors
@@ -327,21 +401,25 @@ because we are still recording the public and our stores' tenants.
 
 Gated on §2.3. Each phase exits on real hardware in a real store.
 
-**Phase 0 — Establish the condition (1 week, no code).** Age and replacement
-schedule of the OpenEye NVRs. Real bitrate per camera type with smart codec on and
-off. *Exit: §2.3 is answered yes or no.* **If no, stop here and negotiate the
-license instead.**
+**Phase 0 — Survey the estate (1–2 weeks, no code).** The commercial decision is
+made; this establishes what it costs. For a representative sample of stores, and
+then for all 150: **are the cameras on the NVR's built-in PoE ports or an external
+switch (§5.2)?** Camera models, firmware versions, and whether the documented RTSP
+URL works with existing credentials (§5.1). Real bitrate per camera type.
+*Exit: a per-store topology inventory, and a switch-and-labour budget that is
+either near zero or $60–120k. Nothing gets ordered before this.*
 
-**Phase 1 — One appliance records (5–6 weeks).** ONVIF discovery, RTSP ingest,
-stream-copy segmenting, ring buffer, retention arithmetic with a harness, local UI.
-No cloud. *Exit: 30 cameras recording 7 days; pull power and network repeatedly and
-lose nothing but the outage seconds, with a correct `gap`.*
+**Phase 1 — One appliance records (5–6 weeks).** Templated RTSP onboarding (§5.1,
+ONVIF discovery later), dual-NIC camera segment, stream-copy segmenting, ring
+buffer, retention arithmetic with a harness, local UI. No cloud. *Exit: 30 real
+Hikvision cameras at a real store recording 7 days; pull power and network
+repeatedly and lose nothing but the outage seconds, with a correct `gap`.*
 
 **Phase 2 — Fleet console (4–5 weeks).** IoT fleet provisioning, shadows, index
 sync, health telemetry, the §8 screen, OTA. *Exit: diagnose a camera fault at a
 store 200 miles away without SSH.*
 
-**Phase 3 — Parallel run (4 weeks + 30 days observation).** §5, at one store,
+**Phase 3 — Parallel run (4 weeks + 30 days observation).** §5.4, at one store,
 beside OpenEye. *Exit: 30 days of segment-by-segment agreement with the NVR.*
 
 **Phase 4 — See it (5–6 weeks).** WebRTC live view, timeline with explicit gaps,
@@ -353,8 +431,9 @@ minute and emails it to police.*
 schedules, after-hours person/vehicle, LPR, notifications. *Exit: false-alert rate
 low enough that we keep notifications on for a week.*
 
-**Phase 6 — Roll out.** Store by store, per §5, never more than a handful in
+**Phase 6 — Roll out.** Store by store, per §5.4, never more than a handful in
 flight. Decommission OpenEye per store only after its 30-day fallback window.
+Camera replacement rides along at whatever pace the budget allows (§1.2).
 
 **Realistic: 6–9 months to the first authoritative store**, then 6–12 months of
 rollout at a deliberate pace.
@@ -363,8 +442,8 @@ rollout at a deliberate pace.
 
 ## 12. Open decisions
 
-1. **How old are the OpenEye NVRs, and when are they scheduled for replacement?**
-   §2.3. This decides the whole project. Answer it first.
+1. **Are the cameras on NVR PoE ports or external switches?** (§5.2.) Answer this
+   first — it is worth $60–120k plus 450–900 hours, and it may differ by store.
 2. **Who is on call for this?** We already carry the pager for cameras; someone
    must own the *software*. If that person does not exist, §2.2's ops number is
    wrong and the case weakens.
@@ -374,6 +453,10 @@ rollout at a deliberate pace.
    buy 60 for free.
 5. **Do our stores' gate systems matter enough to integrate?** (§3.) Only worth it
    after Phase 5, and only for systems we actually run.
+6. **What happens to the OpenEye recorders we pull?** 150 NDAA-clean NVRs have
+   resale or spares value. Do not skip this.
+7. **Camera replacement pace.** The appliance makes it incremental (§1.2), so this
+   becomes a pure budget question rather than a technical one.
 
 ---
 
@@ -383,7 +466,9 @@ rollout at a deliberate pace.
 - **No face recognition.** §10.
 - **No cloud-continuous recording.** $35–70k/month for this estate.
 - **No auto-matching a plate to a tenant.** A human confirms.
-- **No big-bang migration.** §5, or not at all.
+- **No big-bang migration.** §5.4, or not at all.
+- **No ONVIF-first onboarding.** §5.1 — it would invent a 3,450-camera config job.
+- **No PoE in the appliance.** §6 — it is the mistake we are currently paying for.
 - **No more Hikvision.** §10.
 
 ---
