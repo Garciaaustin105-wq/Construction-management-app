@@ -235,7 +235,55 @@ async function cmdBudget() {
   }
 }
 
-const commands = { preflight: cmdPreflight, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+async function cmdBench() {
+  const { open, rm, mkdir } = await import("node:fs/promises");
+  const target = flag("path", "/srv/camplat/disk0");
+  const writers = Number(flag("writers", "8"));      // cameras per spindle
+  const seconds = Number(flag("seconds", "20"));
+  const dir = `${target}/.bench`;
+
+  await mkdir(dir, { recursive: true }).catch(() => {});
+  console.log(`writing from ${writers} concurrent streams to ${target} for ${seconds}s`);
+  console.log("(this is what 8 cameras on one spindle actually looks like)\n");
+
+  const chunk = Buffer.alloc(256 * 1024, 0x5a);
+  const deadline = Date.now() + seconds * 1000;
+  let totalBytes = 0;
+
+  const run = async (n) => {
+    const handle = await open(`${dir}/w${n}.bin`, "w");
+    let written = 0;
+    try {
+      while (Date.now() < deadline) {
+        await handle.write(chunk);
+        written += chunk.length;
+      }
+      await handle.sync();          // the number is meaningless without this
+    } finally {
+      await handle.close();
+    }
+    return written;
+  };
+
+  const started = Date.now();
+  const results = await Promise.all(Array.from({ length: writers }, (_, i) => run(i)));
+  const elapsed = (Date.now() - started) / 1000;
+  totalBytes = results.reduce((a, b) => a + b, 0);
+  await rm(dir, { recursive: true, force: true }).catch(() => {});
+
+  const mbPerSec = totalBytes / 1e6 / elapsed;
+  const needMbPerSec = (writers * 2500 * 1000) / 8 / 1e6;   // 8 cameras at 2.5 Mbps
+  console.log(`  throughput   ${mbPerSec.toFixed(1)} MB/s across ${writers} writers`);
+  console.log(`  required     ${needMbPerSec.toFixed(2)} MB/s for ${writers} cameras at 2.5 Mbps`);
+  console.log(`  headroom     ${(mbPerSec / needMbPerSec).toFixed(0)}x`);
+  console.log(
+    mbPerSec > needMbPerSec * 4
+      ? "\n  comfortable — recording is nowhere near this drive's limit"
+      : "\n  MARGINAL — investigate before deploying; a drive this slow will drop frames under load",
+  );
+}
+
+const commands = { preflight: cmdPreflight, bench: cmdBench, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -245,6 +293,7 @@ if (!handler) {
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention
   size [options]                disk sizing table for a store
   budget [options]              per-camera bitrate ceiling for a retention target
+  bench [options]               concurrent write throughput of a recording drive
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS
@@ -259,6 +308,9 @@ size options:
   --cameras N   --days N        defaults 16 and 30
   --kbps a,b,c                  bitrates to tabulate (default 2000,3000,4000,6000)
   --disks-tb a,b,c              raw disk sizes (default 16,24,32,48,64)
+
+bench options:
+  --path DIR   --writers N (cameras per spindle)   --seconds N
 
 budget options:
   --cameras N  --days N  --disk-tb N  --fill 0.85

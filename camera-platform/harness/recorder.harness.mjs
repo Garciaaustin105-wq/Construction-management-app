@@ -9,6 +9,7 @@ import { mkdtemp, writeFile, readdir, stat, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openIndex } from "../agent/segindex.mjs";
+import { assignCamerasToDrives, indexPathFor, XFS_MOUNT_OPTIONS } from "../agent/config.mjs";
 import { scanDisk, applyEviction, applyRecovery, ensureCameraDirs, removeStore, INPROGRESS, QUARANTINE }
   from "../agent/segstore.mjs";
 import { createCameraRecorder, ffmpegArgs } from "../agent/recorder.mjs";
@@ -19,7 +20,10 @@ import { check, eq, close, report } from "./_assert.mjs";
 console.log("recorder integration");
 
 const root = await mkdtemp(path.join(tmpdir(), "camplat-store-"));
-const index = openIndex(path.join(root, "index.db"));
+// The index goes on the OS NVMe, never inside the store root — see
+// agent/config.mjs. Here that is a separate temp dir standing in for it.
+const stateDir = await mkdtemp(path.join(tmpdir(), "camplat-state-"));
+const index = openIndex(path.join(stateDir, "index.db"));
 const CAM = "cam-1";
 const SEG = 60;
 const SIZE = 15_000_000;          // 60s at 2000 kbps
@@ -190,4 +194,43 @@ await check("evicting a file that is already gone is not an error", async () => 
 await recorder.stop();
 index.close();
 await removeStore(root);
+await check("the index is never placed on a recording drive", async () => {
+  const scan = await scanDisk(root);
+  const all = [...scan.sealed, ...scan.inProgress].map((f) => f.path);
+  if (all.some((p) => p.endsWith(".db") || p.includes("index"))) {
+    throw new Error("the SQLite index landed on the recording drive it must avoid");
+  }
+  if (!indexPathFor("/var/lib/camplat").startsWith("/var/lib/camplat")) {
+    throw new Error("default index path must be on the OS drive");
+  }
+});
+
+check("cameras are assigned whole to drives, in contiguous blocks", () => {
+  const ids = Array.from({ length: 16 }, (_, i) => `cam-${i + 1}`);
+  const map = assignCamerasToDrives(ids, 2);
+  eq(map.get("cam-1"), 0, "first camera on drive 0");
+  eq(map.get("cam-8"), 0, "eighth still on drive 0");
+  eq(map.get("cam-9"), 1, "ninth moves to drive 1");
+  eq(map.get("cam-16"), 1, "last on drive 1");
+  const counts = [0, 0];
+  for (const drive of map.values()) counts[drive]++;
+  eq(counts, [8, 8], "evenly split");
+});
+
+check("an odd camera count still fits, with no camera unassigned", () => {
+  const ids = Array.from({ length: 17 }, (_, i) => `c${i}`);
+  const map = assignCamerasToDrives(ids, 2);
+  eq(map.size, 17, "every camera assigned");
+  for (const drive of map.values()) {
+    if (drive < 0 || drive > 1) throw new Error(`camera assigned to nonexistent drive ${drive}`);
+  }
+});
+
+check("XFS is mounted with a large allocsize — the anti-fragmentation setting", () => {
+  if (!XFS_MOUNT_OPTIONS.includes("allocsize=")) {
+    throw new Error("without allocsize, 8 concurrent writers fragment the platter");
+  }
+  if (!XFS_MOUNT_OPTIONS.includes("noatime")) throw new Error("atime turns every read into a write");
+});
+
 report("recorder integration");

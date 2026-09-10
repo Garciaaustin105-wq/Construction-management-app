@@ -24,6 +24,36 @@ import path from "node:path";
 import { ensureCameraDirs, sealSegment, INPROGRESS } from "./segstore.mjs";
 import { redactRtspUrl } from "../dist/rtsp.js";
 
+/**
+ * Args for the DETECTION substream — decoded, unlike the recording path.
+ *
+ * `-hwaccel vaapi` matters specifically on the N100. Decoding 8–12 substreams in
+ * software costs most of a core on a 4-core 6W part; on the iGPU it is close to
+ * free, and those cores stay available to the 16 recording processes. The N100's
+ * UHD graphics handles H.264 and H.265 including 10-bit.
+ *
+ * Falls back to software decode when there is no render node — a missing
+ * /dev/dri is a degraded box, not a broken one.
+ */
+export function detectionArgs(url, { fps = 5, width = 640, height = 360, hwaccel = true } = {}) {
+  const accel = hwaccel
+    ? ["-hwaccel", "vaapi", "-hwaccel_device", "/dev/dri/renderD128", "-hwaccel_output_format", "vaapi"]
+    : [];
+  const scale = hwaccel
+    ? ["-vf", `scale_vaapi=w=${width}:h=${height},hwdownload,format=nv12`]
+    : ["-vf", `scale=${width}:${height}`];
+  return [
+    "-nostdin", "-hide_banner", "-loglevel", "warning",
+    ...accel,
+    "-rtsp_transport", "tcp",
+    "-i", url,
+    "-an",
+    ...scale,
+    "-r", String(fps),
+    "-f", "rawvideo", "-pix_fmt", "nv12", "-",
+  ];
+}
+
 export function ffmpegArgs(url, outputPattern, segmentSeconds = 60) {
   return [
     "-nostdin", "-hide_banner", "-loglevel", "warning",
@@ -38,6 +68,11 @@ export function ffmpegArgs(url, outputPattern, segmentSeconds = 60) {
     "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
     "-reset_timestamps", "1",
     "-strftime", "1",
+    // Spinning disks hate small scattered writes, and eight ffmpeg processes
+    // per spindle each dribbling packets is exactly that. Buffering into larger
+    // writes keeps the platter doing sequential work.
+    "-flush_packets", "0",
+    "-max_muxing_queue_size", "1024",
     outputPattern,                     // .../<cameraId>/.inprogress/%s.mp4
   ];
 }
