@@ -40,6 +40,19 @@ export type MaterialOrder = {
   note: string | null;
   placed_at: string | null;
   created_at: string;
+  /** The credential in the supplier link. Never rendered on a public page. */
+  share_token: string;
+  sent_at: string | null;
+  /**
+   * Whether the supplier sees money.
+   *
+   * OFF by default, and that default is the point: unit_cost is what the ORG
+   * expects to pay and may have come from a DIFFERENT supplier. Prices hidden,
+   * this document asks for a quote; prices shown, it is a purchase order. Both
+   * are useful and confusing them costs real money.
+   */
+  show_prices: boolean;
+  delivery_note: string | null;
 };
 
 export type MaterialOrderItem = {
@@ -160,6 +173,44 @@ export function unpricedItems(
   items: Pick<MaterialOrderItem, "unit_cost">[]
 ): number {
   return items.filter((i) => !(i.unit_cost > 0)).length;
+}
+
+/**
+ * What the supplier is looking at, in words.
+ *
+ * A document with no prices is a request for a quote, not an order — saying so
+ * on the page stops a supplier reading a blank price column as "free" or as an
+ * omission to be queried.
+ */
+export function describeSupplierDoc(order: Pick<MaterialOrder, "show_prices">): string {
+  return order.show_prices
+    ? "This is an order. The prices are what we expect to pay — tell us if any are wrong before you ship."
+    : "This is a request for a quote, not an order. Prices are deliberately left off: please quote us.";
+}
+
+/** The path a supplier opens. Origin is added by the caller, which knows it. */
+export function orderSharePath(order: Pick<MaterialOrder, "share_token">): string {
+  return `/o/${order.share_token}`;
+}
+
+/**
+ * Can this order be sent yet?
+ *
+ * A draft can. What it must not be is EMPTY — a supplier receiving a document
+ * with no lines has been sent a puzzle, and it is the kind of mistake that is
+ * only obvious after they reply asking what it is.
+ */
+export function sendProblem(
+  order: Pick<MaterialOrder, "status">,
+  itemCount: number
+): string | null {
+  if (itemCount <= 0) {
+    return "This order has no lines. There is nothing for a supplier to read.";
+  }
+  if (order.status === "canceled") {
+    return "This order was canceled. Raise a new one rather than sending it.";
+  }
+  return null;
 }
 
 export function describeStatus(status: MaterialOrderStatus): string {
