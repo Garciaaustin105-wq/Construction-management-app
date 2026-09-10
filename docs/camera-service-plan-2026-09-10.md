@@ -103,6 +103,11 @@ Three things, and together they flip the answer:
 | License cost, 3,450 cameras at $3.25 | **$134,550** |
 | AWS cost of goods if self-hosted (~$1.38/camera) | $57,132 |
 | **Gross saving** | **$77,418** |
+
+> **Superseded — the AWS figure above was a placeholder and was too high.** An
+> itemised bill is in [`camera-aws-cost-and-onboarding.md`](camera-aws-cost-and-onboarding.md):
+> AWS is **$10,400–19,200/year**, not $57,132, so the real saving is
+> **$115,000–124,000/year**. Read that document for the line-by-line.
 | Less incremental software ops (~0.25–0.5 FTE) | −$25,000 to −$50,000 |
 | **Net annual** | **$27,000 – $52,000** |
 
@@ -272,6 +277,9 @@ burglary step.
 reliable, independently replaceable, and keeps a switch failure from taking the
 recorder down with it. Repeating OpenEye's built-in-PoE mistake would leave the
 next person swapping our box with the same §5.2 problem.
+
+Automatic camera onboarding — SADP/ONVIF/ARP discovery, RTSP templating, MAC-based
+identity — is specified in [`camera-aws-cost-and-onboarding.md`](camera-aws-cost-and-onboarding.md) Part 2.
 
 **Adopt, don't build:** go2rtc (MIT) for RTSP/ONVIF ingest and WebRTC; ffmpeg
 `-c copy` for segmenting; Frigate (MIT) as the detector; AWS IoT Greengrass v2 for
