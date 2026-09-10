@@ -70,50 +70,68 @@ actually testify to. Spend the money there before spending it on megapixels.
 all-party-consent state, so audio is off by default and enabled only per-camera
 with a deliberate decision behind it.
 
-## Storage for a 16-camera store
+## Storage for the NVR — 16 identical cameras
 
-Modelled as a real mix rather than 16 identical cameras, all AVYCON H.265+ VBR:
-10 × 4MP corridor turrets, 4 × 5MP perimeter bullets, 1 × 5MP LPR gate,
-1 × 8MP panoramic aisle.
+Sizing for **our own appliance**, the box replacing the OpenEye NVR. All 16
+cameras the same model, AVYCON H.265+ VBR.
 
-| Scenario | Total | GB/day | 30 days |
+| Avg bitrate | GB/day/cam | Store GB/day | Disk for 30 days |
 |---|---|---|---|
-| Optimistic — smart codec working, quiet site | 22 Mbps | 240 | 7.2 TB |
-| **Expected** — H.265+ VBR, mixed roles | **32 Mbps** | **346** | **10.4 TB** |
-| Conservative — busy site, smart codec less effective | 44 Mbps | 475 | 14.3 TB |
-| Bad case — someone leaves a camera on CBR | 66 Mbps | 708 | 21.2 TB |
+| 1.5 Mbps — smart codec on a static corridor | 16.2 | 259 | 7.8 TB |
+| **2 Mbps — vendor's recommended average for 4MP H.265+** | **21.6** | **346** | **10.4 TB** |
+| 2.5 Mbps | 27.0 | 432 | 13.0 TB |
+| 3 Mbps — mixed indoor/outdoor, more motion | 32.4 | 518 | 15.6 TB |
+| 4 Mbps — CBR, or 5MP+ at quality | 43.2 | 691 | 20.7 TB |
 
-Days achieved **at 85% fill** — a ring buffer should never run to the rim:
+Days achieved **at 85% fill**, which is where a ring buffer should live:
 
-| Disk | Usable @85% | Optimistic | Expected | Conservative | Bad case |
-|---|---|---|---|---|---|
-| 2× 8 TB | 12.2 TB | 51 d | 35 d | **26 d** | 17 d |
-| 2× 10 TB | 15.3 TB | 64 d | 44 d | 32 d | 22 d |
-| **2× 12 TB** | **18.4 TB** | **77 d** | **53 d** | **39 d** | **26 d** |
-| 2× 16 TB | 24.5 TB | 102 d | 71 d | 52 d | 35 d |
+| Disk | Usable | 1.5 Mbps | 2 Mbps | 2.5 Mbps | 3 Mbps | 4 Mbps |
+|---|---|---|---|---|---|---|
+| 2× 8 TB | 12.2 TB | 47 d | 35 d | 28 d | **24 d** | 18 d |
+| 2× 10 TB | 15.3 TB | 59 d | 44 d | 35 d | 30 d | 22 d |
+| **2× 12 TB** | **18.4 TB** | **71 d** | **53 d** | **43 d** | **35 d** | **27 d** |
+| 2× 16 TB | 24.5 TB | 94 d | 71 d | 57 d | 47 d | 35 d |
 
 ### Buy 2× 12 TB
 
-It holds 30 days in every scenario except a camera left on CBR, and 53 days in
-the expected one. **2× 8 TB fails the conservative case at 26 days** — and the
-conservative case is not pessimistic, it is what a busy site in summer looks
-like. The step from 8 TB to 12 TB is roughly $120 per store against a 30-day
-promise you would otherwise miss and only discover when someone needed day 28.
+At the expected 2 Mbps it gives **53 days** — comfortably past 30 with room for
+the estimate to be wrong. It still clears 30 days at 3 Mbps, and only misses at
+a full 4 Mbps.
+
+2× 8 TB works only if the cameras really sit at or below 2 Mbps. At 3 Mbps it
+gives 24 days and misses the promise. **The whole gap is about $120 a store** —
+cheap insurance against a bitrate nobody has measured yet.
+
+### One SKU is worth more than the storage maths
+
+All-identical cameras buy things that never show up in a capacity table:
+
+- **One RTSP path to confirm.** AVYCON's path varies by model; with one model,
+  one bench test settles onboarding for every camera you ever install.
+- **One spare on the shelf** covers any failure at any store.
+- **One config profile** — codec, rate control, substream, schedule — so
+  "correctly configured" is a single thing rather than a per-model question.
+- **One measured bitrate** turns this table from an estimate into a fact.
+
+The flip side is worth naming: uniformity makes misconfiguration uniform too.
+One camera set to CBR in the golden profile puts every store in the 4 Mbps
+column at once. That is the argument for the appliance reporting **measured**
+bitrate per camera and flagging drift, rather than trusting the profile.
 
 ### Assign whole cameras to drives — do not stripe
 
-With two drives the instinct is to span or stripe them into one volume. **Don't.**
-Striped, one drive failure loses every camera's entire history. Assigned — say
-cameras 1–8 on drive A, 9–16 on drive B — the same failure loses eight cameras
-completely and leaves the other eight fully intact.
+With two drives the instinct is to span them into one volume. **Don't.** Striped,
+one drive failure loses every camera's entire history. Assigned — cameras 1–8 on
+drive A, 9–16 on drive B — the same failure loses eight cameras completely and
+leaves eight fully intact.
 
 Neither is good, but bounded beats total: an investigation with half the cameras
-is still an investigation, whereas a site with a 30-day hole across every camera
-has nothing. And since the cloud already holds incident clips and keyframes
-(§ the plan), the drive is the bulk archive, not the only copy of what mattered.
+is still an investigation. And the cloud already holds incident clips and
+keyframes, so the drive is the bulk archive rather than the only copy of what
+mattered.
 
-RAID-1 would survive the failure but halves capacity — 2× 12 TB becomes 10.8 TB
-usable, below even the 2× 8 TB figure above. Not worth it here.
+RAID-1 survives the failure but halves capacity — 2× 12 TB becomes 10.8 TB
+usable, below even the 2× 8 TB row. Not worth it here.
 
 ## Still to confirm — on the bench, not from a catalogue
 
