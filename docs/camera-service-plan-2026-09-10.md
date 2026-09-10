@@ -2,85 +2,123 @@
 
 > **Status:** plan, not a spec. Nothing has been built. Written 2026-09-10.
 >
-> **v3 — the build is now conditional.** v1 targeted construction sites; v2
-> retargeted to self-storage. v3 responds to one hard number from the human: a
-> working camera installer pays **$3.25 per camera per month** in dealer license
-> cost. That is the price of *not* building this, and §0 shows it makes the
-> platform unprofitable to build until roughly 50–75 facilities.
+> **v4 — the estate changes the question.** v1 targeted construction; v2
+> retargeted to self-storage; v3 made the build conditional on reaching ~50
+> facilities. The human then disclosed the actual footprint: **150+ stores at
+> 16–30 cameras each — roughly 3,450 cameras — mostly Hikvision, on OpenEye
+> NVRs.**
 >
-> **Recommendation: become a dealer now. Build this when §0's trigger fires.**
-> The build plan below is kept intact and current so it is ready when that
-> happens — it is not abandoned, it is scheduled.
+> That is past every threshold in v3. It also makes the platform the *second*
+> most important thing in this document. **The Hikvision estate is the first**,
+> and it is both the larger liability and the far larger opportunity.
 
 ---
 
-## 0. Read this first — should you build this at all?
+## 0. The estate you actually have
 
-A friend who installs cameras pays **$3.25/camera/month** for a dealer license.
-Dealer terms are never public, so that is better evidence than anything findable
-online — and it is the number the whole business case turns on.
+150+ stores × 16–30 cameras ≈ **2,400–4,500 cameras, call it 3,450.** Mostly
+Hikvision, recording to OpenEye NVRs.
 
-**Building your own platform saves you the license fee and nothing else.**
+Two things follow, and neither is "build a platform".
 
-| | Per camera / month |
-|---|---|
-| Dealer license cost avoided | $3.25 |
-| AWS cost of goods incurred instead (§11) | −$1.38 |
-| **Net saving from owning the platform** | **$1.87** |
+### 0.1 The Hikvision estate is an active security problem, today
 
-Now size that against a real footprint, at 40 cameras per facility:
+Not a compliance abstraction — a live one:
 
-| Facilities | Cameras | Annual saving from building |
+- **CVE-2017-7921**, a critical authentication bypass in Hikvision cameras, was
+  added to CISA's Known Exploited Vulnerabilities catalog on **5 March 2026**
+  after confirmation that attackers are **actively exploiting it in the wild**.
+  Federal agencies were given until 26 March 2026 to remediate.
+- **October 2025: the FCC closed the last loopholes** — retroactively revoking
+  outstanding equipment authorisations and banning importation of legacy models.
+  New units, **and replacement parts**, are drying up.
+- **Firmware pipelines are breaking.** Sanctions prevent the use of US technology
+  in future firmware, so new vulnerabilities increasingly will not get patched.
+
+To be accurate about what is *not* true: the FCC action is an importation and
+marketing ban, **not** a mandate to remove installed equipment. A private
+commercial business with no federal ties may legally keep running Hikvision
+cameras it already owns. Nobody is going to confiscate anything.
+
+But read that alongside what these facilities sell. **A self-storage operator's
+entire product is "your property is safe here."** Three thousand-plus cameras
+carrying an actively-exploited authentication bypass, on a firmware line that is
+going dark, is not a paperwork risk. It is a breach with a press release attached,
+at customers whose only differentiator is security.
+
+**Do this in the next few weeks, independent of every other decision in this
+document:** VLAN-isolate the cameras, remove all internet exposure and port
+forwarding, disable UPnP, rotate every default credential, and confirm the NVRs
+are the only route in. That is a weekend of work per store at most and it
+addresses the exploited CVE without buying anything.
+
+### 0.2 The refresh is the actual business
+
+Those cameras have to be replaced over the next 12–24 months — not because a
+regulator will force it, but because parts and firmware are ending.
+
+| | Low | High |
 |---|---|---|
-| 5 | 200 | $4,488 |
-| 10 | 400 | $8,976 |
-| 20 | 800 | $17,952 |
-| **50** | 2,000 | **$44,880** |
-| 100 | 4,000 | $89,760 |
+| Cameras | 2,400 | 4,500 |
+| At $250–400/camera installed | **$600,000** | **$1,800,000** |
+| At 30–40% margin | **$180,000** | **$720,000** |
 
-Against that: 6–9 months to v1 (§12), and then **the platform never stops
-costing.** On-call, security patching, camera-firmware regressions, OS updates
-across a fleet, and someone reachable at 2am when a facility is being broken
-into. Call that $30–60k/year of somebody's time even part-time.
+**That is the opportunity in this conversation.** It is one to two orders of
+magnitude larger than anything the software saves, and it is in front of you now.
 
-**So the platform runs at a loss until ~50 facilities and is only clearly
-worth it past ~75–100.** At 10 or 20 facilities you would spend most of a year
-building something that saves less than $18,000 annually and adds a permanent
-operating burden. That is not a close call.
+**And you are unusually well placed for it, because your VMS is not the problem.**
+The generic industry advice is to swap the VMS to an ONVIF platform first, then
+phase hardware over 12–24 months. **You already did that step** — OpenEye is
+NDAA-clean and takes standard ONVIF cameras. So this is not a rip-and-replace.
+It is a **camera-by-camera swap onto recorders you already own**, phaseable store
+by store, with no forklift moment and no retraining. Your existing OpenEye
+investment is exactly what makes the migration cheap.
 
-### 0.1 The counter-argument, stated fairly
+Specify NDAA-compliant, ONVIF, **smart-codec** cameras (§2 — it halves storage and
+buys retention for free). Axis, Avigilon and Hanwha give written 889 attestations.
 
-Opex saving was never the real reason to own a platform. Three things are:
+### 0.3 So should you build the platform now?
 
-1. **Enterprise value.** A dealer's book and a vertical SaaS sell on different
-   multiples — recurring monitoring revenue is valued on RMR multiples, and
-   platform ARR usually more richly still. If you reach 50 facilities, what you
-   own matters more than what you earned along the way.
-2. **Vendor risk.** Dealer terms change, prices rise, and nothing stops your
-   vendor going direct to your customer. Today that is a real dependency.
-3. **You keep the retail spread either way.** Reselling at $8 on a $3.25 cost is
-   $4.75/camera/month of margin *with no engineering at all.* Building does not
-   add that margin — it only converts $3.25 of cost into $1.38.
+At 3,450 cameras, the arithmetic finally clears v3's threshold:
 
-Points 1 and 2 are genuine and they are why this document still exists. They are
-strategic and long-dated; they do not pay for eight months of engineering at 20
-facilities.
+| | Per month | Per year |
+|---|---|---|
+| License cost at $3.25 × 3,450 | $11,212 | **$134,550** |
+| AWS COGS if self-built ($1.38) | $4,761 | $57,132 |
+| **Gross saving from building** | **$6,451** | **$77,418** |
 
-### 0.2 The trigger
+$77k/year is real money. But **150 sites needs real operations** — on-call
+rotation, fleet patching, someone accountable at 2am — and that is a fully-loaded
+$80–120k/year. **Even at this scale the pure build case is roughly break-even to
+negative.** It got much better than v3 and it still does not clear.
 
-Start building — or seriously re-scope — when **any** of these is true:
+**What clears easily is negotiating.** $3.25 is your friend's price at your
+friend's volume. You are a 3,450-camera account about to spend $600k–1.8M on new
+cameras — which is the single moment of maximum leverage you will ever have over
+a VMS vendor, and every one of them wants that hardware decision to go their way.
 
-- You pass **~50 facilities** (≈2,000 cameras) under contract or in reach.
-- Your vendor raises dealer pricing materially or changes terms against you.
-- You hit a capability the platform genuinely cannot do and customers will pay
-  for — most likely deep access-control correlation (§8) on a gate system your
-  vendor does not integrate.
-- You are raising money or preparing to sell, and platform ownership changes the
-  valuation more than the engineering costs.
+| Negotiated license | Annual saving | Engineering required |
+|---|---|---|
+| $2.50 | $31,050 | **None** |
+| $2.25 | $41,400 | **None** |
+| $2.00 | $51,750 | **None** |
 
-Until then: **§3 path A.** Everything from §4 onward is the plan for the day the
-trigger fires, and Phase 0 (§12) is designed to be run on installs you are doing
-anyway, so the information keeps accruing at no extra cost.
+Competitively bid the VMS alongside the camera refresh — OpenEye against Eagle
+Eye, Rhombus, Avigilon Alta, Genetec. **A phone call at 3,450 cameras plausibly
+captures most of what eight months of engineering would, with no ops burden and
+no vendor-migration risk.** Do that first. If it fails, you will have learned
+exactly what your vendor dependency is worth, which is the strongest possible
+input to the build decision.
+
+### 0.4 Order of operations
+
+1. **Weeks:** network-isolate the Hikvision estate (§0.1). Non-negotiable, cheap.
+2. **This quarter:** competitive-bid VMS + cameras together (§0.3). Capture the
+   license savings without building.
+3. **12–24 months:** phased camera refresh onto existing OpenEye NVRs (§0.2).
+   **This is the business.**
+4. **Reassess the build** once the refresh is underway and you know your real
+   negotiated license rate. The plan from §1 onward stays current for that day.
 
 ---
 
@@ -526,21 +564,24 @@ Cross-site console, talk-down speakers, monitoring-centre handoff.
 
 ## 13. Open decisions
 
-1. **How many facilities can you actually reach?** (§0.) This is now the only
-   question that decides whether B ever happens. Under ~50, run A. If your
-   customer base plus your friend's install pipeline plausibly reaches 50+, the
-   build case reopens and §0.2 tells you when.
-2. **Do you sell hardware, or spec it?** Selling means inventory and RMAs;
-   specifying means a lighter company and a worse install experience.
-3. **Which access-control vendor first?** PTI is the most deployed. Storable/Nokē
+1. **Who owns the 150 stores — you, or your customers?** (§0.) It does not change
+   the security work or the refresh, but it decides who captures the $134k/year of
+   license spend and who carries the ops burden if you ever build. Answer this
+   before anything in §0.3 is acted on.
+2. **What did the competitive bid actually return?** (§0.3.) The build decision
+   waits on that number, not on a threshold.
+3. **Do you sell hardware, or spec it?** Selling means inventory and RMAs;
+   specifying means a lighter company and a worse install experience. At
+   3,450 cameras this is a materially bigger question than it was at 20 sites.
+4. **Which access-control vendor first?** PTI is the most deployed. Storable/Nokē
    is the largest ecosystem. Ask your actual customers what is on their gates —
    the answer is probably already known and it should decide Phase 5.
-4. **Retention promise.** 30 days is the default and it sizes every drive you buy.
+5. **Retention promise.** 30 days is the default and it sizes every drive you buy.
    Sixty doubles the storage BOM — unless smart codec pays for it (§2).
-5. **Monitoring.** Do you offer 24/7 remote guarding, or partner for it? It is the
+6. **Monitoring.** Do you offer 24/7 remote guarding, or partner for it? It is the
    highest-value service at unmanned facilities and a completely different company
    to run.
-6. **Insurance and counsel.** Before the first paying site: E&O cover, and a
+7. **Insurance and counsel.** Before the first paying site: E&O cover, and a
    lawyer's read on §10. A camera system that loses footage during a break-in
    gets sued.
 
@@ -572,6 +613,10 @@ Cross-site console, talk-down speakers, monitoring-centre handoff.
 - [Self-storage security solutions round-up](https://www.neighbor.com/storage-blog/self-storage-security-solutions/) — Nokē/Eagle Eye video partnership; PTI, Sentinel, SpiderDoor in access control
 - [Remote guarding for self-storage](https://eliteisi.com/remote-guarding-for-self-storage-facilities-real-time-prevention-of-break-ins-and-unauthorized-access/) — talk-down, unmanned sites
 - [OpenEye OWS 24/7 Lite](https://www.openeye.net/introducing-ows-247-lite-the-most-affordable-subscription-option-for-openeye-web-services/) — entry tier includes 2 GB cloud storage; [OWS licensing](https://answers.openeye.net/OpenEye_Web_Services/OWS_Licensing) — per channel, recorder purchased separately
-- [NDAA Section 889 camera compliance](https://tec-tel.com/resources/ndaa-section-889-camera-compliance)
+- [NDAA Section 889 camera compliance](https://tec-tel.com/resources/ndaa-section-889-camera-compliance) and [Hikvision alternatives for federal-touching facilities](https://tec-tel.com/compare/hikvision-alternatives)
+- [CISA KEV listing of CVE-2017-7921](https://netcrook.com/hikvision-camera-vulnerabilities-privilege-escalation-2026/) — added 5 March 2026, actively exploited
+- [Can I still use my existing Hikvision system after the 2026 FCC changes?](https://www.clevelandsecuritycameras.com/post/can-i-still-use-my-existing-hikvision-system-after-the-2026-fcc-changes) — importation/marketing ban, not a removal mandate for private commercial use
+- [FCC closes the remaining Hikvision loopholes](https://blog.camerasecuritynow.com/2026/01/13/hikvision-dahua-cameras-critical-2026-update-plan-ahead-now/) — October 2025, retroactive authorisation revocation; parts and firmware supply
+- [Replacing Hikvision — NDAA migration sequencing](https://www.coram.ai/post/replacing-hikvision-a-painless-guide-to-ndaa-compliance) — swap VMS to ONVIF first, phase hardware over 12–24 months
 - [Audio surveillance consent by state](https://www.upcounsel.com/audio-surveillance-laws-by-state/) — 11 all-party states + DC, including Florida
 - [Surveillance compliance checklist — BIPA](https://www.forasoft.com/learn/video-surveillance/articles-vms/surveillance-compliance-checklist)
