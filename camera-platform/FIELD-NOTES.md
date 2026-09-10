@@ -12,6 +12,7 @@ Last updated 2026-09-10. Nothing in the Measured column yet.
 | 1b | Cameras are 4MP on **H.265+ VBR** (not H.264, not CBR) | 12x storage swing — see below | `camctl probe` reports codec; camera web UI reports rate control | — |
 | 2 | SADP multicast group is `239.255.255.250` **or** `239.255.255.230`, UDP 37020 | Whether discovery finds Hikvision cameras at all | `camctl discover <cidr> --raw-dir ./sadp-raw`, keep the files | — |
 | 3 | Hikvision RTSP path is `/Streaming/Channels/101` and `/102` | Whether onboarding works without touching each camera | `camctl probe` succeeding at all | — |
+| 3b | **AVYCON path is `/profile1` and `/profile2`** — vendor says it varies by model | Onboarding every new camera | `camctl probe <ip> --vendor avycon --try-all` | — |
 | 4 | Cameras sit on an external PoE switch, not the NVR's built-in PoE ports | $60–120k of switches and 450–900 hours, across 150 stores | Look at one rack | — |
 | 5 | 16 TB per appliance gives 30 days | Appliance BOM | Falls out of #1 | — |
 
@@ -111,6 +112,46 @@ the appliance BOM is fixed, not after.
 
 `camctl probe` reports resolution, codec and *measured* bitrate together, so it
 answers this per camera rather than per datasheet.
+
+## AVYCON — the chosen replacement camera
+
+**NDAA:** AVYCON publishes a formal Section 889 compliance statement — no
+prohibited System-on-Chip from covered vendors, and an explicit commitment to
+avoid OEM, ODM or JDM relationships with vendors in violation. That is a written
+attestation, the same standard applied to Axis, Avigilon and Hanwha, so it
+clears the bar the refresh exists to meet. **Keep a copy of the statement on
+file** — the point of the refresh is being able to prove compliance, not just
+assert it.
+
+**ONVIF:** AVYCON supports ONVIF Profile S. Unlike the Hikvision estate, where
+ONVIF is off by default from firmware v5.5.0, new AVYCON cameras should answer
+WS-Discovery — so `camctl discover` gets easier as the refresh progresses, not
+harder.
+
+**RTSP — the one to pin down.** The documented pattern is `/profile1` (main) and
+`/profile2` (sub), but AVYCON's own documentation says **the stream path varies
+by model**. `candidatePaths()` therefore holds an ordered list rather than a
+single template, and `buildRtspUrl` refuses to return an undocumented convention
+as though it were the answer.
+
+Resolve it once per model, on the bench:
+
+```
+camctl probe <ip> --vendor avycon --try-all --user U --pass P
+```
+
+It walks the candidates, reports which one streams, and tells you to record it
+here. **Do this for each AVYCON model before ordering in volume** — one bench
+test per model turns the whole fleet's onboarding into a known quantity.
+
+| AVYCON model | Working main path | Working sub path | Codec | Measured bitrate |
+|---|---|---|---|---|
+| *(fill in from `--try-all`)* | | | | |
+
+**Still to confirm:** whether the models chosen support **H.265+ / smart codec**.
+Per the table above that setting is worth 2x on storage — it is the difference
+between 2x 8 TB and 2x 16 TB per appliance, so it belongs in the purchase
+decision rather than being discovered afterwards.
 
 ## Why #2 needs the raw captures
 

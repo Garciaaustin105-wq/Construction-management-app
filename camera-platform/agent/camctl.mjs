@@ -12,7 +12,7 @@ import { sweep } from "./sweep.mjs";
 import { discoverSadp } from "./sadp.mjs";
 import { discoverOnvif } from "./wsdiscovery.mjs";
 import { probeStream, measureBitrate } from "./media.mjs";
-import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
+import { buildRtspUrl, redactRtspUrl, candidatePaths, urlForPath } from "../dist/rtsp.js";
 import { vendorFromMac, normaliseMac } from "../dist/camera.js";
 import { computeRetentionDays, requiredBytesForDays, usableBytesFromRaw, TERABYTE } from "../dist/retention.js";
 
@@ -95,12 +95,52 @@ async function cmdProbe() {
   const vendor = flag("vendor", "hikvision");
   const seconds = Number(flag("seconds", "30"));
 
-  const built = buildRtspUrl({ vendor, ip, channel: Number(flag("channel", "1")), stream: flag("stream", "main") }, creds);
-  if (built.kind !== "ok") { console.error(built.message); process.exit(1); }
-  console.log(`probing ${built.redacted}`);
+  const channel = Number(flag("channel", "1"));
+  const stream = flag("stream", "main");
+  const tryAll = args.includes("--try-all");
 
-  const probe = await probeStream(built.url);
-  if (probe.kind !== "ok") { console.error(`unusable: ${probe.reason}`); process.exit(1); }
+  let built;
+  let probe;
+
+  if (tryAll) {
+    // Some vendors — AVYCON documents this — use different paths per model.
+    // Trying the ordered candidates and recording which streamed turns the
+    // guess into a fact. Do this once per model, then reuse the answer.
+    const candidates = candidatePaths(vendor, stream, channel);
+    console.log(`trying ${candidates.length} candidate path(s) for ${vendor}:`);
+    for (const candidate of candidates) {
+      const attempt = urlForPath(ip, candidate.path, creds);
+      process.stdout.write(`  ${candidate.path.padEnd(40)} ${candidate.documented ? "[documented]" : "[convention]"} ... `);
+      const result = await probeStream(attempt.url, { timeoutMs: 12_000 });
+      if (result.kind === "ok") {
+        console.log("STREAMS");
+        console.log(`\n  >>> working path for ${vendor}/${stream}: ${candidate.path}`);
+        console.log(`      record this in FIELD-NOTES against the model — it is now a fact, not a guess.\n`);
+        built = attempt;
+        probe = result;
+        break;
+      }
+      console.log("no");
+    }
+    if (!probe) {
+      console.error(`\nnone of the candidate paths streamed. Check credentials, then read the\nRTSP path from the camera's own web interface and send it back so the\ncandidate list learns it.`);
+      process.exit(1);
+    }
+  } else {
+    built = buildRtspUrl({ vendor, ip, channel, stream }, creds);
+    if (built.kind !== "ok") {
+      console.error(built.message);
+      console.error(`\ntry: camctl probe ${ip} --vendor ${vendor} --try-all ...`);
+      process.exit(1);
+    }
+    console.log(`probing ${built.redacted}`);
+    probe = await probeStream(built.url);
+    if (probe.kind !== "ok") {
+      console.error(`unusable: ${probe.reason}`);
+      console.error(`\nthis vendor's path may vary by model — retry with --try-all`);
+      process.exit(1);
+    }
+  }
 
   const s = probe.stream;
   console.log(`  codec        ${s.codec}`);
@@ -174,7 +214,9 @@ if (!handler) {
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS
-  --vendor hikvision|axis|hanwha|avigilon
+  --vendor hikvision|avycon|axis|hanwha|avigilon
+  --try-all                     try every known path for the vendor and report
+                                which one streams (AVYCON paths vary by model)
   --channel N   --stream main|sub
   --seconds N                   measurement window (default 30, minimum 20)
   --cameras N   --disk-tb N     retention projection

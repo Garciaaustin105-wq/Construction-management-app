@@ -9,7 +9,7 @@
 
 export type DiscoverySource = "sadp" | "onvif" | "arp_probe" | "manual";
 
-export type Vendor = "hikvision" | "axis" | "hanwha" | "avigilon" | "generic";
+export type Vendor = "hikvision" | "axis" | "hanwha" | "avigilon" | "avycon" | "generic";
 
 export interface CameraIdentity {
   /** Normalised lowercase, colon-separated. */
