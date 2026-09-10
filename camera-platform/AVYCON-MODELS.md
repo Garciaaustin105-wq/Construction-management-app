@@ -70,6 +70,51 @@ actually testify to. Spend the money there before spending it on megapixels.
 all-party-consent state, so audio is off by default and enabled only per-camera
 with a deliberate decision behind it.
 
+## Storage for a 16-camera store
+
+Modelled as a real mix rather than 16 identical cameras, all AVYCON H.265+ VBR:
+10 × 4MP corridor turrets, 4 × 5MP perimeter bullets, 1 × 5MP LPR gate,
+1 × 8MP panoramic aisle.
+
+| Scenario | Total | GB/day | 30 days |
+|---|---|---|---|
+| Optimistic — smart codec working, quiet site | 22 Mbps | 240 | 7.2 TB |
+| **Expected** — H.265+ VBR, mixed roles | **32 Mbps** | **346** | **10.4 TB** |
+| Conservative — busy site, smart codec less effective | 44 Mbps | 475 | 14.3 TB |
+| Bad case — someone leaves a camera on CBR | 66 Mbps | 708 | 21.2 TB |
+
+Days achieved **at 85% fill** — a ring buffer should never run to the rim:
+
+| Disk | Usable @85% | Optimistic | Expected | Conservative | Bad case |
+|---|---|---|---|---|---|
+| 2× 8 TB | 12.2 TB | 51 d | 35 d | **26 d** | 17 d |
+| 2× 10 TB | 15.3 TB | 64 d | 44 d | 32 d | 22 d |
+| **2× 12 TB** | **18.4 TB** | **77 d** | **53 d** | **39 d** | **26 d** |
+| 2× 16 TB | 24.5 TB | 102 d | 71 d | 52 d | 35 d |
+
+### Buy 2× 12 TB
+
+It holds 30 days in every scenario except a camera left on CBR, and 53 days in
+the expected one. **2× 8 TB fails the conservative case at 26 days** — and the
+conservative case is not pessimistic, it is what a busy site in summer looks
+like. The step from 8 TB to 12 TB is roughly $120 per store against a 30-day
+promise you would otherwise miss and only discover when someone needed day 28.
+
+### Assign whole cameras to drives — do not stripe
+
+With two drives the instinct is to span or stripe them into one volume. **Don't.**
+Striped, one drive failure loses every camera's entire history. Assigned — say
+cameras 1–8 on drive A, 9–16 on drive B — the same failure loses eight cameras
+completely and leaves the other eight fully intact.
+
+Neither is good, but bounded beats total: an investigation with half the cameras
+is still an investigation, whereas a site with a 30-day hole across every camera
+has nothing. And since the cloud already holds incident clips and keyframes
+(§ the plan), the drive is the bulk archive, not the only copy of what mattered.
+
+RAID-1 would survive the failure but halves capacity — 2× 12 TB becomes 10.8 TB
+usable, below even the 2× 8 TB figure above. Not worth it here.
+
 ## Still to confirm — on the bench, not from a catalogue
 
 | | Why it matters | How |
