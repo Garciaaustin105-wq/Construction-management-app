@@ -92,15 +92,54 @@ Days achieved **at 85% fill**, which is where a ring buffer should live:
 | **2× 12 TB** | **18.4 TB** | **71 d** | **53 d** | **43 d** | **35 d** | **27 d** |
 | 2× 16 TB | 24.5 TB | 94 d | 71 d | 57 d | 47 d | 35 d |
 
-### Buy 2× 12 TB
+### Build: dual 8 TB — and the budget that makes it work
 
-At the expected 2 Mbps it gives **53 days** — comfortably past 30 with room for
-the estimate to be wrong. It still clears 30 days at 3 Mbps, and only misses at
-a full 4 Mbps.
+**Decided: 2× 8 TB.** 16 TB raw → 14.4 TB after filesystem overhead → **12.2 TB
+at 85% fill**, which is where a ring buffer should live.
 
-2× 8 TB works only if the cameras really sit at or below 2 Mbps. At 3 Mbps it
-gives 24 days and misses the promise. **The whole gap is about $120 a store** —
-cheap insurance against a bitrate nobody has measured yet.
+That gives every camera **2,353 kbps average** for a 30-day target. Against the
+configuration recommended above:
+
+| Config | Avg | Utilisation | Projected |
+|---|---|---|---|
+| **4MP @ 15 fps** | 1.3 Mbps | 55% | **54 days** |
+| 4MP @ 20 fps | 1.6 Mbps | 68% | 44 days |
+| 4MP @ 30 fps | 2.0 Mbps | 85% | 35 days |
+| 4MP @ 30 fps CBR | 4.0 Mbps | 170% | **18 days — misses** |
+
+**Dual 8 TB holds 30 days comfortably at 4MP/15fps, with 54 days of runway.**
+The ceiling is 2.35 Mbps per camera; the recommended config sits at 1.3.
+
+What it does not have is slack for the estimate being wrong. On 2× 12 TB an
+unmeasured bitrate running high would have been absorbed. Here it is not — so
+the encoder profile stops being advice and becomes a build requirement, and the
+appliance has to enforce it rather than report on it afterwards.
+
+That is what `contracts/budget.ts` is for:
+
+- `computePerCameraBudget(30, usableBytes, 16)` → the 2,353 kbps ceiling.
+- `checkAgainstBudget(measured, budget)` → fleet utilisation, projected days, and
+  **which cameras are over their share, named and ranked worst first**.
+- It **refuses** to project at all if any camera is unmeasured — with no spare
+  disk, the unmeasured one may be exactly the one eating the margin, and a
+  projection that silently skipped it would read as reassuring while being wrong.
+
+One useful subtlety it encodes: a camera over its equal share does **not** mean
+the target is missed. Some cameras running hot is fine while others run cold —
+fleet utilisation decides whether 30 days holds, and the per-camera list is for
+finding *which one changed*. The gate will always be the busiest camera on site;
+that is not a fault, it is a gate.
+
+### Why 2× 12 TB was the earlier recommendation
+
+It would have given 53 days at 2 Mbps and still cleared 30 at 3 Mbps — insurance
+against a bitrate nobody has measured yet, for about $120 a store.
+
+That insurance is not being bought, which is a reasonable call at 4MP/15fps: the
+recommended config uses 55% of the budget, so there is room for the measurement
+to come in nearly twice as high as modelled and still hold 30 days. **It does
+mean the first `camctl probe` on a real camera stops being a nice-to-have.**
+Measure before the fleet is configured, not after.
 
 ### 4MP is the floor — what going above it costs
 
