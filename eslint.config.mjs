@@ -23,6 +23,9 @@ const eslintConfig = defineConfig([
     // (.irr-build, .feedback-build, .mat-build, .nav-build, .br-build, ...).
     // Gitignored, regenerated constantly, never hand-edited.
     ".*-build/**",
+    // Same, for camera-platform's standalone contract build. The contracts
+    // themselves ARE linted — only the emitted dist/ is ignored.
+    "camera-platform/dist/**",
   ]),
   {
     // Double quotes, and a template literal only when it earns its keep.

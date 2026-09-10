@@ -70,3 +70,6 @@ next-env.d.ts
 
 # personal Claude Code overrides for this checkout
 .claude/settings.local.json
+
+# camera-platform standalone contract build output
+camera-platform/dist/
