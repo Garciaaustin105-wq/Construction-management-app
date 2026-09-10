@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-const suites = ["retention", "segment", "camera", "rtsp", "eviction", "recovery"];
+const suites = ["retention", "segment", "camera", "rtsp", "eviction", "recovery", "net", "ffprobe", "discovery"];
 let failed = 0;
 for (const s of suites) {
   const r = spawnSync(process.execPath, [`harness/${s}.harness.mjs`], { stdio: "inherit" });
