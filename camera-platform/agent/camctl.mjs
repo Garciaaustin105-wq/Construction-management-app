@@ -14,7 +14,7 @@ import { discoverOnvif } from "./wsdiscovery.mjs";
 import { probeStream, measureBitrate } from "./media.mjs";
 import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
 import { vendorFromMac, normaliseMac } from "../dist/camera.js";
-import { computeRetentionDays, usableBytesFromRaw, TERABYTE } from "../dist/retention.js";
+import { computeRetentionDays, requiredBytesForDays, usableBytesFromRaw, TERABYTE } from "../dist/retention.js";
 
 const [, , command, ...args] = process.argv;
 
@@ -127,7 +127,42 @@ async function cmdProbe() {
   console.log(est.kind === "ok" ? `  ${est.days.toFixed(1)} days retention` : `  refused: ${est.message}`);
 }
 
-const commands = { preflight: cmdPreflight, discover: cmdDiscover, probe: cmdProbe };
+async function cmdSize() {
+  const cameras = Number(flag("cameras", "16"));
+  const days = Number(flag("days", "30"));
+  const rates = (flag("kbps", "2000,3000,4000,6000")).split(",").map(Number);
+  const disks = (flag("disks-tb", "16,24,32,48,64")).split(",").map(Number);
+  const cams = (kbps) => Array.from({ length: cameras }, (_, i) => ({ cameraId: `cam-${i + 1}`, bitrateKbps: kbps }));
+  const tb = (bytes) => (bytes / TERABYTE).toFixed(1);
+
+  console.log(`${cameras} cameras, ${days}-day target\n`);
+  console.log("avg bitrate   GB/day/cam   fleet GB/day   disk needed");
+  for (const kbps of rates) {
+    const perCamDay = (kbps * 1000 * 86400) / 8 / 1e9;
+    const need = requiredBytesForDays(cams(kbps), days);
+    if (need.kind !== "ok") { console.log(`${kbps} kbps: refused — ${need.message}`); continue; }
+    console.log(
+      `${String(kbps / 1000 + " Mbps").padStart(9)}   ${perCamDay.toFixed(1).padStart(10)}   ${(perCamDay * cameras).toFixed(0).padStart(12)}   ${tb(need.bytes).padStart(7)} TB`,
+    );
+  }
+
+  console.log(`\nRetention achieved, by raw disk (10% filesystem overhead):\n`);
+  process.stdout.write("raw disk   usable ");
+  for (const kbps of rates) process.stdout.write(String(kbps / 1000 + " Mbps").padStart(11));
+  console.log();
+  for (const raw of disks) {
+    const usable = usableBytesFromRaw(raw * TERABYTE);
+    process.stdout.write(`${String(raw + " TB").padEnd(10)} ${tb(usable).padStart(5)} TB`);
+    for (const kbps of rates) {
+      const r = computeRetentionDays(cams(kbps), usable);
+      process.stdout.write((r.kind === "ok" ? `${r.days.toFixed(0)} days` : "refused").padStart(11));
+    }
+    console.log();
+  }
+  console.log(`\nEvery figure assumes the bitrate is MEASURED. Run \`camctl probe\` first —\na datasheet number is a setting, not a measurement.`);
+}
+
+const commands = { preflight: cmdPreflight, discover: cmdDiscover, probe: cmdProbe, size: cmdSize };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -135,6 +170,7 @@ if (!handler) {
   preflight                     check ffmpeg/ffprobe and permissions
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention
+  size [options]                disk sizing table for a store
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS
@@ -143,7 +179,13 @@ probe options:
   --seconds N                   measurement window (default 30, minimum 20)
   --cameras N   --disk-tb N     retention projection
 
+size options:
+  --cameras N   --days N        defaults 16 and 30
+  --kbps a,b,c                  bitrates to tabulate (default 2000,3000,4000,6000)
+  --disks-tb a,b,c              raw disk sizes (default 16,24,32,48,64)
+
 example:
+  node agent/camctl.mjs size --cameras 16 --kbps 3000,4000,6000
   node agent/camctl.mjs discover 192.168.1.0/24 --raw-dir ./sadp-raw
   node agent/camctl.mjs probe 192.168.1.64 --user admin --pass '...' --cameras 23 --disk-tb 16`);
   process.exit(command ? 2 : 0);

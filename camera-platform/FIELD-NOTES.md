@@ -58,6 +58,44 @@ Same 4MP camera, 23 per store, 30 days:
 That is 2× 8 TB versus 4× 16 TB per appliance — across 150 stores, a materially
 different hardware order for hardware that records the same pictures.
 
+### 16 cameras on H.264, worked through
+
+The small-store case. Computed with `camctl size --cameras 16`, not by hand:
+
+| H.264 profile | Avg | GB/day/cam | Fleet GB/day | Disk for 30 days |
+|---|---|---|---|---|
+| VBR, smart codec, static corridor | 2 Mbps | 21.6 | 346 | **10.4 TB** |
+| VBR, typical | 3 Mbps | 32.4 | 518 | **15.6 TB** |
+| VBR, higher quality | 4 Mbps | 43.2 | 691 | **20.7 TB** |
+| CBR pinned at max | 6 Mbps | 64.8 | 1,037 | **31.1 TB** |
+
+Retention actually achieved (raw disk, 10% filesystem overhead):
+
+| Raw disk | Usable | 2 Mbps | 3 Mbps | 4 Mbps | 6 Mbps |
+|---|---|---|---|---|---|
+| 2× 8 TB | 14.4 TB | 42 d | 28 d | 21 d | 14 d |
+| 2× 12 TB | 21.6 TB | 63 d | 42 d | 31 d | 21 d |
+| 2× 16 TB | 28.8 TB | 83 d | 56 d | 42 d | 28 d |
+| 4× 12 TB | 43.2 TB | 125 d | 83 d | 63 d | 42 d |
+| 4× 16 TB | 57.6 TB | 167 d | 111 d | 83 d | 56 d |
+
+**2× 8 TB does not reach 30 days on H.264 at any realistic quality** — it gives
+28 days at 3 Mbps and 14 at CBR. The smallest 16-camera H.264 appliance that
+clears 30 days with margin is **2× 12 TB**, and that only at 3 Mbps or better.
+
+Switching the same 16 cameras to H.265+ (roughly half the bitrate for equal
+quality), 30-day target:
+
+| | H.264 | H.265+ | Saved per store |
+|---|---|---|---|
+| Typical | 15.6 TB | 7.8 TB | 7.8 TB |
+| Higher quality | 20.7 TB | 10.4 TB | 10.4 TB |
+| CBR at max | 31.1 TB | 15.6 TB | 15.6 TB |
+
+On H.265+ a 16-camera store fits comfortably in **2× 8 TB**. On H.264 it needs
+2× 12 TB or 2× 16 TB. That one setting is the difference between the cheapest
+appliance in the range and the next one up — before any hardware is bought.
+
 ### What to check, and it is free
 
 1. **H.265+ or H.264?** Older 4MP models support only H.264 and cost roughly
