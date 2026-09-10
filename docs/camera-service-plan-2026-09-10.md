@@ -32,10 +32,16 @@ and whether the business works.
 | Continuous → S3 direct (60s segments, lifecycle to IA at day 7) | **~$10–12** | Ingress free; ~$9.69 blended storage + ~$0.22 PUTs, **plus an IA early-deletion penalty** — see the caveat below. |
 | **Edge-first: record local, upload events + keyframes** | **~$0.30–0.80** | ~15–20 GB/month uploaded. Storage rounds to pennies. |
 
-Spot AI quotes around **$99/camera/month**; OpenEye and the broader cloud-VMS
-category run **$5–30/channel/month**. At $99 continuous-cloud has gross margin.
-At $25 — the price you need to displace an incumbent — **continuous cloud is
-negative margin before you have paid a single support engineer.**
+Spot AI quotes around **$99/camera/month**. OpenEye starts at about
+**$5/channel/month** — and understanding *why* it can be that cheap is the whole
+strategy, so it gets its own section ([§3.1](#31-what-openeyes-5-actually-buys)).
+The short version: $5 is a cloud-*management* licence sitting on top of hardware
+the customer already bought, with recording kept local and 2 GB of cloud storage.
+It is not $5 of cloud video.
+
+At $99 continuous-cloud recording has gross margin. At $25 it is thin. **At $5 it
+is roughly four times underwater before you have paid a single support
+engineer.**
 
 > **Caveat on the S3 row, because it is the kind of error that looks fine.**
 > S3 Infrequent Access bills a **30-day minimum storage duration**. Transition at
@@ -67,7 +73,8 @@ budget and a substream default.
 |---|---|---|---|---|
 | Cameras | Their own + BYO | **BYO standard IP** | Proprietary only | BYO ONVIF/RTSP |
 | Recording | On-prem appliance | On-prem recorder | On-camera SSD | On-prem bridge |
-| Pricing | ~$99/cam/mo, quote-only | ~$5–30/channel/mo, quote-only | Camera + licence, high | TBD, see [§9](#9-unit-economics-and-pricing) |
+| Pricing | ~$99/cam/mo, quote-only | **from ~$5/channel/mo** + hardware, quote-only | Camera + licence, high | TBD, see [§9](#9-unit-economics-and-pricing) |
+| Cloud storage included | Substantial | **2 GB** on the entry tier | On-camera | See §9 |
 | Sold via | Direct | **Integrators** | Direct | Direct, construction-first |
 | AI search | Yes, headline feature | Limited | Yes | Phase 4 |
 | Construction-native | No | No | No | **Yes — the wedge** |
@@ -77,6 +84,34 @@ sell through integrator channels that took a decade to build. **The build is not
 the hard part of this business; distribution and 24/7 support are.** That is not
 a reason to stop — it is the reason the wedge in [§10](#10-the-wedge-why-this-beats-a-generic-vms)
 has to be real rather than a slogan.
+
+### 3.1 What OpenEye's $5 actually buys
+
+This number was corrected into the plan by the human, and it is the most
+important competitive fact in the document — so it is worth being precise about
+what is inside it. OWS 24/7 **Lite**, the entry tier, includes **2 GB of cloud
+storage**. At 2 Mbps that is **2.3 hours of one camera**. It is a budget for
+event clips, not a video archive.
+
+Three things make $5 possible, and you have **none of them by default**:
+
+| Their lever | What it does | Do you have it? |
+|---|---|---|
+| Customer buys OpenEye hardware — a cloud recorder or their cloud cameras — as a separate one-time purchase | Takes margin up front; the recorder is the archive | Only if you sell hardware at margin (open decision #2) |
+| Recording stays local, 2 GB in the cloud | Cloud COGS rounds to ~$0.05/camera/month | **Yes** — this is the same edge-first design as §2 |
+| Sold **exclusively through integrators** | The integrator does install, support and the truck rolls | **No.** Direct sales means you eat all of it |
+
+**Conclusion, and it changes the pricing strategy: do not try to compete at $5.**
+That price is a software line item inside a deal that also carries hardware margin
+and an integrator's support labour. Matching it while selling direct means
+matching their revenue and absorbing costs they never touch.
+
+The viable position is the opposite one: **OpenEye's cost structure at
+Spot AI's altitude.** Edge-first recording keeps COGS near $1.63, and you charge
+$25–40 for things OpenEye's $5 tier does not include at all — real cloud
+retention, AI search, PPE observation, and the construction-native features in
+[§10](#10-the-wedge-why-this-beats-a-generic-vms). You are not the cheap option.
+You are the option that costs a quarter of Spot AI and knows what a job site is.
 
 ---
 
@@ -294,11 +329,24 @@ retention, us-east-1, 8 cameras per site, 60 alert events per camera per day at
 | **AWS cost of goods** | **~$1.63** |
 | Embeddings + AI search (Phase 4, per camera) | +$0.50–2.00 |
 
-Against a $25/camera/month price that is **~90% gross margin before support**;
-against $99 it is ~98%. The margin is not the risk. **Support, truck rolls and
-churn are the risk** — one on-site visit at $150 wipes out six camera-months.
-This is why bridge health telemetry and remote diagnosis are a Phase 2 feature,
-not a Phase 6 one.
+Gross margin by price point, before any support cost:
+
+| Price / camera / month | Gross margin | One $150 truck roll costs you |
+|---|---|---|
+| $5 (matching OpenEye Lite) | $3.37 — 67% | **45 camera-months** |
+| $25 | $23.37 — 93% | 6 camera-months |
+| $40 | $38.37 — 96% | 4 camera-months |
+| $99 (Spot AI) | $97.37 — 98% | 1.5 camera-months |
+
+The percentages flatter the $5 column and hide the real problem: **the absolute
+dollars per camera are what pay a support engineer, not the ratio.** A hundred
+cameras at $5 is $337/month of gross profit — less than one support incident.
+The same hundred at $25 is $2,337 and the business breathes.
+
+So the margin is not the risk at $25+. **Support, truck rolls and churn are the
+risk**, and they are the reason bridge health telemetry and remote diagnosis are
+a Phase 2 feature rather than a Phase 6 one. Every problem you can diagnose
+without driving to a site is the entire month's profit on four cameras.
 
 Amortised hardware: $800 per site ÷ 8 cameras ÷ 36 months = **$2.78/camera/month**
 if you finance it, or a one-time charge if you do not.
@@ -400,8 +448,10 @@ These need answers before Phase 2, and none of them is mine to make:
 2. **Do you sell hardware, or spec it?** Selling it means RMAs, inventory and
    customs. Specifying it ("buy this $700 mini PC and this NVMe, we'll ship the
    image") means a worse install experience and a much lighter company.
-3. **Direct or through integrators?** OpenEye's channel is its moat. Direct is
-   faster to first revenue and much slower to a hundred sites.
+3. **Direct or through integrators?** OpenEye's channel is its moat *and* the
+   reason it can price at $5 (§3.1) — the integrator absorbs the support cost.
+   Direct is faster to first revenue, much slower to a hundred sites, and forces
+   you to price at $25+ to fund your own support.
 4. **Which market first — construction sites, or equipment yards?** Yards have
    power, internet and a fixed address. Active sites have LTE, dust, theft and
    urgency. The yard is the easier build; the site is the bigger pain.
@@ -433,7 +483,9 @@ These need answers before Phase 2, and none of them is mine to make:
 - [Frigate video pipeline](https://docs.frigate.video/frigate/video_pipeline/) — substream decode, 5 fps sampling
 - [Hailo-8 vs Coral for NVR workloads](https://botmonster.com/smart-home/hailo-8-vs-coral-tpu-frigate-nvr-comparison/) and [edge accelerator comparison](https://www.geeky-gadgets.com/ai-edge-sbc-hardware-comparison/)
 - [Spot AI pricing](https://surveillant.ai/guides/spot-ai-pricing) — ~$99/camera/month, quote-only
-- [OpenEye pricing](https://surveillant.ai/guides/openeye-pricing) and [cloud VSaaS pricing guide](https://surveillant.ai/guides/cloud-video-surveillance-pricing) — $5–30/channel/month
+- [OpenEye OWS 24/7 Lite announcement](https://www.openeye.net/introducing-ows-247-lite-the-most-affordable-subscription-option-for-openeye-web-services/) — entry tier includes **2 GB cloud storage**
+- [OWS licensing](https://answers.openeye.net/OpenEye_Web_Services/OWS_Licensing) — per-channel, 1:1 policy, OpenEye recorder or cloud cameras purchased separately
+- [OpenEye pricing](https://surveillant.ai/guides/openeye-pricing) and [cloud VSaaS pricing guide](https://surveillant.ai/guides/cloud-video-surveillance-pricing) — $5–30/channel/month band, sold only through integrators
 - [NDAA Section 889 camera compliance](https://tec-tel.com/resources/ndaa-section-889-camera-compliance) and [compliant brand list](https://security.getuniqcli.com/guides/ndaa-compliant-camera-brands)
 - [Surveillance compliance checklist — GDPR, BIPA, DPIA](https://www.forasoft.com/learn/video-surveillance/articles-vms/surveillance-compliance-checklist)
 - [Employee monitoring laws by state 2026](https://www.intelogos.com/blog/employee-monitoring-laws-by-state) — California AB 1221
