@@ -72,31 +72,67 @@ export function parseRtspUrl(raw: string): ParsedRtsp {
   // deliberately cannot see — the contracts compile with `"types": []` so that
   // reaching for a host API breaks the build rather than the purity guarantee.
   //   rtsp://[user[:pass]@]host[:port][/path][?query]
-  const match =
-    /^(rtsps?):\/\/(?:([^:@/]+)(?::([^@/]*))?@)?([^:/?#]+)(?::(\d+))?([^?#]*)(\?[^#]*)?/i.exec(trimmed);
-  if (match === null) {
-    // Distinguish the two failures, because they need different fixes: a wrong
-    // scheme is usually someone pasting the camera's web page instead of its
-    // stream, and saying so is faster than letting them wonder.
-    return /^rtsps?:\/\//i.test(trimmed)
-      ? { kind: "invalid", reason: "could not parse host and path" }
-      : { kind: "invalid", reason: "must begin rtsp:// or rtsps:// — this looks like a web address, not a stream" };
+  const scheme = /^rtsps?:\/\//i.exec(trimmed);
+  if (scheme === null) {
+    // A wrong scheme is usually someone pasting the camera's web page instead
+    // of its stream, and saying so is faster than letting them wonder.
+    return { kind: "invalid", reason: "must begin rtsp:// or rtsps:// — this looks like a web address, not a stream" };
   }
 
-  const rawUser = match[2];
-  const rawPass = match[3];
-  const host = match[4];
-  const rawPort = match[5];
-  const rawPath = match[6];
-  const rawQuery = match[7];
+  // The authority runs to the first '/', '?' or '#', and the credentials to the
+  // LAST '@' within it. That is how ffmpeg splits a URL, so a password with a
+  // raw '@' means here what it means to the program that connects with it. A
+  // regex naturally splits at the first '@', which put the rest of such a
+  // password into the host — and from the host into logs and the camera list.
+  const rest = trimmed.slice(scheme[0].length);
+  const authEnd = rest.search(/[/?#]/);
+  const authority = authEnd === -1 ? rest : rest.slice(0, authEnd);
+  const tail = authEnd === -1 ? "" : rest.slice(authEnd);
+  const at = authority.lastIndexOf("@");
+  const userinfo = at === -1 ? null : authority.slice(0, at);
+  const hostPort = at === -1 ? authority : authority.slice(at + 1);
 
-  if (host === undefined || host === "") {
+  // No reason below quotes the input. A URL that fails to parse is most often
+  // one whose password broke its structure, so any fragment of it may be secret.
+  if (hostPort === "") {
     return { kind: "invalid", reason: "no host" };
   }
+  const hp = /^([^:@\s[\]]+)(?::(\d*))?$/.exec(hostPort);
+  if (hp === null) {
+    return {
+      kind: "invalid",
+      reason: tail.includes("@")
+        ? "could not parse host and port — a password containing '/', '?' or '#' must be percent-encoded (%2F, %3F, %23)"
+        : "could not parse host and port",
+    };
+  }
+  const host = hp[1] as string;
+  const rawPort = hp[2];
+
+  let rawUser: string | undefined;
+  let rawPass: string | undefined;
+  if (userinfo !== null) {
+    const colon = userinfo.indexOf(":");
+    rawUser = colon === -1 ? userinfo : userinfo.slice(0, colon);
+    rawPass = colon === -1 ? undefined : userinfo.slice(colon + 1);
+    // A password with no username would be dropped in favour of the configured
+    // credentials (resolveCameraUrl keys on the username), silently.
+    if (rawUser === "") {
+      return { kind: "invalid", reason: "credentials in the URL with no username" };
+    }
+  }
+
+  const queryAt = tail.search(/[?#]/);
+  const rawPath = queryAt === -1 ? tail : tail.slice(0, queryAt);
+  const rawQuery = queryAt === -1 || tail[queryAt] === "#"
+    ? undefined
+    : tail.slice(queryAt).replace(/#.*$/s, "");
 
   const port = rawPort === undefined || rawPort === "" ? 554 : Number(rawPort);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    return { kind: "invalid", reason: `port out of range: ${rawPort}` };
+    // Not echoed: in `rtsp://admin:12345678` with the host left off, the
+    // "port" is an all-digit password.
+    return { kind: "invalid", reason: "port out of range: must be 1-65535" };
   }
 
   // A bare host with no path is usually a mistake, but some cameras do serve a

@@ -13,3 +13,7 @@ export * from "./bandwidth.js";
 export * from "./timeline.js";
 export * from "./uploadPolicy.js";
 export * from "./cameraSource.js";
+export * from "./httpRange.js";
+export * from "./apiQuery.js";
+export * from "./indexCoverage.js";
+export * from "./cameraView.js";

@@ -42,6 +42,36 @@ check("redactRtspUrl strips credentials from an arbitrary URL", () => {
   eq(redactRtspUrl("rtsp://10.0.0.5:554/path"), "rtsp://10.0.0.5:554/path", "no-credential URL untouched");
 });
 
+check("THE FEARED ONE: a URL mid-line is redacted — stderr and stack traces are text", () => {
+  eq(redactRtspUrl("[rtsp @ 0x55d0] rtsp://admin:hunter2@10.0.0.5:554/x: 401 Unauthorized"),
+     "[rtsp @ 0x55d0] rtsp://admin:***@10.0.0.5:554/x: 401 Unauthorized", "mid-line");
+  eq(redactRtspUrl("Error: probe failed\n    at open (rtsp://admin:hunter2@10.0.0.5/x)"),
+     "Error: probe failed\n    at open (rtsp://admin:***@10.0.0.5/x)", "in a stack trace");
+  eq(redactRtspUrl("a rtsp://u:p1@h1/x b RTSPS://u:p2@h2/y"), "a rtsp://u:***@h1/x b RTSPS://u:***@h2/y", "two");
+  eq(redactRtspUrl("rtsp://u:p1@h1/x,rtsp://u:p2@h2/y"), "rtsp://u:***@h1/x,rtsp://u:***@h2/y", "glued together");
+});
+
+check("THE FEARED ONE: a raw '@', '/', '?' or '#' in the password does not survive redaction", () => {
+  eq(redactRtspUrl("rtsp://a:b@c@10.0.0.5/x"), "rtsp://a:***@10.0.0.5/x", "two '@' — split at the last, as ffmpeg does");
+  eq(redactRtspUrl("rtsp://admin:hun/ter2@10.0.0.5/x"), "rtsp://admin:***@10.0.0.5/x", "a raw '/'");
+  for (const pw of ["hunter2", "p@ss", "a@b@c", "hun/ter2", "x?y9z", "q#r7s", "pa$$.w*rd", "100%pure"]) {
+    const out = redactRtspUrl(`ffmpeg: rtsp://admin:${pw}@10.0.0.5:554/Streaming/Channels/101: refused`);
+    if (out.includes(pw)) throw new Error(`password ${JSON.stringify(pw)} survived: ${out}`);
+    if (!out.includes("rtsp://")) throw new Error(`the URL itself was lost: ${out}`);
+  }
+});
+
+check("a password in the vendor's path is redacted too", () => {
+  eq(redactRtspUrl("rtsp://10.0.0.6:554/user=admin&password=hunter2&channel=1&stream=0.sdp"),
+     "rtsp://10.0.0.6:554/user=admin&password=***&channel=1&stream=0.sdp", "path");
+  eq(redactRtspUrl("rtsp://10.0.0.6/live?user=admin&pwd=p@ss"), "rtsp://10.0.0.6/live?user=admin&pwd=***", "query, with an '@'");
+  eq(redactRtspUrl("rtsp://10.0.0.6/cam?bypass=1"), "rtsp://10.0.0.6/cam?bypass=1", "not every word ending in pass");
+});
+
+check("a username with no password is treated as the secret", () => {
+  eq(redactRtspUrl("rtsp://t0ken@10.0.0.5/x"), "rtsp://***@10.0.0.5/x", "user only");
+});
+
 check("an unknown vendor REFUSES rather than guessing a path", () => {
   const r = buildRtspUrl({ vendor: "generic", ip: "10.0.0.5", channel: 1, stream: "main" }, creds);
   eq(r.kind, "unsupported", "kind");

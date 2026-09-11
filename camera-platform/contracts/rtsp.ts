@@ -165,9 +165,36 @@ export function buildRtspUrl(
   return { kind: "ok", url, redacted };
 }
 
-/** Strip credentials from any RTSP URL before it reaches a log or the console. */
-export function redactRtspUrl(url: string): string {
-  return url.replace(/^(rtsps?:\/\/)([^:/@]+):([^@]*)@/i, "$1$2:***@");
+/**
+ * Strip credentials from every RTSP URL in a piece of text before it reaches a
+ * log or the console.
+ *
+ * Text, not a URL: callers pass ffmpeg stderr and stack traces, where the URL
+ * is mid-line. This was once anchored at the start of the string, so it only
+ * ever redacted a bare URL — never the stack trace camctl prints on a crash.
+ *
+ * Within each URL: `password=`/`passwd=`/`pwd=`/`pass=` parameters in the path
+ * or query are blanked (some vendors put the password there); then the userinfo
+ * is blanked up to the LAST '@' of the authority, as ffmpeg reads it; and if
+ * the authority has no '@', up to the last '@' anywhere in the URL, because a
+ * raw '/', '?' or '#' in a password ends the authority early. That last rule
+ * over-redacts a URL with an '@' in its query — a log line that loses its host
+ * is the better failure. A URL runs to whitespace or to the next rtsp://.
+ */
+export function redactRtspUrl(text: string): string {
+  return text.replace(/(rtsps?:\/\/)((?:(?!rtsps?:\/\/)\S)*)/gi, (_whole, scheme: string, body: string) => {
+    const blanked = body.replace(/(^|[/?&;])(password|passwd|pwd|pass)=[^&]*/gi, "$1$2=***");
+    const authEnd = blanked.search(/[/?#]/);
+    const authority = authEnd === -1 ? blanked : blanked.slice(0, authEnd);
+    let at = authority.lastIndexOf("@");
+    if (at === -1) at = blanked.lastIndexOf("@");
+    if (at === -1) return scheme + blanked;
+    const userinfo = blanked.slice(0, at);
+    const colon = userinfo.indexOf(":");
+    const user = colon === -1 ? "" : userinfo.slice(0, colon);
+    const kept = user !== "" && !/[/?#]/.test(user) ? `${user}:***` : "***";
+    return `${scheme}${kept}${blanked.slice(at)}`;
+  });
 }
 
 /** Candidate URLs to try, in order, when adopting an unknown camera. */

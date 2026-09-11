@@ -50,6 +50,22 @@ export function eq(actual, expected, what = "value") {
   if (a !== e) throw new Error(`${what}: expected ${e}, got ${a}`);
 }
 
+/**
+ * Like eq, but object key order does not matter. `eq` compares JSON text, so
+ * `{ ok, ms }` and `{ ms, ok }` differ — which fails a correct implementation
+ * for the order it happened to build a literal in.
+ */
+export function same(actual, expected, what = "value") {
+  const canon = (v) => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v !== null && typeof v === "object") {
+      return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]));
+    }
+    return v;
+  };
+  eq(canon(actual), canon(expected), what);
+}
+
 export function close(actual, expected, tolerance, what = "value") {
   if (!(Math.abs(actual - expected) <= tolerance)) {
     throw new Error(`${what}: expected ${expected} ±${tolerance}, got ${actual}`);
