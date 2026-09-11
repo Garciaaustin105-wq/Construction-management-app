@@ -156,6 +156,30 @@ which is worth 2x on its own.
 Model-by-model selection is in [`AVYCON-MODELS.md`](AVYCON-MODELS.md), including
 the model-number scheme and a table to fill in from the bench.
 
+## IP assignment — a Phase A capability, to build with hardware present
+
+Cameras ship on a factory-default address. Sixteen of them arriving on the same
+one is the normal case, not an edge case, and the recorder has to be able to
+reassign them without anyone opening sixteen web interfaces.
+
+| Mechanism | Works on | Notes |
+|---|---|---|
+| **SADP** (UDP 37020) | Hikvision and its OEMs | The same protocol already used for discovery can set the address. This is what Hikvision's own SADP tool does. |
+| **ONVIF `SetNetworkInterfaces`** | Anything ONVIF-compliant, incl. AVYCON | Requires ONVIF enabled and credentials |
+
+**Do not write this blind.** An address set wrongly puts a camera on a subnet
+nothing can reach, and the fix is the reset button on a pole. Capture a real SADP
+set-IP exchange alongside the discovery captures (`--raw-dir`) before
+implementing.
+
+Open questions for the bench:
+
+| | |
+|---|---|
+| What is AVYCON's factory default address — static, or DHCP? | — |
+| Does SADP set-IP need the camera's current password? | — |
+| Does AVYCON ship with ONVIF enabled, so `SetNetworkInterfaces` is available? | — |
+
 ## Why #2 needs the raw captures
 
 SADP is reverse-engineered, not published, and sources disagree on the multicast

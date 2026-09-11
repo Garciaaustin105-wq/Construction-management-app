@@ -13,6 +13,7 @@ import { discoverSadp } from "./sadp.mjs";
 import { discoverOnvif } from "./wsdiscovery.mjs";
 import { probeStream, measureBitrate } from "./media.mjs";
 import { buildRtspUrl, redactRtspUrl, candidatePaths, urlForPath } from "../dist/rtsp.js";
+import { parseRtspUrl } from "../dist/cameraSource.js";
 import { vendorFromMac, normaliseMac } from "../dist/camera.js";
 import { computeRetentionDays, requiredBytesForDays, usableBytesFromRaw, TERABYTE } from "../dist/retention.js";
 import { computePerCameraBudget, checkAgainstBudget, withRingHeadroom } from "../dist/budget.js";
@@ -99,6 +100,25 @@ async function cmdProbe() {
   const channel = Number(flag("channel", "1"));
   const stream = flag("stream", "main");
   const tryAll = args.includes("--try-all");
+
+  // Level 3: a full URL, used exactly as given. This is the path that gets an
+  // installer off site when everything clever has failed, so it second-guesses
+  // nothing — not the port, not the path, not the credentials.
+  if (/^rtsps?:\/\//i.test(ip)) {
+    const parsed = parseRtspUrl(ip);
+    if (parsed.kind !== "ok") { console.error(`not usable: ${parsed.reason}`); process.exit(2); }
+    const url = parsed.username
+      ? ip
+      : urlForPath(parsed.host, parsed.path, creds, parsed.port).url;
+    console.log(`probing ${redactRtspUrl(url)}  (verbatim — no template applied)`);
+    const direct = await probeStream(url);
+    if (direct.kind !== "ok") { console.error(`unusable: ${direct.reason}`); process.exit(1); }
+    const s2 = direct.stream;
+    console.log(`  codec ${s2.codec}  ${s2.width}x${s2.height}  ${s2.fps ?? "?"} fps  audio ${s2.hasAudio ? "PRESENT" : "none"}`);
+    console.log(`\n  >>> working URL: ${redactRtspUrl(url)}`);
+    console.log("      record it in FIELD-NOTES against the model — it belongs in candidatePaths().");
+    return;
+  }
 
   let built;
   let probe;
@@ -291,6 +311,8 @@ if (!handler) {
   preflight                     check ffmpeg/ffprobe and permissions
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention
+  probe <rtsp://...> [options]  same, but the URL is used verbatim — level 3,
+                                for when path detection is what failed
   size [options]                disk sizing table for a store
   budget [options]              per-camera bitrate ceiling for a retention target
   bench [options]               concurrent write throughput of a recording drive

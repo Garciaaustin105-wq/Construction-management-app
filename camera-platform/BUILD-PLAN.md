@@ -27,18 +27,36 @@ Nothing here talks to a camera yet, and nothing serves a client.
 **Every automatic mechanism must have a manual override, and the manual path is
 never second-class.**
 
-Spot.ai auto-connects cameras and offers no manual route. The day discovery fails
-— unusual firmware, a non-standard port, a camera behind a router, a model whose
-path nobody has seen — the installer is stuck at a site with a working camera and
-no way to add it. That is not a missing feature, it is a design that assumed its
-own success.
+Two different products, and I had them confused. Setting it straight, because
+the gap is only in one of them:
 
-So: discovery saves time, it is never the only way in. `contracts/cameraSource.ts`
-takes a pasted RTSP URL verbatim, honours non-standard ports and query strings,
-accepts a bare host and lets the probe judge, and records when a human overrode
-what a template produced — because three sites correcting the same vendor the
-same way means the candidate list is wrong and should be fixed centrally rather
-than by every installer in turn.
+**OpenEye does this well.** Manual entry by device IP, *and* — the part that
+matters on an install day — **it can change a camera's IP from the NVR**. Sixteen
+cameras out of the box all answering on the same factory default is a real
+problem, and the alternative is plugging them in one at a time, opening each web
+interface, and setting an address by hand. Doing it from the recorder is the
+difference between an afternoon and ten minutes.
+
+**Spot.ai is the one that auto-connects with no useful manual route.** When
+discovery fails there, the installer is stuck at a site with a working camera.
+
+So we need both capabilities, and neither is optional:
+
+| Level | Input | Catches |
+|---|---|---|
+| 1 | Nothing — sweep, SADP, WS-Discovery | The normal case |
+| 2 | **An IP** — we walk `candidatePaths()` | Camera outside the swept range, or silent to discovery |
+| 3 | **A full RTSP URL**, used verbatim | Non-standard port, unknown path, a model nobody has seen |
+
+**Plus IP assignment from the appliance** — SADP can set a Hikvision camera's
+address without touching its web interface, and ONVIF's `SetNetworkInterfaces`
+does the same for anything compliant. Both are how the tools that do this
+already work.
+
+> **Build this one with hardware in front of you.** Assigning an address wrongly
+> puts a camera on a subnet nothing can reach, and recovery is a physical reset
+> button on a pole. It is the one piece of the discovery stack that should not be
+> written blind and tested later.
 
 The same rule applies everywhere else it comes up: auto-assigned camera names,
 auto-detected bitrates, auto-selected substreams. **Automatic by default,
