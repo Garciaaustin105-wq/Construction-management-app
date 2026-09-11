@@ -27,6 +27,28 @@ export const PROFILE_KBPS: Record<StreamProfile, number> = {
 /** Best to worst. Degradation walks down this list. */
 const LADDER: readonly StreamProfile[] = ["main", "sub", "low", "snapshot"];
 
+/**
+ * Tiles per page on a phone. OpenEye's app shows six and paginates, which is
+ * both a legibility decision and the reason opening a store feels instant —
+ * six streams to negotiate, not sixteen.
+ *
+ * The client MUST stop the previous page's streams when the user swipes.
+ * Otherwise streams accumulate as they browse, and a manager who flicks through
+ * three pages is holding eighteen open on a link sized for six.
+ */
+export const MOBILE_TILES_PER_PAGE = 6;
+
+/**
+ * Desktop shows the whole store at once — sixteen tiles, no paging. Still the
+ * substream: "not full resolution but it still looks good" is exactly right,
+ * because a tile on a 1080p monitor is about 480x270 and the substream is
+ * 640x360.
+ *
+ * So a desktop viewer costs roughly 2.7x a phone viewer on the store's uplink,
+ * which is the main reason contention happens at all.
+ */
+export const DESKTOP_TILES = 16;
+
 export interface StreamRequest {
   cameraId: string;
   viewerId: string;

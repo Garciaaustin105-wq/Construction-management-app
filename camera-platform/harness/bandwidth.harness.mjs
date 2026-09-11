@@ -1,6 +1,6 @@
 /** Uplink budgeting. The failure feared: the third viewer being refused, or
  *  worse, everyone's video AND the alert-clip upload stuttering together. */
-import { allocateBandwidth, capacityAt, PROFILE_KBPS } from "../dist/bandwidth.js";
+import { allocateBandwidth, capacityAt, PROFILE_KBPS, MOBILE_TILES_PER_PAGE, DESKTOP_TILES } from "../dist/bandwidth.js";
 import { check, eq, throws, report } from "./_assert.mjs";
 
 console.log("bandwidth");
@@ -136,6 +136,51 @@ check("two viewers pinning different cameras share what is available", () => {
   const pins = plan.allocations.filter((a) => a.cameraId === "cam-a" || a.cameraId === "cam-b");
   eq(pins.length, 2, "both pins present");
   eq(new Set(pins.map((p) => p.granted)).size, 1, "both pins treated equally");
+});
+
+check("phone viewers: three fit undegraded on 15 Mbps, four is the edge", () => {
+  eq(MOBILE_TILES_PER_PAGE, 6, "six up, swipe for the rest");
+  const phones = (n) => Array.from({ length: n }, (_, v) => req(MOBILE_TILES_PER_PAGE, "sub", `v${v}`)).flat();
+  eq(allocateBandwidth(phones(3), CABLE).anyDegraded, false, "three phones fit");
+  eq(allocateBandwidth(phones(4), CABLE).anyDegraded, true, "four tips it over");
+});
+
+check("a desktop viewer costs 2.7x a phone viewer — the real source of contention", () => {
+  eq(DESKTOP_TILES, 16, "desktop shows the whole store");
+  const desktop = allocateBandwidth(req(DESKTOP_TILES, "sub", "ceo"), CABLE);
+  const phone = allocateBandwidth(req(MOBILE_TILES_PER_PAGE, "sub", "mgr"), CABLE);
+  eq(desktop.usedKbps / phone.usedKbps, DESKTOP_TILES / MOBILE_TILES_PER_PAGE, "ratio");
+  eq(desktop.anyDegraded, false, "one desktop viewer alone is fine");
+});
+
+check("the realistic mix: CEO on desktop plus two managers on phones", () => {
+  const plan = allocateBandwidth([
+    ...req(DESKTOP_TILES, "sub", "ceo"),
+    ...req(MOBILE_TILES_PER_PAGE, "sub", "mgr1"),
+    ...req(MOBILE_TILES_PER_PAGE, "sub", "mgr2"),
+  ], CABLE);
+  eq(plan.refused.length, 0, "nobody locked out");
+  if (plan.usedKbps > plan.budgetKbps) throw new Error("over budget");
+});
+
+check("6-up mobile tolerates viewers that 16-up desktop does not", () => {
+  const sixUp = allocateBandwidth([...req(6, "sub", "v1"), ...req(6, "sub", "v2"), ...req(6, "sub", "v3")], CABLE);
+  const sixteenUp = allocateBandwidth([...req(16, "sub", "v1"), ...req(16, "sub", "v2"), ...req(16, "sub", "v3")], CABLE);
+  eq(sixUp.anyDegraded, false, "three viewers at 6-up: nobody degraded");
+  eq(sixteenUp.anyDegraded, true, "three viewers at 16-up: everyone degraded");
+});
+
+check("a phone page plus a pinned full-screen fits easily", () => {
+  const plan = allocateBandwidth([
+    { cameraId: "cam-gate", viewerId: "v1", desired: "main", pinned: true },
+    ...req(MOBILE_TILES_PER_PAGE, "sub", "v1"),
+  ], CABLE);
+  eq(plan.anyDegraded, false, "grid and spotlight both at full quality");
+});
+
+check("capacity in phone pages, not raw streams — the number an operator cares about", () => {
+  eq(Math.floor(capacityAt("sub", CABLE) / MOBILE_TILES_PER_PAGE), 3, "15 Mbps carries 3 phone pages");
+  eq(Math.floor(capacityAt("sub", 5000) / MOBILE_TILES_PER_PAGE), 1, "OpenEye's recommended 5 Mbps carries one");
 });
 
 report("bandwidth");
