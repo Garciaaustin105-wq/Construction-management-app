@@ -234,6 +234,28 @@ Do not confuse the two axes. "4MP quality" is a statement about pixels. It does
 not imply 30 fps, and paying for 30 fps everywhere is how a 12 TB appliance
 quietly becomes a 20 TB one.
 
+### GOP: main stream and substream want OPPOSITE settings
+
+Earlier in this project I recommended an I-frame interval of 2x the frame rate to
+cut bitrate. **That applies to the main stream only.** Applying it to the
+substream is a mistake of the kind that shows up as "the app feels slow" rather
+than as anything obviously broken.
+
+| | Main stream | Substream |
+|---|---|---|
+| Job | Fill the disk as slowly as possible | Start playing as fast as possible |
+| GOP | **2x frame rate** (60 at 30 fps) | **1x frame rate or shorter** (~1s) |
+| Why | Fewer I-frames is 15–25% less storage | A player cannot start until an I-frame arrives |
+
+A viewer opening a grid waits for the next I-frame on every tile. At a one-second
+GOP that is imperceptible. At four seconds, sixteen tiles paint raggedly over
+four seconds and the app feels broken — while saving storage on a stream nobody
+records.
+
+**Set them independently.** The substream costs so little disk that its GOP is
+free to optimise entirely for startup latency. This is what makes "open a store,
+see every camera at once" possible.
+
 ### One SKU is worth more than the storage maths
 
 All-identical cameras buy things that never show up in a capacity table:
