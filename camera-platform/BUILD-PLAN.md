@@ -22,6 +22,28 @@ Nothing here talks to a camera yet, and nothing serves a client.
 
 ---
 
+## A standing rule, learned from a competitor
+
+**Every automatic mechanism must have a manual override, and the manual path is
+never second-class.**
+
+Spot.ai auto-connects cameras and offers no manual route. The day discovery fails
+— unusual firmware, a non-standard port, a camera behind a router, a model whose
+path nobody has seen — the installer is stuck at a site with a working camera and
+no way to add it. That is not a missing feature, it is a design that assumed its
+own success.
+
+So: discovery saves time, it is never the only way in. `contracts/cameraSource.ts`
+takes a pasted RTSP URL verbatim, honours non-standard ports and query strings,
+accepts a bare host and lets the probe judge, and records when a human overrode
+what a template produced — because three sites correcting the same vendor the
+same way means the candidate list is wrong and should be fixed centrally rather
+than by every installer in turn.
+
+The same rule applies everywhere else it comes up: auto-assigned camera names,
+auto-detected bitrates, auto-selected substreams. **Automatic by default,
+manual always available.**
+
 ## Phase A — the appliance stands alone (4–5 weeks)
 
 **The goal: a box you could install at one car wash today and the staff on site

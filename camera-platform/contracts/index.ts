@@ -12,3 +12,4 @@ export * from "./budget.js";
 export * from "./bandwidth.js";
 export * from "./timeline.js";
 export * from "./uploadPolicy.js";
+export * from "./cameraSource.js";
