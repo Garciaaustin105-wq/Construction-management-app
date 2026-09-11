@@ -131,13 +131,52 @@ budgeted. That is the number to establish before ordering anything.
 
 ---
 
-## 3. What internal-only lets us delete
+## 2.5 One customer, 150 stores — what that changes
+
+The estate belongs to **a customer**, not to us. We build, install and operate
+the platform; they own the stores, the tenants and the footage.
+
+That is not the same as "internal", and three things I cut on that basis come
+back.
+
+**Per-site access control — but not multi-tenancy.** One customer, so no tenant
+isolation, no billing, no white-label. But 150 stores with their own managers
+means a store manager sees *their* store and not the other 149, while a regional
+sees a group and head office sees everything. That is role and scope within one
+account — much simpler than SaaS multi-tenancy, and not nothing.
+
+**An audit trail of who watched what.** Sooner or later a tenant dispute, an
+employment matter or a subpoena will turn into "who looked at this footage, and
+when". A customer-operated system needs that answer. Views and exports get
+logged; the log is not editable from the console.
+
+**Liability is real again.** I wrote earlier that internal use removes the
+product-liability surface. It does not when the estate is a customer's: if
+footage is missing during a break-in at their facility, that is a contractual
+problem, not an internal inconvenience. Which makes three existing decisions
+load-bearing rather than nice — explicit gaps with reasons (never silent
+absence), evidence hold that eviction cannot touch, and hashed exports.
+
+**The 2am pager is contractual.** Not "we already support cameras anyway". Fleet
+telemetry and remote diagnosis move from efficiency to obligation, which is more
+reason for the §8 console to be Phase 2.
+
+### Two things to settle with the customer, not in code
+
+1. **Footage on termination.** If the contract ends, the recordings are theirs.
+   Agree the export mechanism and format *before* it is ever needed, and make
+   sure the appliance can produce it without us.
+2. **Concentration.** One customer is the entire user base of this platform. It
+   is worth knowing whether that is a long contract or a rolling one before
+   committing years of engineering to it.
+
+## 3. What one customer still lets us delete
 
 Roughly a third of every previous draft. Gone, permanently:
 
 | Deleted | Why |
 |---|---|
-| Multi-tenancy, RLS, tenant isolation | One company, one estate |
+| Multi-tenancy, RLS, tenant isolation | One customer, one estate — but see §2.5 for per-site scope, which is not the same thing |
 | Billing, plans, metering, Stripe | Nobody is invoiced |
 | Customer-facing portal, branding, white-label | Internal users only |
 | Dealer/reseller management | Not selling it |
