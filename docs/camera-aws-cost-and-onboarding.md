@@ -76,6 +76,63 @@ per store per month across 150 stores is 42 GB — **97 cents**. That is the who
 cost of insuring against a stolen recorder, so there is no argument for skipping
 it.
 
+### 1.3b The monitoring hub — 24/7 across 10 stores
+
+A guard off-site watching 10 stores on a wall of displays. This is the only usage
+pattern so far that can cost real money, and **two design choices decide whether
+it costs $0 or $2,200 a month.**
+
+**Choice one: substream for tiles, main stream only for the spotlight.**
+A tile on a video wall is roughly 480×270. Sending a 5MP main stream to be drawn
+at that size is absurd — send the 640×360 substream at ~400 kbps, and switch that
+one camera to the main stream when the operator opens it full-screen. Every
+commercial VMS client works this way.
+
+| Tiles | Stream | Hub download | Fleet GB/mo | Relayed via AWS |
+|---|---|---|---|---|
+| 16 | substream | 6.4 Mbps | 2,074 | $176 |
+| **32** | **substream** | **12.8 Mbps** | 4,147 | **$353** |
+| 64 | substream | 25.6 Mbps | 8,294 | $705 |
+| 32 | main | 80 Mbps | 25,920 | **$2,203** |
+| 160 | main | 400 Mbps | 129,600 | $11,016 |
+
+Same 32 tiles: **$353 on substreams, $2,203 on main streams.** A 6× difference
+from one decision in the client.
+
+**Choice two: peer-to-peer, not relayed.** Every figure in that last column is
+what it costs *if the video goes through AWS*. Peer-to-peer, the stream goes
+store → internet → hub and **AWS sees none of it: $0**. The realistic
+configuration — 32 substream tiles plus one full-screen spotlight — is 15.3 Mbps
+into the hub, which is nothing for a business connection.
+
+So a hub adds **roughly nothing to the AWS bill**, provided P2P holds. Budget for
+the minority of stores whose NAT forces a relay: if 2 of 10 relay, that is about
+$70/month, not $353.
+
+#### The constraint that is not AWS
+
+**It is the stores' upload bandwidth.**
+
+| Per store | Substream | Main stream |
+|---|---|---|
+| 8 cameras | 3.2 Mbps up | 20 Mbps up |
+| 16 cameras | **6.4 Mbps up** | 40 Mbps up |
+
+Sixteen substreams is 6.4 Mbps of sustained upload, 24/7, from each store. Many
+commercial cable plans are 10–20 Mbps up, so this fits — but it is most of a
+modest connection, permanently. **Check the upload speed at any store that joins
+the hub before promising continuous monitoring**, and expect the appliance to
+need a per-store cap on how many simultaneous streams it will serve.
+
+#### Worth questioning the premise
+
+Continuously watching 160 cameras is not effective human monitoring — attention
+degrades badly past a handful of tiles. The pattern that actually works in remote
+guarding is **event-driven**: the wall shows a small overview, an alert puts the
+relevant camera front and centre, and the operator responds. That needs the
+detection work in Phase 5 far more than it needs bandwidth, and it costs less in
+every dimension.
+
 ### 1.4 Four design choices worth real money
 
 Each of these is a decision in the appliance, not a negotiation with AWS:
