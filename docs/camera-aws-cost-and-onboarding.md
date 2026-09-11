@@ -8,110 +8,73 @@
 
 ## Part 1 — What AWS costs
 
-### 1.1 Correction to the plan
+### 1.1 The architecture this is costing
 
-The plan used **$1.38/camera/month** as AWS cost of goods — a generic per-camera
-placeholder. Itemised properly below, the real figure is **$0.25–0.46**. The
-placeholder was 3–5× too high, and it was used in the build-vs-buy case, so:
+**Footage lives on the appliance. The cloud is for reaching it, not holding it.**
 
-| | Plan said | Actual |
-|---|---|---|
-| AWS per year | $57,132 | **$10,400–19,200** |
-| License cost avoided | $134,550 | $134,550 |
-| **Annual saving from self-hosting** | $77,418 | **$115,000–124,000** |
+- **Live view** — a manager on the mobile app, the CEO from a remote desktop.
+  WebRTC, peer-to-peer between the viewer and the appliance. **The video does not
+  pass through AWS at all**; it rides the store's own upload. AWS supplies only
+  the signalling handshake, and a TURN relay in the minority of cases where NAT
+  traversal fails.
+- **Playback** — scrubbing back through history. The appliance serves its own
+  archive over the same path. Nothing is staged into S3 to be watched.
+- **The only routine upload** is a clip when a genuine alert fires, kept in the
+  cloud because the recorder is itself what a burglar takes (§4.1 of the plan).
+  Not motion events, not keyframes — real alerts.
 
-The build case is materially stronger than the plan states.
+Everything else is a control plane: device connectivity, health telemetry, the
+console.
 
-### 1.2 How much of this is measured, and how much is invented
+> **Earlier versions of this document costed something else.** They assumed 15
+> events per camera per day plus a keyframe a minute uploaded continuously —
+> roughly **14 TB a month** into S3, which made storage over half the bill and
+> produced headline figures of $744–865. That is not this architecture. Those
+> numbers are withdrawn.
 
-Worth stating plainly, because the headline number gets quoted.
+### 1.2 What it actually costs — 150 stores, 16 cameras each
 
-**Solid — AWS's published unit prices.** $0.023/GB-month S3, $1.00 per million
-IoT messages, $0.085/GB CloudFront, $0.03 per WebRTC signalling channel. These
-come from AWS's own pricing pages and are not in doubt.
-
-**Invented — every usage figure they multiply.** Chiefly **15 events per camera
-per day**, which I chose as plausible and nobody has measured. It drives S3
-storage, and S3 storage is over half the bill:
-
-| Events/day/camera | GB/camera/mo | Fleet TB/mo (150 stores) | S3 $/mo |
-|---|---|---|---|
-| 5 | 3.1 | 7.5 | $173 |
-| **15 — the assumption in use** | **5.9** | **14.3** | **$328** |
-| 30 | 10.2 | 24.4 | $561 |
-| 50 | 15.8 | 37.9 | $872 |
-
-A five-fold swing in the dominant line. Review traffic (guessed at 1 TB/month),
-CloudWatch ingest (50 GB) and the database sizing are assumptions too, just
-smaller ones.
-
-**So: right order of magnitude — hundreds a month, not thousands — but not a
-budget figure.** One month of real operation replaces every row.
-
-### 1.3 Most of the bill is fixed, not per-camera
-
-The least intuitive part. Roughly **$195/month is platform cost that does not
-scale with stores at all** — Postgres, the console and Lambda, CloudWatch,
-Route 53/ACM/KMS. Only the rest moves with fleet size:
-
-| Stores | Fixed | Variable | Total | $/store | $/camera |
-|---|---|---|---|---|---|
-| 1 | $195 | $4 | **$199** | $198.66 | $12.42 |
-| 10 | $195 | $37 | $232 | $23.16 | $1.45 |
-| 50 | $195 | $183 | $378 | $7.56 | $0.47 |
-| 150 | $195 | $549 | **$744** | $4.96 | $0.31 |
-
-**The first store costs $199/month; the hundred-and-fiftieth costs $5.** Anyone
-sizing this from a per-camera figure at low store counts will get it badly wrong
-in both directions.
-
-> **Correction to the headline.** The $865 below was computed at **3,450
-> cameras**, from when stores were 16–30 cameras averaging 23. At a uniform 16
-> per store that is **2,400 cameras**, and the figure is **~$744**. The table
-> that follows has not been rescaled — read it for the shape of the bill and the
-> four design choices in §1.4, which are what actually matter.
-
-### 1.5 Assumptions
-
-State these, because they drive everything. **Local disk is the archive; AWS
-holds the index, incident clips and keyframes only.**
-
-| | |
+| Line | Monthly |
 |---|---|
-| Stores / cameras | 150 / 3,450 (avg 23) |
-| Incident clips | 15/camera/day × 30 s @ 2 Mbps = 3.4 GB/camera/month |
-| Keyframes | 1/minute @ 40 KB = 1.7 GB/camera/month |
-| **Uploaded** | **~6 GB/camera/month → 20.7 TB/month fleet-wide** |
-| Cloud retention | 30 days |
-| Region | us-east-1 |
+| Postgres (console DB) | $90 |
+| Console + Lambda hosting | $50 |
+| CloudWatch | $45 |
+| Route 53 / ACM / KMS | $10 |
+| IoT Core — 150 devices, telemetry | $12 |
+| Greengrass — 150 devices | $24 |
+| KVS WebRTC signalling — 150 channels | $5 |
+| TURN relay — 2 hrs/store/month, 15% relayed | $6 |
+| S3 — alert clips, 30/store/month | $0.31 |
+| CloudFront — clip export | $2 |
+| **Total** | **~$244** |
 
-### 1.3 The monthly bill
+**$1.63 per store. Ten cents per camera.**
 
-| Line | Basis | Monthly |
-|---|---|---|
-| S3 storage | 20,700 GB × $0.023 | **$476** |
-| S3 PUT requests | ~4.0M × $0.005/1,000 | $20 |
-| S3 GET requests | ~1M | $1 |
-| CloudFront egress | 1 TB review traffic × $0.085 | $85 |
-| IoT Core messages | 6.48M × $1.00/M | $7 |
-| IoT connectivity | 6.48M min × $0.08/M | $1 |
-| IoT shadow + registry | ~2M ops × $1.25/M | $3 |
-| IoT rules | 6.48M × $0.15/M | $1 |
-| Greengrass | 150 devices × ~$0.16 *(verify current rate)* | $24 |
-| KVS WebRTC signalling | 150 channels × $0.03 | $5 |
-| KVS WebRTC TURN + messages | variable — see §1.5 | $50 |
-| Postgres (RDS t4g.medium, or Aurora SLS v2 ~1 ACU) | | $90 |
-| Lambda + console hosting (Fargate ×2) | | $50 |
-| CloudWatch logs, metrics, alarms | ~50 GB ingest | $45 |
-| Route 53, ACM, KMS | | $10 |
-| **Total** | | **~$865/month** |
+### 1.3 Two things worth noticing
 
-**≈ $10,400/year. $0.25 per camera per month.**
+**80% of the bill has nothing to do with video.** $195 of $244 is platform —
+Postgres, console hosting, CloudWatch, DNS. The entire video-related spend is
+**$49/month across 2,400 cameras**. If this bill ever needs cutting, the target
+is the database and log retention, not anything to do with footage.
 
-**Heavier scenario** — 3× the events, 90-day retention with lifecycle to Glacier
-Instant Retrieval, 3 TB of review traffic: **~$1,600/month, $19,200/year,
-$0.46/camera.** Budget somewhere in that band; it is not a number that will
-surprise you.
+**Viewing is cheap because it does not touch AWS.** One camera stream is
+1.13 GB per hour. Peer-to-peer, the store's uplink carries it and AWS sees
+nothing. Even if *every* session fell back to TURN relay:
+
+| Viewing hrs/store/mo | Fleet GB | If 100% relayed | At a realistic 15% |
+|---|---|---|---|
+| 1 | 169 | $14 | $2.15 |
+| **2** | 338 | $29 | **$4.30** |
+| 5 | 844 | $72 | $10.76 |
+| 10 | 1,688 | $143 | $21.52 |
+
+Even the worst case is small. But it is the only line that scales with how much
+people watch, so it is the one to alarm on — see §1.5.
+
+**Keeping alert clips in the cloud is effectively free.** Thirty genuine alerts
+per store per month across 150 stores is 42 GB — **97 cents**. That is the whole
+cost of insuring against a stolen recorder, so there is no argument for skipping
+it.
 
 ### 1.4 Four design choices worth real money
 
