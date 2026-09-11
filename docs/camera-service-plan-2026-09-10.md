@@ -170,6 +170,28 @@ reason for the §8 console to be Phase 2.
    is worth knowing whether that is a long contract or a rolling one before
    committing years of engineering to it.
 
+## 2.6 What OpenEye's timeline actually does — parity check
+
+From their public knowledge base, so our claims about being better are measured
+rather than assumed.
+
+| Their behaviour | Ours |
+|---|---|
+| Continuous recording drawn **dark blue**, motion events **light blue**, both together solid grey | Same idea. **Gaps are visible in their product too** — so showing them is parity, not an advantage |
+| **Hovering the timeline previews a thumbnail** of that moment | Not built. Worth copying — we keep keyframes already, so it is a lookup, not a decode |
+| Event filters shown as icons below event start times | Matches the bucketed detections in `contracts/timeline.ts` |
+| Four separate searches: Timeline, Thumbnail, Motion, Event | One timeline carrying all three layers |
+| Playback opens **one camera**; live is the grid | Synchronised grid playback is the real gap (§2.7) |
+| App search window ~7 days; full retention only on the recorder | Our index is local and only the cheap layer syncs, so the app can offer the full 30 |
+
+**Correction to an earlier claim.** I had assumed gaps were invisible in their
+product and treated rendering them as a differentiator. They are visible. What
+still looks like an advantage is narrower and worth stating precisely: we carry
+a **reason** for every gap — `camera_offline`, `disk_full`, `tampered`,
+`evicted_by_retention` — where a coloured bar only says recording is absent.
+During an investigation "the camera was tampered with" and "retention expired"
+are very different findings.
+
 ## 3. What one customer still lets us delete
 
 Roughly a third of every previous draft. Gone, permanently:
