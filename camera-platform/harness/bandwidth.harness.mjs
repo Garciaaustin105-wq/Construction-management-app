@@ -183,4 +183,40 @@ check("capacity in phone pages, not raw streams — the number an operator cares
   eq(Math.floor(capacityAt("sub", 5000) / MOBILE_TILES_PER_PAGE), 1, "OpenEye's recommended 5 Mbps carries one");
 });
 
+check("THE FEARED ONE: a viewer in the store does not degrade a viewer at home", () => {
+  const remoteOnly = allocateBandwidth(req(DESKTOP_TILES, "sub", "ceo"), CABLE);
+  const withLocal = allocateBandwidth([
+    ...req(DESKTOP_TILES, "sub", "ceo"),
+    ...req(DESKTOP_TILES, "sub", "mgr").map((r) => ({ ...r, transport: "local" })),
+  ], CABLE);
+  eq(withLocal.usedKbps, remoteOnly.usedKbps, "the local viewer added nothing to the uplink");
+  eq(withLocal.anyDegraded, false, "and degraded nobody");
+  eq(withLocal.allocations.length, 32, "both viewers still served");
+});
+
+check("a local viewer gets full quality even while remote viewers are degraded", () => {
+  const plan = allocateBandwidth([
+    ...req(16, "sub", "r1"), ...req(16, "sub", "r2"), ...req(16, "sub", "r3"),
+    { cameraId: "cam-1", viewerId: "onsite", desired: "main", transport: "local" },
+  ], CABLE);
+  const onsite = plan.allocations.find((a) => a.viewerId === "onsite");
+  eq(onsite.granted, "main", "LAN is not the constraint");
+  eq(onsite.degraded, false, "not degraded");
+  eq(plan.allocations.some((a) => a.viewerId === "r1" && a.degraded), true, "remote viewers still degraded");
+});
+
+check("transport defaults to relay — the conservative assumption", () => {
+  const noTransport = allocateBandwidth(req(16, "sub", "v1"), CABLE);
+  const explicitRelay = allocateBandwidth(
+    req(16, "sub", "v1").map((r) => ({ ...r, transport: "relay" })), CABLE);
+  eq(noTransport.usedKbps, explicitRelay.usedKbps, "unstated is treated as remote, not free");
+});
+
+check("an all-local store uses no uplink at all", () => {
+  const plan = allocateBandwidth(
+    req(DESKTOP_TILES, "main", "onsite").map((r) => ({ ...r, transport: "local" })), CABLE);
+  eq(plan.usedKbps, 0, "nothing on the uplink");
+  eq(plan.anyDegraded, false, "sixteen main streams on a LAN is fine");
+});
+
 report("bandwidth");

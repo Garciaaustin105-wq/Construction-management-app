@@ -49,9 +49,25 @@ export const MOBILE_TILES_PER_PAGE = 6;
  */
 export const DESKTOP_TILES = 16;
 
+/**
+ * How a viewer reaches the appliance.
+ *
+ * `local` is the one that matters here: a manager standing in their own store,
+ * on the store wifi, reaches the appliance directly over the LAN. That traffic
+ * never touches the uplink, so it must not be counted against it — and since a
+ * gigabit LAN is not the constraint, a local viewer can have full quality even
+ * while remote viewers are being degraded.
+ *
+ * Treating local viewers as uplink consumers was a real bug: someone standing in
+ * the store would silently degrade the CEO watching from home.
+ */
+export type Transport = "local" | "direct" | "relay";
+
 export interface StreamRequest {
   cameraId: string;
   viewerId: string;
+  /** Defaults to `relay` — the conservative assumption if nobody says. */
+  transport?: Transport;
   /** What the viewer asked for. They may be given less. */
   desired: StreamProfile;
   /**
@@ -113,8 +129,22 @@ export function allocateBandwidth(
   const usable = uplinkKbps * usableFraction;
   const budgetKbps = Math.max(0, usable - reservedKbps);
 
-  const pinned = requests.filter((r) => r.pinned === true);
-  const normal = requests.filter((r) => r.pinned !== true);
+  // Local viewers are on the LAN. They cost the uplink nothing and are always
+  // granted what they asked for.
+  const local = requests.filter((r) => r.transport === "local");
+  const remote = requests.filter((r) => r.transport !== "local");
+
+  const localAllocations: Allocation[] = local.map((request) => ({
+    cameraId: request.cameraId,
+    viewerId: request.viewerId,
+    desired: request.desired,
+    granted: request.desired,
+    kbps: PROFILE_KBPS[request.desired],
+    degraded: false,
+  }));
+
+  const pinned = remote.filter((r) => r.pinned === true);
+  const normal = remote.filter((r) => r.pinned !== true);
 
   // Pinned streams are served first, at what was asked for, and only degrade if
   // they cannot fit even on their own. Everything else shares what is left.
@@ -122,8 +152,9 @@ export function allocateBandwidth(
   const pinnedUsed = pinnedAllocations.reduce((sum, a) => sum + a.kbps, 0);
   const normalAllocations = degradeToFit(normal, Math.max(0, budgetKbps - pinnedUsed));
 
-  const allocations = [...pinnedAllocations, ...normalAllocations];
-  const used = allocations.reduce((sum, a) => sum + a.kbps, 0);
+  const allocations = [...localAllocations, ...pinnedAllocations, ...normalAllocations];
+  // Only the remote streams count against the uplink.
+  const used = [...pinnedAllocations, ...normalAllocations].reduce((sum, a) => sum + a.kbps, 0);
 
   return {
     allocations,
