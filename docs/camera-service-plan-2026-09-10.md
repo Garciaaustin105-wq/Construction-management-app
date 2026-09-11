@@ -262,7 +262,25 @@ rather than assumed.
 | Event filters shown as icons below event start times | Matches the bucketed detections in `contracts/timeline.ts` |
 | Four separate searches: Timeline, Thumbnail, Motion, Event | One timeline carrying all three layers |
 | Playback opens **one camera**; live is the grid | Synchronised grid playback is the real gap (§2.7) |
-| App search window ~7 days; full retention only on the recorder | Our index is local and only the cheap layer syncs, so the app can offer the full 30 |
+| **Mobile search ~7 days; desktop ~30** — same recorder, so it is a client limit, not a data limit | Bucketing removes the reason for it — see below |
+
+### Why their mobile is capped at a week, and why ours need not be
+
+Observed directly: the desktop client searches about a month, the mobile app
+about a week. Both talk to the same recorder holding the same 30 days, so the
+limit is in the client.
+
+The likely reason is payload. A month of one camera at ~200 detections a day is
+6,000 events — **360 KB** sent raw, per camera, over cellular. Sixteen cameras is
+5.8 MB to open a store. That is a sensible thing to cap.
+
+`buildReviewTimeline` buckets to roughly the pixel width available, so the same
+month is **240 rows — 21 KB**, seventeen times smaller, and individual events are
+fetched only when the viewer zooms into a window narrow enough for them to be
+clickable.
+
+**So the 30-day mobile search is not a bigger pipe, it is a smaller payload.** It
+is already built and tested; it costs nothing extra to offer.
 
 **Correction to an earlier claim.** I had assumed gaps were invisible in their
 product and treated rendering them as a differentiator. They are visible. What
