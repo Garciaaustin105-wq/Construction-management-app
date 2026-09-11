@@ -9,3 +9,4 @@ export * from "./recovery.js";
 export * from "./net.js";
 export * from "./ffprobe.js";
 export * from "./budget.js";
+export * from "./bandwidth.js";

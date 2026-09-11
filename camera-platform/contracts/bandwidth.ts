@@ -1,0 +1,133 @@
+/**
+ * Site uplink budgeting for live viewing.
+ *
+ * Modelled on how OpenEye's Bandwidth Management behaves, because it is a tested
+ * answer to a problem we would otherwise get wrong: when more people want to
+ * watch than the uplink can carry, **degrade every stream rather than refusing
+ * the newcomer**. Nobody is locked out; everybody's picture gets smaller. A
+ * guard who can see all sixteen cameras badly is better served than one who is
+ * told the site is full.
+ *
+ * One addition of our own: a reserved slice the viewers can never touch. Live
+ * view is the nice-to-have; getting the clip of an intruder into the cloud
+ * before somebody walks off with the recorder is not. Viewers degrade first.
+ */
+
+export type StreamProfile = "main" | "sub" | "low" | "snapshot";
+
+/** Nominal bitrate per profile. `snapshot` is not a stream — it is periodic
+ *  stills, and costs effectively nothing on the uplink. */
+export const PROFILE_KBPS: Record<StreamProfile, number> = {
+  main: 2500,
+  sub: 400,
+  low: 200,
+  snapshot: 0,
+};
+
+/** Best to worst. Degradation walks down this list. */
+const LADDER: readonly StreamProfile[] = ["main", "sub", "low", "snapshot"];
+
+export interface StreamRequest {
+  cameraId: string;
+  viewerId: string;
+  /** What the viewer asked for. They may be given less. */
+  desired: StreamProfile;
+}
+
+export interface Allocation {
+  cameraId: string;
+  viewerId: string;
+  desired: StreamProfile;
+  granted: StreamProfile;
+  kbps: number;
+  degraded: boolean;
+}
+
+export interface BudgetPlan {
+  allocations: Allocation[];
+  /** Total granted, excluding the reserve. */
+  usedKbps: number;
+  budgetKbps: number;
+  reservedKbps: number;
+  /** True when anything was granted below what was asked for. */
+  anyDegraded: boolean;
+  /** Streams that could not be given even a snapshot. Should always be empty —
+   *  snapshot costs nothing — but it is reported rather than assumed. */
+  refused: StreamRequest[];
+}
+
+export class BandwidthError extends Error {}
+
+/**
+ * Allocate a site's uplink across the streams people are asking for.
+ *
+ * `uplinkKbps` should be the MEASURED upload speed, not the sold one.
+ * `usableFraction` leaves room for TCP overhead, retransmits and the fact that
+ * a link run to its rated ceiling drops packets — the video would stutter long
+ * before the arithmetic said it should.
+ */
+export function allocateBandwidth(
+  requests: readonly StreamRequest[],
+  uplinkKbps: number,
+  { reservedKbps = 1000, usableFraction = 0.7 }: { reservedKbps?: number; usableFraction?: number } = {},
+): BudgetPlan {
+  if (!Number.isFinite(uplinkKbps) || uplinkKbps <= 0) {
+    throw new BandwidthError(`uplinkKbps must be positive, got ${uplinkKbps}`);
+  }
+  if (usableFraction <= 0 || usableFraction > 1) {
+    throw new BandwidthError(`usableFraction must be in (0,1], got ${usableFraction}`);
+  }
+
+  const usable = uplinkKbps * usableFraction;
+  const budgetKbps = Math.max(0, usable - reservedKbps);
+
+  // Start everyone at what they asked for, then walk the whole set down the
+  // ladder together until it fits. Degrading uniformly is the point: the
+  // alternative — first-come-first-served at full quality — means whoever
+  // connected first keeps a good picture while everyone after gets nothing.
+  let level = 0;
+  let allocations: Allocation[] = [];
+  for (;;) {
+    allocations = requests.map((request) => {
+      const desiredIndex = LADDER.indexOf(request.desired);
+      const grantedIndex = Math.min(LADDER.length - 1, Math.max(desiredIndex, desiredIndex + level));
+      const granted = LADDER[grantedIndex] as StreamProfile;
+      return {
+        cameraId: request.cameraId,
+        viewerId: request.viewerId,
+        desired: request.desired,
+        granted,
+        kbps: PROFILE_KBPS[granted],
+        degraded: granted !== request.desired,
+      };
+    });
+
+    const used = allocations.reduce((sum, a) => sum + a.kbps, 0);
+    if (used <= budgetKbps || level >= LADDER.length - 1) {
+      return {
+        allocations,
+        usedKbps: used,
+        budgetKbps,
+        reservedKbps,
+        anyDegraded: allocations.some((a) => a.degraded),
+        refused: [],
+      };
+    }
+    level++;
+  }
+}
+
+/**
+ * What a site can carry at full quality, for sizing and for telling an operator
+ * why their picture just got smaller.
+ */
+export function capacityAt(
+  profile: StreamProfile,
+  uplinkKbps: number,
+  { reservedKbps = 1000, usableFraction = 0.7 } = {},
+): number {
+  const perStream = PROFILE_KBPS[profile];
+  if (perStream === 0) return Number.POSITIVE_INFINITY;
+  const budget = Math.max(0, uplinkKbps * usableFraction - reservedKbps);
+  return Math.floor(budget / perStream);
+}
