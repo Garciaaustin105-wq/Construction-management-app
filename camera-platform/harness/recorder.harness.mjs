@@ -200,7 +200,9 @@ await check("the index is never placed on a recording drive", async () => {
   if (all.some((p) => p.endsWith(".db") || p.includes("index"))) {
     throw new Error("the SQLite index landed on the recording drive it must avoid");
   }
-  if (!indexPathFor("/var/lib/camplat").startsWith("/var/lib/camplat")) {
+  // indexPathFor uses path.join, so on Windows it returns \var\lib\camplat\index.db.
+  // Compare against the same join; a hard-coded "/" prefix failed on every Windows run.
+  if (!indexPathFor("/var/lib/camplat").startsWith(path.join("/var/lib/camplat"))) {
     throw new Error("default index path must be on the OS drive");
   }
 });

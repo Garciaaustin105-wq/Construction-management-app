@@ -24,6 +24,12 @@ git log --oneline -12
 ls camera-platform/
 ```
 
+If the branch is not there at all, **fetch first**. It was built in a cloud container
+and pushed from there, so a local clone that had not fetched since has no trace of
+it. `git log --all` searches only the refs you already have. (Measured 2026-09-10: a
+local session found nothing until `git fetch` brought in
+`origin/claude/camera-service-plan-uwr6st`.)
+
 **The agent bus will be empty for you.** The cloud session that wrote this
 registered on a bus that `.mcp.json` spawns *in-process* (`node
 tools/agent-bus/server.mjs`), whose state lives in `.git/agent-bus/state.json` —
@@ -79,6 +85,20 @@ npx tsc -p tsconfig.json && node harness/run-all.mjs
 That is the whole verification story. No jest, no vitest — plain `.mjs`
 harnesses and an `_assert.mjs`. Run it before you touch anything, so you know the
 baseline is green on your machine and not just in CI.
+
+**On Windows**, "209 passing" held only on Linux until the commit after `a7c669e`.
+One check, "the index is never placed on a recording drive", compared
+`indexPathFor()`, which uses `path.join` and so returns backslashes on Windows,
+against a hard-coded `/var/lib/camplat` prefix. That was a harness bug, not a
+product bug. The appliance is Linux. The harness now compares against
+`path.join(...)`. If you see that one check fail, do not "fix" `indexPathFor`
+(build rule 22).
+
+`camera-platform/` has no `package.json`. `npx tsc` only works because it walks
+up to the root `node_modules`. In a fresh worktree with no `node_modules`, it
+fetches the unrelated `tsc` package from npm instead. Run `npm ci` at the root
+first, or call `<a checkout with node_modules>/node_modules/.bin/tsc` directly.
+The code imports only Node built-ins. `node:sqlite` needs Node ≥ 22.5.
 
 ### `contracts/` — pure TypeScript, no I/O
 
@@ -217,6 +237,14 @@ path (vendor says it varies by model — use `camctl probe <ip> --vendor avycon
 --try-all`), whether ONVIF ships enabled, SADP's multicast group, and whether
 cameras sit on the NVR's built-in PoE ports (worth $60–120k across the estate). Do
 not treat any disk-sizing number as fact until `camctl probe` has run on hardware.
+
+> **Two numbers, not one (found on re-post, 2026-09-10).** The note above says
+> storage rests on 2.5 Mbps. `FIELD-NOTES.md` #1 and the "Open" section below say
+> **2 Mbps**, and the storage tables there use 2 Mbps. 2500 kbps is what
+> `contracts/bandwidth.ts` (`main: 2500`) and `camctl bench` (disk-write
+> requirement) assume. Both are assumptions and neither is measured. Do not pick
+> one and do not average them (build rule 18). `camctl probe` on a real camera
+> replaces both.
 
 **Re-post these on your bus**, since yours is the real one:
 
