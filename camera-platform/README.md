@@ -1,5 +1,13 @@
 # camera-platform
 
+> **New to this subsystem? Read
+> [`../docs/handoff/handoff-camera-platform-a2-opus.md`](../docs/handoff/handoff-camera-platform-a2-opus.md)
+> first.** It covers what is decided and why, what is built, what is still
+> assumed rather than measured, and the current task. This file describes the
+> layout only.
+>
+> Lives on branch `claude/camera-service-plan-uwr6st`, not `main`.
+
 Contracts for the internal camera platform. **Pure modules only** — no I/O, no
 React, no browser globals, no Node globals. They compile standalone and every
 one has a harness that runs in about a second without a camera, a network or a

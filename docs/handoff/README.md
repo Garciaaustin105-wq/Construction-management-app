@@ -9,6 +9,17 @@ what has changed underneath the lane specs and which rules were added after they
 were written. Where a lane doc and the state-of-play note disagree, the note
 wins.
 
+## Live — camera-platform (the NVR replacing OpenEye)
+
+| Doc | What it is |
+|---|---|
+| [camera-platform → A2](handoff-camera-platform-a2-opus.md) | **Start here for anything camera-related.** Where the subsystem lives, the five decisions that surprise people, what the 209 checks cover, and the A2 local-API task |
+
+This work is **not in `src/`** and **not on `main`** — it is `camera-platform/` at
+the repo root, on branch `claude/camera-service-plan-uwr6st`. It has its own
+tsconfig and its own harnesses, and nothing in `src/` imports it. That is why
+searching the app for it comes back empty.
+
 ## The quick estimator UI — all four lanes SHIPPED
 
 | Doc | Lane | State |
