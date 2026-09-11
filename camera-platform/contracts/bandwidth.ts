@@ -32,6 +32,16 @@ export interface StreamRequest {
   viewerId: string;
   /** What the viewer asked for. They may be given less. */
   desired: StreamProfile;
+  /**
+   * The viewer deliberately chose this quality — tapped a tile to full screen,
+   * or picked HD in the app because they are trying to read something.
+   *
+   * Pinned streams are satisfied first and degrade last. Without this, a viewer
+   * who upgrades one camera watches it drop straight back down as soon as the
+   * other fifteen tiles compete for the same uplink, which makes the control
+   * feel broken.
+   */
+  pinned?: boolean;
 }
 
 export interface Allocation {
@@ -81,16 +91,42 @@ export function allocateBandwidth(
   const usable = uplinkKbps * usableFraction;
   const budgetKbps = Math.max(0, usable - reservedKbps);
 
-  // Start everyone at what they asked for, then walk the whole set down the
-  // ladder together until it fits. Degrading uniformly is the point: the
-  // alternative — first-come-first-served at full quality — means whoever
-  // connected first keeps a good picture while everyone after gets nothing.
+  const pinned = requests.filter((r) => r.pinned === true);
+  const normal = requests.filter((r) => r.pinned !== true);
+
+  // Pinned streams are served first, at what was asked for, and only degrade if
+  // they cannot fit even on their own. Everything else shares what is left.
+  const pinnedAllocations = degradeToFit(pinned, budgetKbps);
+  const pinnedUsed = pinnedAllocations.reduce((sum, a) => sum + a.kbps, 0);
+  const normalAllocations = degradeToFit(normal, Math.max(0, budgetKbps - pinnedUsed));
+
+  const allocations = [...pinnedAllocations, ...normalAllocations];
+  const used = allocations.reduce((sum, a) => sum + a.kbps, 0);
+
+  return {
+    allocations,
+    usedKbps: used,
+    budgetKbps,
+    reservedKbps,
+    anyDegraded: allocations.some((a) => a.degraded),
+    refused: [],
+  };
+}
+
+/**
+ * Walk a set of requests down the ladder together until it fits.
+ *
+ * Degrading uniformly is the point: the alternative — first-come-first-served
+ * at full quality — means whoever connected first keeps a good picture while
+ * everyone after gets nothing. The floor is `snapshot`, which costs nothing, so
+ * this always terminates with everybody served something.
+ */
+function degradeToFit(requests: readonly StreamRequest[], budgetKbps: number): Allocation[] {
   let level = 0;
-  let allocations: Allocation[] = [];
   for (;;) {
-    allocations = requests.map((request) => {
+    const allocations = requests.map((request) => {
       const desiredIndex = LADDER.indexOf(request.desired);
-      const grantedIndex = Math.min(LADDER.length - 1, Math.max(desiredIndex, desiredIndex + level));
+      const grantedIndex = Math.min(LADDER.length - 1, desiredIndex + level);
       const granted = LADDER[grantedIndex] as StreamProfile;
       return {
         cameraId: request.cameraId,
@@ -101,18 +137,8 @@ export function allocateBandwidth(
         degraded: granted !== request.desired,
       };
     });
-
     const used = allocations.reduce((sum, a) => sum + a.kbps, 0);
-    if (used <= budgetKbps || level >= LADDER.length - 1) {
-      return {
-        allocations,
-        usedKbps: used,
-        budgetKbps,
-        reservedKbps,
-        anyDegraded: allocations.some((a) => a.degraded),
-        refused: [],
-      };
-    }
+    if (used <= budgetKbps || level >= LADDER.length - 1) return allocations;
     level++;
   }
 }

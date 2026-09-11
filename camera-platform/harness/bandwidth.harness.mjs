@@ -90,4 +90,52 @@ check("no viewers means no usage, not an error", () => {
   eq(plan.anyDegraded, false, "nothing degraded");
 });
 
+check("THE FEARED ONE: a stream the viewer upgraded survives while the grid drops", () => {
+  // A guard watching 16 tiles taps one to HD because they are reading a plate,
+  // while two other people are also on the site.
+  const plan = allocateBandwidth([
+    { cameraId: "cam-gate", viewerId: "v1", desired: "main", pinned: true },
+    ...req(15, "sub", "v1"),
+    ...req(16, "sub", "v2"),
+    ...req(16, "sub", "v3"),
+  ], CABLE);
+
+  const spotlight = plan.allocations.find((a) => a.cameraId === "cam-gate" && a.viewerId === "v1");
+  eq(spotlight.granted, "main", "the deliberately chosen quality holds");
+  eq(spotlight.degraded, false, "not degraded");
+  eq(plan.anyDegraded, true, "the passive tiles absorbed it instead");
+  if (plan.usedKbps > plan.budgetKbps) throw new Error("over budget");
+});
+
+check("pinning cannot conjure bandwidth — pinned degrades when pinned alone will not fit", () => {
+  const plan = allocateBandwidth(
+    Array.from({ length: 10 }, (_, i) => ({ cameraId: `c${i}`, viewerId: "v1", desired: "main", pinned: true })),
+    CABLE,
+  );
+  eq(plan.allocations.every((a) => a.degraded), true, "ten HD streams do not fit, so they step down");
+  if (plan.usedKbps > plan.budgetKbps) throw new Error("over budget");
+});
+
+check("passive tiles fall to snapshots rather than starving the pinned stream", () => {
+  const plan = allocateBandwidth([
+    { cameraId: "cam-1", viewerId: "v1", desired: "main", pinned: true },
+    ...req(40, "sub", "v2"),
+  ], 6000);
+  const pinnedOne = plan.allocations.find((a) => a.cameraId === "cam-1" && a.pinned !== false && a.viewerId === "v1");
+  eq(pinnedOne.granted, "main", "pinned held");
+  eq(plan.allocations.filter((a) => a.viewerId === "v2").every((a) => a.granted === "snapshot"), true,
+     "the rest became stills");
+});
+
+check("two viewers pinning different cameras share what is available", () => {
+  const plan = allocateBandwidth([
+    { cameraId: "cam-a", viewerId: "v1", desired: "main", pinned: true },
+    { cameraId: "cam-b", viewerId: "v2", desired: "main", pinned: true },
+    ...req(16, "sub", "v3"),
+  ], CABLE);
+  const pins = plan.allocations.filter((a) => a.cameraId === "cam-a" || a.cameraId === "cam-b");
+  eq(pins.length, 2, "both pins present");
+  eq(new Set(pins.map((p) => p.granted)).size, 1, "both pins treated equally");
+});
+
 report("bandwidth");
