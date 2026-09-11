@@ -190,3 +190,41 @@ export function coverage(segments: readonly Segment[]): Coverage {
     gapsByReason,
   };
 }
+
+/**
+ * Merge adjacent spans that share a tier, for rendering.
+ *
+ * `buildTimeline` deliberately keeps one span per file, because each is a
+ * distinct object with its own key and byte count. A UI does not want that: a
+ * day of unbroken recording is 1,440 identical abutting blocks, and a month is
+ * 43,200. What a viewer needs to see is where the recording is and where it is
+ * not.
+ *
+ * Gaps are merged only with gaps of the SAME reason. "Camera offline" followed
+ * by "disk full" is two different facts and collapsing them into one band would
+ * throw away the more useful half.
+ */
+export function coalesceForDisplay(segments: readonly Segment[]): Segment[] {
+  const out: Segment[] = [];
+  for (const segment of segments) {
+    const previous = out[out.length - 1];
+    const mergeable =
+      previous !== undefined &&
+      previous.tier === segment.tier &&
+      previous.endUtc === segment.startUtc &&
+      previous.gapReason === segment.gapReason;
+
+    if (!mergeable) {
+      out.push({ ...segment });
+      continue;
+    }
+    previous.endUtc = segment.endUtc;
+    // Bytes stay summable for recorded spans and stay null across gaps — a
+    // merged gap must not acquire a byte count of zero.
+    previous.bytes =
+      previous.bytes === null || segment.bytes === null ? previous.bytes : previous.bytes + segment.bytes;
+    // The key identified one file; a merged span is no longer one file.
+    previous.key = null;
+  }
+  return out;
+}
