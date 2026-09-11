@@ -170,6 +170,32 @@ reason for the §8 console to be Phase 2.
    is worth knowing whether that is a long contract or a rolling one before
    committing years of engineering to it.
 
+## 2.55 The governing principle: faithful parity
+
+Asked what irritates him about OpenEye, the answer was **nothing — the system
+works**. That is the most important design constraint in this document, so it is
+recorded before the feature comparison rather than after.
+
+**We are not replacing a bad product.** We are replacing a good one, for the
+reasons in §2 — the licence cost and not depending on a vendor. So the brief is
+to *match* it, not to improve on it.
+
+That is harder than it sounds. Users migrating from something that works will
+notice every place ours is merely close, and will have no patience for a feature
+that is different-but-arguably-better. The failure mode for this project is not
+being unimaginative; it is being clever.
+
+**Default: when in doubt, do what OpenEye does.** Copy the colour coding, the
+grid sizes, the separate search screen, the export flow. Diverge only where it is
+cheap and unambiguously better — currently three things, all small:
+
+1. **Gap reasons.** They draw absence; we can say why.
+2. **Full 30-day search in the app.** Their index syncs about a week; ours is
+   local, so the range costs nothing.
+3. **Synchronised grid playback.** Later, and only if it earns its place.
+
+Anything not on that list should look like what the user already knows.
+
 ## 2.6 What OpenEye's timeline actually does — parity check
 
 From their public knowledge base, so our claims about being better are measured
