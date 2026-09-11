@@ -133,6 +133,36 @@ relevant camera front and centre, and the operator responds. That needs the
 detection work in Phase 5 far more than it needs bandwidth, and it costs less in
 every dimension.
 
+### 1.3c How OpenEye actually handles this — two corrections
+
+I claimed a viewer cap was something we would have to invent, and that P2P was
+the obvious design. Checking the incumbent corrected both.
+
+**They do have a cap, and it degrades rather than refuses.** OWS ships
+*Bandwidth Management*, which "can downscale the resolution of video or evenly
+distribute maximum bandwidth to stream multiple cameras". So the third viewer
+does not get turned away — everyone's picture gets smaller. That is plainly
+better than refusing a connection, and it is what we should copy: **distribute
+the uplink budget across active streams and drop resolution under pressure**,
+rather than admitting viewers until something breaks.
+
+**Relay is their default, not peer-to-peer.** The recorder holds an outbound
+connection to OpenEye's relay servers, so there is no port forwarding and, more
+to the point, **the uplink carries one stream regardless of viewer count**. They
+absorb the egress inside the per-channel fee. Direct WebRTC exists as an option;
+relay is the path of least resistance.
+
+That reframes our choice. P2P is cheaper for us and lower latency, but it is the
+reason viewers multiply the uplink at all — a problem OpenEye simply does not
+have. The sensible design is **both**: direct when it works, relay as automatic
+fallback, which is roughly what OWS offers anyway.
+
+**Also worth noting: OpenEye recommends 5 Mbps site upload**, covering "one 4MP
+high definition stream, or up to 9 standard definition streams". Our 16
+simultaneous substreams at 6.4 Mbps is more than the incumbent asks a site to
+provide — another argument for degrading gracefully rather than assuming
+headroom that is not there.
+
 ### 1.4 Four design choices worth real money
 
 Each of these is a decision in the appliance, not a negotiation with AWS:
