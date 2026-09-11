@@ -170,6 +170,60 @@ reason for the §8 console to be Phase 2.
    is worth knowing whether that is a long contract or a rolling one before
    committing years of engineering to it.
 
+## 2.5b The economics, and what they say about sequencing
+
+Two facts change the rollout plan: a site install sells for about **$30,800**, of
+which the **NVR is $2,800**, and the first sites are **new car-wash installs**,
+not migrations.
+
+### The NVR line is margin, not just a licence saving
+
+| | Today (reselling OpenEye) | With ours |
+|---|---|---|
+| Sells for | $2,800 | $2,800 |
+| Costs | dealer price | **$633** |
+| Margin | ~$1,400 | **$2,167** |
+
+Plus recurring, per 16-camera site: billed $80/month, licence $52 today against
+$1.63 of AWS owned — **$28/month margin becomes $78**.
+
+**Per site over three years: ~$2,580. Across 150 sites: ~$387,000.**
+
+### Which inverts the rollout
+
+The plan said 150 migrations. That was wrong once the numbers were known.
+
+**On a new install, switching costs nothing.** You are already pulling cable,
+mounting cameras and racking a recorder. Putting our box in instead of theirs is
+the same labour, the same day, the same invoice — the $767 of extra hardware
+margin and $50/month of recurring are pure upside with **zero incremental work**.
+
+**On an existing site, migration costs a truck roll** to replace something that
+is working. At ~$150 that is three months of the recurring gain, spent to
+achieve what a scheduled replacement would have given for free.
+
+So the sequence is:
+
+1. **Every new install gets our appliance from day one.** This is where the money
+   is and it is free to take.
+2. **Existing sites migrate opportunistically** — when the OpenEye recorder is
+   due for replacement anyway, or while someone is on site for another reason.
+3. **Never drive to a site purely to migrate it.** The gain does not cover the
+   visit.
+
+Which means the project does not need 150 commissionings before it pays. It needs
+**one new car wash**.
+
+### The first site still wants a safety net
+
+Greenfield has no OpenEye to fall back on — good, because nothing is being
+compared against; risky, because nothing is quietly recording if ours fails.
+
+**Install both on the first one.** Cameras serve multiple RTSP clients, so the
+customer gets the OpenEye system they paid for and we get a real-world proving
+ground beside it. Cost: one spare $633 appliance. After that site proves out,
+subsequent washes ship ours alone.
+
 ## 2.55 The governing principle: faithful parity
 
 Asked what irritates him about OpenEye, the answer was **nothing — the system
