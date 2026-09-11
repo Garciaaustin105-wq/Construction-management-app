@@ -170,6 +170,38 @@ reason for the §8 console to be Phase 2.
    is worth knowing whether that is a long contract or a rolling one before
    committing years of engineering to it.
 
+## 2.5a Settled: no footage in the cloud
+
+**Decided.** No clips, no keyframes, no synced detections. Video, the segment
+index and the event index all stay on the appliance. An event is a timestamp
+pointing into the recording already there; clicking a marker seeks and streams on
+demand.
+
+Earlier drafts argued for uploading alert clips against the recorder being
+stolen, citing the industry's "on-site theft of the NVR is the primary risk".
+**That came from surveillance-vendor content, which sells cloud backup.** Against
+it: 150 stores of operating experience with no such incident, and the structural
+point that the recorder sits in a locked office while a burglar is cutting a lock
+on a unit. The operator's evidence is better than the vendor's. Withdrawn.
+
+**Still in the cloud, none of it footage:** device registry, user accounts and
+access control, relay signalling, and health state. That is the control plane,
+and OpenEye's product has the same.
+
+**Accepted consequences.** Search works only when a site is reachable — the same
+condition as live view, so it is one outage rather than two. Cross-site queries
+become many round trips rather than one; fine at the rate anyone actually asks
+them.
+
+**Not a consequence:** drive failure. Cloud clips never addressed it — only the
+handful uploaded would have survived. That is handled by assigning whole cameras
+per drive, so one failure costs eight cameras and leaves eight intact.
+
+`contracts/uploadPolicy.ts` stays, having never uploaded anything. Its filtering
+earns its place on timeline legibility: a car wash generating vehicle detections
+all day turns the bar into a solid stripe with the one useful event invisible
+inside it.
+
 ## 2.5b The economics, and what they say about sequencing
 
 Two facts change the rollout plan: a site install sells for about **$30,800**, of
