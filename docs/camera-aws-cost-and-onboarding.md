@@ -22,7 +22,56 @@ placeholder was 3–5× too high, and it was used in the build-vs-buy case, so:
 
 The build case is materially stronger than the plan states.
 
-### 1.2 Assumptions
+### 1.2 How much of this is measured, and how much is invented
+
+Worth stating plainly, because the headline number gets quoted.
+
+**Solid — AWS's published unit prices.** $0.023/GB-month S3, $1.00 per million
+IoT messages, $0.085/GB CloudFront, $0.03 per WebRTC signalling channel. These
+come from AWS's own pricing pages and are not in doubt.
+
+**Invented — every usage figure they multiply.** Chiefly **15 events per camera
+per day**, which I chose as plausible and nobody has measured. It drives S3
+storage, and S3 storage is over half the bill:
+
+| Events/day/camera | GB/camera/mo | Fleet TB/mo (150 stores) | S3 $/mo |
+|---|---|---|---|
+| 5 | 3.1 | 7.5 | $173 |
+| **15 — the assumption in use** | **5.9** | **14.3** | **$328** |
+| 30 | 10.2 | 24.4 | $561 |
+| 50 | 15.8 | 37.9 | $872 |
+
+A five-fold swing in the dominant line. Review traffic (guessed at 1 TB/month),
+CloudWatch ingest (50 GB) and the database sizing are assumptions too, just
+smaller ones.
+
+**So: right order of magnitude — hundreds a month, not thousands — but not a
+budget figure.** One month of real operation replaces every row.
+
+### 1.3 Most of the bill is fixed, not per-camera
+
+The least intuitive part. Roughly **$195/month is platform cost that does not
+scale with stores at all** — Postgres, the console and Lambda, CloudWatch,
+Route 53/ACM/KMS. Only the rest moves with fleet size:
+
+| Stores | Fixed | Variable | Total | $/store | $/camera |
+|---|---|---|---|---|---|
+| 1 | $195 | $4 | **$199** | $198.66 | $12.42 |
+| 10 | $195 | $37 | $232 | $23.16 | $1.45 |
+| 50 | $195 | $183 | $378 | $7.56 | $0.47 |
+| 150 | $195 | $549 | **$744** | $4.96 | $0.31 |
+
+**The first store costs $199/month; the hundred-and-fiftieth costs $5.** Anyone
+sizing this from a per-camera figure at low store counts will get it badly wrong
+in both directions.
+
+> **Correction to the headline.** The $865 below was computed at **3,450
+> cameras**, from when stores were 16–30 cameras averaging 23. At a uniform 16
+> per store that is **2,400 cameras**, and the figure is **~$744**. The table
+> that follows has not been rescaled — read it for the shape of the bill and the
+> four design choices in §1.4, which are what actually matter.
+
+### 1.5 Assumptions
 
 State these, because they drive everything. **Local disk is the archive; AWS
 holds the index, incident clips and keyframes only.**
