@@ -68,6 +68,10 @@ export function openIndex(file) {
         state=excluded.state, hold=excluded.hold,
         pending_upload=excluded.pending_upload, bitrate_kbps=excluded.bitrate_kbps`),
     byPath: db.prepare("SELECT * FROM segments WHERE path = ?"),
+    // The API serves by the client-facing id (cameraId + startMs), never by
+    // path — a client never sends a path and the server never builds one from
+    // what a client sent.
+    byKey: db.prepare("SELECT * FROM segments WHERE camera_id = ? AND start_ms = ?"),
     all: db.prepare("SELECT * FROM segments ORDER BY start_ms"),
     byCamera: db.prepare("SELECT * FROM segments WHERE camera_id = ? ORDER BY start_ms"),
     inRange: db.prepare(`SELECT * FROM segments WHERE camera_id = ?
@@ -114,6 +118,10 @@ export function openIndex(file) {
     },
     get(path) {
       const row = stmts.byPath.get(path);
+      return row ? rowToSegment(row) : null;
+    },
+    getByKey(cameraId, startMs) {
+      const row = stmts.byKey.get(cameraId, startMs);
       return row ? rowToSegment(row) : null;
     },
     all: () => stmts.all.all().map(rowToSegment),
