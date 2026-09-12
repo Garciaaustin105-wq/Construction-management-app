@@ -1,3 +1,19 @@
+## Progress since this handoff was written
+
+- `09958e8` — A2's PURE half: contracts `httpRange`, `apiQuery`, `indexCoverage`,
+  `cameraView` + harnesses (the bus note camera-a2-contracts has the details).
+- `8e6fa1e` (2026-09-12, local session) — A2's TRANSPORT: `agent/api-server.mjs`
+  (GET /health, /cameras, /timeline, /playback, /segments/:id with RFC 9110
+  ranges), `segindex.getByKey`, `harness/apiServer.harness.mjs` (20 checks).
+  The slice's contract is `camera-platform/A2-TRANSPORT-SPEC.md`.
+- Still open in A2: the `liveNegotiation` contract and the live-stream
+  endpoints (relay-by-default; `bandwidth.ts` already models the budget).
+- Dispatch note: gpt-oss:20b invents APIs it cannot see — feed it the FIXED
+  real file as context, split dispatches per file, expect Claude to
+  integration-fix.
+
+---
+
 # HANDOFF — camera-platform, and the A2 local API
 
 **For: Claude Opus 5 running locally. Written 2026-09-11 by Claude Opus 5 (cloud session).**
