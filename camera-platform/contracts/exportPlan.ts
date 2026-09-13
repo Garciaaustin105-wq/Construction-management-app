@@ -213,3 +213,120 @@ export function planExport(
     totalBytes
   };
 }
+
+/** The archive's last entry. */
+export const MANIFEST_ENTRY_NAME = "manifest.json";
+export const MANIFEST_FORMAT = "camera-export/1";
+export const MANIFEST_NOTE =
+  "Each file is one whole recorded segment, byte for byte as stored. Files are never joined or trimmed, " +
+  "so delivered can be wider than requested. Nothing was recorded during any range listed in gaps.";
+
+/** A manifest that would not match what was sent. Never sent to the client. */
+export class ExportManifestError extends Error {}
+
+/** What the stream measured for one file while sending it. */
+export interface SentFile {
+  name: string;
+  bytes: number;
+  /** Lowercase hex SHA-256 of the bytes sent. */
+  sha256: string;
+}
+
+/**
+ * The manifest.json text for an export: `JSON.stringify(manifest, null, 2)`
+ * followed by one "\n".
+ *
+ * `sent`: one entry per file of the plan, in the plan's order, as measured by
+ * the stream. `siteId`: the appliance's site. `generatedAtUtc`: when the
+ * export began.
+ *
+ * Throws ExportManifestError, checked in this order, when:
+ * 1. `sent.length !== plan.files.length`;
+ * 2. for any i, `sent[i].name !== plan.files[i].name`, or
+ *    `sent[i].bytes !== plan.files[i].bytes` (a short or long file: the
+ *    archive must not claim what it did not carry), or `sent[i].sha256` is
+ *    not a string matching /^[0-9a-f]{64}$/. The message names the entry
+ *    name, never a storage path;
+ * 3. `siteId` is empty.
+ * `generatedAtUtc` is normalised with toUtc(parseUtc(...)), so a malformed one
+ * throws TimeRangeError.
+ *
+ * The manifest object, with keys in exactly this order:
+ *   format: MANIFEST_FORMAT, siteId, cameraId: plan.cameraId, generatedAtUtc,
+ *   requested: { startUtc, endUtc }, delivered: { startUtc, endUtc },
+ *   recordedSeconds, gapSeconds, totalBytes, note: MANIFEST_NOTE,
+ *   files: one { name, startUtc, endUtc, bytes, sha256 } per plan file
+ *     (name, times and bytes from the plan, sha256 from sent),
+ *   gaps: one { startUtc, endUtc, reason, source } per plan gap.
+ * Nothing else: no path, no segmentId, and no key copied from `sent` beyond
+ * sha256.
+ *
+ * Finally, when any character of the text is neither "\n" nor in 0x20..0x7e,
+ * throw ExportManifestError (the stream writes it one byte per character).
+ */
+export function exportManifest(
+  plan: ExportPlan,
+  sent: readonly SentFile[],
+  siteId: string,
+  generatedAtUtc: string,
+): string {
+  // validations
+  if (sent.length !== plan.files.length) {
+    throw new ExportManifestError("sent length mismatch");
+  }
+  for (let i = 0; i < sent.length; i++) {
+    const s = sent[i];
+    const f = plan.files[i];
+    if (s === undefined || f === undefined) {
+      throw new ExportManifestError("sent does not match the plan");
+    }
+    if (s.name !== f.name) {
+      throw new ExportManifestError(`mismatched name: ${s.name}`);
+    }
+    if (s.bytes !== f.bytes) {
+      throw new ExportManifestError(`mismatched bytes: ${s.name}`);
+    }
+    if (typeof s.sha256 !== "string" || /^[0-9a-f]{64}$/.test(s.sha256) === false) {
+      throw new ExportManifestError(`invalid sha256: ${s.name}`);
+    }
+  }
+  if (siteId.length === 0) {
+    throw new ExportManifestError("siteId is empty");
+  }
+
+  const normGeneratedAtUtc = toUtc(parseUtc(generatedAtUtc));
+  const manifest = {
+    format: MANIFEST_FORMAT,
+    siteId: siteId,
+    cameraId: plan.cameraId,
+    generatedAtUtc: normGeneratedAtUtc,
+    requested: { startUtc: plan.requested.startUtc, endUtc: plan.requested.endUtc },
+    delivered: { startUtc: plan.delivered.startUtc, endUtc: plan.delivered.endUtc },
+    recordedSeconds: plan.recordedSeconds,
+    gapSeconds: plan.gapSeconds,
+    totalBytes: plan.totalBytes,
+    note: MANIFEST_NOTE,
+    files: plan.files.map((f, i) => ({
+      name: f.name,
+      startUtc: f.startUtc,
+      endUtc: f.endUtc,
+      bytes: f.bytes,
+      sha256: sent[i]?.sha256 ?? ""
+    })),
+    gaps: plan.gaps.map(g => ({
+      startUtc: g.startUtc,
+      endUtc: g.endUtc,
+      reason: g.reason,
+      source: g.source
+    }))
+  };
+  const text = JSON.stringify(manifest, null, 2) + "\n";
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code !== 10 && (code < 0x20 || code > 0x7e)) {
+      throw new ExportManifestError("manifest contains non-ASCII character");
+    }
+  }
+  return text;
+}
+
