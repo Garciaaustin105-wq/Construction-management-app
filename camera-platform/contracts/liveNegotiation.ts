@@ -1,0 +1,145 @@
+import type { CameraResolution } from "./cameraView.js";
+
+/**
+ * The quality of a live stream.
+ */
+export type LiveQuality = "mainstream" | "substream";
+
+/**
+ * Reasons why a live negotiation can be refused.
+ */
+export type LiveRefusalReason =
+  | "unknown_camera" // cameraId not in config
+  | "unresolved_camera" // resolveCameraUrl returned {kind:"unresolved"}
+  | "substream_unavailable" // no manual substreamUrl, and the vendor has no derivation
+  | "camera_busy" // per-camera concurrent-live cap already held
+  | "stream_limit"; // appliance-wide concurrent-live cap held
+
+/**
+ * Result of a live negotiation.
+ */
+export type LiveNegotiation =
+  | { kind: "ok"; cameraId: string; quality: LiveQuality; mode: "ws-fmp4"; streamId: string }
+  | { kind: "refused"; reason: LiveRefusalReason; detail: string };
+
+/**
+ * Negotiates a live stream request.
+ *
+ * The decision order is load-bearing; the first matching rule is returned.
+ * Refusal details are short human sentences and never contain URLs or
+ * credentials.
+ *
+ * @param input - Negotiation parameters
+ * @returns LiveNegotiation
+ */
+export function negotiateLive(input: {
+  cameraId: string; // the id the CALLER resolved; echoed verbatim on ok
+  cameraExists: boolean; // the CALLER does the config lookup; this contract never searches
+  quality: LiveQuality; // the CALLER validates the query string; this contract
+  // assumes a valid quality and never parses one
+  resolution: CameraResolution; // from resolveCameraUrl — unresolved -> refused
+  substreamUrl: string | null; // manual override from config, verbatim when present
+  vendorDerivesSubstream: boolean; // true only for vendors with a known substream path rule
+  activeForCamera: number; // live streams already running for this camera
+  activeTotal: number; // live streams already running appliance-wide
+  maxPerCamera: number; // default 2
+  maxTotal: number; // default 16
+  streamId: string; // caller-generated (crypto.randomUUID), echoed when ok
+}): LiveNegotiation {
+  const {
+    cameraId,
+    cameraExists,
+    quality,
+    resolution,
+    substreamUrl,
+    vendorDerivesSubstream,
+    activeForCamera,
+    activeTotal,
+    maxPerCamera,
+    maxTotal,
+    streamId,
+  } = input;
+
+  // 1. Unknown camera
+  if (!cameraExists) {
+    return {
+      kind: "refused",
+      reason: "unknown_camera",
+      detail: "no camera with that id in this site's config",
+    };
+  }
+
+  // 2. Unresolved camera URL
+  if (resolution.kind === "unresolved") {
+    return {
+      kind: "refused",
+      reason: "unresolved_camera",
+      detail: "camera URL could not be resolved",
+    };
+  }
+
+  // 3. Substream unavailable
+  if (quality === "substream" && substreamUrl === null && !vendorDerivesSubstream) {
+    return {
+      kind: "refused",
+      reason: "substream_unavailable",
+      detail: "substream not available for this camera",
+    };
+  }
+
+  // 4. Camera busy
+  if (activeForCamera >= maxPerCamera) {
+    return {
+      kind: "refused",
+      reason: "camera_busy",
+      detail: "camera is already at its maximum concurrent live streams",
+    };
+  }
+
+  // 5. Stream limit reached
+  if (activeTotal >= maxTotal) {
+    return {
+      kind: "refused",
+      reason: "stream_limit",
+      detail: "maximum concurrent live streams reached",
+    };
+  }
+
+  // 6. All checks passed
+  return {
+    kind: "ok",
+    cameraId,
+    quality,
+    mode: "ws-fmp4",
+    streamId,
+  };
+}
+
+/**
+ * Returns the ffmpeg command arguments for live muxing.
+ *
+ * The returned array contains the arguments *after* the URL; the caller
+ * prepends `"ffmpeg"`. The command uses `-c copy` only.
+ *
+ * @param url - The RTSP or other stream URL
+ * @returns string[] - ffmpeg ARGV
+ */
+export function liveFfmpegArgs(url: string): string[] {
+  return [
+    "-rtsp_transport",
+    "tcp",
+    "-i",
+    url,
+    "-c",
+    "copy",
+    "-f",
+    "mp4",
+    "-movflags",
+    "frag_keyframe+empty_moov",
+    "-fflags",
+    "+nobuffer",
+    "-flags",
+    "low_delay",
+    "pipe:1",
+  ];
+}
