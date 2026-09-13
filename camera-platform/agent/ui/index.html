@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<!-- Live camera grid (A3 slice 1). Contract: LIVE-GRID-UI-SPEC.md section 2.
+     Plain page, no framework: the appliance is a box in a closet. The feared
+     part (box re-assembly) lives in /ui/live-client.js and is harness-tested;
+     this file only wires sockets, MSE and tile state. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live cameras</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    padding: 12px;
+    background: #14161a;
+    color: #e8eaed;
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  .pageError {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #3a1d1d;
+    color: #ffb4b4;
+    display: none;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 10px;
+  }
+  .tile {
+    position: relative;
+    border: 1px solid #2c2f36;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1b1d22;
+    cursor: pointer;
+  }
+  .tile.enlarged { grid-column: span 2; grid-row: span 2; }
+  .tile header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: #23262c;
+    font-weight: 600;
+  }
+  .tile header .quality {
+    font-weight: 400;
+    font-size: 12px;
+    color: #9aa0a6;
+  }
+  .tile video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+  }
+  .tile .status {
+    padding: 6px 10px;
+    min-height: 1.4em;
+    color: #9aa0a6;
+  }
+  .tile .status.problem { color: #ffb4b4; }
+  .tile .status button {
+    margin-left: 8px;
+    padding: 2px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div class="pageError" id="pageError"></div>
+<div class="grid" id="grid"></div>
+
+<script type="module">
+import { createBoxAccumulator, extractMimeCodec } from '/ui/live-client.js';
+
+const grid = document.getElementById('grid');
+const pageError = document.getElementById('pageError');
+
+// Per-tile connection state. One WS per camera at a time: a toggle closes the
+// old socket BEFORE opening the new one (spec: never two streams per camera).
+const tiles = new Map();
+
+const showPageError = (msg) => {
+  pageError.textContent = msg;
+  pageError.style.display = 'block';
+};
+
+function setStatus(tile, msg, kind) {
+  const el = tile.querySelector('.status');
+  el.className = kind === 'problem' ? 'status problem' : 'status';
+  el.textContent = msg;
+}
+
+// Reconnect button: click stops propagation so the tap does not also toggle
+// the tile's quality (a reconnect must not flip the stream).
+function addReconnect(tile, label) {
+  const el = tile.querySelector('.status');
+  const btn = document.createElement('button');
+  btn.textContent = 'Reconnect';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const t = tiles.get(tile.dataset.cameraId);
+    connect(t, t.quality);
+  });
+  el.textContent = label + ' ';
+  el.appendChild(btn);
+}
+
+async function loadCameras() {
+  let data;
+  try {
+    const res = await fetch('/cameras');
+    data = await res.json();
+  } catch {
+    showPageError('Failed to reach the appliance (' + location.host + ')');
+    return;
+  }
+  if (!Array.isArray(data)) {
+    showPageError('The appliance answered /cameras with an unexpected response');
+    return;
+  }
+  for (const cam of data) {
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    tile.dataset.cameraId = cam.cameraId;
+
+    const header = document.createElement('header');
+    const name = document.createElement('span');
+    name.textContent = cam.name ?? cam.cameraId;
+    const quality = document.createElement('span');
+    quality.className = 'quality';
+    header.append(name, quality);
+
+    const video = document.createElement('video');
+    video.muted = true; // autoplay policies require muted for unattended pages
+    video.playsInline = true;
+    video.autoplay = true;
+
+    const status = document.createElement('div');
+    status.className = 'status';
+
+    tile.append(header, video, status);
+    tile.addEventListener('click', () => {
+      const t = tiles.get(cam.cameraId);
+      if (!t) return;
+      // Tap toggles quality AND enlargement together (spec): substream ->
+      // mainstream enlarged; tapping again returns to substream at normal size.
+      const toMain = t.quality === 'substream';
+      tile.classList.toggle('enlarged', toMain);
+      connect(t, toMain ? 'mainstream' : 'substream');
+    });
+
+    grid.appendChild(tile);
+    tiles.set(cam.cameraId, { tile, video, qualityEl: quality, quality: 'substream' });
+    connect(tiles.get(cam.cameraId), 'substream');
+  }
+}
+
+// Close the current socket without touching tile state — used before a
+// quality switch. onclose is suppressed so the old socket's teardown does not
+// overwrite the new one's status.
+function closeQuietly(t) {
+  if (!t.socket) return;
+  t.socket.onclose = null;
+  t.socket.onerror = null;
+  t.socket.close();
+  t.socket = null;
+}
+
+function teardownMedia(t) {
+  if (t.sourceBuffer) {
+    try { t.mediaSource.removeSourceBuffer(t.sourceBuffer); } catch { /* already detached */ }
+    t.sourceBuffer = null;
+  }
+  if (t.mediaSource) {
+    try { URL.revokeObjectURL(t.objectUrl); } catch { /* already revoked */ }
+    t.mediaSource = null;
+    t.objectUrl = null;
+  }
+  t.pending = [];
+  t.appendQueued = false;
+}
+
+function connect(t, quality) {
+  const { tile, video } = t;
+  closeQuietly(t);
+  teardownMedia(t);
+
+  t.quality = quality;
+  t.retryMainstream = false; // one automatic substream->mainstream fallback per connection
+  t.codecMime = null;
+  t.pending = [];
+  t.appendQueued = false;
+  t.accumulator = createBoxAccumulator();
+  t.qualityEl.textContent = quality;
+
+  setStatus(tile, 'connecting…');
+  video.src = '';
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(proto + '//' + location.host + '/live/' + tile.dataset.cameraId + '?quality=' + quality);
+  socket.binaryType = 'arraybuffer'; // media arrives as binary; text frames are control envelopes
+  t.socket = socket;
+
+  socket.onopen = () => setStatus(tile, 'waiting for the first frame…');
+
+  socket.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      // Text frame = JSON envelope: refusals and terminal live events.
+      let env;
+      try { env = JSON.parse(event.data); } catch { return; }
+      handleControl(t, env);
+      return;
+    }
+    for (const seg of t.accumulator.push(new Uint8Array(event.data))) {
+      if (!t.codecMime) handleInit(t, seg);
+      else queueAppend(t, seg);
+    }
+  };
+
+  socket.onclose = (event) => {
+    if (t.socket !== socket) return; // superseded by a newer connection
+    t.socket = null;
+    if (event.code === 1000) {
+      setStatus(tile, 'disconnected');
+    } else {
+      setStatus(tile, 'connection closed (code ' + event.code + ')', 'problem');
+    }
+  };
+
+  socket.onerror = () => { /* onclose always follows; it owns the message */ };
+}
+
+function handleControl(t, env) {
+  const { tile } = t;
+  if (env.ok === false && env.code === 'substream_unavailable') {
+    // The camera cannot serve the substream: retry mainstream exactly once,
+    // automatically (spec default). A second failure surfaces as a refusal.
+    if (!t.retryMainstream) {
+      t.retryMainstream = true;
+      connect(t, 'mainstream');
+    } else {
+      setStatus(tile, 'substream unavailable, mainstream retry failed', 'problem');
+    }
+    return;
+  }
+  if (env.ok === false && env.code === 'live_source_failed') {
+    teardownMedia(t);
+    addReconnect(tile, 'camera source failed: ' + (env.message ?? env.code));
+    return;
+  }
+  if (env.ok === false && env.code === 'live_stalled') {
+    addReconnect(tile, 'stream stalled: ' + (env.message ?? env.code));
+    return;
+  }
+  if (env.ok === false && env.code === 'live_ended') {
+    addReconnect(tile, 'stream ended: ' + (env.message ?? env.code));
+    return;
+  }
+  if (env.ok === false) {
+    setStatus(tile, env.code + (env.message ? ' — ' + env.message : ''), 'problem');
+  }
+}
+
+function handleInit(t, initSegment) {
+  const { tile, video } = t;
+  const codec = extractMimeCodec(initSegment);
+  if (codec.error) {
+    setStatus(tile, 'cannot read this camera’s codec from its stream', 'problem');
+    t.socket.close();
+    return;
+  }
+  if (!MediaSource.isTypeSupported(codec.mime)) {
+    // Say it out loud in the tile — HEVC needs hardware decode; never silently
+    // black-frame.
+    setStatus(tile, 'this browser cannot decode this camera’s codec (' +
+      codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + ')', 'problem');
+    t.socket.close();
+    return;
+  }
+  t.codecMime = codec.mime;
+  t.pending = [initSegment];
+
+  const ms = new MediaSource();
+  t.mediaSource = ms;
+  t.objectUrl = URL.createObjectURL(ms);
+  video.src = t.objectUrl;
+
+  ms.addEventListener('sourceopen', () => {
+    if (!t.socket || t.mediaSource !== ms) return; // connection changed mid-open
+    const sb = ms.addSourceBuffer(t.codecMime);
+    sb.mode = 'sequence'; // live stream: append order IS time, no seek math
+    t.sourceBuffer = sb;
+    sb.addEventListener('updateend', () => {
+      if (t.sourceBuffer !== sb) return;
+      // Evict from the start once the live window exceeds ~20 s: a viewer of a
+      // live grid never rewinds, and unbounded buffering grows forever.
+      try {
+        if (sb.buffered.length && sb.buffered.end(sb.buffered.length - 1) - sb.buffered.start(0) > 20) {
+          const start = sb.buffered.start(0);
+          const end = sb.buffered.end(0);
+          if (end > start) sb.remove(start, end);
+        }
+      } catch { /* buffered read races removal; next updateend retries */ }
+      t.appendQueued = false;
+      pumpAppend(t);
+    });
+    pumpAppend(t);
+  });
+}
+
+// One append in flight at a time: queue emissions, pump on updateend. Calling
+// appendBuffer while updating throws, so every path funnels through pump.
+function queueAppend(t, seg) {
+  t.pending.push(seg);
+  pumpAppend(t);
+}
+
+function pumpAppend(t) {
+  if (t.appendQueued || !t.sourceBuffer || t.sourceBuffer.updating || !t.pending.length) return;
+  const seg = t.pending.shift();
+  t.appendQueued = true;
+  try {
+    t.sourceBuffer.appendBuffer(seg);
+  } catch {
+    // A mid-stream decode failure poisons the buffer; the close that follows
+    // (server side or watchdog) surfaces through onclose.
+    t.appendQueued = false;
+  }
+}
+
+loadCameras();
+</script>
+</body>
+</html>

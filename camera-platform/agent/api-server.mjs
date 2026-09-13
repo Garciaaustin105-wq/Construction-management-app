@@ -8,7 +8,7 @@
 // generic server_error envelope.  No stack traces are sent to the client.
 
 import { createServer } from 'node:http';
-import { stat } from 'node:fs/promises';
+import { stat, readFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
@@ -298,6 +298,26 @@ export function createApiServer({
           res.writeHead(416, headers);
           res.end();
         }
+        return;
+      }
+
+      // ---------- the live grid page ----------
+      // Served per request, not cached at boot, so an edit to the two UI
+      // files lands on the next page load without a server restart.
+      if (pathname === '/' || pathname === '/ui/live-client.js') {
+        const file = pathname === '/'
+          ? join(import.meta.dirname, 'ui', 'index.html')
+          : join(import.meta.dirname, 'ui', 'live-client.mjs');
+        const type = pathname === '/' ? 'text/html; charset=utf-8' : 'text/javascript';
+        let body;
+        try {
+          body = await readFile(file);
+        } catch {
+          sendError(res, 500, 'ui_missing', 'the live grid UI files are not installed');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+        res.end(body);
         return;
       }
 

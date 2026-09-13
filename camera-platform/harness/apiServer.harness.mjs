@@ -14,13 +14,14 @@
  * on the port the recorded-past routes answer on, with a fake ffmpeg injected
  * through createApiServer's spawnFn — the harness never spawns a real one.
  */
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { createApiServer } from "../agent/api-server.mjs";
 import { openIndex } from "../agent/segindex.mjs";
 import { liveRegistry, closeAll } from "../agent/live.mjs";
+import { createBoxAccumulator, extractMimeCodec, parseTopLevelBoxes } from "../agent/ui/live-client.mjs";
 import { check, eq, report } from "./_assert.mjs";
 
 console.log("api server");
@@ -425,6 +426,154 @@ await check("the per-camera cap is enforced through the real server", async () =
   w1.close();
   await nextClose(w1);
   await new Promise((r) => setTimeout(r, 50));
+});
+
+// ---------- the live grid UI (A3 slice 1): the pure half, and its two routes ----------
+// The pure module is imported by the browser page and this harness IDENTICALLY
+// — every check below runs with no document, which is the module's contract.
+// The MP4 fixtures are hand-built (deterministic, non-zero) because the feared
+// part is box arithmetic, not ffmpeg.
+
+const lbU32 = (n) => Uint8Array.of((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+const lbFcc = (s) => Uint8Array.from([...s].map((c) => c.charCodeAt(0)));
+const lbCat = (...parts) => {
+  const n = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+};
+const lbBox = (type, payload) => {
+  const s = 8 + payload.length;
+  return lbCat(lbU32(s), lbFcc(type), payload);
+};
+// init segment: ftyp + a moov whose trak chain reaches stsd with `entries`.
+const lbInit = (...entries) => lbCat(
+  lbBox("ftyp", lbU32(0)),
+  lbBox("moov", lbBox("trak", lbBox("mdia", lbBox("minf", lbBox("stbl",
+    lbBox("stsd", lbCat(new Uint8Array(4), lbU32(entries.length), ...entries))))))),
+);
+// A video sample entry: 8-byte header + 78 fixed VisualSampleEntry bytes + children.
+const lbVideoEntry = (type, ...children) => lbBox(type, lbCat(new Uint8Array(78), ...children));
+// An audio sample entry: 8 + 28 fixed bytes + children.
+const lbAudioEntry = (...children) => lbBox("mp4a", lbCat(new Uint8Array(28), ...children));
+// esds chain with self-consistent expandable-128 lengths: ES(0x16) = ES_ID+flags
+// + DCD(0x11 = 13 fixed + DSI(0x02)); ASC [0x12,0x08] = AAC-LC, aot 2.
+const lbEsds = lbBox("esds", Uint8Array.of(
+  0, 0, 0, 0, 0x03, 0x16, 0x00, 0x01, 0x00,
+  0x04, 0x11, 0x40, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x05, 0x02, 0x12, 0x08));
+
+await check("box accumulator: every chunk-boundary class re-assembles byte-exactly", async () => {
+  const ftyp = lbBox("ftyp", lbU32(0));
+  const moov = lbBox("moov", lbBox("trak", new Uint8Array(10)));
+  const moof = lbBox("moof", new Uint8Array(6));
+  const mdat = lbBox("mdat", new Uint8Array(30));
+  const stream = lbCat(ftyp, moov, moof, mdat);
+  for (const step of [1, 3, 7]) {
+    const acc = createBoxAccumulator();
+    const ems = [];
+    for (let i = 0; i < stream.length; i += step) {
+      ems.push(...acc.push(stream.subarray(i, Math.min(i + step, stream.length))));
+    }
+    ems.push(...acc.flush());
+    eq(ems.length, 2, `step ${step}: exactly one init emission + one moof+mdat emission`);
+    eq(Buffer.from(ems[0]).equals(Buffer.from(lbCat(ftyp, moov))), true, `step ${step}: init = ftyp through moov`);
+    eq(Buffer.from(ems[1]).equals(Buffer.from(lbCat(moof, mdat))), true, `step ${step}: media = moof+mdat as ONE buffer`);
+    eq(Buffer.from(lbCat(...ems)).equals(Buffer.from(stream)), true, `step ${step}: concatenation is byte-equal to the stream`);
+  }
+});
+
+await check("a 64-bit largesize box arrives whole and passes through individually", async () => {
+  const ftyp = lbBox("ftyp", lbU32(0));
+  const moov = lbBox("moov", lbBox("trak", new Uint8Array(10)));
+  // size=1 -> the next 8 bytes are the u64 largesize (big-endian: high word 0).
+  const big = lbCat(lbU32(1), lbFcc("free"), lbU32(0), lbU32(20), lbU32(7));
+  const acc = createBoxAccumulator();
+  const ems = acc.push(lbCat(ftyp, moov, big));
+  eq(ems.length, 2, "init emission + the free box");
+  eq(Buffer.from(ems[1]).equals(Buffer.from(big)), true, "the largesize box emitted whole");
+});
+
+await check("a size === 0 box (extends to end of stream) waits for flush", async () => {
+  const zero = lbCat(lbU32(0), lbFcc("mdat"));
+  const acc = createBoxAccumulator();
+  const pushed = acc.push(lbCat(lbBox("ftyp", lbU32(0)), lbBox("moov", lbBox("trak", new Uint8Array(10))), zero));
+  eq(pushed.length, 1, "only the init emission; the size-0 box is held");
+  const flushed = acc.flush();
+  eq(flushed.length, 1, "flush emits it");
+  eq(Buffer.from(flushed[0]).equals(Buffer.from(zero)), true, "byte-equal");
+});
+
+await check("a trailing partial box waits for flush (a broken append beats dropped bytes)", async () => {
+  const acc = createBoxAccumulator();
+  const whole = lbCat(lbBox("ftyp", lbU32(0)), lbBox("moov", lbBox("trak", new Uint8Array(10))), lbBox("moof", new Uint8Array(6)), lbBox("mdat", new Uint8Array(30)));
+  const partial = lbBox("moof", new Uint8Array(6)).subarray(0, 10); // header + half the body
+  const ems = acc.push(whole);
+  eq(ems.length, 2, "the complete part emits normally");
+  const flushed = acc.push(partial).concat(acc.flush());
+  eq(flushed.length, 1, "the partial is flushed, not silently dropped");
+  eq(flushed[0].length, 10, "byte-exact remainder");
+});
+
+await check("extractMimeCodec: avc1 High@L4.0 + mp4a AAC-LC (one stsd, two entries)", async () => {
+  const avcC = lbBox("avcC", Uint8Array.of(1, 0x64, 0x00, 0x28, 0xff, 0xe1)); // profile, compat, level
+  const mp4a = lbAudioEntry(lbEsds);
+  const r = extractMimeCodec(lbInit(lbVideoEntry("avc1", avcC), mp4a));
+  eq(r.mime, 'video/mp4; codecs="avc1.640028, mp4a.40.2"', "the exact string");
+});
+
+await check("extractMimeCodec: hvc1 Main@L3.1 (the fleet's actual codec)", async () => {
+  // hvcC payload: configVersion 1, byte1 = space 0 | tier L | idc 1, compat
+  // 0x60000000 (reversed -> 6), constraints B0 + zeros, level 93.
+  const hvcC = lbBox("hvcC", Uint8Array.of(1, 0x01, 0x60, 0x00, 0x00, 0x00, 0xb0, 0, 0, 0, 0, 0, 93));
+  const r = extractMimeCodec(lbInit(lbVideoEntry("hvc1", hvcC)));
+  eq(r.mime, 'video/mp4; codecs="hvc1.1.6.L93.B0"', "Main@L3.1 per the verified recipe");
+});
+
+await check("extractMimeCodec: separate video and audio traks (what ffmpeg actually emits)", async () => {
+  const avcC = lbBox("avcC", Uint8Array.of(1, 0x64, 0x00, 0x28, 0xff, 0xe1));
+  const init = lbCat(
+    lbBox("ftyp", lbU32(0)),
+    lbBox("moov", lbCat(
+      lbBox("trak", lbBox("mdia", lbBox("minf", lbBox("stbl",
+        lbBox("stsd", lbCat(new Uint8Array(4), lbU32(1), lbVideoEntry("avc1", avcC))))))),
+      lbBox("trak", lbBox("mdia", lbBox("minf", lbBox("stbl",
+        lbBox("stsd", lbCat(new Uint8Array(4), lbU32(1), lbAudioEntry(lbEsds))))))))));
+  const r = extractMimeCodec(init);
+  eq(r.mime, 'video/mp4; codecs="avc1.640028, mp4a.40.2"', "both traks found");
+});
+
+await check("extractMimeCodec refusals are values, never throws", async () => {
+  const ftypOnly = lbBox("ftyp", lbU32(0));
+  eq(extractMimeCodec(ftypOnly).error !== undefined, true, "no moov");
+  eq(extractMimeCodec(lbCat(ftypOnly, lbBox("moov", new Uint8Array(4)))).error !== undefined, true, "moov with no video track");
+  const bareAVC = lbVideoEntry("avc1"); // no avcC child
+  const bareHEV = lbVideoEntry("hev1"); // no hvcC child
+  eq(extractMimeCodec(lbInit(bareAVC)).error !== undefined, true, "avc1 without avcC");
+  eq(extractMimeCodec(lbInit(bareHEV)).error !== undefined, true, "hev1 without hvcC");
+});
+
+await check("GET / serves the live grid page", async () => {
+  const { res, text } = await fetchJson(`${base}/`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "text/html; charset=utf-8", "the page's type");
+  eq(text.includes("/ui/live-client.js"), true, "the page loads the pure module");
+  eq(text.includes("/live/"), true, "the page speaks the live edge");
+  eq(res.headers.get("cache-control"), "no-store", "edits land without a restart");
+});
+
+await check("GET /ui/live-client.js serves the pure module byte-equal to disk", async () => {
+  const { res, text } = await fetchJson(`${base}/ui/live-client.js`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "text/javascript", "a module type the browser executes");
+  const onDisk = await readFile(join(import.meta.dirname, "..", "agent", "ui", "live-client.mjs"), "utf8");
+  eq(text, onDisk, "the browser runs the identical file the harness tested");
+});
+
+await check("GET /ui/nope is a route miss", async () => {
+  const { res, json } = await fetchJson(`${base}/ui/nope`);
+  eq(res.status, 404, "status");
+  eq(json.code, "no_such_route", "the HTTP router still answers");
 });
 
 closeAll(); // the live registry and its watchdog end here — nothing outlives the harness
