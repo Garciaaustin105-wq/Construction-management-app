@@ -9,12 +9,18 @@
  * answered with coverage-with-a-reason rather than an empty 200; a segment the
  * index knows but the disk lost; an index `bytes` of null (stat() decides the
  * Content-Length); a Range ignored or unsatisfiable; a window clipped to now.
+ *
+ * The live edge rides the SAME server: ws://host:port/live/<cameraId> answers
+ * on the port the recorded-past routes answer on, with a fake ffmpeg injected
+ * through createApiServer's spawnFn — the harness never spawns a real one.
  */
 import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { EventEmitter } from "node:events";
 import { createApiServer } from "../agent/api-server.mjs";
 import { openIndex } from "../agent/segindex.mjs";
+import { liveRegistry, closeAll } from "../agent/live.mjs";
 import { check, eq, report } from "./_assert.mjs";
 
 console.log("api server");
@@ -318,6 +324,111 @@ await check("only GET exists", async () => {
   eq(json.code, "no_such_route", "unknown route");
 });
 
+// ---------- the live edge, on the real server ----------
+//
+// A SECOND createApiServer with an injected fake spawn: this is both the live
+// checks and the proof the injection point exists. The main server above
+// keeps the default real spawnFn and is never WS-upgraded, exactly as
+// production leaves it between camera connections.
+
+console.log("api server: live edge");
+
+function fakeChild() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => {
+    child.killed = true;
+    queueMicrotask(() => child.emit("exit"));
+  };
+  return child;
+}
+
+const spawnCalls = [];
+const fakeSpawn = (cmd, args, opts) => {
+  const child = fakeChild();
+  spawnCalls.push({ cmd, args, opts, child });
+  return child;
+};
+
+const liveServer = createApiServer({ stateDir, config, index, spawnFn: fakeSpawn, maxPerCamera: 1 });
+await new Promise((resolve) => liveServer.listen(0, "127.0.0.1", resolve));
+const liveBase = `http://127.0.0.1:${liveServer.address().port}`;
+
+const wsOpen = (path) =>
+  new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${liveServer.address().port}${path}`);
+    ws.binaryType = "arraybuffer"; // native client delivers binary as ArrayBuffer, not Buffer
+    const timer = setTimeout(() => reject(new Error("ws open timeout")), 3000);
+    ws.addEventListener("open", () => { clearTimeout(timer); resolve(ws); });
+    ws.addEventListener("error", (e) => { clearTimeout(timer); reject(new Error("ws error: " + (e.error?.message ?? e.message ?? "unknown"))); });
+  });
+const nextMessage = (ws, ms2 = 3000) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("message timeout")), ms2);
+    ws.addEventListener("message", (ev) => {
+      clearTimeout(timer);
+      // Binary arrives as ArrayBuffer (binaryType set above); a refusal is a
+      // TEXT frame and arrives as a string — Buffer.from(string) is the path
+      // live.harness's proven helper takes too.
+      resolve(ev.data instanceof Buffer
+        ? ev.data
+        : Buffer.from(ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : ev.data));
+    }, { once: true });
+  });
+const nextClose = (ws) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("timeout"), 3000);
+    ws.addEventListener("close", () => { clearTimeout(timer); resolve("closed"); }, { once: true });
+  });
+
+await check("the live edge rides the api server's own port — bytes flow through the real server", async () => {
+  const ws = await wsOpen("/live/cam-1");
+  const call = spawnCalls[spawnCalls.length - 1];
+  eq(call.cmd, "ffmpeg", "the transport spawns ffmpeg");
+  const i = call.args.indexOf("-i");
+  eq(i !== -1, true, "argv has -i");
+  eq(call.args[i + 1], "rtsp://admin:hunter2@10.0.0.5:8554/live", "the negotiated url rides the argv");
+  const chunk = fill(91, 3000);
+  call.child.stdout.emit("data", chunk);
+  const msg = await nextMessage(ws);
+  eq(msg.equals(chunk), true, "byte-exact through the real server");
+  const entry = [...liveRegistry().values()].find((e) => e.cameraId === "cam-1");
+  eq(entry !== undefined, true, "the negotiated stream is in the registry");
+  ws.close();
+  await nextClose(ws);
+  await new Promise((r) => setTimeout(r, 50));
+});
+
+await check("plain GET /live/... is a route miss, not a hang", async () => {
+  const { res, json } = await fetchJson(`${liveBase}/live/cam-1`);
+  eq(res.status, 404, "status");
+  eq(json.code, "no_such_route", "the HTTP router answers; the upgrade handler did not eat the request");
+});
+
+await check("unknown camera: the refusal envelope, then the close", async () => {
+  const ws = await wsOpen("/live/nope");
+  const env = JSON.parse((await nextMessage(ws)).toString());
+  eq([env.ok, env.code], [false, "unknown_camera"], "refused before any spawn");
+  eq(liveRegistry().size, 0, "no slot held");
+  await nextClose(ws);
+});
+
+await check("the per-camera cap is enforced through the real server", async () => {
+  const w1 = await wsOpen("/live/cam-1");
+  eq(liveRegistry().size, 1, "first stream held (maxPerCamera 1)");
+  const w2 = await wsOpen("/live/cam-1");
+  const env = JSON.parse((await nextMessage(w2)).toString());
+  eq([env.ok, env.code], [false, "camera_busy"], "second refused");
+  await nextClose(w2);
+  w1.close();
+  await nextClose(w1);
+  await new Promise((r) => setTimeout(r, 50));
+});
+
+closeAll(); // the live registry and its watchdog end here — nothing outlives the harness
+liveServer.close();
 server.close();
 index.close();
 await rm(stateDir, { recursive: true, force: true });

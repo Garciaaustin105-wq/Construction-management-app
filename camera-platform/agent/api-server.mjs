@@ -10,9 +10,11 @@
 import { createServer } from 'node:http';
 import { stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
 import { loadConfig, resolveCameraUrl } from './recorder-service.mjs';
+import { attachLive, closeAll } from './live.mjs';
 import { openIndex } from './segindex.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
 
@@ -34,7 +36,18 @@ const sendError = (res, status, code, message) => {
   res.end(JSON.stringify({ ok: false, code, message }));
 };
 
-export function createApiServer({ stateDir, config, index, now = () => new Date() }) {
+export function createApiServer({
+  stateDir,
+  config,
+  index,
+  now = () => new Date(),
+  // The live transport hangs off THIS server. spawnFn is injectable so the
+  // harness runs the real WS edge against a fake ffmpeg; the caps are the
+  // appliance's stream budget (per camera / total).
+  spawnFn = spawn,
+  maxPerCamera = 2,
+  maxTotal = 16,
+}) {
   const driveAssignment = assignCamerasToDrives(
     config.cameras.map((c) => c.cameraId),
     config.storeRoots.length
@@ -302,6 +315,13 @@ export function createApiServer({ stateDir, config, index, now = () => new Date(
     }
   });
 
+  // The live edge rides the same port as the recorded-past routes: ws://host:port/live/<cameraId>.
+  // `now` is deliberately NOT passed through — the recorded-past routes run on
+  // the caller's clock (the harness pins a fixed instant), but a LIVE stream
+  // runs on the wall clock, and a stale-harness timestamp would make every
+  // fresh stream look already-stalled to the watchdog.
+  attachLive(server, { config, spawnFn, maxPerCamera, maxTotal });
+
   return server;
 }
 
@@ -320,6 +340,11 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
   });
 
   const shutdown = () => {
+    // Live streams first: an ffmpeg child orphaned by shutdown keeps pulling
+    // from the camera after the server is gone. closeAll kills every child
+    // and destroys every socket; the registry is module state, so this also
+    // covers streams attached before this handler existed.
+    closeAll();
     server.close(() => {
       index.close();
       process.exit(0);
