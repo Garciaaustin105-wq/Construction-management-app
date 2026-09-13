@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<!-- Recorded-footage review (A3 slice 2). Contract: REVIEW-UI-SPEC.md section 2.
+     Plain page, no framework. Every decision that can be wrong without looking
+     wrong (gap widening, the future tail, which segment a click means, a
+     hostile segment id) lives in /ui/review-client.js and is harness-tested;
+     this file only fetches, draws and plays. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    padding: 12px;
+    background: #14161a;
+    color: #e8eaed;
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  a { color: #8ab4f8; }
+  header { display: flex; align-items: baseline; gap: 14px; margin: 0 0 10px; }
+  header h1 { margin: 0; font-size: 18px; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+  .controls select, .controls input, .controls button, .status button {
+    padding: 4px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+  }
+  .controls button, .status button { cursor: pointer; }
+  .pageError {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #3a1d1d;
+    color: #ffb4b4;
+  }
+  .strip {
+    position: relative;
+    height: 36px;
+    border: 1px solid #2c2f36;
+    border-radius: 6px;
+    background: #1b1d22;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+  .bar { position: absolute; top: 0; bottom: 0; }
+  .bar.recorded { background: #2e7d32; }
+  .bar.gap { background: #c62828; }
+  .bar.future { box-sizing: border-box; border: 1px dashed #6b7078; background: transparent; }
+  .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; }
+  .hours { position: relative; height: 18px; margin: 2px 0 8px; color: #9aa0a6; font-size: 12px; }
+  .hours span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .legend { display: flex; gap: 14px; margin: 0 0 12px; color: #9aa0a6; font-size: 12px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; border-radius: 2px; }
+  .legend .recorded { background: #2e7d32; }
+  .legend .gap { background: #c62828; }
+  .legend .future { box-sizing: border-box; border: 1px dashed #6b7078; }
+  video { display: block; width: 100%; max-width: 960px; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; }
+  .status { margin: 8px 0 0; min-height: 1.4em; color: #9aa0a6; }
+  .status.problem { color: #ffb4b4; }
+</style>
+</head>
+<body>
+<header><a href="/">Live</a><h1>Review</h1></header>
+
+<div class="controls">
+  <select id="camera" aria-label="Camera"></select>
+  <button id="prevDay" type="button">Previous day</button>
+  <input id="day" type="date" aria-label="Day">
+  <button id="nextDay" type="button">Next day</button>
+</div>
+
+<div class="pageError" id="pageError" hidden></div>
+
+<div class="strip" id="strip"><div class="playhead" id="playhead" hidden></div></div>
+<div class="hours" id="hours"></div>
+<div class="legend">
+  <span><i class="recorded"></i>Recorded</span>
+  <span><i class="gap"></i>Not recorded</span>
+  <span><i class="future"></i>Not yet happened</span>
+</div>
+
+<video id="video" controls playsinline></video>
+<div class="status" id="status"></div>
+
+<script type="module">
+import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback } from '/ui/review-client.js';
+
+const el = {
+  camera: document.getElementById('camera'),
+  day: document.getElementById('day'),
+  prevDay: document.getElementById('prevDay'),
+  nextDay: document.getElementById('nextDay'),
+  pageError: document.getElementById('pageError'),
+  strip: document.getElementById('strip'),
+  playhead: document.getElementById('playhead'),
+  hours: document.getElementById('hours'),
+  video: document.getElementById('video'),
+  status: document.getElementById('status'),
+};
+
+// What is on screen now. `requested` is the /timeline body's requested range
+// ({ startUtc, endUtc }) of the day being shown, or null before one loads.
+// `playing` is the last "play" plan, or null when nothing is playing.
+// `loadSeq` increments on every loadDay call, so a slow /timeline answer for
+// a day the user has already left is dropped instead of drawn.
+const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0 };
+
+// Every text that came from the server or a camera goes in with textContent.
+// Nothing in this page parses a string as HTML.
+
+const two = (n) => String(n).padStart(2, '0');
+
+/** Local wall-clock "HH:MM" for a UTC ISO string. */
+const localTime = (utc) => {
+  const d = new Date(utc);
+  return two(d.getHours()) + ':' + two(d.getMinutes());
+};
+
+/** Show a whole-page problem (null hides it). */
+function showPageError(message) {
+  el.pageError.hidden = message === null;
+  el.pageError.textContent = message ?? '';
+}
+
+/** Set the line under the video. kind "problem" colours it; anything else is plain. */
+function setStatus(message, kind) {
+  el.status.className = kind === 'problem' ? 'status problem' : 'status';
+  el.status.textContent = message;
+}
+
+/**
+ * The local calendar day `value` ("YYYY-MM-DD", what <input type="date">
+ * gives) as a UTC window: local midnight to the NEXT local midnight.
+ * Returns { startUtc, endUtc } as ISO strings (Date#toISOString), or null when
+ * value is not exactly four digits, "-", two digits, "-", two digits, or names
+ * a day that does not exist (month 13, February 30: check that the Date built
+ * from y, m - 1, d reads back the same year, month and date).
+ * Build both ends with the Date constructor, new Date(y, m - 1, d) and
+ * new Date(y, m - 1, d + 1): a DST day is 23 or 25 hours long, so never add
+ * a fixed day of milliseconds.
+ */
+function dayWindow(value) {
+  if (typeof value !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const start = new Date(y, mo - 1, d);
+  if (start.getFullYear() !== y || start.getMonth() !== mo - 1 || start.getDate() !== d) return null;
+  const end = new Date(y, mo - 1, d + 1);
+  return { startUtc: start.toISOString(), endUtc: end.toISOString() };
+}
+
+/**
+ * "YYYY-MM-DD" for the local day `days` days after the local day `value`
+ * (negative goes back), or null when dayWindow(value) is null. Build with
+ * new Date(y, m - 1, d + days) and read back getFullYear, getMonth() + 1 and
+ * getDate(), each zero-padded (use two() for month and day).
+ */
+function shiftDay(value, days) {
+  if (dayWindow(value) === null) return null;
+  const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(value);
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const t = new Date(y, mo - 1, d + days);
+  const y2 = t.getFullYear();
+  const mo2 = t.getMonth() + 1;
+  const d2 = t.getDate();
+  return y2 + '-' + two(mo2) + '-' + two(d2);
+}
+
+/**
+ * Fill the camera <select> from GET /cameras, then call loadDay().
+ * - /cameras answers a JSON array of objects with `cameraId` and optional
+ *   `name`. One <option> per camera: value = cameraId, text = name when it is
+ *   a non-empty string, else cameraId. Set option.value and option.textContent.
+ * - The fetch fails or the body is not JSON (the try/catch covers ONLY the
+ *   fetch and res.json(), nothing after), or it is not an array:
+ *   showPageError("Cannot reach the recorder (" + location.host + ")") and stop.
+ * - An empty array: showPageError("This recorder has no cameras configured")
+ *   and stop.
+ * - Otherwise showPageError(null), then await loadDay() OUTSIDE any try: an
+ *   error thrown while drawing is the page's own bug and must reach the
+ *   caller as itself, never be reported as an unreachable recorder.
+ */
+async function loadCameras() {
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/cameras');
+    body = await res.json();
+  } catch (e) {
+    reached = false;
+  }
+  if (!reached || !Array.isArray(body)) {
+    showPageError('Cannot reach the recorder (' + location.host + ')');
+    return;
+  }
+  if (body.length === 0) {
+    showPageError('This recorder has no cameras configured');
+    return;
+  }
+  // Remove existing options
+  for (const c of Array.from(el.camera.childNodes)) {
+    el.camera.removeChild(c);
+  }
+  let firstValue = null;
+  for (const cam of body) {
+    if (typeof cam !== 'object' || cam === null || typeof cam.cameraId !== 'string') continue;
+    const o = document.createElement('option');
+    o.value = cam.cameraId;
+    o.textContent = (typeof cam.name === 'string' && cam.name !== '') ? cam.name : cam.cameraId;
+    el.camera.appendChild(o);
+    if (firstValue === null) firstValue = o.value;
+  }
+  if (firstValue !== null) el.camera.value = firstValue;
+  showPageError(null);
+  await loadDay();
+}
+
+/**
+ * Load and draw the day in el.day for the camera in el.camera.
+ * 1. const seq = ++view.loadSeq.
+ * 2. win = dayWindow(el.day.value). null: showPageError("Pick a day") and stop.
+ * 3. GET /timeline with a URLSearchParams query: camera = el.camera.value,
+ *    start = win.startUtc, end = win.endUtc, buckets = "96".
+ * 4. After the await (and after reading the JSON), if seq !== view.loadSeq,
+ *    return without touching the page: the user has moved on.
+ * 5. Fetch or JSON failure: showPageError("Cannot reach the recorder ("
+ *    + location.host + ")"), clearStrip(), stop. The try/catch covers ONLY
+ *    the fetch and res.json(); steps 6 to 8 run outside it, so an error thrown
+ *    while drawing reaches the caller as itself. (Step 4's check comes first
+ *    for a failure too: a stale failure touches nothing.)
+ * 6. body.ok === false: showPageError(code + ": " + message) using body.code
+ *    and body.message, clearStrip(), stop. (A day entirely in the future
+ *    arrives here as window_in_future.)
+ * 7. layout = layoutCoverage(body). layout.error: showPageError("The recorder
+ *    sent a timeline this page cannot draw: " + layout.error), clearStrip(),
+ *    stop.
+ * 8. showPageError(null); view.requested = body.requested;
+ *    drawStrip(layout.bars); drawHours(win); movePlayhead(null).
+ */
+async function loadDay() {
+  const seq = ++view.loadSeq;
+  const win = dayWindow(el.day.value);
+  if (!win) {
+    showPageError('Pick a day');
+    return;
+  }
+  const q = new URLSearchParams({
+    camera: el.camera.value,
+    start: win.startUtc,
+    end: win.endUtc,
+    buckets: '96'
+  });
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/timeline?' + q.toString());
+    body = await res.json();
+  } catch (e) {
+    reached = false;
+  }
+  if (seq !== view.loadSeq) return;
+  if (!reached || !body || typeof body !== 'object') {
+    showPageError('Cannot reach the recorder (' + location.host + ')');
+    clearStrip();
+    return;
+  }
+  if (body.ok === false) {
+    showPageError(body.code + ': ' + body.message);
+    clearStrip();
+    return;
+  }
+  const layout = layoutCoverage(body);
+  if (layout.error) {
+    showPageError('The recorder sent a timeline this page cannot draw: ' + layout.error);
+    clearStrip();
+    return;
+  }
+  showPageError(null);
+  view.requested = body.requested;
+  drawStrip(layout.bars);
+  drawHours(win);
+  movePlayhead(null);
+}
+
+/**
+ * Empty the strip and the hour labels and forget the drawn day:
+ * view.requested = null. Remove every child of el.strip EXCEPT el.playhead,
+ * hide the playhead (el.playhead.hidden = true), and remove every child of
+ * el.hours.
+ */
+function clearStrip() {
+  view.requested = null;
+  for (const c of Array.from(el.strip.childNodes)) {
+    if (c !== el.playhead) el.strip.removeChild(c);
+  }
+  el.playhead.hidden = true;
+  for (const c of Array.from(el.hours.childNodes)) {
+    el.hours.removeChild(c);
+  }
+}
+
+/**
+ * Draw `bars` (layoutCoverage's bars) into el.strip. First remove every child
+ * of el.strip except el.playhead. Then, for each bar, one <div> with class
+ * "bar " + bar.kind, style.left = (bar.left * 100) + "%", style.width =
+ * (bar.width * 100) + "%", inserted BEFORE el.playhead so the playhead stays
+ * on top. div.title (textContent-safe, it is an attribute) is:
+ * - gap: describeGap(bar.gapReason, bar.gapSource) + ", " +
+ *   localTime(bar.startUtc) + " to " + localTime(bar.endUtc)
+ * - recorded: "Recorded, " + localTime(bar.startUtc) + " to " + localTime(bar.endUtc)
+ * - future: "Not yet happened"
+ */
+function drawStrip(bars) {
+  // Remove old bars except playhead
+  for (const c of Array.from(el.strip.childNodes)) {
+    if (c !== el.playhead) el.strip.removeChild(c);
+  }
+  // For each bar
+  for (const bar of bars) {
+    const div = document.createElement('div');
+    div.className = 'bar ' + bar.kind;
+    div.style.left = (bar.left * 100) + '%';
+    div.style.width = (bar.width * 100) + '%';
+    let title = '';
+    if (bar.kind === 'gap') {
+      title = describeGap(bar.gapReason, bar.gapSource) + ', ' + localTime(bar.startUtc) + ' to ' + localTime(bar.endUtc);
+    } else if (bar.kind === 'recorded') {
+      title = 'Recorded, ' + localTime(bar.startUtc) + ' to ' + localTime(bar.endUtc);
+    } else if (bar.kind === 'future') {
+      title = 'Not yet happened';
+    }
+    div.title = title;
+    el.strip.insertBefore(div, el.playhead);
+  }
+}
+
+/**
+ * Hour labels under the strip, every 3 hours of the local day `win`
+ * ({ startUtc, endUtc } from dayWindow). Remove every child of el.hours.
+ * Take y, m, d from new Date(win.startUtc) (getFullYear, getMonth, getDate).
+ * For h = 0, 3, 6, ... 21: t = new Date(y, m, d, h).toISOString();
+ * f = instantToFraction(t, win.startUtc, win.endUtc); skip when f is null;
+ * add a <span> with textContent = two(new Date(t).getHours()) + ":00" and
+ * style.left = (f * 100) + "%". (On a DST day an hour may not exist and the
+ * Date constructor moves it; reading the hour back is what gets labelled.)
+ */
+function drawHours(win) {
+  // Remove old labels
+  for (const c of Array.from(el.hours.childNodes)) el.hours.removeChild(c);
+  const s = new Date(win.startUtc);
+  const y = s.getFullYear(), m = s.getMonth(), d = s.getDate();
+  for (let h = 0; h < 24; h += 3) {
+    const t = new Date(y, m, d, h).toISOString();
+    const f = instantToFraction(t, win.startUtc, win.endUtc);
+    if (f === null) continue;
+    const span = document.createElement('span');
+    span.textContent = two(new Date(t).getHours()) + ':00';
+    span.style.left = (f * 100) + '%';
+    el.hours.appendChild(span);
+  }
+}
+
+/**
+ * Place the playhead at the UTC instant `utc` on the drawn day, or hide it.
+ * Hide (el.playhead.hidden = true) when utc is null, view.requested is null,
+ * or instantToFraction(utc, view.requested.startUtc, view.requested.endUtc)
+ * is null. Otherwise el.playhead.hidden = false and
+ * el.playhead.style.left = (f * 100) + "%".
+ */
+function movePlayhead(utc) {
+  if (!utc || !view.requested) {
+    el.playhead.hidden = true;
+    return;
+  }
+  const f = instantToFraction(utc, view.requested.startUtc, view.requested.endUtc);
+  if (f === null || f === undefined) {
+    el.playhead.hidden = true;
+    return;
+  }
+  el.playhead.hidden = false;
+  el.playhead.style.left = (f * 100) + '%';
+}
+
+/**
+ * Resolve the instant `utc` for the selected camera and act on it.
+ * First const seq = ++view.playSeq. GET /playback with URLSearchParams
+ * camera = el.camera.value, at = utc. After the await (success or failure),
+ * if seq !== view.playSeq return without touching anything: a later click,
+ * or stopVideo() (camera or day changed), superseded this request.
+ * Read the JSON even on a non-2xx status: refusals are JSON bodies with
+ * ok: false, and planPlayback reads those too. When the fetch itself fails or
+ * the body is not JSON, applyPlan({ action: "error", code: "unreachable",
+ * message: "cannot reach the recorder" }). Otherwise applyPlan(planPlayback(body)).
+ * The try/catch covers ONLY the fetch and res.json(); applyPlan runs outside
+ * it, so an error thrown while applying reaches the caller as itself.
+ */
+async function playAt(utc) {
+  const seq = ++view.playSeq;
+  const q = new URLSearchParams({ camera: el.camera.value, at: utc });
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/playback?' + q.toString());
+    body = await res.json();
+  } catch (e) {
+    reached = false;
+  }
+  if (seq !== view.playSeq) return;
+  if (!reached) {
+    applyPlan({ action: 'error', code: 'unreachable', message: 'cannot reach the recorder' });
+    return;
+  }
+  applyPlan(planPlayback(body));
+}
+
+/**
+ * Carry out one planPlayback action.
+ * Before every action except "play": stopVideo().
+ * - "play": view.playing = plan; el.video.src = plan.src; when the video
+ *   fires "loadedmetadata" ONCE (addEventListener with { once: true }), set
+ *   el.video.currentTime = plan.offsetSeconds, then call el.video.play() and
+ *   swallow its rejected promise with .catch(() => {}) (autoplay may be
+ *   blocked; the controls remain). setStatus("Playing from " +
+ *   localTime(instant) ) where instant = the segment start plus
+ *   offsetSeconds: new Date(Date.parse(plan.segmentStartUtc) +
+ *   plan.offsetSeconds * 1000).toISOString().
+ * - "gap": setStatus(plan.label, "problem"). When plan.nextRecordedUtc is a
+ *   string, append a <button type="button"> with textContent "Jump to next
+ *   recording" to el.status (after the text; separate them with a space) whose
+ *   click calls playAt(plan.nextRecordedUtc).
+ * - "live": setStatus("This moment is still being recorded. "), then append an
+ *   <a href="/"> with textContent "Watch live" to el.status.
+ * - "future": setStatus("That moment has not happened yet").
+ * - "error": setStatus(plan.code + ": " + plan.message, "problem").
+ * - anything else: setStatus("unexpected plan", "problem").
+ */
+function applyPlan(plan) {
+  const action = plan && typeof plan === 'object' ? plan.action : null;
+  if (action !== 'play') {
+    stopVideo();
+  }
+  if (action === 'play') {
+    view.playing = plan;
+    el.video.src = plan.src;
+    el.video.addEventListener('loadedmetadata', () => {
+      el.video.currentTime = plan.offsetSeconds;
+      const playPromise = el.video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+    }, { once: true });
+    const instant = new Date(Date.parse(plan.segmentStartUtc) + plan.offsetSeconds * 1000).toISOString();
+    setStatus('Playing from ' + localTime(instant));
+  } else if (action === 'gap') {
+    setStatus(plan.label, 'problem');
+    if (typeof plan.nextRecordedUtc === 'string') {
+      el.status.appendChild(document.createTextNode(' '));
+      const b = document.createElement('button');
+      b.setAttribute('type', 'button');
+      b.textContent = 'Jump to next recording';
+      b.addEventListener('click', () => { playAt(plan.nextRecordedUtc); });
+      el.status.appendChild(b);
+    }
+  } else if (action === 'live') {
+    setStatus('This moment is still being recorded. ');
+    const a = document.createElement('a');
+    a.setAttribute('href', '/');
+    a.textContent = 'Watch live';
+    el.status.appendChild(a);
+  } else if (action === 'future') {
+    setStatus('That moment has not happened yet');
+  } else if (action === 'error') {
+    setStatus(plan.code + ': ' + plan.message, 'problem');
+  } else {
+    setStatus('unexpected plan', 'problem');
+  }
+}
+
+/**
+ * Stop playback and forget it: view.playing = null; view.playSeq += 1 (any
+ * /playback answer still on its way is now stale); el.video.pause();
+ * el.video.removeAttribute("src"); el.video.load(); movePlayhead(null).
+ */
+function stopVideo() {
+  view.playing = null;
+  view.playSeq += 1;
+  el.video.pause();
+  el.video.removeAttribute('src');
+  el.video.load();
+  movePlayhead(null);
+}
+
+/**
+ * Wire every event. Called once, before loadCameras().
+ * - el.day.value = the local today as "YYYY-MM-DD" (getFullYear,
+ *   getMonth() + 1, getDate(), with two()).
+ * - el.camera "change" and el.day "change": stopVideo(), setStatus(""), loadDay().
+ * - el.prevDay / el.nextDay "click": v = shiftDay(el.day.value, -1 / +1);
+ *   when v is not null: el.day.value = v, stopVideo(), setStatus(""), loadDay().
+ * - el.strip "click": ignore when view.requested is null.
+ *   rect = el.strip.getBoundingClientRect(); ignore when rect.width <= 0.
+ *   r = fractionToInstant((event.clientX - rect.left) / rect.width,
+ *   view.requested.startUtc, view.requested.endUtc); when r.error,
+ *   setStatus(r.error, "problem") and stop; else playAt(r.utc).
+ * - el.video "ended": when view.playing is not null, playAt(view.playing.segmentEndUtc)
+ *   (continuous play: the next segment, or a labelled stop at a gap).
+ * - el.video "timeupdate": when view.playing is not null,
+ *   movePlayhead(new Date(Date.parse(view.playing.segmentStartUtc) +
+ *   el.video.currentTime * 1000).toISOString()).
+ * - el.video "error": only when view.playing is not null (removing the src
+ *   also fires "error"): setStatus("This browser cannot play this recording
+ *   (H.265 needs hardware decoding)", "problem").
+ */
+function wireEvents() {
+  const now = new Date();
+  el.day.value = now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate());
+  el.camera.addEventListener('change', () => {
+    stopVideo();
+    setStatus('');
+    loadDay();
+  });
+  el.day.addEventListener('change', () => {
+    stopVideo();
+    setStatus('');
+    loadDay();
+  });
+  el.prevDay.addEventListener('click', () => {
+    const v = shiftDay(el.day.value, -1);
+    if (v !== null) {
+      el.day.value = v;
+      stopVideo();
+      setStatus('');
+      loadDay();
+    }
+  });
+  el.nextDay.addEventListener('click', () => {
+    const v = shiftDay(el.day.value, 1);
+    if (v !== null) {
+      el.day.value = v;
+      stopVideo();
+      setStatus('');
+      loadDay();
+    }
+  });
+  el.strip.addEventListener('click', (event) => {
+    if (view.requested === null) return;
+    const rect = el.strip.getBoundingClientRect();
+    if (!(rect.width > 0)) return;
+    const r = fractionToInstant((event.clientX - rect.left) / rect.width, view.requested.startUtc, view.requested.endUtc);
+    if (r.error) {
+      setStatus(r.error, 'problem');
+      return;
+    }
+    playAt(r.utc);
+  });
+  el.video.addEventListener('ended', () => {
+    if (view.playing !== null) {
+      playAt(view.playing.segmentEndUtc);
+    }
+  });
+  el.video.addEventListener('timeupdate', () => {
+    if (view.playing !== null) {
+      const iso = new Date(Date.parse(view.playing.segmentStartUtc) + el.video.currentTime * 1000).toISOString();
+      movePlayhead(iso);
+    }
+  });
+  el.video.addEventListener('error', () => {
+    if (view.playing !== null) {
+      setStatus('This browser cannot play this recording (H.265 needs hardware decoding)', 'problem');
+    }
+  });
+}
+
+wireEvents();
+loadCameras();
+</script>
+</body>
+</html>

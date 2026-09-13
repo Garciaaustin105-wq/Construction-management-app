@@ -1,0 +1,443 @@
+/**
+ * The review page's script, run for real: the <script type="module"> out of
+ * agent/ui/review.html, against the real api server on a real socket, with
+ * only the DOM faked. A browser is still the only proof that a <video> seeks
+ * into a fragmented MP4 (REVIEW-UI-SPEC.md says so); everything the page
+ * DECIDES is checked here.
+ *
+ * The failures tested (build rule 19): a slow answer for a day the user has
+ * already left drawn over the day they are on; a DST day built by adding
+ * 86 400 000; a gap that plays on silently instead of stopping with its
+ * reason; a camera refusal that shows nothing; the error the browser fires
+ * when the page itself clears the video, reported as a codec failure.
+ *
+ * The clock is pinned (server now = 2026-09-11T12:00:00Z) and the time zone is
+ * pinned (America/New_York), so "local day" means the same thing on every
+ * machine.
+ */
+process.env.TZ = "America/New_York";
+
+import { mkdtemp, writeFile, mkdir, rm, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+import { createApiServer } from "../agent/api-server.mjs";
+import { openIndex } from "../agent/segindex.mjs";
+import { closeAll } from "../agent/live.mjs";
+import { check, eq, report } from "./_assert.mjs";
+
+console.log("review page");
+const now = () => new Date("2026-09-11T12:00:00Z");
+const ms = (iso) => Date.parse(iso);
+
+/* ── the recorder: segments A, B, a logged gap, C, and an open one ─────────── */
+
+const stateDir = await mkdtemp(join(tmpdir(), "camplat-review-"));
+const disk0 = join(stateDir, "disk0");
+await mkdir(join(disk0, "cam-1"), { recursive: true });
+const config = {
+  siteId: "carwash-01",
+  storeRoots: [disk0],
+  credentials: { username: "svc", password: "p@ss" },
+  segmentSeconds: 60,
+  cameras: [
+    { cameraId: "cam-1", host: "10.0.0.5", vendor: "generic", name: "Bay 1" },
+    { cameraId: "cam-2", host: "10.0.0.6", vendor: "generic" },
+  ],
+};
+const index = openIndex(join(stateDir, "index.db"));
+const seg = (startUtc, endUtc, state) => ({
+  cameraId: "cam-1", startUtc, endUtc, path: `cam-1/${ms(startUtc)}.mp4`, bytes: 10, state,
+  hold: false, pendingUpload: false, bitrateKbps: null,
+});
+for (const [s, e] of [["2026-09-11T10:00:00Z", "2026-09-11T10:01:00Z"],
+  ["2026-09-11T10:01:00Z", "2026-09-11T10:02:00Z"], ["2026-09-11T10:05:00Z", "2026-09-11T10:06:00Z"]]) {
+  index.put(seg(s, e, "sealed"));
+  await writeFile(join(disk0, "cam-1", `${ms(s)}.mp4`), Buffer.alloc(10, 7));
+}
+index.put(seg("2026-09-11T11:58:00Z", null, "open"));
+index.addGap({ cameraId: "cam-1", startUtc: "2026-09-11T10:02:00Z", endUtc: "2026-09-11T10:05:00Z", reason: "camera_offline" });
+
+const server = createApiServer({ stateDir, config, index, now });
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const host = `127.0.0.1:${server.address().port}`;
+const idOf = (iso) => `cam-1.${ms(iso)}`;
+
+/* ── the smallest DOM the page's contract allows ──────────────────────────── */
+
+class FakeEl {
+  constructor(tag, id = null) {
+    this.tagName = tag.toUpperCase();
+    this.id = id;
+    this.children = [];
+    this.parentNode = null;
+    this.style = {};
+    this.className = "";
+    this.hidden = false;
+    this.value = "";
+    this.title = "";
+    this.attrs = {};
+    this.listeners = {};
+    this._text = "";
+  }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); }
+  set textContent(v) { for (const c of this.children) c.parentNode = null; this.children = []; this._text = String(v); }
+  get firstChild() { return this.children[0] ?? null; }
+  get lastChild() { return this.children.at(-1) ?? null; }
+  get childNodes() { return this.children; }
+  get options() { return this.children; }
+  appendChild(c) {
+    if (c.parentNode) c.parentNode.removeChild(c);
+    c.parentNode = this; this.children.push(c); return c;
+  }
+  append(...cs) { for (const c of cs) this.appendChild(typeof c === "string" ? textNode(c) : c); }
+  insertBefore(c, ref) {
+    if (ref === null) return this.appendChild(c);
+    if (c.parentNode) c.parentNode.removeChild(c);
+    const i = this.children.indexOf(ref);
+    if (i < 0) throw new Error("insertBefore: ref is not a child");
+    c.parentNode = this; this.children.splice(i, 0, c); return c;
+  }
+  removeChild(c) {
+    const i = this.children.indexOf(c);
+    if (i < 0) throw new Error("removeChild: not a child");
+    this.children.splice(i, 1); c.parentNode = null; return c;
+  }
+  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+  replaceChildren(...cs) { this.textContent = ""; this.append(...cs); }
+  setAttribute(k, v) { this.attrs[k] = String(v); if (k === "href") this.href = String(v); }
+  getAttribute(k) { return this.attrs[k] ?? null; }
+  removeAttribute(k) { delete this.attrs[k]; if (k === "src") this.src = ""; }
+  addEventListener(type, fn, opts) {
+    (this.listeners[type] ??= []).push({ fn, once: Boolean(opts && opts.once) });
+  }
+  removeEventListener(type, fn) {
+    this.listeners[type] = (this.listeners[type] ?? []).filter((l) => l.fn !== fn);
+  }
+  fire(type, extra = {}) {
+    const ls = this.listeners[type] ?? [];
+    this.listeners[type] = ls.filter((l) => !l.once);
+    for (const l of ls) l.fn({ type, target: this, currentTarget: this, preventDefault() {}, stopPropagation() {}, ...extra });
+  }
+  set innerHTML(_) { throw new Error("the page must not use innerHTML"); }
+}
+const textNode = (s) => { const t = new FakeEl("#text"); t._text = s; return t; };
+
+class FakeVideo extends FakeEl {
+  constructor(id) { super("video", id); this.src = ""; this.currentTime = 0; this.plays = 0; this.paused = true; this.loads = 0; }
+  play() { this.plays++; this.paused = false; return Promise.reject(new Error("autoplay blocked")); }
+  pause() { this.paused = true; }
+  load() { this.loads++; }
+}
+
+let page;
+function freshDom() {
+  const byId = {};
+  for (const [id, tag] of [["camera", "select"], ["day", "input"], ["prevDay", "button"], ["nextDay", "button"],
+    ["pageError", "div"], ["strip", "div"], ["playhead", "div"], ["hours", "div"], ["status", "div"]]) {
+    byId[id] = new FakeEl(tag, id);
+  }
+  byId.video = new FakeVideo("video");
+  byId.pageError.hidden = true;
+  byId.playhead.hidden = true;
+  byId.strip.appendChild(byId.playhead);
+  byId.strip.getBoundingClientRect = () => ({ left: 100, width: 1000, top: 0, height: 36 });
+  return byId;
+}
+
+let fetchLog = [];
+let fetchBroken = false;
+// A promise that holds every /playback answer until it resolves: a slow recorder.
+let holdPlayback = null;
+const realFetch = globalThis.fetch;
+function install(byId) {
+  globalThis.document = {
+    getElementById: (id) => byId[id] ?? null,
+    createElement: (tag) => (tag === "video" ? new FakeVideo() : new FakeEl(tag)),
+    createTextNode: textNode,
+  };
+  globalThis.location = { host, protocol: "http:" };
+  globalThis.fetch = (url, opts) => {
+    const u = String(url);
+    fetchLog.push(u);
+    if (fetchBroken) return Promise.reject(new TypeError("fetch failed"));
+    if (!u.startsWith("/")) throw new Error(`the page fetched a non-relative URL: ${u}`);
+    if (holdPlayback && u.startsWith("/playback?")) {
+      return holdPlayback.then(() => realFetch(`http://${host}${u}`, opts));
+    }
+    return realFetch(`http://${host}${u}`, opts);
+  };
+}
+
+// The script, verbatim, with its one import pointed at the file on disk and a
+// handle on its top-level names appended. Nothing else about it changes.
+const html = await readFile(join(import.meta.dirname, "..", "agent", "ui", "review.html"), "utf8");
+const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
+const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
+const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
+  "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents"];
+// The handle goes in just before the two startup calls, so a throw while the
+// page starts up is one failed check rather than a crashed suite.
+const START = "\nwireEvents();\nloadCameras();\n";
+if (!script.includes(START)) throw new Error("review.html must end its script with wireEvents(); loadCameras();");
+const transformed = script.replace("'/ui/review-client.js'", `'${clientUrl}'`)
+  .replace(START, `\nglobalThis.__page = { ${NAMES.join(", ")} };${START}`);
+const tmpScript = join(stateDir, "review-page.mjs");
+await writeFile(tmpScript, transformed);
+
+const settle = () => new Promise((r) => setTimeout(r, 60));
+async function until(fn, what, limitMs = 3000) {
+  const t0 = Date.now();
+  while (!fn()) {
+    if (Date.now() - t0 > limitMs) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+const dom = freshDom();
+install(dom);
+let startupError = null;
+await import(pathToFileURL(tmpScript).href).catch((e) => { startupError = e; });
+page = globalThis.__page;
+const barsOf = () => dom.strip.children.filter((c) => c !== dom.playhead);
+
+/* ── the checks ───────────────────────────────────────────────────────────── */
+
+await check("the page uses no innerHTML and only relative fetches", async () => {
+  eq(html.includes("innerHTML"), false, "no innerHTML anywhere in the file");
+  eq(html.includes("86400000") || html.includes("86_400_000"), false, "no day arithmetic in ms");
+});
+
+await check("dayWindow is local midnight to the next local midnight, DST days included", async () => {
+  eq(page.dayWindow("2026-09-11"), { startUtc: "2026-09-11T04:00:00.000Z", endUtc: "2026-09-12T04:00:00.000Z" }, "a summer day");
+  eq(page.dayWindow("2026-03-08"), { startUtc: "2026-03-08T05:00:00.000Z", endUtc: "2026-03-09T04:00:00.000Z" }, "spring forward: 23 h");
+  eq(page.dayWindow("2026-11-01"), { startUtc: "2026-11-01T04:00:00.000Z", endUtc: "2026-11-02T05:00:00.000Z" }, "fall back: 25 h");
+  for (const bad of ["", "2026-9-11", "2026-02-30", "2026-13-01", "2026-00-10", "20260911", "2026-09-11T00:00", null, undefined, 20260911]) {
+    eq(page.dayWindow(bad), null, `refused: ${JSON.stringify(bad)}`);
+  }
+});
+
+await check("shiftDay crosses months, years and DST, and refuses what dayWindow refuses", async () => {
+  eq(page.shiftDay("2026-03-01", -1), "2026-02-28", "back over February");
+  eq(page.shiftDay("2026-12-31", 1), "2027-01-01", "into a new year");
+  eq(page.shiftDay("2026-03-08", 1), "2026-03-09", "over spring forward");
+  eq(page.shiftDay("2026-02-30", 1), null, "a day that does not exist");
+});
+
+await check("on load: cameras listed by name, today defaulted, a future day refused out loud", async () => {
+  if (startupError) throw startupError;
+  await until(() => dom.camera.children.length === 2 && !dom.pageError.hidden, "cameras + the first timeline's answer");
+  eq(dom.camera.children.map((o) => [o.value, o.textContent]), [["cam-1", "Bay 1"], ["cam-2", "cam-2"]], "value = id, text = name else id");
+  eq(/^\d{4}-\d{2}-\d{2}$/.test(dom.day.value), true, `today as YYYY-MM-DD: ${dom.day.value}`);
+  // The server's clock is 2026-09-11, so the machine's real today is the future to it.
+  eq(dom.pageError.hidden, false, "the error line is shown");
+  eq(dom.pageError.textContent.startsWith("window_in_future: "), true, `code: message — ${dom.pageError.textContent}`);
+  eq(barsOf().length, 0, "nothing drawn for a refused day");
+});
+
+await check("a day draws recorded, a widened reasoned gap, recorded, and the future tail", async () => {
+  dom.day.value = "2026-09-11";
+  fetchLog = [];
+  await page.loadDay();
+  const q = new URLSearchParams(fetchLog.find((u) => u.startsWith("/timeline?")).split("?")[1]);
+  eq([q.get("camera"), q.get("start"), q.get("end"), q.get("buckets")],
+    ["cam-1", "2026-09-11T04:00:00.000Z", "2026-09-12T04:00:00.000Z", "96"], "the query");
+  eq(dom.pageError.hidden, true, "the error line is gone");
+  const bars = barsOf();
+  const kinds = bars.map((b) => b.className);
+  eq(kinds.at(-1), "bar future", "the part after now is its own kind");
+  const gap = bars.find((b) => b.className === "bar gap" && b.title.startsWith("Camera offline"));
+  eq(Boolean(gap), true, `the logged gap carries its reason: ${bars.map((b) => b.title).join(" | ")}`);
+  eq(gap.title, "Camera offline, 06:02 to 06:05", "reason, then local times");
+  eq(parseFloat(gap.style.width) >= 0.399, true, `a 3 minute gap is widened to be seen: ${gap.style.width}`);
+  eq(bars.some((b) => b.title === "Recorded, 06:00 to 06:02"), true, "recorded runs merge and read in local time");
+  eq(dom.strip.lastChild === dom.playhead, true, "the playhead stays on top");
+  eq(dom.hours.children.map((s) => s.textContent), ["00:00", "03:00", "06:00", "09:00", "12:00", "15:00", "18:00", "21:00"], "hour labels");
+  eq(dom.hours.children[2].style.left, "25%", "06:00 sits a quarter of the way in");
+});
+
+await check("THE FEARED ONE: a slow answer for a day already left is not drawn", async () => {
+  dom.day.value = "2026-09-11";
+  const first = page.loadDay();
+  dom.day.value = "2030-01-01";
+  const second = page.loadDay();
+  await Promise.all([first, second]);
+  eq(dom.pageError.textContent.startsWith("window_in_future"), true, "the day on screen is the second one");
+  eq(barsOf().length, 0, "the first day's bars never land");
+  dom.day.value = "2030-01-01";
+  const a = page.loadDay();
+  dom.day.value = "2026-09-11";
+  const b = page.loadDay();
+  await Promise.all([a, b]);
+  eq(dom.pageError.hidden, true, "and the other way round: no stale error over a drawn day");
+  eq(barsOf().length > 0, true, "the second day is drawn");
+});
+
+await check("a click on the strip plays the moment under it, at its offset", async () => {
+  // The strip is 1000 px from x = 100, so one pixel is 86.4 s of the day.
+  // x = 350.5 is fraction 0.2505: 21 643 200 ms after 04:00Z = 10:00:43.2Z,
+  // 43.2 s into segment A.
+  dom.strip.fire("click", { clientX: 350.5 });
+  await until(() => dom.video.src !== "", "a src");
+  eq(dom.video.src, `/segments/${idOf("2026-09-11T10:00:00Z")}`, "segment A through the segment route");
+  dom.video.fire("loadedmetadata");
+  eq(Math.abs(dom.video.currentTime - 43.2) < 1e-6, true, `seeked to the offset: ${dom.video.currentTime}`);
+  eq(dom.video.plays, 1, "play() called once (its rejection swallowed)");
+  eq(dom.status.textContent, "Playing from 06:00", "local time being played");
+  dom.video.fire("loadedmetadata");
+  eq(dom.video.plays, 1, "the seek listener was once-only");
+});
+
+await check("the playhead follows currentTime and hides off the day", async () => {
+  dom.video.currentTime = 30;
+  dom.video.fire("timeupdate");
+  eq(dom.playhead.hidden, false, "shown");
+  const want = ((6 * 3600 + 30) / 86400) * 100;
+  eq(Math.abs(parseFloat(dom.playhead.style.left) - want) < 1e-6, true, `at ${dom.playhead.style.left}`);
+  page.movePlayhead("2026-09-13T00:00:00Z");
+  eq(dom.playhead.hidden, true, "a moment off the drawn day hides it, never pins it to an edge");
+});
+
+await check("THE FEARED ONE: continuous play stops at a gap and names it", async () => {
+  dom.video.fire("ended");
+  await until(() => dom.video.src.endsWith(idOf("2026-09-11T10:01:00Z")), "segment B");
+  dom.video.fire("ended");
+  await until(() => dom.status.className === "status problem", "the gap");
+  eq(dom.status.textContent.startsWith("Camera offline"), true, `labelled: ${dom.status.textContent}`);
+  eq(dom.video.paused, true, "the video stopped");
+  eq(dom.video.src, "", "its src cleared");
+  eq(dom.playhead.hidden, true, "the playhead hidden");
+  const btn = dom.status.children.find((c) => c.tagName === "BUTTON");
+  eq(btn?.textContent, "Jump to next recording", "a way past the gap");
+  btn.fire("click");
+  await until(() => dom.video.src.endsWith(idOf("2026-09-11T10:05:00Z")), "segment C");
+});
+
+await check("the error the page causes itself is not a codec failure; a real one is", async () => {
+  page.stopVideo();
+  dom.status.textContent = "";
+  dom.video.fire("error");
+  eq(dom.status.textContent, "", "clearing the src fires error: not reported");
+  await page.playAt("2026-09-11T10:00:10Z");
+  dom.video.fire("error");
+  eq(dom.status.textContent, "This browser cannot play this recording (H.265 needs hardware decoding)", "said out loud");
+  eq(dom.status.className, "status problem", "as a problem");
+});
+
+await check("live, future and refusals each say what they are", async () => {
+  await page.playAt("2026-09-11T11:59:00Z");
+  eq(dom.status.textContent, "This moment is still being recorded. Watch live", "live");
+  eq(dom.status.children.find((c) => c.tagName === "A")?.href, "/", "linked to the live page");
+  await page.playAt("2026-09-11T12:30:00Z");
+  eq(dom.status.textContent, "That moment has not happened yet", "future");
+  dom.camera.value = "../x";
+  await page.playAt("2026-09-11T10:00:10Z");
+  eq(dom.status.textContent.startsWith("bad_camera_id: "), true, `refusal shown: ${dom.status.textContent}`);
+  eq(dom.status.className, "status problem", "as a problem");
+  dom.camera.value = "cam-1";
+});
+
+await check("changing day or camera stops playback and redraws", async () => {
+  await page.playAt("2026-09-11T10:00:10Z");
+  eq(page.view.playing !== null, true, "playing");
+  fetchLog = [];
+  dom.day.value = "2026-09-12";
+  dom.nextDay.fire("click");
+  await until(() => fetchLog.some((u) => u.startsWith("/timeline?")), "a reload");
+  eq(dom.day.value, "2026-09-13", "next day");
+  eq(page.view.playing, null, "playback forgotten");
+  dom.prevDay.fire("click");
+  dom.prevDay.fire("click");
+  eq(dom.day.value, "2026-09-11", "back two days");
+  await settle();
+  fetchLog = [];
+  dom.camera.value = "cam-2";
+  dom.camera.fire("change");
+  await until(() => fetchLog.some((u) => u.includes("camera=cam-2")), "a reload for the new camera");
+  await settle();
+  eq(barsOf().every((b) => b.className !== "bar recorded"), true, "cam-2 has nothing recorded");
+  dom.camera.value = "cam-1";
+});
+
+await check("THE FEARED ONE: a slow playback answer for a camera already left never plays", async () => {
+  page.stopVideo();
+  let release;
+  holdPlayback = new Promise((r) => { release = r; });
+  try {
+    fetchLog = [];
+    const pending = page.playAt("2026-09-11T10:00:10Z");
+    await until(() => fetchLog.some((u) => u.startsWith("/playback?")), "the playback request");
+    dom.camera.fire("change");
+    release();
+    await pending;
+    await settle();
+    eq(dom.video.src, "", "the old camera's segment was never loaded");
+    eq(page.view.playing, null, "and nothing is recorded as playing");
+    eq(dom.status.textContent.startsWith("Playing from"), false, `no stale status: ${dom.status.textContent}`);
+  } finally {
+    holdPlayback = null;
+  }
+  // A second click supersedes the first the same way.
+  let release2;
+  holdPlayback = new Promise((r) => { release2 = r; });
+  try {
+    const first = page.playAt("2026-09-11T10:00:10Z");
+    holdPlayback = null;
+    const second = page.playAt("2026-09-11T10:05:10Z");
+    await second;
+    release2();
+    await first;
+    eq(dom.video.src, `/segments/${idOf("2026-09-11T10:05:00Z")}`, "the later click wins, whatever answers last");
+  } finally {
+    holdPlayback = null;
+    page.stopVideo();
+  }
+});
+
+await check("a bug in the page is not blamed on the recorder", async () => {
+  // Only a failed fetch or unreadable JSON is "unreachable". A throw while
+  // drawing is the page's own fault and must surface as itself.
+  dom.status.textContent = "";
+  dom.video.addEventListener = () => { throw new Error("page bug in play"); };
+  let err = null;
+  try {
+    await page.playAt("2026-09-11T10:00:10Z").catch((e) => { err = e; });
+  } finally {
+    delete dom.video.addEventListener;
+  }
+  eq(err?.message, "page bug in play", "playAt lets the page's own error out");
+  eq(dom.status.textContent.startsWith("unreachable"), false, `not called unreachable: ${dom.status.textContent}`);
+  page.stopVideo();
+
+  dom.day.value = "2026-09-11";
+  for (const [what, run] of [["loadDay", () => page.loadDay()], ["loadCameras", () => page.loadCameras()]]) {
+    dom.hours.appendChild = () => { throw new Error(`page bug in ${what}`); };
+    err = null;
+    try {
+      await run().catch((e) => { err = e; });
+    } finally {
+      delete dom.hours.appendChild;
+    }
+    eq(err?.message, `page bug in ${what}`, `${what} lets the page's own error out`);
+    eq(!dom.pageError.hidden && dom.pageError.textContent.startsWith("Cannot reach"), false,
+      `${what} does not say the recorder is unreachable: ${dom.pageError.textContent}`);
+  }
+  await page.loadDay();
+});
+
+await check("an unreachable recorder is named, not a blank page", async () => {
+  fetchBroken = true;
+  await page.loadCameras();
+  eq(dom.pageError.hidden, false, "shown");
+  eq(dom.pageError.textContent, `Cannot reach the recorder (${host})`, "names the host");
+  await page.playAt("2026-09-11T10:00:10Z");
+  eq(dom.status.textContent, "unreachable: cannot reach the recorder", "playback too");
+  fetchBroken = false;
+});
+
+globalThis.fetch = realFetch;
+closeAll();
+server.close();
+index.close();
+await rm(stateDir, { recursive: true, force: true });
+report("review page");

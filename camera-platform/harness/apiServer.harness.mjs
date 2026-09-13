@@ -22,6 +22,7 @@ import { createApiServer } from "../agent/api-server.mjs";
 import { openIndex } from "../agent/segindex.mjs";
 import { liveRegistry, closeAll } from "../agent/live.mjs";
 import { createBoxAccumulator, extractMimeCodec, parseTopLevelBoxes } from "../agent/ui/live-client.mjs";
+import { layoutCoverage, planPlayback } from "../agent/ui/review-client.mjs";
 import { check, eq, report } from "./_assert.mjs";
 
 console.log("api server");
@@ -568,6 +569,52 @@ await check("GET /ui/live-client.js serves the pure module byte-equal to disk", 
   eq(res.headers.get("content-type"), "text/javascript", "a module type the browser executes");
   const onDisk = await readFile(join(import.meta.dirname, "..", "agent", "ui", "live-client.mjs"), "utf8");
   eq(text, onDisk, "the browser runs the identical file the harness tested");
+});
+
+await check("THE FEARED ONE: /playback never sends the storage path to the browser", async () => {
+  const { json } = await fetchJson(`${base}/playback?camera=cam-1&at=2026-09-11T10:00:30Z`);
+  eq(json.resolution.kind, "segment", "a segment resolution");
+  eq(Object.hasOwn(json.resolution, "path"), false, "no path key");
+  eq(JSON.stringify(json).includes("cam-1/"), false, "no storage layout anywhere in the body");
+  const plan = planPlayback(json);
+  eq(plan.action, "play", "the page's own planner plays it");
+  eq(plan.src, `/segments/${idOf(T.A)}`, "through the segment route");
+});
+
+await check("GET /review serves the review page", async () => {
+  const { res, text } = await fetchJson(`${base}/review`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "text/html; charset=utf-8", "the page's type");
+  eq(text.includes("/ui/review-client.js"), true, "the page loads the pure module");
+  eq(text.includes("/timeline"), true, "the page asks for coverage");
+  eq(text.includes("/playback"), true, "the page resolves a click");
+  eq(res.headers.get("cache-control"), "no-store", "edits land without a restart");
+});
+
+await check("GET /ui/review-client.js serves the pure module byte-equal to disk", async () => {
+  const { res, text } = await fetchJson(`${base}/ui/review-client.js`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "text/javascript", "a module type the browser executes");
+  const onDisk = await readFile(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs"), "utf8");
+  eq(text, onDisk, "the browser runs the identical file the harness tested");
+});
+
+await check("the live page links to review", async () => {
+  const { text } = await fetchJson(`${base}/`);
+  eq(text.includes('href="/review"'), true, "a Review link");
+});
+
+await check("layoutCoverage accepts a real /timeline body, including a clipped one", async () => {
+  const past = await fetchJson(
+    `${base}/timeline?camera=cam-1&start=2026-09-11T10:00:00Z&end=2026-09-11T10:06:00Z`);
+  const a = layoutCoverage(past.json);
+  eq(a.error, undefined, `a closed window lays out: ${a.error}`);
+  eq(a.bars.map((b) => b.kind).join(","), "recorded,gap,recorded", "the runs, in order");
+  const today = await fetchJson(
+    `${base}/timeline?camera=cam-1&start=2026-09-11T10:00:00Z&end=2026-09-11T13:00:00Z`);
+  const b = layoutCoverage(today.json);
+  eq(b.error, undefined, `a clipped window lays out: ${b.error}`);
+  eq(b.bars.at(-1).kind, "future", "the part after now is its own kind");
 });
 
 await check("GET /ui/nope is a route miss", async () => {
