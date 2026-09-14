@@ -157,6 +157,39 @@ systemctl daemon-reload
 systemctl enable camplat-recorder.service camplat-api.service
 echo "  camplat-recorder and camplat-api enabled; they start at boot once $STATE_DIR/config.json exists"
 
+say "Logs"
+# Uncapped, journald may take a tenth of the OS drive, which the index shares.
+# Persistent, so the logs from before a power cut survive it: those are the
+# ones you need.
+install -d -m 0755 /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/camplat.conf <<'JOURNAL'
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+SystemKeepFree=4G
+MaxRetentionSec=1month
+JOURNAL
+systemctl restart systemd-journald
+echo "  journald: persistent, capped at 1G, keeps 4G free on the OS drive"
+
+say "Drive health"
+# smartd watches every drive, runs a short self-test daily at 02:00 and a long
+# one Saturdays at 03:00, and logs temperature changes. It only logs, to the
+# journal: there is no mail on this box. No temperature thresholds: an NVMe OS
+# drive runs hotter than a recording disk, and a limit right for one raises
+# false alarms on the other. health.json reading it waits for real smartctl
+# output from the box.
+if [ -f /etc/smartd.conf ] && ! grep -q '# camplat: managed by setup/install.sh' /etc/smartd.conf && [ ! -f /etc/smartd.conf.camplat-orig ]; then
+  cp -p /etc/smartd.conf /etc/smartd.conf.camplat-orig
+fi
+cat > /etc/smartd.conf <<'SMARTD'
+# camplat: managed by setup/install.sh (the package's original is smartd.conf.camplat-orig)
+DEVICESCAN -a -o on -S on -n standby,q -s (S/../.././02|L/../../6/03) -W 4
+SMARTD
+systemctl enable smartmontools.service >/dev/null 2>&1 || systemctl enable smartd.service >/dev/null 2>&1 || true
+systemctl restart smartmontools.service 2>/dev/null || systemctl restart smartd.service 2>/dev/null || warn "smartd did not start: drive health is not being watched"
+echo "  smartd: all drives, short test daily 02:00, long test Saturday 03:00, temperature changes of 4C logged"
+
 say "Watchdog"
 if [[ -c /dev/watchdog ]]; then
   sed -i 's/^#\?RuntimeWatchdogSec=.*/RuntimeWatchdogSec=30s/' /etc/systemd/system.conf
