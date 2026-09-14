@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, readFile, mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readHealth, isAlertRecord, readPreviousAlerts, runAlertsCheck, shouldRestartRecorder, transitionLogLine }
+import { readHealth, isAlertRecord, readPreviousAlerts, runAlertsCheck, shouldRestartRecorder, transitionLogLine, alertsResponse }
   from "../agent/alerts-run.mjs";
 import { defaultThresholds } from "../dist/alerts.js";
 import { check, eq, report } from "./_assert.mjs";
@@ -95,6 +95,31 @@ try {
     eq(shouldRestartRecorder([t("recorder_stale", "raised", "unknown")]), false, "going unknown (the clock is suspect)");
     eq(shouldRestartRecorder([t("disk_filling", "clear", "raised")]), false, "another alert");
     eq(shouldRestartRecorder([t("disk_filling", "clear", "raised"), t("recorder_stale", "unknown", "raised")]), true, "among others");
+  });
+
+  await check("THE FEARED ONE: /alerts never shows old alerts as if they were current", () => {
+    const nowUtc = "2026-09-14T12:10:00.000Z";
+    const file = (checkedUtc, alerts = [record()]) => ({ checkedUtc, alerts });
+    eq(alertsResponse(null, nowUtc), { ok: true, check: "never", checkedUtc: null, reason: "the alerts check has not run", alerts: [], discarded: 0 }, "never ran");
+    eq(alertsResponse(file("2026-09-14T12:09:00.000Z"), nowUtc), { ok: true, check: "current", checkedUtc: "2026-09-14T12:09:00.000Z", reason: null, alerts: [record()], discarded: 0 }, "a minute old is current");
+    eq(alertsResponse(file("2026-09-14T12:07:00.000Z"), nowUtc).check, "current", "exactly 180 s is still current");
+    const old = alertsResponse(file("2026-09-14T12:06:59.000Z"), nowUtc);
+    eq([old.check, old.reason, old.alerts.length], ["stale", "the last alerts check was 181 s ago", 1], "181 s: stale, and the raised alert is still shown");
+    eq(alertsResponse(file("2026-09-14T12:13:01.000Z"), nowUtc).check, "stale", "a check from the future (the clock moved) is not current either");
+    eq(alertsResponse(file("2026-09-14T12:06:59.000Z"), nowUtc, 600_000).check, "current", "maxAgeMs is honoured");
+  });
+
+  await check("/alerts says what it could not use, and never throws on junk", () => {
+    const nowUtc = "2026-09-14T12:10:00.000Z";
+    const refused = (reason) => ({ ok: true, check: "unreadable", checkedUtc: null, reason, alerts: [], discarded: 0 });
+    eq(alertsResponse({ unreadable: "Unexpected end of JSON input" }, nowUtc), refused("alerts.json is unreadable: Unexpected end of JSON input"), "corrupt file");
+    const notCheck = refused("alerts.json is not an alerts check");
+    for (const [what, raw] of [["an array", [record()]], ["a number", 7], ["no alerts", { checkedUtc: nowUtc }],
+      ["no checkedUtc", { alerts: [] }], ["checkedUtc not a date", { checkedUtc: "soon", alerts: [] }], ["checkedUtc a number", { checkedUtc: 5, alerts: [] }]]) {
+      eq(alertsResponse(raw, nowUtc), notCheck, what);
+    }
+    const mixed = alertsResponse({ checkedUtc: nowUtc, alerts: [record(), { key: "junk" }, null, record({ key: "disk_filling:/d1" })] }, nowUtc);
+    eq([mixed.alerts.map((a) => a.key), mixed.discarded], [["disk_filling:/d0", "disk_filling:/d1"], 2], "bad entries dropped and counted");
   });
 
   await check("transition log lines are one JSON line each, warning when raised or lost", () => {

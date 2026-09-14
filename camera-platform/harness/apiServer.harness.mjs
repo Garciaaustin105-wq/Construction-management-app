@@ -149,6 +149,21 @@ await check("/health counts what it knows, including what it cannot resolve", as
   eq(json.segments, 5, "indexed segments");
 });
 
+await check("/alerts tells a check that never ran, a current one and a corrupt file apart", async () => {
+  const never = await fetchJson(`${base}/alerts`);
+  eq([never.res.status, never.json?.check, never.json?.alerts], [200, "never", []], "no alerts.json yet");
+  const raised = { key: "recorder_stale:recorder", id: "recorder_stale", subject: "recorder", state: "raised",
+    since: "2026-09-11T11:58:00.000Z", badStreak: 2, goodStreak: 0, value: "200 s since the last health report" };
+  await writeFile(join(stateDir, "alerts.json"), JSON.stringify({ checkedUtc: "2026-09-11T11:59:00.000Z", alerts: [raised] }));
+  const current = await fetchJson(`${base}/alerts`);
+  eq([current.json?.check, current.json?.checkedUtc, current.json?.alerts], ["current", "2026-09-11T11:59:00.000Z", [raised]], "the timer's file, read as it is");
+  eq(current.res.headers.get("content-type"), "application/json", "JSON");
+  await writeFile(join(stateDir, "alerts.json"), "{ half");
+  const corrupt = await fetchJson(`${base}/alerts`);
+  eq([corrupt.res.status, corrupt.json?.check, corrupt.json?.alerts], [200, "unreadable", []], "a corrupt file is said to be corrupt");
+  await rm(join(stateDir, "alerts.json"));
+});
+
 await check("/timeline answers recorded, logged gap, recorded", async () => {
   const { res, json } = await fetchJson(
     `${base}/timeline?camera=cam-1&start=2026-09-11T10:00:00Z&end=2026-09-11T10:06:00Z`);

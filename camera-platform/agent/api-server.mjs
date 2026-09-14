@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { loadConfig, resolveCameraUrl } from './recorder-service.mjs';
 import { attachLive, closeAll } from './live.mjs';
 import { openIndex } from './segindex.mjs';
+import { readHealth, alertsResponse } from './alerts-run.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
 
 // The pure contracts, compiled. Refusals are VALUES (ok === false), not
@@ -255,6 +256,17 @@ export function createApiServer({
         };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(envelope));
+        return;
+      }
+
+      // ---------- /alerts ----------
+      // Written by camplat-alerts.timer, not by this process. A missing,
+      // corrupt or old file is answered as what it is (check: never,
+      // unreadable, stale), never as a quiet empty list.
+      if (pathname === '/alerts') {
+        const raw = await readHealth(join(stateDir, 'alerts.json'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(alertsResponse(raw, now().toISOString())));
         return;
       }
 
