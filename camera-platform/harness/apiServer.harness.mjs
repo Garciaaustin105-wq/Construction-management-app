@@ -616,6 +616,17 @@ await check("GET /ui/review-client.js serves the pure module byte-equal to disk"
   eq(text, onDisk, "the browser runs the identical file the harness tested");
 });
 
+await check("both pages start the alerts banner, and its module is served as tested", async () => {
+  for (const page of ["/", "/review"]) {
+    const { text } = await fetchJson(`${base}${page}`);
+    eq([text.includes('id="alertBanner"'), text.includes("from '/ui/alert-banner.js'"), text.includes("startAlertBanner(document.getElementById('alertBanner'))")],
+      [true, true, true], `${page}: element, import and start`);
+  }
+  const { res, text } = await fetchJson(`${base}/ui/alert-banner.js`);
+  eq([res.status, res.headers.get("content-type")], [200, "text/javascript"], "served as a module");
+  eq(text, await readFile(join(import.meta.dirname, "..", "agent", "ui", "alert-banner.mjs"), "utf8"), "byte-equal to disk");
+});
+
 await check("the live page links to review", async () => {
   const { text } = await fetchJson(`${base}/`);
   eq(text.includes('href="/review"'), true, "a Review link");

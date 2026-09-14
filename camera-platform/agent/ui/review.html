@@ -31,6 +31,10 @@
     font: inherit;
   }
   .controls button, .status button { cursor: pointer; }
+  .alertBanner { margin: 0 0 12px; padding: 8px 10px; border-radius: 6px; }
+  .alertBanner.problem { background: #3a1d1d; color: #ffb4b4; }
+  .alertBanner.notice { background: #2c2a1d; color: #f1e3a0; }
+  .alertBanner .problem, .alertBanner .notice { margin: 2px 0; }
   .pageError {
     margin: 0 0 12px;
     padding: 8px 10px;
@@ -78,6 +82,7 @@
 </head>
 <body>
 <header><a href="/">Live</a><h1>Review</h1></header>
+<div class="alertBanner" id="alertBanner" role="status" hidden></div>
 
 <div class="controls">
   <select id="camera" aria-label="Camera"></select>
@@ -108,6 +113,7 @@
 
 <script type="module">
 import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer } from '/ui/review-client.js';
+import { startAlertBanner } from '/ui/alert-banner.js';
 
 const el = {
   camera: document.getElementById('camera'),
@@ -738,6 +744,7 @@ function wireExport() {
 wireExport();
 wireEvents();
 loadCameras();
+startAlertBanner(document.getElementById('alertBanner'));
 </script>
 </body>
 </html>

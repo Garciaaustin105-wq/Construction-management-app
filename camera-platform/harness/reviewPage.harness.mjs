@@ -187,7 +187,8 @@ const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", 
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireEvents();\nloadCameras();\n";
 if (!script.includes(START)) throw new Error("review.html must end its script with wireEvents(); loadCameras();");
-const transformed = script.replace("'/ui/review-client.js'", `'${clientUrl}'`)
+const bannerUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "alert-banner.mjs")).href;
+const transformed = script.replace("'/ui/review-client.js'", `'${clientUrl}'`).replace("'/ui/alert-banner.js'", `'${bannerUrl}'`)
   .replace(START, `\nglobalThis.__page = { ${NAMES.join(", ")} };${START}`);
 const tmpScript = join(stateDir, "review-page.mjs");
 await writeFile(tmpScript, transformed);

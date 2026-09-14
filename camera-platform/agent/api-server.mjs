@@ -41,6 +41,7 @@ const UI_FILES = {
   '/ui/live-client.js': 'live-client.mjs',
   '/review': 'review.html',
   '/ui/review-client.js': 'review-client.mjs',
+  '/ui/alert-banner.js': 'alert-banner.mjs',
 };
 
 const sendError = (res, status, code, message) => {
