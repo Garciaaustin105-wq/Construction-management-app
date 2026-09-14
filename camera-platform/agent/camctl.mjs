@@ -9,7 +9,12 @@
  */
 import { preflight } from "./preflight.mjs";
 import { runLoad, formatLoadReport } from "./loadtest.mjs";
-import { audit } from "./recorder-service.mjs";
+import { audit, loadConfig } from "./recorder-service.mjs";
+import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUEST } from "./alerts-run.mjs";
+import { defaultThresholds } from "../dist/alerts.js";
+import { DEFAULT_PATHS } from "./config.mjs";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { sweep } from "./sweep.mjs";
 import { discoverSadp } from "./sadp.mjs";
 import { discoverOnvif } from "./wsdiscovery.mjs";
@@ -372,13 +377,36 @@ async function cmdAudit() {
   }
 }
 
-const commands = { preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+// Run by camplat-alerts.timer every 60 s, as the service user. It writes
+// alerts.json and logs only changes. With --restart-stale it asks for a
+// recorder restart by writing a request file; camplat-recorder-restart.path
+// (root) acts on it, so this unprivileged process needs no polkit or sudo.
+async function cmdAlerts() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  const config = await loadConfig(stateDir);
+  const result = await runAlertsCheck({ stateDir, thresholds: defaultThresholds(config.segmentSeconds) });
+  for (const reason of result.discarded) console.log(JSON.stringify({ level: "warn", msg: "previous alerts discarded", reason }));
+  for (const t of result.transitions) console.log(transitionLogLine(t));
+  if (args.includes("--restart-stale") && shouldRestartRecorder(result.transitions)) {
+    await writeFile(path.join(stateDir, RESTART_REQUEST), `${result.checkedUtc}
+`);
+    console.log(JSON.stringify({ level: "warn", msg: "recorder restart requested", reason: "recorder_stale raised" }));
+  }
+  if (process.stdout.isTTY) {
+    for (const a of result.alerts) if (a.state !== "clear") console.log(`  ${a.state.padEnd(8)}${a.key}: ${a.value}`);
+    console.log(`checked ${result.checkedUtc}: ${result.alerts.filter((a) => a.state === "raised").length} raised, ${result.alerts.filter((a) => a.state === "unknown").length} unknown`);
+  }
+}
+
+const commands = { alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
 
   preflight                     check ffmpeg/ffprobe and permissions
   audit [--state-dir D]         what recovery would do now; read-only (or CAMPLAT_STATE_DIR)
+  alerts [--state-dir D]        check health.json, write alerts.json, log what changed
+         [--restart-stale]      ask for a recorder restart when recorder_stale is raised
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
                   [--iface NAME|ADDR]  the card facing the cameras; default: the card on <cidr>
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention

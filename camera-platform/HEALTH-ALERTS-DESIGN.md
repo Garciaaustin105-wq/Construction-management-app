@@ -79,10 +79,19 @@ they are starting values, not truths.
 ## The watchdog: two ways, one recommended
 
 **A. Stale-file restart (recommended first).** The alerts timer already knows
-when `recorder_stale` has been raised twice in a row. At that point it runs
-`systemctl restart camplat-recorder`.
-- Needs: the timer unit runs as root, or a polkit rule that allows only that
-  one restart. Choose on the box.
+when `recorder_stale` has been raised twice in a row. At that point it asks
+for a restart.
+- **Decided: a request file, no root and no polkit.** `camplat-alerts.timer`
+  runs `camctl alerts --restart-stale` every 60 s as the service user. On the
+  transition into raised it writes `$STATE_DIR/restart-recorder.request`.
+  `camplat-recorder-restart.path` (root) sees the file; its service removes it
+  and runs `systemctl restart --no-block camplat-recorder.service`.
+- Only the transition restarts. An alert that stays raised has no transition,
+  so a restart that did not help is not repeated every minute. A missing
+  health.json is "unknown", not raised, so it never restarts on its own
+  (`Restart=on-failure` covers a recorder that exits).
+- Built and checked on Windows (`harness/alertsRun.harness.mjs`); **the path
+  unit itself is unproven until stage 2.**
 - Pros: plain files, no native module, testable on Windows, and the same signal
   as the alert.
 - Cons: detection takes about 2–3 minutes, not seconds.

@@ -153,9 +153,56 @@ TimeoutStopSec=30s
 [Install]
 WantedBy=multi-user.target
 UNIT
+cat > /etc/systemd/system/camplat-alerts.service <<UNIT
+[Unit]
+Description=camplat alerts check (reads health.json, writes alerts.json)
+ConditionPathExists=$STATE_DIR/config.json
+
+[Service]
+Type=oneshot
+User=$RUN_USER
+WorkingDirectory=$APP_DIR
+Environment=CAMPLAT_STATE_DIR=$STATE_DIR
+ExecStart=$NODE_BIN $APP_DIR/agent/camctl.mjs alerts --restart-stale
+UNIT
+cat > /etc/systemd/system/camplat-alerts.timer <<UNIT
+[Unit]
+Description=camplat alerts check every 60 s
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+# Watchdog option A (HEALTH-ALERTS-DESIGN.md). The alerts check runs as
+# $RUN_USER and cannot restart the recorder, so it writes a request file and
+# this root path unit acts on it, once per request: the file is removed
+# before the restart. Unproven until stage 2 on the box.
+cat > /etc/systemd/system/camplat-recorder-restart.path <<UNIT
+[Unit]
+Description=camplat recorder restart request
+
+[Path]
+PathExists=$STATE_DIR/restart-recorder.request
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+cat > /etc/systemd/system/camplat-recorder-restart.service <<UNIT
+[Unit]
+Description=camplat recorder restart (requested by the alerts check)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rm -f $STATE_DIR/restart-recorder.request
+ExecStart=/usr/bin/systemctl restart --no-block camplat-recorder.service
+UNIT
 systemctl daemon-reload
-systemctl enable camplat-recorder.service camplat-api.service
-echo "  camplat-recorder and camplat-api enabled; they start at boot once $STATE_DIR/config.json exists"
+systemctl enable camplat-recorder.service camplat-api.service camplat-alerts.timer camplat-recorder-restart.path
+echo "  camplat-recorder, camplat-api and the alerts timer enabled; they start at boot once $STATE_DIR/config.json exists"
 
 say "Logs"
 # Uncapped, journald may take a tenth of the OS drive, which the index shares.
