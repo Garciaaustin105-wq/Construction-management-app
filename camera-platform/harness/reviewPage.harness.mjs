@@ -134,7 +134,8 @@ let page;
 function freshDom() {
   const byId = {};
   for (const [id, tag] of [["camera", "select"], ["day", "input"], ["prevDay", "button"], ["nextDay", "button"],
-    ["pageError", "div"], ["strip", "div"], ["playhead", "div"], ["hours", "div"], ["status", "div"]]) {
+    ["pageError", "div"], ["strip", "div"], ["playhead", "div"], ["hours", "div"], ["status", "div"],
+    ["exportFrom", "input"], ["exportTo", "input"], ["exportBtn", "button"], ["exportStatus", "div"]]) {
     byId[id] = new FakeEl(tag, id);
   }
   byId.video = new FakeVideo("video");
@@ -149,6 +150,8 @@ let fetchLog = [];
 let fetchBroken = false;
 // A promise that holds every /playback answer until it resolves: a slow recorder.
 let holdPlayback = null;
+// The same for /export/plan.
+let holdPlan = null;
 const realFetch = globalThis.fetch;
 function install(byId) {
   globalThis.document = {
@@ -165,6 +168,9 @@ function install(byId) {
     if (holdPlayback && u.startsWith("/playback?")) {
       return holdPlayback.then(() => realFetch(`http://${host}${u}`, opts));
     }
+    if (holdPlan && u.startsWith("/export/plan?")) {
+      return holdPlan.then(() => realFetch(`http://${host}${u}`, opts));
+    }
     return realFetch(`http://${host}${u}`, opts);
   };
 }
@@ -175,7 +181,8 @@ const html = await readFile(join(import.meta.dirname, "..", "agent", "ui", "revi
 const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
 const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
-  "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents"];
+  "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents",
+  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireEvents();\nloadCameras();\n";
@@ -392,6 +399,147 @@ await check("THE FEARED ONE: a slow playback answer for a camera already left ne
     holdPlayback = null;
     page.stopVideo();
   }
+});
+
+/* ── export ── */
+
+const linkOf = () => dom.exportStatus.children.find((c) => c.tagName === "A") ?? null;
+const planQuery = () => {
+  const u = fetchLog.find((x) => x.startsWith("/export/plan?"));
+  return u ? new URLSearchParams(u.split("?")[1]) : null;
+};
+async function offer(from, to) {
+  dom.camera.value = "cam-1";
+  dom.day.value = "2026-09-11";
+  dom.exportFrom.value = from;
+  dom.exportTo.value = to;
+  fetchLog = [];
+  await page.offerExport();
+}
+
+await check("exportWindow is local times on the shown day, and refuses what did not happen", async () => {
+  eq(page.exportWindow("2026-09-11", "06:00", "06:06"),
+    { startUtc: "2026-09-11T10:00:00.000Z", endUtc: "2026-09-11T10:06:00.000Z" }, "a summer morning");
+  eq(page.exportWindow("2026-03-08", "01:00", "04:00"),
+    { startUtc: "2026-03-08T06:00:00.000Z", endUtc: "2026-03-08T08:00:00.000Z" }, "over spring forward: 3 wall hours, 2 real");
+  eq(page.exportWindow("2026-03-08", "02:30", "03:30"), null, "02:30 never happened that day");
+  for (const [d, f, t] of [["2026-09-11", "06:06", "06:00"], ["2026-09-11", "06:00", "06:00"], ["2026-09-11", "23:00", "00:00"],
+    ["2026-09-11", "", "06:00"], ["2026-09-11", "6:00", "06:06"], ["2026-09-11", "06:60", "07:00"],
+    ["2026-09-11", "24:00", "23:00"], ["2026-09-11", "06:00:00", "06:06:00"], ["2026-02-30", "06:00", "07:00"],
+    ["2026-09-11", null, "07:00"]]) {
+    eq(page.exportWindow(d, f, t), null, `refused: ${JSON.stringify([d, f, t])}`);
+  }
+});
+
+await check("an offer names files, size, delivered local times and gaps, and its link is that range's ZIP", async () => {
+  await offer("06:00", "06:06");
+  const q = planQuery();
+  eq(q && [q.get("camera"), q.get("start"), q.get("end")],
+    ["cam-1", "2026-09-11T10:00:00.000Z", "2026-09-11T10:06:00.000Z"], "the plan query");
+  eq(dom.exportStatus.className, "exportStatus", "not a problem");
+  eq(dom.exportStatus.textContent, "3 files, 30 B, 06:00 to 06:06, 1 gap not recorded. Download ZIP", "the offer");
+  const a = linkOf();
+  eq(Boolean(a), true, "a download link");
+  eq(a.getAttribute("href"), "/export?" + q.toString(), "the link asks for exactly what was planned");
+  const res = await realFetch(`http://${host}${a.getAttribute("href")}`);
+  await res.arrayBuffer();
+  eq([res.status, res.headers.get("content-type")], [200, "application/zip"], "and the recorder serves it as a ZIP");
+
+  await offer("06:00", "06:02");
+  eq(dom.exportStatus.textContent, "2 files, 20 B, 06:00 to 06:02. Download ZIP", "no gaps, no gap words");
+});
+
+await check("refusals, bad times and an unreachable recorder each say so and offer nothing", async () => {
+  await offer("07:00", "08:00");
+  eq(dom.exportStatus.className, "exportStatus problem", "a problem");
+  eq(dom.exportStatus.textContent.startsWith("export_reaches_recording: "), true, `code: message — ${dom.exportStatus.textContent}`);
+  eq(linkOf(), null, "no link");
+
+  await offer("06:03", "06:04");
+  eq(dom.exportStatus.textContent.startsWith("export_nothing_recorded: "), true, `code: message — ${dom.exportStatus.textContent}`);
+  eq(linkOf(), null, "no link");
+
+  await offer("06:06", "06:00");
+  eq(planQuery(), null, "nothing fetched for an end before the start");
+  eq([dom.exportStatus.className, dom.exportStatus.textContent],
+    ["exportStatus problem", "Pick a start and an end time on this day, the end after the start"], "told why");
+
+  fetchBroken = true;
+  try {
+    await offer("06:00", "06:06");
+  } finally {
+    fetchBroken = false;
+  }
+  eq([dom.exportStatus.className, dom.exportStatus.textContent],
+    ["exportStatus problem", `Cannot reach the recorder (${host})`], "names the host");
+  eq(linkOf(), null, "no link");
+});
+
+await check("THE FEARED ONE: a slow plan for a camera already left never offers its download", async () => {
+  let release;
+  holdPlan = new Promise((r) => { release = r; });
+  try {
+    dom.camera.value = "cam-1";
+    dom.day.value = "2026-09-11";
+    dom.exportFrom.value = "06:00";
+    dom.exportTo.value = "06:06";
+    fetchLog = [];
+    const pending = page.offerExport().then(() => null, (e) => e);
+    await until(() => planQuery() !== null, "the plan request");
+    dom.camera.value = "cam-2";
+    dom.camera.fire("change");
+    release();
+    const failed = await pending;
+    if (failed) throw failed;
+    await settle();
+    eq(linkOf(), null, "no link for the camera the user left");
+    eq(dom.exportStatus.textContent, "", `nothing stale shown: ${dom.exportStatus.textContent}`);
+  } finally {
+    holdPlan = null;
+    dom.camera.value = "cam-1";
+    dom.camera.fire("change");
+    await settle();
+  }
+
+  // A shown offer is withdrawn when anything it describes changes.
+  for (const [what, act] of [
+    ["the end time", () => { dom.exportTo.value = "06:02"; dom.exportTo.fire("change"); }],
+    ["the start time", () => { dom.exportFrom.value = "06:01"; dom.exportFrom.fire("change"); }],
+    ["the day", () => { dom.day.fire("change"); }],
+    ["the next-day button", () => { dom.nextDay.fire("click"); }],
+    ["the previous-day button", () => { dom.prevDay.fire("click"); }],
+  ]) {
+    await offer("06:00", "06:06");
+    eq(Boolean(linkOf()), true, `an offer is shown before changing ${what}`);
+    act();
+    eq(linkOf(), null, `changing ${what} withdraws it`);
+  }
+  await settle();
+  dom.day.value = "2026-09-11";
+  await page.loadDay();
+});
+
+await check("the button asks, and a page bug in the offer is not blamed on the recorder", async () => {
+  dom.camera.value = "cam-1";
+  dom.day.value = "2026-09-11";
+  dom.exportFrom.value = "06:00";
+  dom.exportTo.value = "06:02";
+  page.clearExport();
+  dom.exportBtn.fire("click");
+  await until(() => linkOf() !== null, "the offer from a button click");
+  eq(dom.exportStatus.textContent, "2 files, 20 B, 06:00 to 06:02. Download ZIP", "the button's offer");
+
+  const createElement = globalThis.document.createElement;
+  globalThis.document.createElement = () => { throw new Error("page bug in offerExport"); };
+  let err = null;
+  try {
+    await page.offerExport().catch((e) => { err = e; });
+  } finally {
+    globalThis.document.createElement = createElement;
+  }
+  eq(err?.message, "page bug in offerExport", "offerExport lets the page's own error out");
+  eq(dom.exportStatus.textContent.startsWith("Cannot reach"), false, `not called unreachable: ${dom.exportStatus.textContent}`);
+  page.clearExport();
 });
 
 await check("a bug in the page is not blamed on the recorder", async () => {

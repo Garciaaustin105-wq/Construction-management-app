@@ -62,6 +62,18 @@
   video { display: block; width: 100%; max-width: 960px; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; }
   .status { margin: 8px 0 0; min-height: 1.4em; color: #9aa0a6; }
   .status.problem { color: #ffb4b4; }
+  .export { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 0; }
+  .export input, .export button {
+    padding: 4px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+  }
+  .export button { cursor: pointer; }
+  .exportStatus { flex-basis: 100%; min-height: 1.4em; color: #9aa0a6; }
+  .exportStatus.problem { color: #ffb4b4; }
 </style>
 </head>
 <body>
@@ -87,8 +99,15 @@
 <video id="video" controls playsinline></video>
 <div class="status" id="status"></div>
 
+<div class="export">
+  <label>Export from <input id="exportFrom" type="time" step="60"></label>
+  <label>to <input id="exportTo" type="time" step="60"></label>
+  <button id="exportBtn" type="button">Check export</button>
+  <div class="exportStatus" id="exportStatus"></div>
+</div>
+
 <script type="module">
-import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback } from '/ui/review-client.js';
+import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer } from '/ui/review-client.js';
 
 const el = {
   camera: document.getElementById('camera'),
@@ -101,6 +120,10 @@ const el = {
   hours: document.getElementById('hours'),
   video: document.getElementById('video'),
   status: document.getElementById('status'),
+  exportFrom: document.getElementById('exportFrom'),
+  exportTo: document.getElementById('exportTo'),
+  exportBtn: document.getElementById('exportBtn'),
+  exportStatus: document.getElementById('exportStatus'),
 };
 
 // What is on screen now. `requested` is the /timeline body's requested range
@@ -108,7 +131,9 @@ const el = {
 // `playing` is the last "play" plan, or null when nothing is playing.
 // `loadSeq` increments on every loadDay call, so a slow /timeline answer for
 // a day the user has already left is dropped instead of drawn.
-const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0 };
+// `exportSeq` does the same for /export/plan: every offerExport and every
+// clearExport increments it, so a slow plan never offers a stale download.
+const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq: 0 };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
@@ -578,6 +603,139 @@ function wireEvents() {
   });
 }
 
+/* ── export: one camera, a time range on the shown day, as a ZIP ──────────── */
+
+/**
+ * The local times `from` and `to` ("HH:MM", what <input type="time" step="60">
+ * gives) on the local day `day` ("YYYY-MM-DD") as a UTC window
+ * { startUtc, endUtc } (Date#toISOString), or null when:
+ * - dayWindow(day) is null;
+ * - from or to is not a string of exactly two digits, ":", two digits, with
+ *   hours 0-23 and minutes 0-59;
+ * - either time did not happen that day (spring forward: build each end with
+ *   new Date(y, m - 1, d, hh, mm) and refuse when getHours() or getMinutes()
+ *   do not read back hh and mm);
+ * - the end is not strictly after the start (no overnight ranges).
+ */
+function exportWindow(day, from, to) {
+  const win = dayWindow(day);
+  if (win === null) return null;
+  const timeRe = /^([0-9]{2}):([0-9]{2})$/;
+  const parse = (t) => {
+    if (typeof t !== 'string') return null;
+    const m = timeRe.exec(t);
+    if (!m) return null;
+    const h = Number(m[1]), mm = Number(m[2]);
+    if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+    return {h, m: mm};
+  };
+  const startP = parse(from);
+  const endP = parse(to);
+  if (!startP || !endP) return null;
+  const dayRe = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
+  const dM = dayRe.exec(day);
+  if (!dM) return null;
+  const y = Number(dM[1]), mo = Number(dM[2]), d = Number(dM[3]);
+  const start = new Date(y, mo - 1, d, startP.h, startP.m);
+  if (start.getHours() !== startP.h || start.getMinutes() !== startP.m) return null;
+  const end = new Date(y, mo - 1, d, endP.h, endP.m);
+  if (end.getHours() !== endP.h || end.getMinutes() !== endP.m) return null;
+  if (end.getTime() <= start.getTime()) return null;
+  return {startUtc: start.toISOString(), endUtc: end.toISOString()};
+}
+
+/**
+ * Replace what the export line shows. `parts` is an array of strings and
+ * elements, put in with el.exportStatus.replaceChildren(...parts) (strings go
+ * in as text, never as HTML). kind "problem" sets className
+ * "exportStatus problem"; anything else "exportStatus".
+ */
+function setExportStatus(parts, kind) {
+  el.exportStatus.className = kind === 'problem' ? 'exportStatus problem' : 'exportStatus';
+  el.exportStatus.replaceChildren(...parts);
+}
+
+/** Forget any offer, shown or on its way: view.exportSeq++, then setExportStatus([]). */
+function clearExport() {
+  view.exportSeq += 1;
+  setExportStatus([]);
+}
+
+/**
+ * Ask the recorder what an export of the chosen range would deliver, and offer
+ * the download. Returns nothing; every outcome is shown on the export line.
+ * 1. const seq = ++view.exportSeq.
+ * 2. const win = exportWindow(el.day.value, el.exportFrom.value, el.exportTo.value).
+ *    null: setExportStatus(["Pick a start and an end time on this day, the end after the start"], "problem")
+ *    and return, with no fetch.
+ * 3. const q = new URLSearchParams({ camera: el.camera.value, start: win.startUtc, end: win.endUtc }).
+ * 4. try { res = await fetch('/export/plan?' + q.toString()); body = await res.json(); }
+ *    The try covers ONLY those two lines. On a throw: after the seq check below,
+ *    setExportStatus(["Cannot reach the recorder (" + location.host + ")"], "problem") and return.
+ * 5. If seq !== view.exportSeq, return (the user changed something meanwhile).
+ * 6. const offer = planExportOffer(body). action "error":
+ *    setExportStatus([offer.code + ": " + offer.message], "problem") and return.
+ * 7. action "offer": a link a = document.createElement('a');
+ *    a.setAttribute('href', '/export?' + q.toString()); a.textContent = 'Download ZIP'.
+ *    The text: fileCount + (fileCount === 1 ? " file, " : " files, ") + offer.size + ", "
+ *    + localTime(offer.deliveredStartUtc) + " to " + localTime(offer.deliveredEndUtc)
+ *    + (gapCount === 0 ? "" : ", " + gapCount + (gapCount === 1 ? " gap" : " gaps") + " not recorded")
+ *    + ". "
+ *    setExportStatus([text, a]) (plain kind).
+ */
+async function offerExport() {
+  const seq = ++view.exportSeq;
+  const win = exportWindow(el.day.value, el.exportFrom.value, el.exportTo.value);
+  if (!win) {
+    setExportStatus(['Pick a start and an end time on this day, the end after the start'], 'problem');
+    return;
+  }
+  const q = new URLSearchParams({ camera: el.camera.value, start: win.startUtc, end: win.endUtc });
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/export/plan?' + q.toString());
+    body = await res.json();
+  } catch (e) {
+    reached = false;
+  }
+  if (seq !== view.exportSeq) return;
+  if (!reached) {
+    setExportStatus(['Cannot reach the recorder (' + location.host + ')'], 'problem');
+    return;
+  }
+  const offer = planExportOffer(body);
+  if (offer.action === 'error') {
+    setExportStatus([offer.code + ': ' + offer.message], 'problem');
+    return;
+  }
+  const a = document.createElement('a');
+  a.setAttribute('href', '/export?' + q.toString());
+  a.textContent = 'Download ZIP';
+  const text = offer.fileCount + (offer.fileCount === 1 ? ' file, ' : ' files, ') + offer.size + ', '
+    + localTime(offer.deliveredStartUtc) + ' to ' + localTime(offer.deliveredEndUtc)
+    + (offer.gapCount === 0 ? '' : ', ' + offer.gapCount + (offer.gapCount === 1 ? ' gap' : ' gaps') + ' not recorded')
+    + '. ';
+  setExportStatus([text, a]);
+}
+
+/**
+ * Hook the export control up. exportBtn "click" calls offerExport(). A shown
+ * offer describes one camera, day and range, so each of these calls
+ * clearExport(): exportFrom "change", exportTo "change", camera "change",
+ * day "change", prevDay "click", nextDay "click".
+ */
+function wireExport() {
+  el.exportBtn.addEventListener('click', () => { offerExport(); });
+  el.exportFrom.addEventListener('change', clearExport);
+  el.exportTo.addEventListener('change', clearExport);
+  el.camera.addEventListener('change', clearExport);
+  el.day.addEventListener('change', clearExport);
+  el.prevDay.addEventListener('click', clearExport);
+  el.nextDay.addEventListener('click', clearExport);
+}
+
+wireExport();
 wireEvents();
 loadCameras();
 </script>
