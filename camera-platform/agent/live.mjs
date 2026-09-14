@@ -214,6 +214,15 @@ export function attachLive(server, deps) {
       registry.delete(streamId);
     };
     const teardown = (envelope) => {
+      // Every teardown is logged with its envelope: without this the log
+      // cannot answer "why did that stream end?" after the fact. A client
+      // close frame and the socket's 'close' both land here: log the first.
+      if (registry.has(streamId)) log("info", "live stream ended", {
+        cameraId, quality, streamId,
+        reason: envelope ? envelope.code : "client_disconnected",
+        bytesSent: entry.bytesSent,
+        stderrTail: envelope?.message ?? null,
+      });
       if (child && !child.killed) child.kill("SIGTERM");
       if (!socket.destroyed) {
         if (envelope) {
@@ -313,6 +322,15 @@ export function attachLive(server, deps) {
   attachLive.watchdog.unref?.();
 
   function teardownOf(entry, envelope) {
+    // Watchdog-driven teardowns log too — the stall and no-pong paths are the
+    // ones most likely to be a bug and the least visible without a line here.
+    log("info", "live stream ended", {
+      cameraId: entry.cameraId, quality: entry.quality, streamId: entry.streamId,
+      reason: envelope ? envelope.code : "client_disconnected",
+      bytesSent: entry.bytesSent,
+      stderrTail: envelope?.message ?? null,
+      watched: true,
+    });
     if (entry.child && !entry.child.killed) entry.child.kill("SIGTERM");
     if (!entry.socket.destroyed) {
       if (envelope) {

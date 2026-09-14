@@ -82,7 +82,7 @@
 <div class="grid" id="grid"></div>
 
 <script type="module">
-import { createBoxAccumulator, extractMimeCodec } from '/ui/live-client.js';
+import { createBoxAccumulator, extractMimeCodec, planLiveBuffer } from '/ui/live-client.js';
 
 const grid = document.getElementById('grid');
 const pageError = document.getElementById('pageError');
@@ -312,6 +312,11 @@ function handleInit(t, initSegment) {
     const sb = ms.addSourceBuffer(t.codecMime);
     sb.mode = 'sequence'; // live stream: append order IS time, no seek math
     t.sourceBuffer = sb;
+    sb.addEventListener('error', () => {
+      // appendBuffer failures are usually ASYNC: MSE fires this event and
+      // readyState drops to 'ended' rather than throwing synchronously.
+      setStatus(tile, 'MSE rejected a segment (decode error)', 'problem');
+    });
     sb.addEventListener('updateend', () => {
       if (t.sourceBuffer !== sb) return;
       // First completed append: MSE accepted a segment. From here playback is
@@ -320,20 +325,54 @@ function handleInit(t, initSegment) {
         t.appendSeen = true;
         setStatus(tile, 'buffering…');
       }
-      // Evict from the start once the live window exceeds ~20 s: a viewer of a
-      // live grid never rewinds, and unbounded buffering grows forever.
-      try {
-        if (sb.buffered.length && sb.buffered.end(sb.buffered.length - 1) - sb.buffered.start(0) > 20) {
-          const start = sb.buffered.start(0);
-          const end = sb.buffered.end(0);
-          if (end > start) sb.remove(start, end);
-        }
-      } catch { /* buffered read races removal; next updateend retries */ }
+      // A viewer of a live grid never rewinds, and unbounded buffering grows
+      // forever: trim behind the playhead and keep it at the live edge. A
+      // removal leaves sb updating, so pumpAppend waits for its updateend.
+      steerLiveBuffer(t);
       t.appendQueued = false;
       pumpAppend(t);
     });
     pumpAppend(t);
   });
+}
+
+/**
+ * Keep one live tile playing at the live edge with a bounded buffer. Called
+ * from the SourceBuffer's updateend, so the buffer is not updating.
+ *
+ * The trim this replaces removed the whole first buffered range, which on the
+ * bench was the range the playhead was in: the tile froze at 19.9 s while the
+ * socket and status stayed "live". planLiveBuffer (live-client.mjs) decides;
+ * this only reads the buffer and applies the decision.
+ *
+ * 1. `const sb = t.sourceBuffer; const video = t.video;` Return if either is
+ *    missing or `sb.updating` is true.
+ * 2. Wrap steps 3 to 6 in try/catch with an empty catch block holding the
+ *    line comment `// buffered read races a detach; the next updateend retries`
+ *    (reading buffered on a removed SourceBuffer throws).
+ * 3. Copy the ranges: `const ranges = [];` then for i from 0 to
+ *    sb.buffered.length - 1, `ranges.push([sb.buffered.start(i), sb.buffered.end(i)]);`
+ * 4. `const plan = planLiveBuffer(ranges, video.currentTime);`
+ * 5. If plan.seekTo !== null, `video.currentTime = plan.seekTo;`
+ * 6. If plan.removeEnd !== null, `sb.remove(ranges[0][0], plan.removeEnd);`
+ *    The removal completes with another updateend, which calls this again;
+ *    by then the window is under the limit, so it removes nothing.
+ */
+function steerLiveBuffer(t) {
+  const sb = t.sourceBuffer;
+  const video = t.video;
+  if (!sb || !video || sb.updating) return;
+  try {
+    const ranges = [];
+    for (let i = 0; i < sb.buffered.length; i++) {
+      ranges.push([sb.buffered.start(i), sb.buffered.end(i)]);
+    }
+    const plan = planLiveBuffer(ranges, video.currentTime);
+    if (plan.seekTo !== null) video.currentTime = plan.seekTo;
+    if (plan.removeEnd !== null) sb.remove(ranges[0][0], plan.removeEnd);
+  } catch {
+    // buffered read races a detach; the next updateend retries
+  }
 }
 
 // One append in flight at a time: queue emissions, pump on updateend. Calling
@@ -349,12 +388,12 @@ function pumpAppend(t) {
   t.appendQueued = true;
   try {
     t.sourceBuffer.appendBuffer(seg);
-  } catch {
+  } catch (e) {
     // A mid-stream decode failure poisons the buffer; the close that follows
     // (server side or watchdog) surfaces through onclose. Say so in the tile:
     // a silently poisoned buffer would look exactly like a stalled stream.
     t.appendQueued = false;
-    setStatus(t.tile, 'player rejected a stream segment', 'problem');
+    setStatus(t.tile, 'player rejected a stream segment (' + (e && e.name ? e.name + ': ' + e.message : 'unknown') + ')', 'problem');
   }
 }
 

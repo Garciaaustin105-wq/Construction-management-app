@@ -251,3 +251,87 @@ function audioObjectTypeFromEsds(p) {
   }
   return aot;
 }
+
+// ── Live buffer steering ─────────────────────────────────────────────────────
+//
+// A live tile's SourceBuffer must be trimmed, or it grows for as long as the
+// tile is open. THE FEARED FAILURE (seen on the bench): trimming the range the
+// playhead is IN. The picture freezes on its last frame while the socket, the
+// server and the status line all still say "live", and new data lands past a
+// hole the <video> never jumps. So the trim only ever cuts behind the
+// playhead, and a playhead left outside the buffer, or too far behind the live
+// edge, is moved to the edge.
+
+export const LIVE_TARGET_LATENCY_S = 1;   // where a seek puts the playhead, behind the edge
+export const LIVE_MAX_LATENCY_S = 4;      // further behind the edge than this: seek
+export const LIVE_WINDOW_S = 20;          // trim once the playhead is this far past the buffer start
+export const LIVE_KEEP_BEHIND_S = 10;     // a trim keeps this much behind the playhead
+export const LIVE_IN_RANGE_TOLERANCE_S = 0.25;
+
+/**
+ * Decide how to steer one live tile. Pure: the page reads the SourceBuffer
+ * and the <video>, calls this, and applies the result.
+ *
+ * `ranges`: the buffered ranges as an array of [startSeconds, endSeconds]
+ * pairs, ascending (the page copies them out of SourceBuffer.buffered).
+ * `currentTime`: the <video>'s currentTime in seconds.
+ *
+ * Returns `{ seekTo, removeEnd }`, keys in that order, each a number or null:
+ *   seekTo     set video.currentTime to this, or null to leave it
+ *   removeEnd  sb.remove(ranges[0][0], removeEnd), or null to remove nothing
+ *
+ * 1. Refuse to steer, returning { seekTo: null, removeEnd: null }, when
+ *    `ranges` is not an array, is empty, or any element is not an array of
+ *    exactly two finite numbers with end >= start; or when `currentTime` is
+ *    not a finite number (typeof "number" and Number.isFinite).
+ * 2. Let last = the final pair and edge = last[1]. The playhead is "inside"
+ *    when some pair has start - LIVE_IN_RANGE_TOLERANCE_S <= currentTime <=
+ *    end + LIVE_IN_RANGE_TOLERANCE_S.
+ * 3. seekTo: when the playhead is not inside, OR edge - currentTime >
+ *    LIVE_MAX_LATENCY_S, seekTo = Math.max(last[0], edge - LIVE_TARGET_LATENCY_S).
+ *    Otherwise null.
+ * 4. Let p = seekTo when it is not null, else currentTime. removeEnd: when
+ *    p - ranges[0][0] > LIVE_WINDOW_S, removeEnd = p - LIVE_KEEP_BEHIND_S.
+ *    Otherwise null. (So removeEnd is always behind p: never the range being
+ *    played.)
+ * 5. Never mutate `ranges`. Never throw.
+ */
+export function planLiveBuffer(ranges, currentTime) {
+  if (!Array.isArray(ranges) || ranges.length === 0) {
+    return { seekTo: null, removeEnd: null };
+  }
+  for (const pair of ranges) {
+    if (!Array.isArray(pair) || pair.length !== 2) {
+      return { seekTo: null, removeEnd: null };
+    }
+    const start = pair[0];
+    const end = pair[1];
+    if (typeof start !== "number" || !Number.isFinite(start)) {
+      return { seekTo: null, removeEnd: null };
+    }
+    if (typeof end !== "number" || !Number.isFinite(end) || end < start) {
+      return { seekTo: null, removeEnd: null };
+    }
+  }
+  if (typeof currentTime !== "number" || !Number.isFinite(currentTime)) {
+    return { seekTo: null, removeEnd: null };
+  }
+
+  const last = ranges[ranges.length - 1];
+  const edge = last[1];
+  const inside = ranges.some(
+    (pair) =>
+      pair[0] - LIVE_IN_RANGE_TOLERANCE_S <= currentTime &&
+      currentTime <= pair[1] + LIVE_IN_RANGE_TOLERANCE_S
+  );
+  let seekTo = null;
+  if (!inside || edge - currentTime > LIVE_MAX_LATENCY_S) {
+    seekTo = Math.max(last[0], edge - LIVE_TARGET_LATENCY_S);
+  }
+  const p = seekTo === null ? currentTime : seekTo;
+  let removeEnd = null;
+  if (p - ranges[0][0] > LIVE_WINDOW_S) {
+    removeEnd = p - LIVE_KEEP_BEHIND_S;
+  }
+  return { seekTo, removeEnd };
+}
