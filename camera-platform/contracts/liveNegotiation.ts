@@ -121,6 +121,12 @@ export function negotiateLive(input: {
  * The returned array contains the arguments *after* the URL; the caller
  * prepends `"ffmpeg"`. The command uses `-c copy` only.
  *
+ * `-probesize`/`-analyzeduration` are capped because the default probe samples
+ * up to five seconds of input before muxing, and a copy mux has nothing to
+ * analyze beyond the H.264 parameter sets that arrive in the first packets —
+ * the camera-side keyframe interval bounds the rest. Measured on the bench
+ * 2026-09-13: live time-to-first-frame 1.65–2.0 s uncapped, 1.2 s capped.
+ *
  * @param url - The RTSP or other stream URL
  * @returns string[] - ffmpeg ARGV
  */
@@ -128,6 +134,10 @@ export function liveFfmpegArgs(url: string): string[] {
   return [
     "-rtsp_transport",
     "tcp",
+    "-probesize",
+    "500000",
+    "-analyzeduration",
+    "500000",
     "-i",
     url,
     "-c",

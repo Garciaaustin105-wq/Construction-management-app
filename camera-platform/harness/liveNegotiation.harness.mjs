@@ -104,9 +104,13 @@ check("liveFfmpegArgs: copy only, ends pipe:1, url appears once after -i", () =>
     "no transcode flags");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1") >= 0, true, "url present");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1"), args.indexOf("-i") + 1, "url right after -i");
-  same(args.length, 15, "exact shape");
+  same(args.length, 19, "exact shape");
   same(args.includes("frag_keyframe+empty_moov"), true, "fragmented mp4");
   same(args.includes("+nobuffer") && args.includes("low_delay"), true, "latency flags");
+  // The probe cap is load-bearing for live start latency: ffmpeg's default
+  // samples up to 5 s of input; the copy mux needs only the parameter sets.
+  same(args.includes("-probesize") && args.includes("500000"), true, "probesize capped");
+  same(args.includes("-analyzeduration") && args.includes("500000"), true, "analyzeduration capped");
 });
 
 report("liveNegotiation");
