@@ -25,6 +25,8 @@ import { parseWindow, parseInstant, parseSegmentId, isCameraId } from '../dist/a
 import { planByteRange, ByteRangeError } from '../dist/httpRange.js';
 import { coverageFromIndex, resolvePlayback, IndexCoverageError } from '../dist/indexCoverage.js';
 import { cameraView } from '../dist/cameraView.js';
+import { planExport } from '../dist/exportPlan.js';
+import { streamExport } from './exportStream.mjs';
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -44,6 +46,100 @@ const sendError = (res, status, code, message) => {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: false, code, message }));
 };
+
+/**
+ * GET /export?camera=&start=&end= : one camera's range, downloaded as a
+ * store-only ZIP of whole segments plus manifest.json. See EXPORT-SPEC.md §3.
+ * `ctx` is { config, index, now, driveAssignment }, as createApiServer holds them.
+ *
+ * THE FEARED FAILURE: a download that completes as a valid-looking archive
+ * while carrying less than it claims. So every refusal goes out as a JSON
+ * envelope BEFORE the ZIP's headers, and once the ZIP has begun, any failure
+ * destroys the response instead of ending it.
+ *
+ * 1. const nowUtc = ctx.now().toISOString(). Take the clock ONCE and use this
+ *    value everywhere below.
+ * 2. const camera = parsedUrl.searchParams.get('camera'). If !isCameraId(camera):
+ *    sendError(res, 400, 'bad_camera_id', 'Invalid camera id') and return.
+ * 3. const windowResult = parseWindow({ start, end, buckets: null }, nowUtc), with
+ *    start and end from parsedUrl.searchParams.get. If isRefusal(windowResult):
+ *    sendError(res, windowResult.status, windowResult.code, windowResult.message)
+ *    and return. Otherwise const effective = windowResult.effective.
+ * 4. const segments = ctx.index.inRange(camera, effective.startUtc, effective.endUtc);
+ *    const gaps = ctx.index.gapsFor(camera). (The same reads /timeline makes.)
+ * 5. Call planExport(camera, segments, gaps, effective, nowUtc) inside try/catch.
+ *    If it throws an IndexCoverageError (instanceof):
+ *    sendError(res, 500, 'index_state_invalid', e.message) and return. Rethrow
+ *    any other error.
+ * 6. If isRefusal(plan): sendError(res, plan.status, plan.code, plan.message)
+ *    and return.
+ * 7. const filename = `${camera}_${effective.startUtc}_${effective.endUtc}.zip`
+ *    with EVERY ':' replaced by '-'. Then
+ *    res.writeHead(200, { 'Content-Type': 'application/zip',
+ *      'Content-Disposition': `attachment; filename="${filename}"`,
+ *      'Cache-Control': 'no-store' }).
+ *    No Content-Length: a body cut off mid-stream must not look complete.
+ * 8. const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0].
+ *    In try/catch:
+ *      await streamExport(res, plan, { resolvePath: (p) => join(root, p),
+ *        siteId: ctx.config.siteId, generatedAtUtc: nowUtc });
+ *      res.end();
+ *    On ANY error: log('warn', 'export aborted', { cameraId: camera,
+ *    code: e.code ?? null, error: e.message }), then res.destroy(). Do not
+ *    rethrow and do not call sendError (the headers are already sent).
+ *
+ * Returns a Promise that resolves once the response has been ended or destroyed.
+ */
+async function serveExport(res, parsedUrl, ctx) {
+  const nowUtc = ctx.now().toISOString();
+  const camera = parsedUrl.searchParams.get('camera');
+  if (!isCameraId(camera)) {
+    sendError(res, 400, 'bad_camera_id', 'Invalid camera id');
+    return;
+  }
+  const start = parsedUrl.searchParams.get('start');
+  const end = parsedUrl.searchParams.get('end');
+  const windowResult = parseWindow({ start, end, buckets: null }, nowUtc);
+  if (isRefusal(windowResult)) {
+    sendError(res, windowResult.status, windowResult.code, windowResult.message);
+    return;
+  }
+  const effective = windowResult.effective;
+  const segments = ctx.index.inRange(camera, effective.startUtc, effective.endUtc);
+  const gaps = ctx.index.gapsFor(camera);
+  let plan;
+  try {
+    plan = planExport(camera, segments, gaps, effective, nowUtc);
+  } catch (e) {
+    if (e instanceof IndexCoverageError) {
+      sendError(res, 500, 'index_state_invalid', e.message);
+      return;
+    }
+    throw e;
+  }
+  if (isRefusal(plan)) {
+    sendError(res, plan.status, plan.code, plan.message);
+    return;
+  }
+  const filename = `${camera}_${effective.startUtc}_${effective.endUtc}.zip`.replace(/:/g, '-');
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Cache-Control': 'no-store',
+  });
+  const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0];
+  try {
+    await streamExport(res, plan, {
+      resolvePath: (p) => join(root, p),
+      siteId: ctx.config.siteId,
+      generatedAtUtc: nowUtc,
+    });
+    res.end();
+  } catch (e) {
+    log('warn', 'export aborted', { cameraId: camera, code: e.code ?? null, error: e.message });
+    res.destroy();
+  }
+}
 
 export function createApiServer({
   stateDir,
@@ -310,6 +406,12 @@ export function createApiServer({
           res.writeHead(416, headers);
           res.end();
         }
+        return;
+      }
+
+      // ---------- /export ----------
+      if (pathname === '/export') {
+        await serveExport(res, parsedUrl, { config, index, now, driveAssignment });
         return;
       }
 

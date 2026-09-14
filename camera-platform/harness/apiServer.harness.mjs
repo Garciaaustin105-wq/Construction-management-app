@@ -18,6 +18,8 @@ import { mkdtemp, writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
+import { readZip } from "./_zipReader.mjs";
 import { createApiServer } from "../agent/api-server.mjs";
 import { openIndex } from "../agent/segindex.mjs";
 import { liveRegistry, closeAll } from "../agent/live.mjs";
@@ -621,6 +623,152 @@ await check("GET /ui/nope is a route miss", async () => {
   const { res, json } = await fetchJson(`${base}/ui/nope`);
   eq(res.status, 404, "status");
   eq(json.code, "no_such_route", "the HTTP router still answers");
+});
+
+// ---------- /export (EXPORT-SPEC.md §3) ----------
+// Its fixtures go in HERE, after every check above has run: /health counts
+// segments and the cam-2 timeline check expects nothing recorded.
+//
+// cam-2: E 10:00-10:01, F 10:01-10:02, a logged outage 10:02-10:04, G 10:04-10:05.
+// cam-3: H's file is LONGER than the index says, I's is SHORTER.
+
+console.log("api server: export");
+
+const X = {
+  E: "2026-09-11T10:00:00Z", F: "2026-09-11T10:01:00Z", G: "2026-09-11T10:04:00Z",
+  H: "2026-09-11T10:00:00Z", I: "2026-09-11T11:00:00Z",
+};
+const exportBytes = { E: fill(404, 700), F: fill(505, 1200), G: fill(606, 300), H: fill(707, 900), I: fill(808, 700) };
+await mkdir(join(disk0, "cam-2"), { recursive: true });
+await mkdir(join(disk0, "cam-3"), { recursive: true });
+for (const k of ["E", "F", "G"]) await writeFile(join(disk0, "cam-2", `${ms(X[k])}.mp4`), exportBytes[k]);
+for (const k of ["H", "I"]) await writeFile(join(disk0, "cam-3", `${ms(X[k])}.mp4`), exportBytes[k]);
+const plusMin = (iso) => new Date(ms(iso) + 60_000).toISOString();
+for (const k of ["E", "F", "G"]) {
+  index.put(seg("cam-2", X[k], plusMin(X[k]), `cam-2/${ms(X[k])}.mp4`, exportBytes[k].length, "sealed"));
+}
+index.addGap({ cameraId: "cam-2", startUtc: "2026-09-11T10:02:00Z", endUtc: "2026-09-11T10:04:00Z", reason: "camera_offline" });
+index.put(seg("cam-3", X.H, plusMin(X.H), `cam-3/${ms(X.H)}.mp4`, 800, "sealed"));
+index.put(seg("cam-3", X.I, plusMin(X.I), `cam-3/${ms(X.I)}.mp4`, 800, "sealed"));
+
+const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+
+/** A download that must FAIL VISIBLY: the request or its body read rejects.
+ *  Returns how many body bytes arrived before it did, or throws if the body
+ *  completed, which is the feared failure itself. */
+async function expectBrokenDownload(url) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    return { status: null, received: 0 };
+  }
+  const reader = res.body.getReader();
+  let received = 0;
+  const chunks = [];
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      chunks.push(value);
+    }
+  } catch {
+    return { status: res.status, received, body: Buffer.concat(chunks) };
+  }
+  throw new Error(`the download completed (${received} bytes, status ${res.status}); it must have failed`);
+}
+
+await check("/export streams whole segments, the gap and a manifest built from what was sent", async () => {
+  const res = await fetch(`${base}/export?camera=cam-2&start=2026-09-11T10:00:30Z&end=2026-09-11T10:04:30Z`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "application/zip", "content type");
+  eq(res.headers.get("content-disposition"),
+    'attachment; filename="cam-2_2026-09-11T10-00-30.000Z_2026-09-11T10-04-30.000Z.zip"', "filename from the effective range");
+  eq(res.headers.get("content-length"), null, "no Content-Length: an aborted body must not look complete");
+  const zip = new Uint8Array(await res.arrayBuffer());
+  const entries = readZip(zip);
+  eq(entries.map((e) => e.name), [
+    "cam-2/2026-09-11T10-00-00.000Z.mp4",
+    "cam-2/2026-09-11T10-01-00.000Z.mp4",
+    "cam-2/2026-09-11T10-04-00.000Z.mp4",
+    "manifest.json",
+  ], "one file per segment, never joined, manifest last");
+  eq(Buffer.from(entries[0].data).equals(exportBytes.E), true, "E byte-exact");
+  eq(Buffer.from(entries[1].data).equals(exportBytes.F), true, "F byte-exact");
+  eq(Buffer.from(entries[2].data).equals(exportBytes.G), true, "G byte-exact");
+
+  const manifest = JSON.parse(Buffer.from(entries[3].data).toString("latin1"));
+  eq(manifest.siteId, "carwash-01", "site");
+  eq(manifest.cameraId, "cam-2", "camera");
+  eq(manifest.generatedAtUtc, now().toISOString(), "generated on the server's clock");
+  eq(manifest.requested, { startUtc: "2026-09-11T10:00:30.000Z", endUtc: "2026-09-11T10:04:30.000Z" }, "requested");
+  eq(manifest.delivered, { startUtc: "2026-09-11T10:00:00.000Z", endUtc: "2026-09-11T10:05:00.000Z" }, "delivered is whole segments");
+  eq(manifest.files.map((f) => [f.name, f.bytes, f.sha256]), [
+    ["cam-2/2026-09-11T10-00-00.000Z.mp4", 700, sha256(exportBytes.E)],
+    ["cam-2/2026-09-11T10-01-00.000Z.mp4", 1200, sha256(exportBytes.F)],
+    ["cam-2/2026-09-11T10-04-00.000Z.mp4", 300, sha256(exportBytes.G)],
+  ], "names, sizes and SHA-256 of the bytes actually sent");
+  eq(manifest.gaps, [{ startUtc: "2026-09-11T10:02:00.000Z", endUtc: "2026-09-11T10:04:00.000Z", reason: "camera_offline", source: "logged" }],
+    "THE FEARED ONE: the outage is declared, not stitched over");
+});
+
+await check("THE FEARED ONE: no storage path in the export, its headers, or its manifest", async () => {
+  const res = await fetch(`${base}/export?camera=cam-2&start=2026-09-11T10:00:30Z&end=2026-09-11T10:04:30Z`);
+  eq(res.status, 200, "status: a refusal here would pass every check below vacuously");
+  const zip = Buffer.from(await res.arrayBuffer());
+  const asText = zip.toString("latin1") + JSON.stringify([...res.headers]);
+  for (const k of ["E", "F", "G"]) {
+    eq(asText.includes(String(ms(X[k]))), false, `no storage file name for ${k}`);
+  }
+  eq(asText.includes(disk0), false, "no store root");
+  eq(asText.includes('"path"'), false, "no path key");
+  eq(asText.includes("segmentId"), false, "no segmentId key");
+});
+
+await check("/export refusals are JSON with the contract's status and code, and no attachment", async () => {
+  const cases = [
+    [`/export?camera=..%2Fx&start=2026-09-11T10:00:00Z&end=2026-09-11T10:06:00Z`, 400, "bad_camera_id"],
+    [`/export?camera=cam-2&start=2026-09-11T10:00:00Z`, 400, "missing_parameter"],
+    [`/export?camera=cam-2&start=2026-09-12T10:00:00Z&end=2026-09-12T11:00:00Z`, 422, "window_in_future"],
+    [`/export?camera=cam-1&start=2026-09-11T11:50:00Z&end=2026-09-11T12:00:00Z`, 422, "export_reaches_recording"],
+    [`/export?camera=cam-2&start=2026-09-11T08:00:00Z&end=2026-09-11T09:00:00Z`, 422, "export_nothing_recorded"],
+    [`/export?camera=cam-1&start=2026-09-11T10:01:00Z&end=2026-09-11T10:02:00Z`, 422, "export_size_unknown"],
+  ];
+  for (const [url, status, code] of cases) {
+    const { res, json } = await fetchJson(`${base}${url}`);
+    eq(res.status, status, `${code} status`);
+    eq(json?.code, code, `${code} code`);
+    eq(json?.ok, false, `${code} envelope`);
+    eq(res.headers.get("content-type"), "application/json", `${code} is JSON`);
+    eq(res.headers.get("content-disposition"), null, `${code} starts no download`);
+  }
+  const live = await fetchJson(`${base}/export?camera=cam-1&start=2026-09-11T11:50:00Z&end=2026-09-11T12:00:00Z`);
+  eq(live.json.message.includes("2026-09-11T11:58:00.000Z"), true, "names the instant to end before");
+});
+
+await check("THE FEARED ONE: a segment the disk lost breaks the download, never a short valid ZIP", async () => {
+  const r = await expectBrokenDownload(`${base}/export?camera=cam-1&start=2026-09-11T09:00:00Z&end=2026-09-11T09:01:00Z`);
+  if (r.body) eq(r.body.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06])), false, "no end-of-central-directory went out");
+});
+
+await check("THE FEARED ONE: a file longer than planned breaks the download, and no byte past the plan is sent", async () => {
+  const r = await expectBrokenDownload(`${base}/export?camera=cam-3&start=2026-09-11T10:00:00Z&end=2026-09-11T10:01:00Z`);
+  if (r.body) {
+    eq(r.body.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06])), false, "no end-of-central-directory went out");
+    eq(r.body.includes(exportBytes.H.subarray(0, 64)), false, "H's bytes never left: the over-long chunk is refused before it is written");
+  }
+});
+
+await check("THE FEARED ONE: a file shorter than planned breaks the download", async () => {
+  const r = await expectBrokenDownload(`${base}/export?camera=cam-3&start=2026-09-11T11:00:00Z&end=2026-09-11T11:01:00Z`);
+  if (r.body) eq(r.body.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06])), false, "no end-of-central-directory went out");
+});
+
+await check("the server outlives a broken export", async () => {
+  const { res, json } = await fetchJson(`${base}/health`);
+  eq(res.status, 200, "status");
+  eq(json.ok, true, "still answering");
 });
 
 closeAll(); // the live registry and its watchdog end here — nothing outlives the harness
