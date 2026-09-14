@@ -284,6 +284,14 @@ Each stage has an exit, and a stage is not started until the one before it exits
 These items run in order. Each is agents only, and each FEARED check is written
 before its fix.
 
+**Status (2026-09-14): all seven are done and committed on the camera branch,
+not yet pushed.**
+- Q1 `772c327`, Q2 `f049963`, A1 `607b2f6`, R1 `d670991`, S1 `4cd0cad`,
+  L17/L16 `f97551d`, L12 `e681024`.
+- Still unproven until the box: `install.sh` and `stage1-check.sh` on Debian
+  (stages 1 and 2), smartd's NVMe self-test on Debian 12's smartmontools
+  (stage 2), and the multicast half of L12 (stage 3).
+
 1. **Q1. Quarantine can overwrite a file it set aside.**
    - **Cause:** `applyRecovery` names the target from the file's path alone
      (`segstore.mjs:145`). If the same path is quarantined on a later boot, it
