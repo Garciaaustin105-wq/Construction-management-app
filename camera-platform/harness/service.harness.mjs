@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveCameraUrl, loadConfig, runRecovery, start } from "../agent/recorder-service.mjs";
+import { resolveCameraUrl, loadConfig, runRecovery, start, audit } from "../agent/recorder-service.mjs";
 import { openIndex } from "../agent/segindex.mjs";
 import { indexPathFor, checkStoreRoot } from "../agent/config.mjs";
 import { INPROGRESS } from "../agent/segstore.mjs";
@@ -305,6 +305,83 @@ await check("THE FEARED ONE: a quarantine that cannot be written fails that file
     eq((await readFile(path.join(d0, "cam-1", "mystery.dat"))).length, 1234, "the file is left where it was");
   } finally {
     await cleanup();
+  }
+});
+
+// camctl audit runs recovery as a dry run. On a live box, or after a fault in
+// the soak, an audit that "fixed" what it found would destroy the evidence.
+await check("THE FEARED ONE: a dry-run recovery reports what it would do and changes nothing", async () => {
+  const { d0, d1, seg, index, cleanup } = await twoDrives();
+  try {
+    index.putMany([await seg(d0, "cam-1", 1757500000000), await seg(null, "cam-2", 1757500060000)]);
+    await mkdir(path.join(d1, "cam-2"), { recursive: true });
+    await writeFile(path.join(d1, "cam-2", "mystery.dat"), Buffer.alloc(1234));
+    const before = JSON.stringify(index.all());
+    const summary = await runRecovery(index, [d0, d1], { dryRun: true });
+    eq(summary.confirmed, 1, "confirmed");
+    eq(summary.lost, 1, "lost");
+    eq(summary.quarantined, 1, "would quarantine");
+    eq(JSON.stringify(index.all()), before, "index rows untouched");
+    eq(index.gapsFor("cam-2").length, 0, "no gap written");
+    eq((await readFile(path.join(d1, "cam-2", "mystery.dat"))).length, 1234, "the file was not moved");
+    let quarantineMade = true;
+    try { await readFile(path.join(d1, ".quarantine")); } catch (e) { quarantineMade = e.code !== "ENOENT"; }
+    eq(quarantineMade, false, "no quarantine directory created");
+  } finally {
+    await cleanup();
+  }
+});
+
+const auditState = async (storeRoots) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "camplat-audit-"));
+  await writeFile(path.join(dir, "config.json"), JSON.stringify({
+    siteId: "audit", storeRoots, segmentSeconds: 60, credentials: creds,
+    cameras: [{ cameraId: "cam-1", url: "rtsp://10.0.0.11:554/x", bitrateKbps: 2500 }],
+  }));
+  return dir;
+};
+
+await check("audit refuses a box with no index, and does not create one", async () => {
+  const d0 = await mkdtemp(path.join(tmpdir(), "camplat-audit-d0-"));
+  const dir = await auditState([d0]);
+  try {
+    let message = "";
+    try { await audit({ stateDir: dir, storeCheck: async () => ({ ok: true }) }); } catch (e) { message = e.message; }
+    eq(message.includes("index"), true, `refusal names the index: ${message}`);
+    let created = true;
+    try { await readFile(indexPathFor(dir)); } catch (e) { created = e.code !== "ENOENT"; }
+    eq(created, false, "no index file was created");
+  } finally {
+    for (const d of [dir, d0]) await rm(d, { recursive: true, force: true });
+  }
+});
+
+await check("THE FEARED ONE: audit with a drive missing refuses to count, instead of calling that drive's footage lost", async () => {
+  const d0 = await mkdtemp(path.join(tmpdir(), "camplat-audit-d0-"));
+  const d1 = await mkdtemp(path.join(tmpdir(), "camplat-audit-d1-"));
+  const dir = await auditState([d0, d1]);
+  const index = openIndex(indexPathFor(dir));
+  index.putMany([{
+    cameraId: "cam-1", startUtc: new Date(1757500000000).toISOString(), endUtc: new Date(1757500060000).toISOString(),
+    path: "cam-1/1757500000000.mp4", bytes: 1000, state: "sealed", hold: false, pendingUpload: false, bitrateKbps: 2500,
+  }]);
+  index.close();
+  await mkdir(path.join(d0, ".quarantine"), { recursive: true });
+  await writeFile(path.join(d0, ".quarantine", "x.dat"), Buffer.alloc(77));
+  try {
+    const refused = await audit({ stateDir: dir, storeCheck: async (root) => (root === d1 ? { ok: false, reason: "not a mount point" } : { ok: true }) });
+    eq(refused.summary, null, "no counts with a drive missing");
+    eq(refused.refusedRoots.map((r) => r.root), [d1], "names the missing drive");
+    eq(refused.disks[1].quarantine, null, "a refused drive's quarantine is unknown, not zero");
+
+    await mkdir(path.join(d1, "cam-1"), { recursive: true });
+    await writeFile(path.join(d1, "cam-1", "1757500000000.mp4"), Buffer.alloc(1000));
+    const ok = await audit({ stateDir: dir, storeCheck: async () => ({ ok: true }) });
+    eq(ok.summary.confirmed, 1, "confirmed");
+    eq(ok.summary.lost, 0, "lost");
+    eq(ok.disks.map((d) => d.quarantine), [{ files: 1, bytes: 77 }, { files: 0, bytes: 0 }], "quarantine per drive");
+  } finally {
+    for (const d of [dir, d0, d1]) await rm(d, { recursive: true, force: true });
   }
 });
 

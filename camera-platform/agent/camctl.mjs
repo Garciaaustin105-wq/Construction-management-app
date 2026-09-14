@@ -8,6 +8,7 @@
  * prints as "not measured" rather than a plausible default.
  */
 import { preflight } from "./preflight.mjs";
+import { audit } from "./recorder-service.mjs";
 import { sweep } from "./sweep.mjs";
 import { discoverSadp } from "./sadp.mjs";
 import { discoverOnvif } from "./wsdiscovery.mjs";
@@ -303,12 +304,49 @@ async function cmdBench() {
   );
 }
 
-const commands = { preflight: cmdPreflight, bench: cmdBench, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+async function cmdAudit() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? undefined;
+  const { summary, refusedRoots, disks } = await audit({ stateDir });
+  console.log("audit — read-only: nothing is moved, deleted or written");
+  console.log();
+  for (const d of disks) {
+    const q = d.quarantine;
+    if (q) {
+      console.log(`  ${d.root} quarantine: ${q.files} file(s), ${(q.bytes / 1e6).toFixed(1)} MB`);
+    } else {
+      console.log(`  ${d.root} quarantine: could not be read`);
+    }
+  }
+  if (refusedRoots.length > 0) {
+    for (const r of refusedRoots) console.log(`REFUSED ${r.root}: ${r.reason}`);
+    console.log("no counts: a drive that is not mounted hides its files, and every segment on it would read as lost. Mount it and run audit again.");
+    process.exit(1);
+  } else {
+    console.log();
+    const rows = [
+      ["confirmed", "segments confirmed on disk", "segment(s)"],
+      ["corrected", "index rows corrected", "segment(s)"],
+      ["partials", "partial segments (unsealed)", "segment(s)"],
+      ["adopted", "files on disk the index lacks", "file(s)"],
+      ["dropped", "unusable files that would be dropped", "file(s)"],
+      ["quarantined", "files that would be quarantined", "file(s)"],
+      ["lost", "LOST: indexed but missing on disk", "segment(s)"],
+    ];
+    for (const [key, label, unit] of rows) {
+      console.log(`  ${label.padEnd(38)}${summary[key]} ${unit}`);
+    }
+    console.log("\nnote: while the recorder is running, the segment being written right now counts as a partial.");
+    if (summary.lost > 0) process.exit(1);
+  }
+}
+
+const commands = { preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
 
   preflight                     check ffmpeg/ffprobe and permissions
+  audit [--state-dir D]         what recovery would do now; read-only (or CAMPLAT_STATE_DIR)
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention
   probe <rtsp://...> [options]  same, but the URL is used verbatim — level 3,

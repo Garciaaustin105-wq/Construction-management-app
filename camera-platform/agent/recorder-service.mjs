@@ -6,7 +6,7 @@
  * deciding what the old ones were, and the partial from the last power cut would
  * be indistinguishable from the segment being written right now.
  */
-import { readFile, writeFile, statfs, mkdir } from "node:fs/promises";
+import { readFile, writeFile, statfs, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { openIndex } from "./segindex.mjs";
 import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, INPROGRESS } from "./segstore.mjs";
@@ -82,7 +82,7 @@ async function diskUsage(root) {
   return { total, free: s.bavail * s.bsize, used: total - s.bavail * s.bsize };
 }
 
-export async function runRecovery(index, storeRoots) {
+export async function runRecovery(index, storeRoots, { dryRun = false } = {}) {
   const summary = { confirmed: 0, corrected: 0, partials: 0, adopted: 0, dropped: 0, quarantined: 0, quarantineFailed: 0, lost: 0 };
   const boundary = new Date().toISOString();
 
@@ -96,6 +96,11 @@ export async function runRecovery(index, storeRoots) {
     const onDisk = scans[i];
     const indexed = index.all().filter((s) => onDisk.some((f) => f.path === s.path) || (i === 0 && !scans.some(arr => arr.some(f => f.path === s.path))));
     const plan = planRecovery(indexed, onDisk, boundary);
+    if (dryRun) {
+      // Report only: no file moves, no index writes, no gaps.
+      for (const key of Object.keys(plan.summary)) summary[key] += plan.summary[key];
+      continue;
+    }
 
     const applied = await applyRecovery(root, plan);
 
@@ -160,6 +165,44 @@ function currentRetention(index, cameras) {
     bitrateKbps: typeof c.bitrateKbps === "number" ? c.bitrateKbps : null,
   }));
   return bitrates;
+}
+
+/**
+ * Report what recovery WOULD do right now, changing nothing.
+ *
+ * Two refusals, so the numbers are never misleading: with no index nothing has
+ * recorded here (and openIndex would create one, hiding a wrong state dir),
+ * and with a refused store root any count is a lie, because the missing drive
+ * hides its files and its footage would be written off as lost.
+ */
+export async function audit({ stateDir = DEFAULT_PATHS.stateDir, storeCheck } = {}) {
+  const config = await loadConfig(stateDir);
+  const indexFile = indexPathFor(stateDir);
+  try {
+    await stat(indexFile);
+  } catch (err) {
+    if (err.code === "ENOENT") throw new Error(`no index at ${indexFile}: nothing has recorded here, or the state directory is wrong`);
+    throw err;
+  }
+  const checkRoot = storeCheck ?? ((root) => checkStoreRoot(root, config.allowUnmountedStores ? { requireMount: false } : {}));
+  const refusedRoots = [];
+  for (const root of config.storeRoots) {
+    const verdict = await checkRoot(root);
+    if (!verdict.ok) refusedRoots.push({ root, reason: verdict.reason });
+  }
+  const disks = [];
+  for (const root of config.storeRoots) {
+    disks.push({ root, quarantine: refusedRoots.some((r) => r.root === root) ? null : await quarantineUsage(root).catch(() => null) });
+  }
+  if (refusedRoots.length > 0) {
+    return { summary: null, refusedRoots, disks };
+  }
+  const index = openIndex(indexFile);
+  try {
+    return { summary: await runRecovery(index, config.storeRoots, { dryRun: true }), refusedRoots, disks };
+  } finally {
+    index.close();
+  }
 }
 
 export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeCheck, now = () => new Date() } = {}) {
