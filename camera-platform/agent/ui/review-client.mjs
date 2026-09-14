@@ -287,3 +287,95 @@ export function planPlayback(body) {
 
   return { action: "error", code: "bad_response", message: "the recorder sent something unreadable" };
 }
+
+/**
+ * A byte count for a person, always with its unit. Decimal units (1 KB = 1000 B),
+ * ASCII only. null when n is not a safe integer >= 0 (Number.isSafeInteger).
+ * - n < 1000: String(n) + " B".
+ * - n < 999950: (n / 1e3).toFixed(1) + " KB".
+ * - n < 999950000: (n / 1e6).toFixed(1) + " MB".
+ * - otherwise: (n / 1e9).toFixed(2) + " GB".
+ * (The 999950 boundaries stop a value reading "1000.0 KB": it reads "1.0 MB".)
+ */
+export function formatBytes(n) {
+  if (!Number.isSafeInteger(n) || n < 0) return null;
+  if (n < 1000) return `${n} B`;
+  if (n < 999950) return `${(n / 1e3).toFixed(1)} KB`;
+  if (n < 999950000) return `${(n / 1e6).toFixed(1)} MB`;
+  return `${(n / 1e9).toFixed(2)} GB`;
+}
+
+function badResponse(code, message) {
+  return { action: "error", code, message };
+}
+
+/**
+ * What the export control shows, from any parsed /export/plan body (success
+ * or refusal). Keys in the order shown. Copies only the named fields: the body
+ * is never spread.
+ *
+ * - not an object (null and arrays are not) -> { action: "error", code: "bad_response", message: "the recorder sent something unreadable" }
+ * - ok === false -> { action: "error", code, message }, each copied when a string,
+ *   else "bad_response" / the unreadable message.
+ * - ok !== true -> the bad_response error.
+ * - The bad_response error too unless ALL of: fileCount is a safe integer >= 1;
+ *   totalBytes is a safe integer >= 0; delivered is an object whose startUtc and
+ *   endUtc are strings that Date.parse to numbers (not NaN) with end > start;
+ *   gaps is an array.
+ * - Otherwise { action: "offer", fileCount, totalBytes, size: formatBytes(totalBytes),
+ *   deliveredStartUtc: delivered.startUtc, deliveredEndUtc: delivered.endUtc,
+ *   gapCount: gaps.length }.
+ */
+export function planExportOffer(body) {
+  // validate body is object
+  if (!isNonArrayObject(body)) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  // handle error response
+  if (body.ok === false) {
+    const code = typeof body.code === "string" ? body.code : "bad_response";
+    const message = typeof body.message === "string" ? body.message : "the recorder sent something unreadable";
+    return badResponse(code, message);
+  }
+  // any ok value other than true leads to unreadable
+  if (body.ok !== true) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  // Now ok true
+  const fileCount = body.fileCount;
+  if (!Number.isSafeInteger(fileCount) || fileCount < 1) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  const totalBytes = body.totalBytes;
+  if (!Number.isSafeInteger(totalBytes) || totalBytes < 0) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  const delivered = body.delivered;
+  if (!isNonArrayObject(delivered)) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  const delStart = delivered.startUtc;
+  const delEnd = delivered.endUtc;
+  if (typeof delStart !== "string" || typeof delEnd !== "string") {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  const delStartMs = Date.parse(delStart);
+  const delEndMs = Date.parse(delEnd);
+  if (Number.isNaN(delStartMs) || Number.isNaN(delEndMs) || delEndMs <= delStartMs) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  const gaps = body.gaps;
+  if (!Array.isArray(gaps)) {
+    return badResponse("bad_response", "the recorder sent something unreadable");
+  }
+  const size = formatBytes(totalBytes);
+  return {
+    action: "offer",
+    fileCount,
+    totalBytes,
+    size,
+    deliveredStartUtc: delStart,
+    deliveredEndUtc: delEnd,
+    gapCount: gaps.length,
+  };
+}

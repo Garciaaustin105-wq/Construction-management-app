@@ -4,6 +4,7 @@
  *  response text, and the storage path reaching the page. */
 import {
   layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback,
+  formatBytes, planExportOffer,
 } from "../agent/ui/review-client.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
@@ -312,6 +313,59 @@ check("plan: anything else is unreadable, never thrown", () => {
     segmentBody({})]) {
     eq(planPlayback(b), UNREADABLE, JSON.stringify(b) ?? "undefined");
   }
+});
+
+await check("formatBytes always carries its unit and never reads 1000.0", () => {
+  for (const [n, want] of [
+    [0, "0 B"], [999, "999 B"], [1000, "1.0 KB"], [1500, "1.5 KB"], [999949, "999.9 KB"],
+    [999950, "1.0 MB"], [66064951, "66.1 MB"], [999949999, "999.9 MB"], [999950000, "1.00 GB"],
+    [4294967295, "4.29 GB"],
+  ]) eq(formatBytes(n), want, `${n}`);
+  for (const bad of [-1, 1.5, NaN, Infinity, "5", null, undefined, 2 ** 53, {}]) {
+    eq(formatBytes(bad), null, `refused: ${String(bad)}`);
+  }
+});
+
+const planBody = (over = {}) => ({
+  ok: true, cameraId: "cam-1",
+  requested: { startUtc: "2026-09-11T10:00:30.000Z", endUtc: "2026-09-11T10:04:30.000Z" },
+  delivered: { startUtc: "2026-09-11T10:00:00.000Z", endUtc: "2026-09-11T10:05:00.000Z" },
+  fileCount: 3, totalBytes: 2200, recordedSeconds: 120, gapSeconds: 120,
+  gaps: [{ startUtc: "2026-09-11T10:02:00.000Z", endUtc: "2026-09-11T10:04:00.000Z", reason: "camera_offline", source: "logged" }],
+  ...over,
+});
+const unreadable = { action: "error", code: "bad_response", message: "the recorder sent something unreadable" };
+
+await check("planExportOffer turns a plan into an offer with the size in words", () => {
+  eq(planExportOffer(planBody()), {
+    action: "offer", fileCount: 3, totalBytes: 2200, size: "2.2 KB",
+    deliveredStartUtc: "2026-09-11T10:00:00.000Z", deliveredEndUtc: "2026-09-11T10:05:00.000Z", gapCount: 1,
+  }, "the offer, keys in order");
+  eq(planExportOffer(planBody({ gaps: [] })).gapCount, 0, "no gaps");
+});
+
+await check("THE FEARED ONE: a storage path in the body never reaches the offer", () => {
+  const offer = planExportOffer(planBody({ path: "/srv/disk0/cam-1/1.mp4", files: [{ path: "/srv/x.mp4" }] }));
+  eq(JSON.stringify(offer).includes("/srv"), false, "nothing copied past the named fields");
+  eq(Object.keys(offer), ["action", "fileCount", "totalBytes", "size", "deliveredStartUtc", "deliveredEndUtc", "gapCount"], "exactly the named keys");
+});
+
+await check("planExportOffer passes refusals through and refuses what it cannot trust", () => {
+  eq(planExportOffer({ ok: false, code: "export_too_large", message: "too big" }),
+    { action: "error", code: "export_too_large", message: "too big" }, "a refusal, copied");
+  eq(planExportOffer({ ok: false, code: 7, message: "m" }), { action: "error", code: "bad_response", message: "m" }, "code falls back alone");
+  eq(planExportOffer({ ok: false, code: "c" }), { action: "error", code: "c", message: "the recorder sent something unreadable" }, "message falls back alone");
+  for (const [what, body] of [
+    ["null", null], ["an array", [planBody()]], ["a string", "ok"], ["ok 'true'", planBody({ ok: "true" })],
+    ["no files", planBody({ fileCount: 0 })], ["fractional count", planBody({ fileCount: 1.5 })],
+    ["count as text", planBody({ fileCount: "3" })], ["blank bytes", planBody({ totalBytes: null })],
+    ["negative bytes", planBody({ totalBytes: -1 })], ["no delivered", planBody({ delivered: null })],
+    ["delivered array", planBody({ delivered: [] })],
+    ["delivered unparsable", planBody({ delivered: { startUtc: "soon", endUtc: "2026-09-11T10:05:00.000Z" } })],
+    ["delivered inverted", planBody({ delivered: { startUtc: "2026-09-11T10:05:00.000Z", endUtc: "2026-09-11T10:00:00.000Z" } })],
+    ["delivered empty", planBody({ delivered: { startUtc: "2026-09-11T10:05:00.000Z", endUtc: "2026-09-11T10:05:00.000Z" } })],
+    ["gaps missing", planBody({ gaps: undefined })], ["gaps object", planBody({ gaps: {} })],
+  ]) eq(planExportOffer(body), unreadable, what);
 });
 
 report("reviewClient");
