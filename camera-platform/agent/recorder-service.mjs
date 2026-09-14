@@ -83,7 +83,7 @@ async function diskUsage(root) {
 }
 
 export async function runRecovery(index, storeRoots) {
-  const summary = { confirmed: 0, corrected: 0, partials: 0, adopted: 0, dropped: 0, quarantined: 0, lost: 0 };
+  const summary = { confirmed: 0, corrected: 0, partials: 0, adopted: 0, dropped: 0, quarantined: 0, quarantineFailed: 0, lost: 0 };
   const boundary = new Date().toISOString();
 
   const scans = [];
@@ -123,7 +123,9 @@ export async function runRecovery(index, storeRoots) {
     if (removals.length > 0) index.removeMany(removals);
     for (const gap of plan.gaps) index.addGap(gap);
 
-    for (const key of Object.keys(summary)) summary[key] += plan.summary[key];
+    for (const key of Object.keys(plan.summary)) summary[key] += plan.summary[key];
+    summary.quarantined -= applied.failed.length;
+    summary.quarantineFailed += applied.failed.length;
   }
   return summary;
 }

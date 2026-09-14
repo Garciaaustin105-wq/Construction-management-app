@@ -134,6 +134,7 @@ export async function applyRecovery(root, plan) {
   const dropped = [];
   const quarantined = [];
   const sealedPartials = [];
+  const failed = [];
 
   for (const action of plan.actions) {
     switch (action.kind) {
@@ -142,10 +143,20 @@ export async function applyRecovery(root, plan) {
         dropped.push(action.file.path);
         break;
       case "quarantine": {
-        const target = path.join(root, QUARANTINE, action.file.path.replace(/\//g, "_"));
-        await mkdir(path.dirname(target), { recursive: true });
-        await rename(path.join(root, action.file.path), target).catch(() => {});
-        quarantined.push({ path: action.file.path, reason: action.reason, movedTo: target });
+        // Never reuse a name: the same path can be quarantined again on a
+        // later boot, and rename would replace what was set aside before.
+        const flat = action.file.path.replace(/\//g, "_");
+        let target = path.join(root, QUARANTINE, `${Date.now()}_${flat}`);
+        for (let n = 1; await stat(target).then(() => true, () => false); n++) {
+          target = path.join(root, QUARANTINE, `${Date.now()}_${n}_${flat}`);
+        }
+        try {
+          await mkdir(path.dirname(target), { recursive: true });
+          await rename(path.join(root, action.file.path), target);
+          quarantined.push({ path: action.file.path, reason: action.reason, movedTo: target });
+        } catch (err) {
+          failed.push({ path: action.file.path, reason: action.reason, error: String(err?.message ?? err) });
+        }
         break;
       }
       case "adopt_orphan":
@@ -159,7 +170,7 @@ export async function applyRecovery(root, plan) {
     }
   }
 
-  return { adopted, dropped, quarantined, sealedPartials };
+  return { adopted, dropped, quarantined, sealedPartials, failed };
 }
 
 export async function ensureCameraDirs(root, cameraId) {

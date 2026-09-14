@@ -162,6 +162,33 @@ await check("an orphan file is adopted, junk is quarantined, empties are dropped
   eq(stillThere.size, 1234, "quarantined file is intact — nothing was destroyed");
 });
 
+await check("THE FEARED ONE: quarantining the same path twice keeps both files", async () => {
+  const qroot = await mkdtemp(path.join(tmpdir(), "camplat-q1-"));
+  await mkdir(path.join(qroot, CAM), { recursive: true });
+  const junk = { path: `${CAM}/mystery.dat`, bytes: 0 };
+  const plan = { actions: [{ kind: "quarantine", file: junk, reason: "unrecognised" }] };
+
+  await writeFile(path.join(qroot, CAM, "mystery.dat"), Buffer.alloc(111));
+  const first = await applyRecovery(qroot, plan);
+  await writeFile(path.join(qroot, CAM, "mystery.dat"), Buffer.alloc(222));
+  const second = await applyRecovery(qroot, plan);
+
+  const held = await readdir(path.join(qroot, QUARANTINE));
+  eq(held.length, 2, "both boots' files are in quarantine");
+  const sizes = (await Promise.all(held.map((n) => stat(path.join(qroot, QUARANTINE, n))))).map((s) => s.size).sort((a, b) => a - b);
+  eq(sizes, [111, 222], "neither file replaced the other");
+  eq(first.quarantined[0].movedTo !== second.quarantined[0].movedTo, true, "each move reports its own target");
+});
+
+await check("a quarantine move that fails is reported as failed, not as quarantined", async () => {
+  const qroot = await mkdtemp(path.join(tmpdir(), "camplat-q1-"));
+  const plan = { actions: [{ kind: "quarantine", file: { path: `${CAM}/gone.dat`, bytes: 0 }, reason: "unrecognised" }] };
+  const applied = await applyRecovery(qroot, plan);
+  eq(applied.quarantined.length, 0, "nothing claimed as quarantined");
+  eq(applied.failed.length, 1, "the failure is reported");
+  eq(applied.failed[0].path, `${CAM}/gone.dat`, "names the file");
+});
+
 await check("THE FEARED ONE: eviction deletes oldest first and spares a held segment", async () => {
   const all = index.all().filter((s) => s.state === "sealed" && s.cameraId === CAM);
   const held = all[0];

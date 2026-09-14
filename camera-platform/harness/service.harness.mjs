@@ -291,6 +291,23 @@ await check("THE FEARED ONE: a segment missing from every drive is still reporte
   }
 });
 
+await check("THE FEARED ONE: a quarantine that cannot be written fails that file, not the whole recovery", async () => {
+  const { d0, d1, seg, index, cleanup } = await twoDrives();
+  try {
+    index.putMany([await seg(d1, "cam-2", 1757500000000)]);
+    await mkdir(path.join(d0, "cam-1"), { recursive: true });
+    await writeFile(path.join(d0, "cam-1", "mystery.dat"), Buffer.alloc(1234));
+    await writeFile(path.join(d0, ".quarantine"), "a file where the quarantine directory should be");
+    const summary = await runRecovery(index, [d0, d1]);
+    eq(summary.quarantined, 0, "nothing claimed as quarantined");
+    eq(summary.quarantineFailed, 1, "the failed move is counted");
+    eq(summary.confirmed, 1, "the other drive still recovered");
+    eq((await readFile(path.join(d0, "cam-1", "mystery.dat"))).length, 1234, "the file is left where it was");
+  } finally {
+    await cleanup();
+  }
+});
+
 await rm(stateDir, { recursive: true, force: true });
 await rm(disk0, { recursive: true, force: true });
 await rm(disk1, { recursive: true, force: true });
