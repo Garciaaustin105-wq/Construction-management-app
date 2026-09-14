@@ -127,6 +127,13 @@ export function negotiateLive(input: {
  * the camera-side keyframe interval bounds the rest. Measured on the bench
  * 2026-09-13: live time-to-first-frame 1.65–2.0 s uncapped, 1.2 s capped.
  *
+ * `+default_base_moof` is load-bearing for MSE: without it ffmpeg writes each
+ * tfhd with an absolute base_data_offset, which the MSE ISOBMFF byte stream
+ * spec FORBIDS (movie-fragment-relative addressing). Chrome reproduces this
+ * as the first moof+mdat append failing with `Failure parsing MP4: TFHD
+ * base-data-offset not allowed by MSE` -> decode error -> every later append
+ * throwing InvalidStateError. Found on the bench 2026-09-14.
+ *
  * @param url - The RTSP or other stream URL
  * @returns string[] - ffmpeg ARGV
  */
@@ -145,7 +152,7 @@ export function liveFfmpegArgs(url: string): string[] {
     "-f",
     "mp4",
     "-movflags",
-    "frag_keyframe+empty_moov",
+    "frag_keyframe+empty_moov+default_base_moof",
     "-fflags",
     "+nobuffer",
     "-flags",

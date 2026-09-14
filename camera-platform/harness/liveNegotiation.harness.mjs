@@ -105,7 +105,11 @@ check("liveFfmpegArgs: copy only, ends pipe:1, url appears once after -i", () =>
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1") >= 0, true, "url present");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1"), args.indexOf("-i") + 1, "url right after -i");
   same(args.length, 19, "exact shape");
-  same(args.includes("frag_keyframe+empty_moov"), true, "fragmented mp4");
+  same(args.includes("frag_keyframe+empty_moov+default_base_moof"), true, "fragmented mp4, MSE-safe addressing");
+  // `default_base_moof` is load-bearing: MSE forbids tfhd's absolute
+  // base_data_offset ("TFHD base-data-offset not allowed by MSE"), and a
+  // missing one makes the FIRST fragment append fail with a decode error that
+  // every later append then rides as InvalidStateError.
   same(args.includes("+nobuffer") && args.includes("low_delay"), true, "latency flags");
   // The probe cap is load-bearing for live start latency: ffmpeg's default
   // samples up to 5 s of input; the copy mux needs only the parameter sets.
