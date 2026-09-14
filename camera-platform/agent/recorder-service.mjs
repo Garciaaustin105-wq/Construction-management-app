@@ -263,7 +263,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
       onEvent: (e) => {
         if (e.kind === "stderr") return;
         const level = e.kind === "spawn_failed" || e.kind === "seal_failed" ? "error"
-          : e.kind === "exited" ? "warn" : "info";
+          : e.kind === "exited" || e.kind === "stop_killed" ? "warn" : "info";
         log(level, e.kind, { cameraId: e.cameraId, count: e.count, code: e.code, file: e.file, error: e.error });
       },
     });

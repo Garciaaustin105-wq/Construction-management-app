@@ -96,8 +96,12 @@ export function createCameraRecorder({
   bitrateKbps = null,
   spawnFn = defaultSpawn,
   onEvent = () => {},
+  stopTimeoutMs = 10_000,
 }) {
   let child = null;
+  // Whether the current ffmpeg has gone, and a promise settled when it does.
+  let childGone = true;
+  let childDone = Promise.resolve();
   let timer = null;
   let stopped = false;
   let lastSeenOpen = null;
@@ -168,6 +172,20 @@ export function createCameraRecorder({
     if (stopped) return;
     const outputPattern = path.join(root, cameraId, INPROGRESS, wipPattern());
     child = spawnFn("ffmpeg", ffmpegArgs(url, outputPattern, segmentSeconds));
+    const spawned = child;
+    childGone = false;
+    childDone = new Promise((resolve) => {
+      spawned?.once?.("exit", () => {
+        childGone = true;
+        resolve();
+      });
+      spawned?.on?.("error", () => {
+        if (spawned.pid === undefined) {
+          childGone = true;
+          resolve();
+        }
+      });
+    });
     onEvent({ kind: "started", cameraId, url: redactRtspUrl(url) });
 
     if (downSince !== null) {
@@ -206,10 +224,24 @@ export function createCameraRecorder({
       });
     },
     async poll() { await sealCompleted(); },
+    // systemd waits TimeoutStopSec (30s) after SIGTERM; returning before ffmpeg
+    // exits cuts the newest segment mid-write on every stop.
     async stop() {
       stopped = true;
       if (timer) clearInterval(timer);
-      try { child?.kill?.("SIGTERM"); } catch { /* already gone */ }
+      if (child && !childGone) {
+        try { child.kill?.("SIGTERM"); } catch { /* already gone */ }
+        let killTimer;
+        const timedOut = await Promise.race([
+          childDone.then(() => false),
+          new Promise((resolve) => { killTimer = setTimeout(() => resolve(true), stopTimeoutMs); }),
+        ]);
+        clearTimeout(killTimer);
+        if (timedOut) {
+          try { child.kill?.("SIGKILL"); } catch { /* already gone */ }
+          onEvent({ kind: "stop_killed", cameraId, waitedMs: stopTimeoutMs });
+        }
+      }
       await sealCompleted().catch(() => {});
     },
   };

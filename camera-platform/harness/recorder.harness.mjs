@@ -373,4 +373,91 @@ await check("THE FEARED ONE: ffmpeg failing to spawn is retried, never a crash, 
   }
 });
 
+// L13: systemd stops the service with SIGTERM and waits TimeoutStopSec (30s)
+// before SIGKILL. If stop() returns before ffmpeg has written its last fragment,
+// the process exits under it and the newest segment is cut mid-write on every
+// update, reboot and power-button press.
+function stoppableSpawn(onKill) {
+  const children = [];
+  const spawnFn = () => {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 4000 + children.length;
+    child.signals = [];
+    child.exited = false;
+    child.once("exit", () => { child.exited = true; });
+    child.kill = (signal) => { child.signals.push(signal); onKill(child, signal); return true; };
+    children.push(child);
+    return child;
+  };
+  return { spawnFn, children };
+}
+async function stoppableRecorder(name, spawnFn, extra = {}) {
+  const stopEvents = [];
+  const stopIndex = openIndex(path.join(await mkdtemp(path.join(tmpdir(), `camplat-${name}-`)), "index.db"));
+  const rec = createCameraRecorder({
+    root, cameraId: `cam-${name}`, url: "rtsp://u:p@10.0.0.7:554/x",
+    index: stopIndex, segmentSeconds: SEG, pollMs: 100_000, spawnFn, onEvent: (e) => stopEvents.push(e), ...extra,
+  });
+  await rec.start();
+  return { rec, stopEvents, stopIndex };
+}
+const settle = (promise, ms) => Promise.race([
+  promise.then(() => "resolved"),
+  new Promise((r) => setTimeout(() => r("hung"), ms)),
+]);
+
+await check("THE FEARED ONE: stop waits for ffmpeg to finish its last fragment before returning", async () => {
+  const { spawnFn, children } = stoppableSpawn((child, signal) => {
+    if (signal === "SIGTERM") setTimeout(() => child.emit("exit", 0), 150);
+  });
+  const { rec, stopEvents, stopIndex } = await stoppableRecorder("graceful", spawnFn, { stopTimeoutMs: 5_000 });
+  try {
+    const outcome = await settle(rec.stop(), 3_000);
+    eq(outcome, "resolved", "stop returned");
+    eq(children.length, 1, "one ffmpeg");
+    eq(children[0].signals, ["SIGTERM"], "asked politely, once");
+    eq(children[0].exited, true, "ffmpeg had exited by the time stop returned");
+    eq(stopEvents.some((e) => e.kind === "stop_killed"), false, "no kill reported for a clean exit");
+  } finally {
+    stopIndex.close();
+  }
+});
+
+await check("THE FEARED ONE: an ffmpeg that ignores SIGTERM is killed, and stop still returns inside the timeout", async () => {
+  const { spawnFn, children } = stoppableSpawn(() => { /* hung on a dead RTSP read: ignores every signal */ });
+  const { rec, stopEvents, stopIndex } = await stoppableRecorder("hung", spawnFn, { stopTimeoutMs: 200 });
+  try {
+    const began = Date.now();
+    const outcome = await settle(rec.stop(), 3_000);
+    const took = Date.now() - began;
+    eq(outcome, "resolved", "stop returned even though ffmpeg never exited");
+    eq(children[0].signals, ["SIGTERM", "SIGKILL"], "SIGTERM, then SIGKILL after the timeout");
+    eq(took >= 150, true, `waited for the timeout before killing (${took}ms)`);
+    const killed = stopEvents.filter((e) => e.kind === "stop_killed");
+    eq(killed.length, 1, "the kill is reported");
+    eq(killed[0]?.cameraId, "cam-hung", "naming the camera");
+    if (JSON.stringify(killed).includes(":p@")) throw new Error("password leaked in stop_killed");
+  } finally {
+    stopIndex.close();
+  }
+});
+
+await check("a camera whose ffmpeg already exited does not hold up stop", async () => {
+  const { spawnFn, children } = stoppableSpawn(() => { /* would never exit if signalled */ });
+  const { rec, stopEvents, stopIndex } = await stoppableRecorder("gone", spawnFn, { stopTimeoutMs: 5_000 });
+  try {
+    children[0].emit("exit", 1);
+    await new Promise((r) => setTimeout(r, 20));
+    const began = Date.now();
+    const outcome = await settle(rec.stop(), 3_000);
+    eq(outcome, "resolved", "stop returned");
+    eq(Date.now() - began < 1_000, true, "without waiting out the timeout");
+    eq(children[0].signals.includes("SIGKILL"), false, "nothing to kill");
+    eq(stopEvents.some((e) => e.kind === "stop_killed"), false, "no kill reported");
+  } finally {
+    stopIndex.close();
+  }
+});
+
 report("recorder integration");
