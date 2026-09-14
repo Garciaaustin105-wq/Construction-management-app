@@ -48,6 +48,63 @@ const sendError = (res, status, code, message) => {
 };
 
 /**
+ * The shared first half of GET /export and GET /export/plan: read the query,
+ * validate it and plan the export. It writes NOTHING to any response, so the
+ * two routes cannot disagree about what a range holds.
+ * `ctx` is { config, index, now, driveAssignment }, as createApiServer holds them.
+ *
+ * Returns either a refusal { ok: false, status, code, message } or
+ * { ok: true, camera, effective, nowUtc, plan }, keys in those orders.
+ *
+ * 1. const nowUtc = ctx.now().toISOString(). Take the clock ONCE and use this
+ *    value everywhere below.
+ * 2. const camera = parsedUrl.searchParams.get('camera'). If !isCameraId(camera):
+ *    return { ok: false, status: 400, code: 'bad_camera_id', message: 'Invalid camera id' }.
+ * 3. const windowResult = parseWindow({ start, end, buckets: null }, nowUtc), with
+ *    start and end from parsedUrl.searchParams.get. If isRefusal(windowResult):
+ *    return { ok: false, status: windowResult.status, code: windowResult.code,
+ *    message: windowResult.message }. Otherwise const effective = windowResult.effective.
+ * 4. const segments = ctx.index.inRange(camera, effective.startUtc, effective.endUtc);
+ *    const gaps = ctx.index.gapsFor(camera). (The same reads /timeline makes.)
+ * 5. Call planExport(camera, segments, gaps, effective, nowUtc) inside try/catch.
+ *    If it throws an IndexCoverageError (instanceof): return { ok: false,
+ *    status: 500, code: 'index_state_invalid', message: e.message }. Rethrow
+ *    any other error.
+ * 6. If isRefusal(plan): return { ok: false, status: plan.status, code: plan.code,
+ *    message: plan.message }.
+ * 7. return { ok: true, camera, effective, nowUtc, plan }.
+ */
+function prepareExport(parsedUrl, ctx) {
+  const nowUtc = ctx.now().toISOString();
+  const camera = parsedUrl.searchParams.get('camera');
+  if (!isCameraId(camera)) {
+    return { ok: false, status: 400, code: 'bad_camera_id', message: 'Invalid camera id' };
+  }
+  const start = parsedUrl.searchParams.get('start');
+  const end = parsedUrl.searchParams.get('end');
+  const windowResult = parseWindow({ start, end, buckets: null }, nowUtc);
+  if (isRefusal(windowResult)) {
+    return { ok: false, status: windowResult.status, code: windowResult.code, message: windowResult.message };
+  }
+  const effective = windowResult.effective;
+  const segments = ctx.index.inRange(camera, effective.startUtc, effective.endUtc);
+  const gaps = ctx.index.gapsFor(camera);
+  let plan;
+  try {
+    plan = planExport(camera, segments, gaps, effective, nowUtc);
+  } catch (e) {
+    if (e instanceof IndexCoverageError) {
+      return { ok: false, status: 500, code: 'index_state_invalid', message: e.message };
+    }
+    throw e;
+  }
+  if (isRefusal(plan)) {
+    return { ok: false, status: plan.status, code: plan.code, message: plan.message };
+  }
+  return { ok: true, camera, effective, nowUtc, plan };
+}
+
+/**
  * GET /export?camera=&start=&end= : one camera's range, downloaded as a
  * store-only ZIP of whole segments plus manifest.json. See EXPORT-SPEC.md §3.
  * `ctx` is { config, index, now, driveAssignment }, as createApiServer holds them.
@@ -57,29 +114,16 @@ const sendError = (res, status, code, message) => {
  * envelope BEFORE the ZIP's headers, and once the ZIP has begun, any failure
  * destroys the response instead of ending it.
  *
- * 1. const nowUtc = ctx.now().toISOString(). Take the clock ONCE and use this
- *    value everywhere below.
- * 2. const camera = parsedUrl.searchParams.get('camera'). If !isCameraId(camera):
- *    sendError(res, 400, 'bad_camera_id', 'Invalid camera id') and return.
- * 3. const windowResult = parseWindow({ start, end, buckets: null }, nowUtc), with
- *    start and end from parsedUrl.searchParams.get. If isRefusal(windowResult):
- *    sendError(res, windowResult.status, windowResult.code, windowResult.message)
- *    and return. Otherwise const effective = windowResult.effective.
- * 4. const segments = ctx.index.inRange(camera, effective.startUtc, effective.endUtc);
- *    const gaps = ctx.index.gapsFor(camera). (The same reads /timeline makes.)
- * 5. Call planExport(camera, segments, gaps, effective, nowUtc) inside try/catch.
- *    If it throws an IndexCoverageError (instanceof):
- *    sendError(res, 500, 'index_state_invalid', e.message) and return. Rethrow
- *    any other error.
- * 6. If isRefusal(plan): sendError(res, plan.status, plan.code, plan.message)
- *    and return.
- * 7. const filename = `${camera}_${effective.startUtc}_${effective.endUtc}.zip`
+ * 1. const prep = prepareExport(parsedUrl, ctx). If prep.ok is false:
+ *    sendError(res, prep.status, prep.code, prep.message) and return.
+ *    Otherwise const { camera, effective, nowUtc, plan } = prep.
+ * 2. const filename = `${camera}_${effective.startUtc}_${effective.endUtc}.zip`
  *    with EVERY ':' replaced by '-'. Then
  *    res.writeHead(200, { 'Content-Type': 'application/zip',
  *      'Content-Disposition': `attachment; filename="${filename}"`,
  *      'Cache-Control': 'no-store' }).
  *    No Content-Length: a body cut off mid-stream must not look complete.
- * 8. const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0].
+ * 3. const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0].
  *    In try/catch:
  *      await streamExport(res, plan, { resolvePath: (p) => join(root, p),
  *        siteId: ctx.config.siteId, generatedAtUtc: nowUtc });
@@ -91,54 +135,77 @@ const sendError = (res, status, code, message) => {
  * Returns a Promise that resolves once the response has been ended or destroyed.
  */
 async function serveExport(res, parsedUrl, ctx) {
-  const nowUtc = ctx.now().toISOString();
-  const camera = parsedUrl.searchParams.get('camera');
-  if (!isCameraId(camera)) {
-    sendError(res, 400, 'bad_camera_id', 'Invalid camera id');
+  const prep = prepareExport(parsedUrl, ctx);
+  if (!prep.ok) {
+    sendError(res, prep.status, prep.code, prep.message);
     return;
   }
-  const start = parsedUrl.searchParams.get('start');
-  const end = parsedUrl.searchParams.get('end');
-  const windowResult = parseWindow({ start, end, buckets: null }, nowUtc);
-  if (isRefusal(windowResult)) {
-    sendError(res, windowResult.status, windowResult.code, windowResult.message);
-    return;
-  }
-  const effective = windowResult.effective;
-  const segments = ctx.index.inRange(camera, effective.startUtc, effective.endUtc);
-  const gaps = ctx.index.gapsFor(camera);
-  let plan;
-  try {
-    plan = planExport(camera, segments, gaps, effective, nowUtc);
-  } catch (e) {
-    if (e instanceof IndexCoverageError) {
-      sendError(res, 500, 'index_state_invalid', e.message);
-      return;
-    }
-    throw e;
-  }
-  if (isRefusal(plan)) {
-    sendError(res, plan.status, plan.code, plan.message);
-    return;
-  }
+  const { camera, effective, nowUtc, plan } = prep;
   const filename = `${camera}_${effective.startUtc}_${effective.endUtc}.zip`.replace(/:/g, '-');
-  res.writeHead(200, {
-    'Content-Type': 'application/zip',
-    'Content-Disposition': `attachment; filename="${filename}"`,
-    'Cache-Control': 'no-store',
-  });
+  res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' });
   const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0];
   try {
-    await streamExport(res, plan, {
-      resolvePath: (p) => join(root, p),
-      siteId: ctx.config.siteId,
-      generatedAtUtc: nowUtc,
-    });
+    await streamExport(res, plan, { resolvePath: (p) => join(root, p), siteId: ctx.config.siteId, generatedAtUtc: nowUtc });
     res.end();
   } catch (e) {
     log('warn', 'export aborted', { cameraId: camera, code: e.code ?? null, error: e.message });
     res.destroy();
   }
+}
+
+
+/**
+ * GET /export/plan?camera=&start=&end= : what GET /export would deliver for
+ * the same query, as JSON, without sending any footage. The review page shows
+ * this before it offers the download link.
+ *
+ * THE FEARED FAILURE: the storage layout reaching the browser. The plan's
+ * files carry `path`, `segmentId` and `name`; none of them is sent. Build the
+ * body field by field, never by spreading the plan or its files.
+ *
+ * 1. const prep = prepareExport(parsedUrl, ctx). If prep.ok is false:
+ *    sendError(res, prep.status, prep.code, prep.message) and return.
+ * 2. const plan = prep.plan. The body, keys in this order:
+ *    { ok: true, cameraId: plan.cameraId,
+ *      requested: { startUtc: plan.requested.startUtc, endUtc: plan.requested.endUtc },
+ *      delivered: { startUtc: plan.delivered.startUtc, endUtc: plan.delivered.endUtc },
+ *      fileCount: plan.files.length, totalBytes: plan.totalBytes,
+ *      recordedSeconds: plan.recordedSeconds, gapSeconds: plan.gapSeconds,
+ *      gaps: plan.gaps mapped to { startUtc, endUtc, reason, source } }
+ * 3. res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+ *    res.end(JSON.stringify(body)).
+ */
+function serveExportPlan(res, parsedUrl, ctx) {
+  const prep = prepareExport(parsedUrl, ctx);
+  if (!prep.ok) {
+    sendError(res, prep.status, prep.code, prep.message);
+    return;
+  }
+  const plan = prep.plan;
+  const body = {
+    ok: true,
+    cameraId: plan.cameraId,
+    requested: {
+      startUtc: plan.requested.startUtc,
+      endUtc: plan.requested.endUtc,
+    },
+    delivered: {
+      startUtc: plan.delivered.startUtc,
+      endUtc: plan.delivered.endUtc,
+    },
+    fileCount: plan.files.length,
+    totalBytes: plan.totalBytes,
+    recordedSeconds: plan.recordedSeconds,
+    gapSeconds: plan.gapSeconds,
+    gaps: plan.gaps.map(g => ({
+      startUtc: g.startUtc,
+      endUtc: g.endUtc,
+      reason: g.reason,
+      source: g.source,
+    })),
+  };
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
 }
 
 export function createApiServer({
@@ -406,6 +473,12 @@ export function createApiServer({
           res.writeHead(416, headers);
           res.end();
         }
+        return;
+      }
+
+      // ---------- /export/plan ----------
+      if (pathname === '/export/plan') {
+        serveExportPlan(res, parsedUrl, { config, index, now, driveAssignment });
         return;
       }
 

@@ -765,6 +765,59 @@ await check("THE FEARED ONE: a file shorter than planned breaks the download", a
   if (r.body) eq(r.body.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06])), false, "no end-of-central-directory went out");
 });
 
+await check("/export/plan describes exactly what /export sends for the same query", async () => {
+  const q = "camera=cam-2&start=2026-09-11T10:00:30Z&end=2026-09-11T10:04:30Z";
+  const { res, json } = await fetchJson(`${base}/export/plan?${q}`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "application/json", "JSON");
+  eq(res.headers.get("cache-control"), "no-store", "not cached: the store changes under it");
+  eq(res.headers.get("content-disposition"), null, "starts no download");
+  eq(Object.keys(json), ["ok", "cameraId", "requested", "delivered", "fileCount", "totalBytes", "recordedSeconds", "gapSeconds", "gaps"], "exactly these keys, in order");
+  eq(json.ok, true, "ok");
+  eq(json.cameraId, "cam-2", "camera");
+  eq(json.fileCount, 3, "three whole segments");
+  eq(json.totalBytes, 2200, "700 + 1200 + 300 bytes");
+  const zipRes = await fetch(`${base}/export?${q}`);
+  eq(zipRes.status, 200, "the export itself");
+  const entries = readZip(new Uint8Array(await zipRes.arrayBuffer()));
+  const manifest = JSON.parse(Buffer.from(entries.at(-1).data).toString("latin1"));
+  eq(json.requested, manifest.requested, "requested matches the manifest");
+  eq(json.delivered, manifest.delivered, "delivered matches the manifest");
+  eq(json.fileCount, manifest.files.length, "file count matches the manifest");
+  eq(json.totalBytes, manifest.files.reduce((n, f) => n + f.bytes, 0), "bytes match what was sent");
+  eq(json.recordedSeconds, manifest.recordedSeconds, "recorded seconds match");
+  eq(json.gapSeconds, manifest.gapSeconds, "gap seconds match");
+  eq(json.gaps, manifest.gaps, "THE FEARED ONE: the gap the download will declare is shown before it");
+});
+
+await check("THE FEARED ONE: /export/plan carries no storage path, file name or segment id", async () => {
+  const res = await fetch(`${base}/export/plan?camera=cam-2&start=2026-09-11T10:00:30Z&end=2026-09-11T10:04:30Z`);
+  eq(res.status, 200, "status: a refusal here would pass every check below vacuously");
+  const text = await res.text() + JSON.stringify([...res.headers]);
+  for (const k of ["E", "F", "G"]) eq(text.includes(String(ms(X[k]))), false, `no storage file name for ${k}`);
+  eq(text.includes(disk0), false, "no store root");
+  for (const key of ['"path"', "segmentId", '"name"', '"files"', ".mp4"]) eq(text.includes(key), false, `no ${key}`);
+});
+
+await check("/export/plan refuses exactly what /export refuses, with the same words", async () => {
+  const queries = [
+    ["camera=..%2Fx&start=2026-09-11T10:00:00Z&end=2026-09-11T10:06:00Z", "bad_camera_id"],
+    ["camera=cam-2&start=2026-09-11T10:00:00Z", "missing_parameter"],
+    ["camera=cam-2&start=2026-09-12T10:00:00Z&end=2026-09-12T11:00:00Z", "window_in_future"],
+    ["camera=cam-1&start=2026-09-11T11:50:00Z&end=2026-09-11T12:00:00Z", "export_reaches_recording"],
+    ["camera=cam-2&start=2026-09-11T08:00:00Z&end=2026-09-11T09:00:00Z", "export_nothing_recorded"],
+    ["camera=cam-1&start=2026-09-11T10:01:00Z&end=2026-09-11T10:02:00Z", "export_size_unknown"],
+  ];
+  for (const [q, code] of queries) {
+    const plan = await fetchJson(`${base}/export/plan?${q}`);
+    const real = await fetchJson(`${base}/export?${q}`);
+    eq(real.json?.code, code, `/export refuses it as ${code} (else this case proves nothing)`);
+    eq([plan.res.status, plan.json?.ok, plan.json?.code, plan.json?.message],
+      [real.res.status, real.json.ok, real.json.code, real.json.message], `${real.json.code}: same status, code and message`);
+    eq(plan.res.headers.get("content-type"), "application/json", `${real.json.code} is JSON`);
+  }
+});
+
 await check("the server outlives a broken export", async () => {
   const { res, json } = await fetchJson(`${base}/health`);
   eq(res.status, 200, "status");
