@@ -89,6 +89,38 @@ try {
       eq(t >= startedMs - 5_000 && t <= endedMs + 5_000, true, `${f} starts within the run (${new Date(t).toISOString()})`);
     }
   });
+
+  // D6: a G.711 camera with audio on. Copied into mp4 this wrote nothing at all.
+  // Not paced with -re, so wall-clock cutting makes one segment; that is enough.
+  const g711 = path.join(work, "source-g711.mkv");
+  const made = spawnSync("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-i", src, "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=8000",
+    "-t", "7", "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "pcm_mulaw", "-ar", "8000", "-ac", "1", "-y", g711], { encoding: "utf8" });
+  const audioRun = async (input, name) => {
+    const dir = path.join(work, name, INPROGRESS);
+    await mkdir(dir, { recursive: true });
+    const a = ffmpegArgs("rtsp://unused.invalid/stream", path.join(dir, wipPattern()), 2, { audio: true });
+    a.splice(a.indexOf("-rtsp_transport"), 2);
+    a.splice(a.indexOf("-i"), 2, "-i", input);
+    const r = spawnSync("ffmpeg", a, { encoding: "utf8", timeout: 60_000 });
+    return { r, dir, files: (await readdir(dir)).sort() };
+  };
+
+  await check("THE FEARED ONE: with audio on, a G.711 camera records video and AAC audio", async () => {
+    eq(made.status, 0, `G.711 source (stderr: ${String(made.stderr).trim().slice(0, 200)})`);
+    const { r, dir, files: out } = await audioRun(g711, "cam-g711");
+    eq(r.status, 0, `ffmpeg exit (stderr: ${String(r.stderr).trim().slice(0, 300)})`);
+    eq(out.length >= 1, true, `segments written, got ${out.length}`);
+    const video = out.reduce((n, f) => n + packetCount(path.join(dir, f)), 0);
+    eq(video, packetCount(g711), "every video packet");
+    const audio = probe(path.join(dir, out[0]), ["-select_streams", "a:0", "-show_entries", "stream=codec_name"]).streams[0];
+    eq(audio?.codec_name, "aac", "audio stored as AAC");
+  });
+
+  await check("with audio on, a camera with no audio track still records", async () => {
+    const { r, dir, files: out } = await audioRun(src, "cam-silent");
+    eq(r.status, 0, `ffmpeg exit (stderr: ${String(r.stderr).trim().slice(0, 300)})`);
+    eq(out.reduce((n, f) => n + packetCount(path.join(dir, f)), 0), sourcePackets, "every video packet");
+  });
 } finally {
   await rm(work, { recursive: true, force: true });
 }

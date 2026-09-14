@@ -55,13 +55,18 @@ export function detectionArgs(url, { fps = 5, width = 640, height = 360, hwaccel
   ];
 }
 
-export function ffmpegArgs(url, outputPattern, segmentSeconds = 60) {
+export function ffmpegArgs(url, outputPattern, segmentSeconds = 60, { audio = false } = {}) {
   return [
     "-nostdin", "-hide_banner", "-loglevel", "warning",
     "-rtsp_transport", "tcp",          // UDP drops packets on a loaded network
     "-i", url,
-    "-c", "copy",                      // never transcode
-    "-an",                             // audio off by default — see the legal gate
+    // Video is never transcoded in either branch.
+    ...(audio
+      // audio on: converted to AAC because mp4 cannot hold G.711/G.726/G.722;
+      // the trailing ? on the audio map lets a camera with no audio track still record
+      ? ["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "32k"]
+      // audio off by default because of the legal gate; never transcode
+      : ["-c", "copy", "-an"]),
     "-f", "segment",
     "-segment_time", String(segmentSeconds),
     "-segment_atclocktime", "1",       // align to wall clock, so timelines line up
@@ -97,8 +102,15 @@ export function createCameraRecorder({
   spawnFn = defaultSpawn,
   onEvent = () => {},
   stopTimeoutMs = 10_000,
+  audio = false,
+  restartDelayMs = 2000,
+  audioProbeMs = 30_000,
 }) {
   let child = null;
+  let audioActive = audio;   // whether the next ffmpeg records audio
+  let audioFailures = 0;     // consecutive quick failures with audio on
+  let audioTrial = false;    // the current run is the video-only trial
+  let launchedAt = 0;        // when the current run was spawned
   // Whether the current ffmpeg has gone, and a promise settled when it does.
   let childGone = true;
   let childDone = Promise.resolve();
@@ -171,8 +183,20 @@ export function createCameraRecorder({
   function launch() {
     if (stopped) return;
     const outputPattern = path.join(root, cameraId, INPROGRESS, wipPattern());
-    child = spawnFn("ffmpeg", ffmpegArgs(url, outputPattern, segmentSeconds));
+    child = spawnFn("ffmpeg", ffmpegArgs(url, outputPattern, segmentSeconds, { audio: audioActive }));
     const spawned = child;
+    launchedAt = Date.now();
+    // A video-only trial still running when the probe fires means the camera
+    // records fine without audio: say so, and keep recording video only.
+    if (audioTrial) {
+      const probe = setTimeout(() => {
+        if (!stopped && child === spawned && !childGone && audioTrial) {
+          audioTrial = false;
+          onEvent({ kind: "audio_dropped", cameraId, reason: "ffmpeg failed twice with audio on and records without it; recording video only until the service restarts" });
+        }
+      }, audioProbeMs);
+      probe?.unref?.();
+    }
     childGone = false;
     childDone = new Promise((resolve) => {
       spawned?.once?.("exit", () => {
@@ -207,9 +231,28 @@ export function createCameraRecorder({
       handled = true;
       downSince = Date.now();
       onEvent(event);
+      const ranMs = Date.now() - launchedAt;
+      if (audioTrial) {
+        // The video-only trial died fast too: the camera is down, not its
+        // audio. Put audio back on and start counting afresh.
+        audioTrial = false;
+        audioActive = true;
+        audioFailures = 0;
+      } else if (audioActive) {
+        if (ranMs < audioProbeMs) {
+          audioFailures += 1;
+          if (audioFailures >= 2) {
+            audioActive = false;
+            audioTrial = true;
+            audioFailures = 0;
+          }
+        } else {
+          audioFailures = 0;
+        }
+      }
       // A camera that drops comes back. Restart, and the gap is recorded above
       // when it does — a reboot loop should still leave an honest timeline.
-      setTimeout(launch, 2000);
+      setTimeout(launch, restartDelayMs);
     };
     child?.on?.("error", (err) => wentDown({ kind: "spawn_failed", cameraId, error: redactRtspUrl(String(err?.message ?? err)) }));
     child?.once?.("exit", (code) => wentDown({ kind: "exited", cameraId, code }));

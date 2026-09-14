@@ -60,6 +60,21 @@ check("ffmpeg is invoked with stream-copy and fragmented mp4", () => {
   if (!args.includes("-an")) throw new Error("audio must be off by default — all-party consent states");
 });
 
+// D6: stores run audio on, and cameras send G.711, G.726, G.722, MP2, L16, AAC
+// or Opus. Copied into mp4, the first four write nothing at all, video included.
+check("THE FEARED ONE: audio on converts to AAC, so any camera's audio still records; audio off is unchanged", () => {
+  const off = ffmpegArgs("rtsp://x", "/out/%s.mp4", 60);
+  eq(ffmpegArgs("rtsp://x", "/out/%s.mp4", 60, { audio: false }), off, "audio:false is today's arguments exactly");
+  eq(off.includes("-an"), true, "audio off by default");
+  const on = ffmpegArgs("rtsp://x", "/out/%s.mp4", 60, { audio: true });
+  const joined = on.join(" ");
+  eq(on.includes("-an"), false, "no -an with audio on");
+  eq(joined.includes("-c:v copy") && joined.includes("-c:a aac"), true, `video copied, audio to AAC: ${joined}`);
+  eq(joined.includes("-map 0:v:0") && joined.includes("-map 0:a:0?"), true, "a camera with no audio track still records");
+  if (joined.includes("-c copy")) throw new Error("-c copy would copy G.711 into mp4 and write nothing");
+  eq(on.slice(-1), off.slice(-1), "same output pattern last");
+});
+
 check("the URL never reaches an event with its password", () => {
   const started = events.find((e) => e.kind === "started");
   if (started.url.includes("p@") || started.url.includes(":p:")) throw new Error("password leaked");
@@ -457,6 +472,87 @@ await check("a camera whose ffmpeg already exited does not hold up stop", async 
     eq(stopEvents.some((e) => e.kind === "stop_killed"), false, "no kill reported");
   } finally {
     stopIndex.close();
+  }
+});
+
+
+// D6: a camera whose audio ffmpeg cannot decode makes the AAC conversion fail,
+// and with it the video. The recorder must fall back to video only, but a camera
+// that is simply offline must not lose its audio setting.
+function audioScriptSpawn(plan) {
+  const children = [];
+  const spawnFn = (cmd, args) => {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 5000 + children.length;
+    child.audio = !args.includes("-an");
+    child.kill = () => { setImmediate(() => child.emit("exit", null)); return true; };
+    const exitAfter = plan(child, children.length);
+    children.push(child);
+    if (exitAfter !== null) setTimeout(() => child.emit("exit", 1), exitAfter);
+    return child;
+  };
+  return { spawnFn, children };
+}
+async function audioRecorder(name, spawnFn) {
+  const events = [];
+  const idx = openIndex(path.join(await mkdtemp(path.join(tmpdir(), `camplat-${name}-`)), "index.db"));
+  const rec = createCameraRecorder({
+    root, cameraId: `cam-${name}`, url: "rtsp://u:p@10.0.0.8:554/x", index: idx, segmentSeconds: SEG, pollMs: 100_000,
+    spawnFn, onEvent: (e) => events.push(e), audio: true, restartDelayMs: 20, audioProbeMs: 300, stopTimeoutMs: 500,
+  });
+  await rec.start();
+  return { rec, events, idx };
+}
+
+await check("THE FEARED ONE: audio ffmpeg cannot handle falls back to video only, and says so", async () => {
+  // With audio, ffmpeg dies at once; without it, it records.
+  const { spawnFn, children } = audioScriptSpawn((child) => (child.audio ? 10 : null));
+  const { rec, events, idx } = await audioRecorder("badaudio", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 900));
+    eq(children.map((c) => c.audio), [true, true, false], "two audio failures, then one video-only run that stays up");
+    const dropped = events.filter((e) => e.kind === "audio_dropped");
+    eq(dropped.length, 1, "audio_dropped reported once");
+    eq(dropped[0]?.cameraId, "cam-badaudio", "naming the camera");
+    if (JSON.stringify(events).includes(":p@")) throw new Error("password leaked in an event");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("THE FEARED ONE: an offline camera keeps its audio; only a video-only run that works drops it", async () => {
+  // Every run dies at once, audio or not: the camera is down, not its audio.
+  const { spawnFn, children } = audioScriptSpawn(() => 10);
+  const { rec, events, idx } = await audioRecorder("offline", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 900));
+    eq(events.some((e) => e.kind === "audio_dropped"), false, "no audio_dropped for a camera that is down");
+    const runs = children.map((c) => c.audio);
+    eq(runs.length >= 5, true, `kept retrying (${runs.length} runs)`);
+    for (let i = 1; i < runs.length; i++) {
+      if (!runs[i] && !runs[i - 1]) throw new Error(`two video-only runs in a row: ${JSON.stringify(runs)}`);
+    }
+    const trial = runs.indexOf(false);
+    eq(trial >= 0 && runs[trial + 1] === true, true, `audio back on after a failed video-only trial: ${JSON.stringify(runs)}`);
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("a single drop, or drops between long runs, never turns audio off", async () => {
+  // fast fail, a long run, fast fail, then stays up.
+  const { spawnFn, children } = audioScriptSpawn((child, n) => [10, 400, 10, null][n] ?? null);
+  const { rec, events, idx } = await audioRecorder("flaky", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 900));
+    eq(children.map((c) => c.audio), [true, true, true, true], "every run keeps audio");
+    eq(events.some((e) => e.kind === "audio_dropped"), false, "nothing dropped");
+  } finally {
+    await rec.stop();
+    idx.close();
   }
 });
 

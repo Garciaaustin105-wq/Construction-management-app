@@ -259,11 +259,12 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
       index,
       segmentSeconds: config.segmentSeconds,
       bitrateKbps: typeof camera.bitrateKbps === "number" ? camera.bitrateKbps : null,
+      audio: camera.audio === true, // legally gated: off unless the site config turns it on
       spawnFn,
       onEvent: (e) => {
         if (e.kind === "stderr") return;
         const level = e.kind === "spawn_failed" || e.kind === "seal_failed" ? "error"
-          : e.kind === "exited" || e.kind === "stop_killed" ? "warn" : "info";
+          : e.kind === "exited" || e.kind === "stop_killed" || e.kind === "audio_dropped" ? "warn" : "info";
         log(level, e.kind, { cameraId: e.cameraId, count: e.count, code: e.code, file: e.file, error: e.error });
       },
     });
