@@ -12,6 +12,8 @@ import { audit } from "./recorder-service.mjs";
 import { sweep } from "./sweep.mjs";
 import { discoverSadp } from "./sadp.mjs";
 import { discoverOnvif } from "./wsdiscovery.mjs";
+import { chooseDiscoveryInterface } from "../dist/net.js";
+import { networkInterfaces } from "node:os";
 import { probeStream, measureBitrate } from "./media.mjs";
 import { buildRtspUrl, redactRtspUrl, candidatePaths, urlForPath } from "../dist/rtsp.js";
 import { parseRtspUrl } from "../dist/cameraSource.js";
@@ -45,7 +47,18 @@ async function cmdPreflight() {
 
 async function cmdDiscover() {
   const cidr = args[0];
-  if (!cidr) { console.error("usage: camctl discover <cidr> [--raw-dir DIR]"); process.exit(2); }
+  if (!cidr) { console.error("usage: camctl discover <cidr> [--raw-dir DIR] [--iface NAME|ADDRESS]"); process.exit(2); }
+
+  // Which card SADP and WS-Discovery use. Decided before the sweep, so a
+  // mistyped --iface stops here rather than after a scan.
+  const card = chooseDiscoveryInterface(networkInterfaces(), { iface: flag("iface") ?? undefined, cidr });
+  if (card.kind === "refused") { console.error(`discover refused: ${card.reason}`); process.exit(2); }
+  if (card.kind === "chosen") {
+    console.log(`discovery card: ${card.name} ${card.address} (${card.source === "iface" ? "from --iface" : `the card on ${cidr}`})`);
+  } else {
+    console.log(`discovery card: not chosen: ${card.reason}`);
+  }
+  const pinned = card.kind === "chosen" ? { interfaceAddress: card.address } : {};
 
   console.log(`sweeping ${cidr} for open 554/80 ...`);
   const hosts = await sweep(cidr, [554, 80], {
@@ -54,7 +67,7 @@ async function cmdDiscover() {
 
   console.log(`\nSADP inquiry (Hikvision, answers with ONVIF disabled) ...`);
   const rawDir = flag("raw-dir");
-  const sadp = await discoverSadp({ rawDir }).catch((e) => {
+  const sadp = await discoverSadp({ rawDir, ...pinned, ...(card.kind === "chosen" ? { broadcast: card.broadcast } : {}) }).catch((e) => {
     console.log(`  SADP failed: ${e.message}`);
     return [];
   });
@@ -64,7 +77,7 @@ async function cmdDiscover() {
   if (rawDir) console.log(`  raw SADP responses written to ${rawDir}`);
 
   console.log(`\nONVIF WS-Discovery ...`);
-  const onvif = await discoverOnvif().catch((e) => {
+  const onvif = await discoverOnvif({ ...pinned }).catch((e) => {
     console.log(`  WS-Discovery failed: ${e.message}`);
     return [];
   });
@@ -348,6 +361,7 @@ if (!handler) {
   preflight                     check ffmpeg/ffprobe and permissions
   audit [--state-dir D]         what recovery would do now; read-only (or CAMPLAT_STATE_DIR)
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
+                  [--iface NAME|ADDR]  the card facing the cameras; default: the card on <cidr>
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention
   probe <rtsp://...> [options]  same, but the URL is used verbatim — level 3,
                                 for when path detection is what failed

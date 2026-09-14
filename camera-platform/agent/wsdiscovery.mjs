@@ -39,8 +39,9 @@ export function parseScopes(xml) {
   return out;
 }
 
-export async function discoverOnvif({ waitMs = 4000, onRaw } = {}) {
-  const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+// `interfaceAddress` pins discovery to one card; without it the kernel picks.
+export async function discoverOnvif({ waitMs = 4000, onRaw, interfaceAddress = null, createSocket = dgram.createSocket } = {}) {
+  const socket = createSocket({ type: "udp4", reuseAddr: true });
   const found = new Map();
 
   socket.on("message", (buffer, rinfo) => {
@@ -54,8 +55,19 @@ export async function discoverOnvif({ waitMs = 4000, onRaw } = {}) {
   await new Promise((resolve, reject) => {
     socket.once("error", reject);
     socket.bind(0, () => {
-      try { socket.addMembership(WSD_GROUP); } catch { /* interface may not support it */ }
-      resolve();
+      if (interfaceAddress) {
+        try {
+          socket.addMembership(WSD_GROUP, interfaceAddress);
+          socket.setMulticastInterface(interfaceAddress);
+          resolve();
+        } catch (e) {
+          socket.close();
+          reject(new Error(`could not join WS-Discovery multicast on ${interfaceAddress}: ${e.message}`));
+        }
+      } else {
+        try { socket.addMembership(WSD_GROUP); } catch { /* interface may not support it */ }
+        resolve();
+      }
     });
   });
 

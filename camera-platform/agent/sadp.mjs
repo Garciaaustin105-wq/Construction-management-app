@@ -49,9 +49,10 @@ export function parseSadpResponse(text) {
  * Broadcast a SADP inquiry and collect replies.
  * `rawDir`, when given, receives one file per response — send those to whoever
  * is maintaining this parser if a camera reports fields it does not read.
+ * `interfaceAddress` (with its subnet `broadcast`) pins discovery to one card; without it the kernel picks.
  */
-export async function discoverSadp({ waitMs = 4000, rawDir = null, onRaw } = {}) {
-  const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+export async function discoverSadp({ waitMs = 4000, rawDir = null, onRaw, interfaceAddress = null, broadcast = null, createSocket = dgram.createSocket } = {}) {
+  const socket = createSocket({ type: "udp4", reuseAddr: true });
   const responses = [];
   let rawCount = 0;
 
@@ -72,10 +73,23 @@ export async function discoverSadp({ waitMs = 4000, rawDir = null, onRaw } = {})
     socket.once("error", reject);
     socket.bind(SADP_PORT, () => {
       try { socket.setBroadcast(true); } catch { /* not fatal */ }
-      for (const group of GROUPS) {
-        try { socket.addMembership(group); } catch { /* interface may not support it */ }
+      if (interfaceAddress) {
+        try {
+          for (const group of GROUPS) {
+            socket.addMembership(group, interfaceAddress);
+          }
+          socket.setMulticastInterface(interfaceAddress);
+          resolve();
+        } catch (e) {
+          socket.close();
+          reject(new Error(`could not join SADP multicast on ${interfaceAddress}: ${e.message}`));
+        }
+      } else {
+        for (const group of GROUPS) {
+          try { socket.addMembership(group); } catch { /* interface may not support it */ }
+        }
+        resolve();
       }
-      resolve();
     });
   });
 
@@ -83,7 +97,7 @@ export async function discoverSadp({ waitMs = 4000, rawDir = null, onRaw } = {})
   for (const group of GROUPS) {
     socket.send(payload, SADP_PORT, group, () => {});
   }
-  socket.send(payload, SADP_PORT, "255.255.255.255", () => {});
+  socket.send(payload, SADP_PORT, broadcast ?? "255.255.255.255", () => {});
 
   await new Promise((resolve) => setTimeout(resolve, waitMs));
   socket.close();
