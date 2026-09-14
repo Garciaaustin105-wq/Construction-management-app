@@ -4,14 +4,14 @@ Running record of what this project currently *assumes* versus what has been
 *measured*. Every open item below is answerable with hardware on a bench and
 `agent/camctl.mjs`. Record answers here rather than in a conversation.
 
-Last updated 2026-09-10. Nothing in the Measured column yet.
+Last updated 2026-09-13 — first live bench session done (see "Bench log" below).
 
 | # | Assumption in use | Where it bites | How to answer | Measured |
 |---|---|---|---|---|
-| 1 | **Cameras stream 2 Mbps** | Every storage, retention and AWS figure written to date | `camctl probe <ip> --seconds 30` | — |
-| 1b | Cameras are 4MP on **H.265+ VBR** (not H.264, not CBR) | 12x storage swing — see below | `camctl probe` reports codec; camera web UI reports rate control | — |
-| 2 | SADP multicast group is `239.255.255.250` **or** `239.255.255.230`, UDP 37020 | Whether discovery finds Hikvision cameras at all | `camctl discover <cidr> --raw-dir ./sadp-raw`, keep the files | — |
-| 3 | Hikvision RTSP path is `/Streaming/Channels/101` and `/102` | Whether onboarding works without touching each camera | `camctl probe` succeeding at all | — |
+| 1 | **Cameras stream 2 Mbps** | Every storage, retention and AWS figure written to date | `camctl probe <ip> --seconds 30` | **1797 kbps measured** (ECI-T24F2, 4MP H.264, VBR cap 6144, static bench scene). 2 Mbps assumption holds; see bench log for the caveat |
+| 1b | Cameras are 4MP on **H.265+ VBR** (not H.264, not CBR) | 12x storage swing — see below | `camctl probe` reports codec; camera web UI reports rate control | 4MP **H.264** VBR (cap 6144 kbps, VBR lower 32). H.265 IS supported by the camera but not enabled by default — enabling it is the storage lever, it was never free |
+| 2 | SADP multicast group is `239.255.255.250` **or** `239.255.255.230`, UDP 37020 | Whether discovery finds Hikvision cameras at all | `camctl discover <cidr> --raw-dir ./sadp-raw`, keep the files | **Works.** Raw replies captured in `sadp-raw/` (activated + factory-reset states) |
+| 3 | Hikvision RTSP path is `/Streaming/Channels/101` and `/102` | Whether onboarding works without touching each camera | `camctl probe` succeeding at all | **`/Streaming/Channels/101` confirmed streaming** on ECI-T24F2 (OEM code 1) with H.264. `/102` still assumed for sub |
 | 3b | **AVYCON path is `/profile1` and `/profile2`** — vendor says it varies by model | Onboarding every new camera | `camctl probe <ip> --vendor avycon --try-all` | — |
 | 4 | Cameras sit on an external PoE switch, not the NVR's built-in PoE ports | $60–120k of switches and 450–900 hours, across 150 stores | Look at one rack | — |
 | 5 | 16 TB per appliance gives 30 days | Appliance BOM | Falls out of #1 | — |
@@ -179,6 +179,43 @@ Open questions for the bench:
 | What is AVYCON's factory default address — static, or DHCP? | — |
 | Does SADP set-IP need the camera's current password? | — |
 | Does AVYCON ship with ONVIF enabled, so `SetNetworkInterfaces` is available? | — |
+
+## Bench log — 2026-09-13, first live camera
+
+Camera: **ECI-T24F2** (Hikvision OEM, detailOEMCode 1), fw V5.7.1build 220609,
+MAC `08-54-11-5d-7e-70`, SN ECI-T24F220230615AAWRAC4440853. Bench: one camera on
+a PoE switch, PC cabled to the same switch (wired NIC statically 192.168.1.50/24
+at bench time).
+
+What the session proved, in order:
+
+1. **Discovery works on real hardware**, in two states: activated (camera had a
+   previous owner's password at 10.0.0.115) and factory-fresh inactive (after a
+   reset button hold, at Hikvision default 192.168.1.64 with ports 80/554 open).
+   Raw SADP replies for both states are in `sadp-raw/`.
+2. **The documented RTSP path is real**: `rtsp://…:554/Streaming/Channels/101`
+   streamed immediately with camera-created credentials — H.264, 2560×1440,
+   20 fps, no audio.
+3. **Measured bitrate: 1797 kbps** (6,737,232 bytes in 30 s). The VBR cap is
+   6144 kbps but the static scene averaged 0.29× the cap — consistent with the
+   smart-codec/VBR reasoning above, on a bench rather than a corridor.
+4. **`camctl probe --try-all` said "no" for every path twice** — first because
+   the old credentials were wrong (ISAPI 401 while port 554 stayed open: the
+   port and paths were never the problem), then because **ffmpeg was not
+   installed on the bench PC**. Probe verdicts depend on ffmpeg; `preflight`
+   exists for exactly this and should be run first next time.
+
+Retention arithmetic at the measured figure (`camctl size` basis, raw disk):
+
+| | 1 camera | 23 cameras (one store) |
+|---|---|---|
+| 16 TB raw at 1797 kbps | 742 days | **~34 days** |
+| 16 TB raw at H.265+ (~0.9 Mbps) | ~1,480 days | **~68 days** |
+
+So **16 TB per store clears the 30-day target at the measured bitrate**, but
+with under a week of margin at H.264 — one store with busier scenes eats it.
+The margin comes free by enabling H.265+ (the camera supports it), which was
+the open lever in #1b and is a settings change, not a purchase.
 
 ## Why #2 needs the raw captures
 
