@@ -3,7 +3,8 @@
 import { statfs } from "node:fs/promises";
 import { access, constants } from "node:fs/promises";
 import { toolVersion } from "./media.mjs";
-import { DEFAULT_PATHS, indexPathFor } from "./config.mjs";
+import { DEFAULT_PATHS, indexPathFor, checkStoreRoot } from "./config.mjs";
+import { loadConfig } from "./recorder-service.mjs";
 
 export async function preflight() {
   const checks = [];
@@ -15,8 +16,9 @@ export async function preflight() {
   const ffprobe = await toolVersion("ffprobe");
   add("ffprobe present", ffprobe !== null, ffprobe ?? "not found on PATH — install ffmpeg");
 
-  const major = Number(process.versions.node.split(".")[0]);
-  add("node >= 18", major >= 18, `node ${process.versions.node}`);
+  let hasSqlite = true;
+  try { await import("node:sqlite"); } catch { hasSqlite = false; }
+  add("node:sqlite available", hasSqlite, hasSqlite ? `node ${process.versions.node} at ${process.execPath}` : `node ${process.versions.node} has no node:sqlite: install the pinned Node major (setup/install.sh)`);
 
   add(
     "raw multicast permitted",
@@ -45,7 +47,9 @@ export async function preflight() {
   );
 
   const stateDir = process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
-  const storeRoots = (process.env.CAMPLAT_STORE_ROOTS ?? DEFAULT_PATHS.storeRoots.join(",")).split(",");
+  const config = await loadConfig(stateDir).catch((err) => { add("config readable", false, err.message); return null; });
+  if (config !== null) add("config readable", true, stateDir);
+  const storeRoots = config?.storeRoots ?? DEFAULT_PATHS.storeRoots;
   const indexPath = indexPathFor(stateDir);
   const indexOnStore = storeRoots.some((root) => indexPath.startsWith(root.trim()));
   add(
@@ -57,6 +61,8 @@ export async function preflight() {
   );
 
   for (const root of storeRoots) {
+    const mount = await checkStoreRoot(root.trim(), config?.allowUnmountedStores ? { requireMount: false } : {});
+    if (!mount.ok) { add(`store ${root.trim()}`, false, mount.reason); continue; }
     const stats = await statfs(root.trim()).catch(() => null);
     if (stats === null) {
       add(`store ${root.trim()}`, false, "not mounted");

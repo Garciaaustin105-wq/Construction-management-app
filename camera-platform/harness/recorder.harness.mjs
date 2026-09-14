@@ -235,4 +235,98 @@ check("XFS is mounted with a large allocsize — the anti-fragmentation setting"
   if (!XFS_MOUNT_OPTIONS.includes("noatime")) throw new Error("atime turns every read into a write");
 });
 
+// The appliance clock steps back (NTP correcting a dead RTC battery) and ffmpeg
+// names a new segment with a start time already on disk. POSIX rename replaces
+// the target without a word, so the old footage is gone and its index row now
+// describes a different file. Found by the Linux audit, 2026-09-14.
+await check("THE FEARED ONE: a clock step back never overwrites sealed footage", async () => {
+  const stepRoot = await mkdtemp(path.join(tmpdir(), "camplat-clockstep-"));
+  const stepIndex = openIndex(path.join(await mkdtemp(path.join(tmpdir(), "camplat-clockstep-state-")), "index.db"));
+  const stepEvents = [];
+  const stepCam = "cam-clock";
+  const wip = async (epochSeconds, bytes) => {
+    await mkdir(path.join(stepRoot, stepCam, INPROGRESS), { recursive: true });
+    await writeFile(path.join(stepRoot, stepCam, INPROGRESS, `${epochSeconds}.mp4`), Buffer.alloc(bytes));
+  };
+  const stepRec = createCameraRecorder({
+    root: stepRoot, cameraId: stepCam, url: "rtsp://u:p@10.0.0.8:554/x",
+    index: stepIndex, segmentSeconds: SEG, pollMs: 100_000, bitrateKbps: 2000,
+    spawnFn: fakeSpawn, onEvent: (e) => stepEvents.push(e),
+  });
+  await stepRec.start();
+  try {
+    await wip(T0, 1000);
+    await wip(T0 + SEG, 500);
+    await stepRec.poll();
+    const sealedRel = `${stepCam}/${T0 * 1000}.mp4`;
+    eq((await stat(path.join(stepRoot, sealedRel))).size, 1000, "the first segment sealed");
+
+    // The clock stepped back: a new recording carries the same start time.
+    await wip(T0, 2000);
+    await stepRec.poll();
+    eq((await stat(path.join(stepRoot, sealedRel))).size, 1000, "the sealed file on disk is the original");
+    eq(stepIndex.get(sealedRel)?.bytes, 1000, "the index row still describes the original");
+    const failed = stepEvents.filter((e) => e.kind === "seal_failed" && e.file === `${T0}.mp4`);
+    eq(failed.length, 1, "the collision is reported once");
+    const setAside = await readdir(path.join(stepRoot, QUARANTINE)).catch(() => []);
+    eq(setAside.length, 1, "the new recording is set aside, not destroyed");
+    eq((await stat(path.join(stepRoot, QUARANTINE, setAside[0]))).size, 2000, "and it is intact");
+    const left = await readdir(path.join(stepRoot, stepCam, INPROGRESS));
+    eq(left.includes(`${T0}.mp4`), false, "it no longer sits in .inprogress to fail on every poll");
+
+    await stepRec.poll();
+    eq(stepEvents.filter((e) => e.kind === "seal_failed").length, 1, "a later poll does not report it again");
+  } finally {
+    await stepRec.stop();
+    stepIndex.close();
+  }
+});
+
+// A child that fails to spawn (ffmpeg missing or not executable) emits 'error',
+// and may or may not emit 'exit' after it. With no 'error' listener Node throws,
+// which on the appliance takes down every camera's recorder at once.
+await check("THE FEARED ONE: ffmpeg failing to spawn is retried, never a crash, never two writers", async () => {
+  const spawned = [];
+  const script = [["error"], ["error", "exit"]];
+  let threw = null;
+  const failingSpawn = () => {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    const steps = script[spawned.length] ?? [];
+    spawned.push(child);
+    setImmediate(() => {
+      try {
+        for (const step of steps) {
+          if (step === "error") child.emit("error", Object.assign(new Error("spawn ffmpeg ENOENT rtsp://u:p@10.0.0.9/x"), { code: "ENOENT" }));
+          else child.emit("exit", null);
+        }
+      } catch (err) {
+        threw = err;
+      }
+    });
+    return child;
+  };
+  const failEvents = [];
+  // The shared index above is already closed by now; this check owns its own.
+  const failIndex = openIndex(path.join(await mkdtemp(path.join(tmpdir(), "camplat-nospawn-")), "index.db"));
+  const failing = createCameraRecorder({
+    root, cameraId: "cam-nospawn", url: "rtsp://u:p@10.0.0.9:554/x",
+    index: failIndex, segmentSeconds: SEG, pollMs: 100_000, spawnFn: failingSpawn, onEvent: (e) => failEvents.push(e),
+  });
+  await failing.start();
+  try {
+    await new Promise((r) => setTimeout(r, 4_500));
+    if (threw) throw new Error(`the spawn error was unhandled: ${threw.message}`);
+    eq(spawned.length, 3, "one relaunch per failure: error alone, then error followed by exit");
+    const failed = failEvents.filter((e) => e.kind === "spawn_failed");
+    eq(failed.length, 2, "each failure reported as spawn_failed");
+    if (failed.some((e) => String(e.error).includes(":p@"))) throw new Error("password leaked in spawn_failed");
+    if (failIndex.gapsFor("cam-nospawn").length === 0) throw new Error("no gap recorded for the time ffmpeg was down");
+  } finally {
+    await failing.stop();
+    failIndex.close();
+  }
+});
+
 report("recorder integration");

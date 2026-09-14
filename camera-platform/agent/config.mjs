@@ -37,6 +37,20 @@ export function indexPathFor(stateDir = DEFAULT_PATHS.stateDir) {
 }
 
 /**
+ * A recording drive must be a real mount point.
+ */
+
+export async function checkStoreRoot(root, { statFn = (p) => import("node:fs/promises").then((fs) => fs.stat(p)), requireMount = process.platform !== "win32" } = {}) {
+  let own;
+  try { own = await statFn(root); } catch (err) { return { ok: false, reason: `${root} does not exist or cannot be read (${err.code ?? err.message})` }; }
+  if (!requireMount) return { ok: true };
+  let parent;
+  try { parent = await statFn(path.dirname(root)); } catch (err) { return { ok: false, reason: `cannot read the parent of ${root} (${err.code ?? err.message})` }; }
+  if (own.dev === parent.dev) return { ok: false, reason: `${root} is not a mount point: its drive is not mounted, and recording there would fill the OS drive` };
+  return { ok: true };
+}
+
+/**
  * Assign cameras to drives, whole.
  *
  * Striping would mean one drive failure loses every camera's history. Assigned,

@@ -91,6 +91,15 @@ export async function sealSegment(root, cameraId, wipFilename) {
   const relative = segmentPathFor(cameraId, startMs);
   const to = path.join(root, relative);
 
+  const taken = await stat(to).then(() => true, (err) => { if (err.code === "ENOENT") return false; throw err; });
+  if (taken) {
+    const name = `${cameraId}_${Date.now()}_${wipFilename}`;
+    await mkdir(path.join(root, QUARANTINE), { recursive: true });
+    await rename(from, path.join(root, QUARANTINE, name));
+    const err = new Error(`a sealed segment already exists at ${relative}; the new recording was set aside as ${QUARANTINE}/${name}`);
+    err.code = "SEAL_COLLISION";
+    throw err;
+  }
   await rename(from, to);
   const info = await stat(to);
   return { path: relative, bytes: info.size, startMs };

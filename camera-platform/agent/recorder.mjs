@@ -183,14 +183,18 @@ export function createCameraRecorder({
 
     child?.stderr?.on("data", (d) => onEvent({ kind: "stderr", cameraId, text: redactRtspUrl(String(d)) }));
 
-    child?.once?.("exit", (code) => {
-      if (stopped) return;
+    let handled = false;
+    const wentDown = (event) => {
+      if (stopped || handled) return;
+      handled = true;
       downSince = Date.now();
-      onEvent({ kind: "exited", cameraId, code });
+      onEvent(event);
       // A camera that drops comes back. Restart, and the gap is recorded above
       // when it does — a reboot loop should still leave an honest timeline.
       setTimeout(launch, 2000);
-    });
+    };
+    child?.on?.("error", (err) => wentDown({ kind: "spawn_failed", cameraId, error: redactRtspUrl(String(err?.message ?? err)) }));
+    child?.once?.("exit", (code) => wentDown({ kind: "exited", cameraId, code }));
   }
 
   return {

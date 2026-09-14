@@ -12,7 +12,7 @@ import { openIndex } from "./segindex.mjs";
 import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, INPROGRESS } from "./segstore.mjs";
 import { createCameraRecorder } from "./recorder.mjs";
 import { planEvictionScalable } from "./evict.mjs";
-import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives } from "./config.mjs";
+import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives, checkStoreRoot } from "./config.mjs";
 import { planRecovery } from "../dist/recovery.js";
 import { bytesToFreeFor } from "../dist/eviction.js";
 import { computeRetentionDays, usableBytesFromRaw } from "../dist/retention.js";
@@ -57,9 +57,10 @@ export function resolveCameraUrl(camera, credentials) {
 
 export async function loadConfig(stateDir) {
   const file = path.join(stateDir, "config.json");
-  const raw = await readFile(file, "utf8").catch(() => null);
+  const raw = await readFile(file, "utf8").catch((err) => { if (err.code === "ENOENT") return null; throw new Error(`cannot read ${file}: ${err.code ?? err.message}`); });
   if (raw === null) throw new Error(`no config at ${file} — the appliance has not been commissioned`);
-  const config = JSON.parse(raw);
+  let config;
+  try { config = JSON.parse(raw); } catch (err) { throw new Error(`${file} is not valid JSON: ${err.message}`); }
   if (!Array.isArray(config.cameras) || config.cameras.length === 0) {
     throw new Error("config has no cameras");
   }
@@ -70,6 +71,7 @@ export async function loadConfig(stateDir) {
     storeRoots: config.storeRoots ?? DEFAULT_PATHS.storeRoots,
     segmentSeconds: config.segmentSeconds ?? 60,
     retentionTargetDays: config.retentionTargetDays ?? 30,
+    allowUnmountedStores: config.allowUnmountedStores === true,
   };
 }
 
@@ -84,10 +86,15 @@ export async function runRecovery(index, storeRoots) {
   const summary = { confirmed: 0, corrected: 0, partials: 0, adopted: 0, dropped: 0, quarantined: 0, lost: 0 };
   const boundary = new Date().toISOString();
 
+  const scans = [];
   for (const root of storeRoots) {
     const scan = await scanDisk(root);
-    const onDisk = [...scan.sealed, ...scan.inProgress];
-    const indexed = index.all().filter((s) => onDisk.some((f) => f.path === s.path) || s.path.startsWith(""));
+    scans.push([...scan.sealed, ...scan.inProgress]);
+  }
+  for (let i = 0; i < storeRoots.length; i++) {
+    const root = storeRoots[i];
+    const onDisk = scans[i];
+    const indexed = index.all().filter((s) => onDisk.some((f) => f.path === s.path) || (i === 0 && !scans.some(arr => arr.some(f => f.path === s.path))));
     const plan = planRecovery(indexed, onDisk, boundary);
 
     const applied = await applyRecovery(root, plan);
@@ -153,17 +160,40 @@ function currentRetention(index, cameras) {
   return bitrates;
 }
 
-export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, now = () => new Date() } = {}) {
+export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeCheck, now = () => new Date() } = {}) {
   const config = await loadConfig(stateDir);
   await mkdir(stateDir, { recursive: true });
   const index = openIndex(indexPathFor(stateDir));
   log("info", "starting", { siteId: config.siteId, cameras: config.cameras.length });
 
+  const checkRoot = storeCheck ?? ((root) => checkStoreRoot(root, config.allowUnmountedStores ? { requireMount: false } : {}));
+  const storeRoots = [];
+  const refusedRoots = [];
+  for (const root of config.storeRoots) {
+    const verdict = await checkRoot(root);
+    if (verdict.ok) {
+      storeRoots.push(root);
+    } else {
+      refusedRoots.push({ root, reason: verdict.reason });
+      log("error", "store root refused", { root, reason: verdict.reason });
+    }
+  }
+  if (storeRoots.length === 0) {
+    index.close();
+    throw new Error(`no usable recording drive: ${refusedRoots.map((r) => r.reason).join("; ")}`);
+  }
   // Recover before a single recorder starts — see the note at the top.
-  const recovered = await runRecovery(index, config.storeRoots);
-  log("info", "recovery complete", recovered);
+  // A refused drive hides its files, so recovery would write them off as lost.
+  let recovered;
+  if (refusedRoots.length === 0) {
+    recovered = await runRecovery(index, storeRoots);
+    log("info", "recovery complete", recovered);
+  } else {
+    recovered = { skipped: true, reason: "a recording drive is not available" };
+    log("warn", "recovery skipped", { refused: refusedRoots.map((r) => r.root) });
+  }
 
-  const assignment = assignCamerasToDrives(config.cameras.map((c) => c.cameraId), config.storeRoots.length);
+  const assignment = assignCamerasToDrives(config.cameras.map((c) => c.cameraId), storeRoots.length);
   const recorders = [];
   const unresolved = [];
 
@@ -174,7 +204,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, now = 
       log("error", "camera unresolved", { cameraId: camera.cameraId, reason: resolved.reason });
       continue;
     }
-    const root = config.storeRoots[assignment.get(camera.cameraId) ?? 0];
+    const root = storeRoots[assignment.get(camera.cameraId) ?? 0];
     await ensureCameraDirs(root, camera.cameraId);
 
     const recorder = createCameraRecorder({
@@ -186,9 +216,10 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, now = 
       bitrateKbps: typeof camera.bitrateKbps === "number" ? camera.bitrateKbps : null,
       spawnFn,
       onEvent: (e) => {
-        if (e.kind === "sealed" || e.kind === "started" || e.kind === "exited" || e.kind === "gap_recorded") {
-          log(e.kind === "exited" ? "warn" : "info", e.kind, { cameraId: e.cameraId, count: e.count, code: e.code });
-        }
+        if (e.kind === "stderr") return;
+        const level = e.kind === "spawn_failed" || e.kind === "seal_failed" ? "error"
+          : e.kind === "exited" ? "warn" : "info";
+        log(level, e.kind, { cameraId: e.cameraId, count: e.count, code: e.code, file: e.file, error: e.error });
       },
     });
     await recorder.start();
@@ -196,12 +227,12 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, now = 
   }
 
   const evictionTimer = setInterval(() => {
-    runEviction(index, config.storeRoots, log).catch((err) => log("error", "eviction failed", { err: err.message }));
+    runEviction(index, storeRoots, log).catch((err) => log("error", "eviction failed", { err: err.message }));
   }, EVICTION_INTERVAL_MS);
 
   const healthTimer = setInterval(async () => {
     const disks = [];
-    for (const root of config.storeRoots) {
+    for (const root of storeRoots) {
       const usage = await diskUsage(root).catch(() => null);
       if (usage) disks.push({ root, ...usage });
     }
@@ -221,7 +252,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, now = 
       retentionDays: retention.kind === "ok" ? retention.days : null,
       retentionRefused: retention.kind === "refused" ? retention.message : null,
     };
-    await writeFile(path.join(stateDir, "health.json"), JSON.stringify(health, null, 2)).catch(() => {});
+    await writeFile(path.join(stateDir, "health.json"), JSON.stringify(health, null, 2)).catch((err) => log("error", "health write failed", { err: err.message }));
   }, HEALTH_INTERVAL_MS);
 
   const stop = async () => {
@@ -232,7 +263,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, now = 
     log("info", "stopped", {});
   };
 
-  return { stop, recorders, index, config, unresolved, recovered };
+  return { stop, recorders, index, config, unresolved, recovered, refusedRoots };
 }
 
 // Only run when executed directly, so tests can import the pieces.
