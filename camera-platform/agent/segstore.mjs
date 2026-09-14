@@ -14,6 +14,7 @@
  */
 import { readdir, stat, rename, unlink, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { wipStartMs } from "./wipNames.mjs";
 
 export const INPROGRESS = ".inprogress";
 export const QUARANTINE = ".quarantine";
@@ -75,16 +76,17 @@ export async function scanDisk(root) {
 /**
  * Move a completed in-progress file to its sealed name.
  *
- * ffmpeg's segment muxer names by epoch SECONDS (`%s`); the index keys on
- * milliseconds, so the rename is also the unit conversion. Doing it here, once,
- * is why nothing downstream has to remember which unit a filename carries.
+ * In-progress names carry their start time — ffmpeg's `%s` epoch seconds on the
+ * Linux appliance, the bench format on Windows (see wipNames.mjs). The index
+ * keys on milliseconds, so the rename is also the unit conversion. Doing it
+ * here, once, is why nothing downstream has to remember which unit a filename
+ * carries.
  */
 export async function sealSegment(root, cameraId, wipFilename) {
-  const epochSeconds = Number(path.basename(wipFilename, ".mp4"));
-  if (!Number.isSafeInteger(epochSeconds) || epochSeconds <= 0) {
-    throw new Error(`in-progress filename is not epoch seconds: ${wipFilename}`);
+  const startMs = wipStartMs(path.basename(wipFilename, ".mp4"));
+  if (!Number.isSafeInteger(startMs) || startMs <= 0) {
+    throw new Error(`in-progress filename is not a start time: ${wipFilename}`);
   }
-  const startMs = epochSeconds * 1000;
   const from = path.join(root, cameraId, INPROGRESS, wipFilename);
   const relative = segmentPathFor(cameraId, startMs);
   const to = path.join(root, relative);

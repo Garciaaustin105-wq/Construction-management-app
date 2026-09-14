@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DeviceCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<SysCap>
+<isSupportDst>true</isSupportDst>
+<NetworkCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<isSupportWireless>false</isSupportWireless>
+<isSupportPPPoE>false</isSupportPPPoE>
+<isSupportBond>false</isSupportBond>
+<isSupport802_1x>true</isSupport802_1x>
+<isSupportNtp>true</isSupportNtp>
+<isSupportFtp>true</isSupportFtp>
+<isSupportUpnp>true</isSupportUpnp>
+<isSupportDdns>true</isSupportDdns>
+<isSupportHttps>true</isSupportHttps>
+<SnmpCap>
+<isSupport>false</isSupport>
+</SnmpCap>
+<isSupportExtNetCfg>false</isSupportExtNetCfg>
+<isSupportIPFilter>true</isSupportIPFilter>
+<isSupportEZVIZ>true</isSupportEZVIZ>
+<isSupportEhome>false</isSupportEhome>
+<isSupportWirelessDial>false</isSupportWirelessDial>
+<isSupportWirelessServer>false</isSupportWirelessServer>
+<isSupportWPS>false</isSupportWPS>
+<isWirelessMutexWithWirelessServer>false</isWirelessMutexWithWirelessServer>
+<verificationCode max="12" >(null)</verificationCode>
+<VerificationCodeModification>
+<verificationCodeType opt="normal,empty">empty</verificationCodeType>
+<isSupportDeclarationURL>true</isSupportDeclarationURL>
+<supportPrivacyPolicyURL>true</supportPrivacyPolicyURL>
+<verificationCodeModify opt="true,false">false</verificationCodeModify>
+<Hyperlinks>
+<declarationURL>https://www.hik-connect.com/views/terms/termsofservice.html</declarationURL>
+<privacyPolicyURL>https://www.hik-connect.com/views/terms/privacypolicy.html</privacyPolicyURL>
+</Hyperlinks>
+</VerificationCodeModification>
+<isSupportIntegrate>true</isSupportIntegrate>
+<isSupportEmailEncrypt>true</isSupportEmailEncrypt>
+<isSupportDynamicHostName>true</isSupportDynamicHostName>
+</NetworkCap>
+<IOCap  version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<IOInputPortNums>0</IOInputPortNums>
+<IOOutputPortNums>0</IOOutputPortNums>
+<isSupportStrobeLamp>false</isSupportStrobeLamp>
+</IOCap>
+<SerialCap  version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<rs485PortNums>0</rs485PortNums>
+<supportRS232Config>true</supportRS232Config>
+<rs422PortNums>0</rs422PortNums>
+<rs232PortNums>1</rs232PortNums>
+</SerialCap>
+<VideoCap  version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<videoInputPortNums>0</videoInputPortNums>
+<videoOutputPortNums>0</videoOutputPortNums>
+<isSupportHeatmap>false</isSupportHeatmap>
+<isSupportCounting>false</isSupportCounting>
+<isSupportPicture>false</isSupportPicture>
+</VideoCap>
+<AudioCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<audioInputNums>1</audioInputNums>
+<audioOutputNums>0</audioOutputNums>
+</AudioCap>
+<isSupportExternalDevice>false</isSupportExternalDevice>
+<isSupportDiagnosedData>true</isSupportDiagnosedData>
+</SysCap>
+<voicetalkNums>0</voicetalkNums>
+<isSupportSnapshot>true</isSupportSnapshot>
+<SecurityCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<supportUserNums>32</supportUserNums>
+<userBondIpNums>0</userBondIpNums>
+<userBondMacNums>0</userBondMacNums>
+<isSupCertificate>true</isSupCertificate>
+<issupIllegalLoginLock>true</issupIllegalLoginLock>
+<isSupportOnlineUser>true</isSupportOnlineUser>
+<isSupportAnonymous>false</isSupportAnonymous>
+<isSupportStreamEncryption>false</isSupportStreamEncryption>
+<securityVersion opt="1"/>
+<keyIterateNum>100</keyIterateNum>
+<isSupportUserCheck>true</isSupportUserCheck>
+<isSupportSecurityQuestionConfig>true</isSupportSecurityQuestionConfig>
+<supportSecurityNode opt="wirelessServer"/>
+<SecurityLimits>
+<LoginPasswordLenLimit min="1" max="16"/>
+<SecurityAnswerLenLimit min="1" max="128"/>
+</SecurityLimits>
+<RSAKeyLength opt="1024,2048" def="1024"/>
+<isSupportONVIFUserManagement>true</isSupportONVIFUserManagement>
+<WebCertificateCap>
+<CertificateType opt="digest,digest/basic"/>
+<SecurityAlgorithm>
+<algorithmType opt="MD5,SHA256,MD5/SHA256"/>
+</SecurityAlgorithm>
+</WebCertificateCap>
+<isSupportConfigFileImport>true</isSupportConfigFileImport>
+<isSupportConfigFileExport>true</isSupportConfigFileExport>
+<cfgFileSecretKeyLenLimit min="1" max="16"/>
+<isIrreversible>true</isIrreversible>
+<salt>a0256921a4b901da5fa67aeb1d74fcd60366c899f32a6d4e906d7538b62b33a5</salt>
+<isSupportSecurityEmail>true</isSupportSecurityEmail>
+<isSupportOnvifInfo>true</isSupportOnvifInfo>
+<isSupportDeviceSelfSignCertExport>true</isSupportDeviceSelfSignCertExport>
+<isSupportEncryptCertificate>true</isSupportEncryptCertificate>
+<maxIllegalLoginTimes min="3" max="20" default="7"/>
+<maxIllegalLoginLockTime min="1" max="120" default="30"/>
+</SecurityCap>
+<EventCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<isSupportHDFull>false</isSupportHDFull>
+<isSupportHDError>true</isSupportHDError>
+<isSupportNicBroken>true</isSupportNicBroken>
+<isSupportIpConflict>true</isSupportIpConflict>
+<isSupportIllAccess>true</isSupportIllAccess>
+<isSupportViException>false</isSupportViException>
+<isSupportViMismatch>false</isSupportViMismatch>
+<isSupportRecordException>false</isSupportRecordException>
+<isSupportTriggerFocus>false</isSupportTriggerFocus>
+<isSupportMotionDetection>true</isSupportMotionDetection>
+<isSupportVideoLoss>false</isSupportVideoLoss>
+<isSupportTamperDetection>true</isSupportTamperDetection>
+</EventCap>
+<RacmCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<pictureSearchType opt="CMR,MOTION"/>
+<recordSearchType opt="CMR,MOTION,EDR,AllEvent"/>
+<SecurityLog>
+<isSupportSecurityLog>true</isSupportSecurityLog>
+<isSupportLogServer>true</isSupportLogServer>
+<isSupportLogServerTest>true</isSupportLogServerTest>
+<SecurityLogTypeList>
+<SecurityLogType>
+<primaryType>All</primaryType>
+<secondaryType opt="all"/>
+</SecurityLogType>
+<SecurityLogType>
+<primaryType>Operation</primaryType>
+<secondaryType opt="all,alarmSmsSend,callOnline,devicePowerOff,devicePowerOn,deviceRecycle,localAddIpc,localAddNas,localUserManagement,localCfgSecurity,localCfgNetwork,localCfgTime,localCfgPara,localCtrlPtz,localDelIpc,localDelNas,localDial,localDialParaSet,localDialScheduleSet,localDownloadCfgFile,localDownloadCountingFile,localDownloadHeatMapFile,localDownloadPicFile,localDownloadRecFile,localExportBlackWhiteListFile,localExportIpcCfg,localFormatDisk,localHdTest,localImportBlackWhiteListFile,localImportIpcCfg,localIpcUpgrade,localLock,localLockFile,localLogOut,localLogin,localManulAlarm,localPin,localPlayByFile,localPlayByTime,localResetPasswd,localSetIpc,localSetNas,localSetSIPServer,localSetSnmp,localSmsRead,localSmsSearch,localSmsSend,localSpareOperate,localStartPicRec,localStartRec,localStopPicRec,localStopRec,localTagOperation,localUnlock,localUnlockFile,localUpdate,localUploadCfgFile,localWhitelistSet,platOper,remoteAddIpc,remoteAddNas,remoteArm,remotecfgauditpolicy,remoteUserManagement,remoteCfgSecurity,remoteCfgNetwork,remoteCfgTime,remoteCfgPara,remoteCreateCloudStoragePool,remoteCtrlPtz,remoteDelHdisk,remoteDelIpc,remoteDelNas,remoteDeleteCloudStoragePool,remoteDeletePic,remoteDeleteRecord,remoteDialConnect,remoteDialDisconn,remoteDialParaSet,remoteDialScheduleSet,remoteDisArm,remoteDisableCloudStorage,remoteDownloadCfgFile,remoteDownloadRecFile,remoteEnableCloudStorage,remoteExportBlackWhiteListFile,remoteExportIpcCfg,remoteFormatHd,remoteGetParaSecurity,remoteGetParaNetwork,remoteGetPara,remoteGetStatus,remoteImportBlackWhiteListFile,VcaLibRestore,remoteImportIpcCfg,remoteLoadHdisk,remoteLockFile,remoteLogin,remoteLogout,remoteManulAlarm,remoteModCloudStorageParam,remoteModCloudStorageVolume,remotePicBackUp,remotePin,remotePlayByFile,remotePlayByTime,remotePowerOff,remotePowerRecycle,remoteSetIpc,remoteSetNas,remoteSetSIPServer,remoteSetSnmp,remoteSmsRead,remoteSmsSearch,remoteSmsSend,remoteSpareOperate,remoteStartPicRec,remoteStartRec,remoteStartTransChan,remoteStopPicRec,remoteStopRec,remoteStopTransChan,remoteTagOperation,remoteUnloadHdisk,remoteUnlockFile,remoteUpgrade,remoteUploadCfgFile,remoteWhitelistSet,remotelIpcUpgrade,smsControl,smsRecv,startVoiceTalk,stopAbnormal,stopVoiceTalk,localSetDeviceActive,localParamSimpleDefault,localParamFactoryDefault,remoteSetDeviceActive,remoteParamSimpleDefault,remoteParamFactoryDefault,localWPSLink,remoteWPSLink,localResetLoginPassWord,remoteResetLoginPassWord,localfaceBaseCreate,localfaceBaseModify,localfaceBaseDelete,localfaceDataAppend,localfaceDataEdit,localfaceDataDelete,localVcaAnalysisConfig,remotefaceBaseCreate,remotefaceBaseModify,remotefaceBaseDelete,remotefaceDataAppend,remotefaceDataEdit,remotefaceDataDelete,remoteVcaAnalysisConfig,localClusterNetworkConfig,localClusterAddDevice,localClusterDelDevice,remoteClusterNetworkConfig,remoteClusterAddDevice,remoteClusterDelDevice,localSetPoeWorkMode,remoteSetPoeWorkMode,localClusterModeConfig,remoteClusterModeConfig,localIOTCfgFileInput,localIOTCfgFileOutput,localIOTAdd,localIOTDelete,localIOTSet,remoteIOTCfgFileInput,remoteIOTCfgFileOutput,remoteIOTAdd,remoteIOTDelete,remoteIOTSet,localCheckTime,remoteCheckTime,remoteFaceContrastTask,unlockSession,terminateHttp,terminateHttps,terminateSSH,selfTest"/>
+</SecurityLogType>
+<SecurityLogType>
+<primaryType>Event</primaryType>
+<secondaryType opt="all,anrRecordException,dialException,hdError,hdFull,illlegealAccess,ipConflict,ipcDisconnect,ipcIpConfilict,ipcmCrash,netBroken,poePowerException,recordError,recordOverFLow,spareException,startIpcMasException,uploadDataCsException,viAndResMismatch,videoException,videoFormatMismatch,videoLost,syncIPCPasswd,ezvizOffline,SDCardAbnormal,SDCardDamage,plateAbnormal,abnormalPort,POC,vcaCameraAngleAnomaly,dataDiskError,intelligentSystemRunningError,facesnapResolutionOverflow,SMDResolutionOverflow,clusterConfigFailed,clusterStorFullException,clusterOfflineNodeException,clusterRecordCycleException,clusterIPCTransferException,vcaSenceException,ClusterDeviceOffline,clusterDisasterToleranceExcept,clusterVersionException,getSubStreamFailure,locked,hddSHMDetectException,safetyHelmetException,faceModelException,validateCert,establishSecSession,replayAttacks,ntpCheckTime,lowAuditLogStorage,httpConnect,httpsConnect,sshConnect,httpDisconnect,httpsDisconnect,sshDisconnect"/>
+</SecurityLogType>
+<SecurityLogType>
+<primaryType>Other</primaryType>
+<secondaryType opt="all"/>
+</SecurityLogType>
+</SecurityLogTypeList>
+</SecurityLog>
+<isSupportRacmChannelsCap opt="true,false">true</isSupportRacmChannelsCap>
+</RacmCap>
+<SmartCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<isSupportROI>true</isSupportROI>
+<isSupportFaceDetect>false</isSupportFaceDetect>
+<isSupportDefocusDetection>false</isSupportDefocusDetection>
+<isSupportAudioDetection>false</isSupportAudioDetection>
+<isSupportSceneChangeDetection>false</isSupportSceneChangeDetection>
+<isSupportStorageDetection>false</isSupportStorageDetection>
+</SmartCap>
+<WLAlarmCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<isSupportTeleControl>false</isSupportTeleControl>
+<isSupportPIR>false</isSupportPIR>
+<isSupportWLSensors>false</isSupportWLSensors>
+<isSupportCallHelp>false</isSupportCallHelp>
+<WLSensorsNum>8</WLSensorsNum>
+</WLAlarmCap>
+<isSupportGIS>false</isSupportGIS>
+<isSupportCompass>false</isSupportCompass>
+<isSupportRoadInfoOverlays>false</isSupportRoadInfoOverlays>
+<TestCap version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<isSupportFTPTest>true</isSupportFTPTest>
+<isSupportPingTest>true</isSupportPingTest>
+<isSupportNTPTest>true</isSupportNTPTest>
+<isSupportNASTest>true</isSupportNASTest>
+<isSupportEmailTest>true</isSupportEmailTest>
+</TestCap>
+<isSupportRemoveStorage>false</isSupportRemoveStorage>
+<isSupportFirmwareVersionInfo>true</isSupportFirmwareVersionInfo>
+<isSupportConvergenceCloud>true</isSupportConvergenceCloud>
+<isSupportAutoMaintenance>true</isSupportAutoMaintenance>
+<isSupportSIMCardStatus>false</isSupportSIMCardStatus>
+</DeviceCap>

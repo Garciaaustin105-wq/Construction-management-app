@@ -187,6 +187,44 @@ MAC `08-54-11-5d-7e-70`, SN ECI-T24F220230615AAWRAC4440853. Bench: one camera on
 a PoE switch, PC cabled to the same switch (wired NIC statically 192.168.1.50/24
 at bench time).
 
+### Recorder end-to-end (same session)
+
+The A1 recorder ran against the live camera from `C:\camplat-bench\state\config.json`
+(store root `C:\camplat-bench\disk0`, 30 s segments): RTSP → copy-mux → WIP →
+sealed `<epochMs>.mp4` → index → `/timeline` → review UI. Findings in the order
+they bit:
+
+1. **Audio on (G.711ulaw) produces ZERO recording.** The probe refused and the
+   same would hit the recorder: the MP4 copy-mux rejects the audio track. USER
+   CORRECTION: **stores run audio ON** — the legally-gated audio-off default
+   must become a per-site option, and the recorder must handle a G.711 track
+   (transcode or muxer choice) before fleet rollout. Open on the bus
+   (bench-audio-on-breaks-copy-mux).
+2. **Quality level, not the VBR cap, is the spend knob.** Same camera, same cap
+   (6144): quality 60 → 1737 kbps; quality 100 → 5198 kbps. 16 cams on 16 TB:
+   ~48 days at 60, **~18 days at 100 — fails the 30-day target**. Fleet recipe:
+   VBR, quality ~60, cap 6144. (bench-quality-level-drives-bitrate)
+3. **Full ISAPI settings inventory captured** in `bench-isapi/` (device info,
+   both streams, image pipeline, smart codec, time). Sub stream 102 = 640×360
+   H.264 @ 1024 kbps — right size for the live grid. Some trees 403 for admin.
+4. **Camera clock was epoch-0**: NTP mode with no NTP server on the isolated
+   LAN. The appliance must SERVE NTP to the cameras — add to commissioning.
+5. **ffmpeg `%s` (epoch-seconds segment naming) does not exist on Windows**
+   (Microsoft CRT): the recorder crash-looped with `Failed to open segment ''`
+   before any recording. Fix: `agent/wipNames.mjs` — the Linux appliance keeps
+   `%s` untouched; win32 bench names WIP files `%Y%m%dT%H%M%S` (local wall
+   time), parsed by `wipStartMs`/`wipCompare` everywhere. Sealed names and the
+   recovery contract are unchanged. (bench-win32-strftime-s-breaks-segment-naming)
+6. **Recovery quarantined the 7 stale WIP files** from the crash-loop rather
+   than sealing them (it cannot parse bench-format names — item 5's fix covered
+   recording, not recovery). They remain in `.quarantine/`. Linux appliances
+   never see this; noted as a bench-only wart.
+
+Store size corrected mid-session: **16 cameras per store** (was 23 in the plan
+tables). Retention at the fleet recipe (1737 kbps measured): 2× 8 TB ≈ 48 d.
+
+### Discovery and probe (earlier in the session)
+
 What the session proved, in order:
 
 1. **Discovery works on real hardware**, in two states: activated (camera had a

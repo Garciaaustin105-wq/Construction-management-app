@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DeviceInfo version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<deviceName>IP CAMERA</deviceName>
+<deviceID>f78d8000-0116-11b4-8267-0854115d7e70</deviceID>
+<deviceDescription>IPCamera</deviceDescription>
+<deviceLocation>hangzhou</deviceLocation>
+<systemContact>Hikvision.China</systemContact>
+<model>ECI-T24F2</model>
+<serialNumber>ECI-T24F220230615AAWRAC4440853</serialNumber>
+<macAddress>08:54:11:5d:7e:70</macAddress>
+<firmwareVersion>V5.7.1</firmwareVersion>
+<firmwareReleasedDate>build 220609</firmwareReleasedDate>
+<encoderVersion>V7.3</encoderVersion>
+<encoderReleasedDate>build 211124</encoderReleasedDate>
+<bootVersion>V1.3.4</bootVersion>
+<bootReleasedDate>100316</bootReleasedDate>
+<hardwareVersion>0x0</hardwareVersion>
+<deviceType>IPCamera</deviceType>
+<telecontrolID>88</telecontrolID>
+<supportBeep>false</supportBeep>
+<supportVideoLoss>false</supportVideoLoss>
+<firmwareVersionInfo>C-R-E8-0</firmwareVersionInfo>
+<manufacturer>hikvision</manufacturer>
+<subSerialNumber>AC4440853</subSerialNumber>
+<OEMCode>0</OEMCode>
+<customizedInfo>PJ14PC20220530226</customizedInfo>
+</DeviceInfo>

@@ -22,6 +22,7 @@ import { spawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { ensureCameraDirs, sealSegment, INPROGRESS } from "./segstore.mjs";
+import { wipPattern, wipCompare, wipStartMs } from "./wipNames.mjs";
 import { redactRtspUrl } from "../dist/rtsp.js";
 
 /**
@@ -73,7 +74,7 @@ export function ffmpegArgs(url, outputPattern, segmentSeconds = 60) {
     // writes keeps the platter doing sequential work.
     "-flush_packets", "0",
     "-max_muxing_queue_size", "1024",
-    outputPattern,                     // .../<cameraId>/.inprogress/%s.mp4
+    outputPattern,                     // .../<cameraId>/.inprogress/<wip pattern>
   ];
 }
 
@@ -112,9 +113,9 @@ export function createCameraRecorder({
     }
     if (files.length === 0) return;
 
-    // Names are epoch seconds, so lexical order is chronological once padded;
-    // sort numerically to be safe about width changes.
-    files.sort((a, b) => Number(path.basename(a, ".mp4")) - Number(path.basename(b, ".mp4")));
+    // Names carry their start time (%s epoch seconds on the appliance; the
+    // bench format on Windows — see wipNames.mjs), so sort by parsed time.
+    files.sort((a, b) => wipCompare(path.basename(a, ".mp4"), path.basename(b, ".mp4")));
 
     // The newest file is still being written. Everything before it is complete.
     const open = files[files.length - 1];
@@ -146,7 +147,7 @@ export function createCameraRecorder({
 
     // Record the open one so a crash leaves the index knowing it existed.
     if (open !== lastSeenOpen) {
-      const startMs = Number(path.basename(open, ".mp4")) * 1000;
+      const startMs = wipStartMs(path.basename(open, ".mp4"));
       index.put({
         cameraId,
         startUtc: new Date(startMs).toISOString(),
@@ -165,7 +166,7 @@ export function createCameraRecorder({
 
   function launch() {
     if (stopped) return;
-    const outputPattern = path.join(root, cameraId, INPROGRESS, "%s.mp4");
+    const outputPattern = path.join(root, cameraId, INPROGRESS, wipPattern());
     child = spawnFn("ffmpeg", ffmpegArgs(url, outputPattern, segmentSeconds));
     onEvent({ kind: "started", cameraId, url: redactRtspUrl(url) });
 
