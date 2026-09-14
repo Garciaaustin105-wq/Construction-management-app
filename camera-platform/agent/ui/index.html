@@ -199,6 +199,7 @@ function connect(t, quality) {
 
   t.quality = quality;
   t.retryMainstream = false; // one automatic substream->mainstream fallback per connection
+  t.appendSeen = false; // stage reporting: MSE accepted its first segment
   t.codecMime = null;
   t.pending = [];
   t.appendQueued = false;
@@ -291,11 +292,20 @@ function handleInit(t, initSegment) {
   }
   t.codecMime = codec.mime;
   t.pending = [initSegment];
+  // Stage reporting: 'waiting for the first frame' is what the tile says at
+  // socket open, so init reaching this far must be visible in the status line
+  // too — otherwise a stuck player and a live one are indistinguishable.
+  setStatus(tile, 'init ok (' + codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + '), opening player…');
 
   const ms = new MediaSource();
   t.mediaSource = ms;
   t.objectUrl = URL.createObjectURL(ms);
   video.src = t.objectUrl;
+  video.addEventListener('playing', () => setStatus(tile, 'live'), { once: true });
+  video.addEventListener('error', () => {
+    const code = video.error ? video.error.code : 0;
+    setStatus(tile, 'video element error ' + code + ' (1 aborted, 2 network, 3 decode, 4 src not supported)', 'problem');
+  }, { once: true });
 
   ms.addEventListener('sourceopen', () => {
     if (!t.socket || t.mediaSource !== ms) return; // connection changed mid-open
@@ -304,6 +314,12 @@ function handleInit(t, initSegment) {
     t.sourceBuffer = sb;
     sb.addEventListener('updateend', () => {
       if (t.sourceBuffer !== sb) return;
+      // First completed append: MSE accepted a segment. From here playback is
+      // the video element's business — distinguishable from 'playing' below.
+      if (!t.appendSeen) {
+        t.appendSeen = true;
+        setStatus(tile, 'buffering…');
+      }
       // Evict from the start once the live window exceeds ~20 s: a viewer of a
       // live grid never rewinds, and unbounded buffering grows forever.
       try {
@@ -335,8 +351,10 @@ function pumpAppend(t) {
     t.sourceBuffer.appendBuffer(seg);
   } catch {
     // A mid-stream decode failure poisons the buffer; the close that follows
-    // (server side or watchdog) surfaces through onclose.
+    // (server side or watchdog) surfaces through onclose. Say so in the tile:
+    // a silently poisoned buffer would look exactly like a stalled stream.
     t.appendQueued = false;
+    setStatus(t.tile, 'player rejected a stream segment', 'problem');
   }
 }
 
