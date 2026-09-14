@@ -248,6 +248,8 @@ Every item was checked by reading the code. The first was also reproduced.
   Per-service watchdog needs `Type=notify` and a ping from the health timer.
   Don't add `WatchdogSec` without both, or systemd will kill a healthy recorder
   every interval. Confirm with `wdctl` in stage 3.
+  Design: HEALTH-ALERTS-DESIGN.md (alerts contract, a stale-file restart
+  first, `Type=notify` only if that proves too slow; where alerts go is D7).
 - **L19. QuickSync drivers aren't installed.** The installer doesn't install
   `intel-media-va-driver` or `vainfo`, and a `/dev/dri` node existing doesn't
   prove decode works. This only matters for detection (Phase D). Note it now;
