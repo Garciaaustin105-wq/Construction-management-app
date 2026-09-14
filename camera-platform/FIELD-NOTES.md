@@ -207,14 +207,17 @@ What the session proved, in order:
 
 Retention arithmetic at the measured figure (`camctl size` basis, raw disk):
 
-| | 1 camera | 23 cameras (one store) |
+| | 1 camera | 16 cameras (one store) |
 |---|---|---|
-| 16 TB raw at 1797 kbps | 742 days | **~34 days** |
-| 16 TB raw at H.265+ (~0.9 Mbps) | ~1,480 days | **~68 days** |
+| 16 TB raw at 1797 kbps | 742 days | **~46 days** |
+| 16 TB raw at H.265+ (~0.9 Mbps) | ~1,480 days | **~93 days** |
 
-So **16 TB per store clears the 30-day target at the measured bitrate**, but
-with under a week of margin at H.264 — one store with busier scenes eats it.
-The margin comes free by enabling H.265+ (the camera supports it), which was
+(Store size corrected 2026-09-13: 16 cameras per store, not the 23 assumed in
+the plan tables.)
+
+So **16 TB per store clears the 30-day target at the measured bitrate with
+~50% headroom** — a store with busier scenes spends some of it. The rest of the
+margin comes free by enabling H.265+ (the camera supports it), which was
 the open lever in #1b and is a settings change, not a purchase.
 
 ## Why #2 needs the raw captures
