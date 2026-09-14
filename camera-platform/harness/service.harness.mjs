@@ -2,6 +2,7 @@
  *  partial from the last power cut is indistinguishable from the file being
  *  written right now. */
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import { mkdtemp, writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import { resolveCameraUrl, loadConfig, runRecovery, start, audit } from "../agen
 import { openIndex } from "../agent/segindex.mjs";
 import { indexPathFor, checkStoreRoot } from "../agent/config.mjs";
 import { INPROGRESS } from "../agent/segstore.mjs";
+import { isReadableHealth } from "../dist/alerts.js";
 import { check, eq, report } from "./_assert.mjs";
 
 console.log("recorder service");
@@ -381,6 +383,60 @@ await check("THE FEARED ONE: audit with a drive missing refuses to count, instea
     eq(ok.summary.lost, 0, "lost");
     eq(ok.disks.map((d) => d.quarantine), [{ files: 1, bytes: 77 }, { files: 0, bytes: 0 }], "quarantine per drive");
   } finally {
+    for (const d of [dir, d0, d1]) await rm(d, { recursive: true, force: true });
+  }
+});
+
+// camctl alerts reads health.json from another process. The failures feared:
+// a refused drive or an unresolved camera left out of the report, so nothing
+// can say it is missing; and "last recorded" taken from the camera's clock,
+// which on the bench camera read 2001.
+await check("THE FEARED ONE: health names every configured camera and drive, and times seals by the box clock", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "camplat-health-"));
+  const d0 = await mkdtemp(path.join(tmpdir(), "camplat-hd0-"));
+  const d1 = await mkdtemp(path.join(tmpdir(), "camplat-hd1-"));
+  await writeFile(path.join(dir, "config.json"), JSON.stringify({
+    siteId: "carwash-01", storeRoots: [d0, d1], segmentSeconds: 60, credentials: creds,
+    cameras: [
+      { cameraId: "cam-1", host: "10.0.0.11", vendor: "avycon", bitrateKbps: 2500 },
+      { cameraId: "cam-2", host: "10.0.0.12", vendor: "avycon", bitrateKbps: 2500 },
+      { cameraId: "cam-3", host: "10.0.0.13", vendor: "generic" },
+    ],
+  }));
+  let clock = Date.parse("2026-09-14T12:00:00.000Z");
+  const now = () => new Date(clock);
+  const spawnFn = () => { const c = new EventEmitter(); c.stderr = new EventEmitter(); c.kill = () => c.emit("exit", 0); return c; };
+  const realLog = console.log;
+  console.log = () => {};
+  let handle;
+  try {
+    handle = await start({ stateDir: dir, spawnFn, now, storeCheck: async (root) => (root === d1 ? { ok: false, reason: "not a mount point" } : { ok: true }) });
+    clock += 60_000;
+    await handle.writeHealth();
+    const first = JSON.parse(await readFile(path.join(dir, "health.json"), "utf8"));
+    eq(first.startedUtc, "2026-09-14T12:00:00.000Z", "started when start() was called");
+    eq(first.atUtc, "2026-09-14T12:01:00.000Z", "reported now");
+    eq(first.cameraIds, ["cam-1", "cam-2", "cam-3"], "the unresolved camera is still named");
+    eq(first.storeRoots, [d0, d1], "every configured drive");
+    eq(first.refusedRoots, [d1], "the refused drive, by root");
+    eq(first.lastSealedUtc, { "cam-1": null, "cam-2": null, "cam-3": null }, "nothing sealed yet is null, not absent");
+    eq(isReadableHealth(first), true, "the alerts contract can read what the service writes");
+
+    const cam1 = handle.recorders.find((r) => r.cameraId === "cam-1");
+    clock += 120_000;
+    // A camera clock stuck in 2001.
+    for (const epochSeconds of [1_000_000_000, 1_000_000_060]) {
+      await writeFile(path.join(cam1.root, "cam-1", INPROGRESS, `${epochSeconds}.mp4`), Buffer.alloc(100));
+    }
+    await cam1.recorder.poll();
+    clock += 10_000;
+    await handle.writeHealth();
+    const second = JSON.parse(await readFile(path.join(dir, "health.json"), "utf8"));
+    eq(second.lastSealedUtc, { "cam-1": "2026-09-14T12:03:00.000Z", "cam-2": null, "cam-3": null }, "the box clock at the seal");
+    eq(fs.existsSync(path.join(dir, "health.json.tmp")), false, "no half-written file left behind");
+  } finally {
+    await handle?.stop();
+    console.log = realLog;
     for (const d of [dir, d0, d1]) await rm(d, { recursive: true, force: true });
   }
 });

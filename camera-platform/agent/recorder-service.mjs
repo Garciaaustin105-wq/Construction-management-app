@@ -6,7 +6,7 @@
  * deciding what the old ones were, and the partial from the last power cut would
  * be indistinguishable from the segment being written right now.
  */
-import { readFile, writeFile, statfs, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, statfs, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { openIndex } from "./segindex.mjs";
 import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, INPROGRESS } from "./segstore.mjs";
@@ -206,6 +206,7 @@ export async function audit({ stateDir = DEFAULT_PATHS.stateDir, storeCheck } = 
 }
 
 export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeCheck, now = () => new Date() } = {}) {
+  const startedUtc = now().toISOString();
   const config = await loadConfig(stateDir);
   await mkdir(stateDir, { recursive: true });
   const index = openIndex(indexPathFor(stateDir));
@@ -241,6 +242,9 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
   const assignment = assignCamerasToDrives(config.cameras.map((c) => c.cameraId), storeRoots.length);
   const recorders = [];
   const unresolved = [];
+  // The box clock when each camera last sealed a segment. Not the segment's own
+  // time: a camera with a wrong clock still reports whether it is recording (L14).
+  const lastSealed = new Map(config.cameras.map((c) => [c.cameraId, null]));
 
   for (const camera of config.cameras) {
     const resolved = resolveCameraUrl(camera, config.credentials);
@@ -262,6 +266,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
       audio: camera.audio === true, // legally gated: off unless the site config turns it on
       spawnFn,
       onEvent: (e) => {
+        if (e.kind === "sealed") lastSealed.set(e.cameraId, now().toISOString());
         if (e.kind === "stderr") return;
         const level = e.kind === "spawn_failed" || e.kind === "seal_failed" ? "error"
           : e.kind === "exited" || e.kind === "stop_killed" || e.kind === "audio_dropped" ? "warn" : "info";
@@ -276,7 +281,8 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
     runEviction(index, storeRoots, log).catch((err) => log("error", "eviction failed", { err: err.message }));
   }, EVICTION_INTERVAL_MS);
 
-  const healthTimer = setInterval(async () => {
+  // Read by `camctl alerts` (contracts/alerts.ts HealthSnapshot), a separate process.
+  const writeHealth = async () => {
     const disks = [];
     for (const root of storeRoots) {
       const usage = await diskUsage(root).catch(() => null);
@@ -289,8 +295,13 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
     const health = {
       siteId: config.siteId,
       atUtc: now().toISOString(),
+      startedUtc,
       cameras: recorders.length,
+      cameraIds: config.cameras.map((c) => c.cameraId),
       unresolved,
+      storeRoots: config.storeRoots,
+      refusedRoots: refusedRoots.map((r) => r.root),
+      lastSealedUtc: Object.fromEntries(lastSealed),
       segments: index.count(),
       disks,
       // A refusal is reported as one. An appliance that cannot compute its own
@@ -298,8 +309,13 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
       retentionDays: retention.kind === "ok" ? retention.days : null,
       retentionRefused: retention.kind === "refused" ? retention.message : null,
     };
-    await writeFile(path.join(stateDir, "health.json"), JSON.stringify(health, null, 2)).catch((err) => log("error", "health write failed", { err: err.message }));
-  }, HEALTH_INTERVAL_MS);
+    // Written aside and renamed, so the alerts reader never sees half a file.
+    const file = path.join(stateDir, "health.json");
+    await writeFile(`${file}.tmp`, JSON.stringify(health, null, 2))
+      .then(() => rename(`${file}.tmp`, file))
+      .catch((err) => log("error", "health write failed", { err: err.message }));
+  };
+  const healthTimer = setInterval(writeHealth, HEALTH_INTERVAL_MS);
 
   const stop = async () => {
     clearInterval(evictionTimer);
@@ -309,7 +325,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
     log("info", "stopped", {});
   };
 
-  return { stop, recorders, index, config, unresolved, recovered, refusedRoots };
+  return { stop, recorders, index, config, unresolved, recovered, refusedRoots, writeHealth };
 }
 
 // Only run when executed directly, so tests can import the pieces.
