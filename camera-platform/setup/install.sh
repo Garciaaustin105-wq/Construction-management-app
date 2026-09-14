@@ -17,6 +17,14 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m!! %s\033[0m\n' "$*"; }
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
+RELEASE="${1:-${CAMPLAT_RELEASE:-}}"
+if [[ -n "$RELEASE" ]]; then
+  [[ -f "$RELEASE" ]] || { echo "no release tarball at $RELEASE"; exit 1; }
+  RELEASE="$(realpath "$RELEASE")"
+elif [[ ! -f "$APP_DIR/VERSION" ]]; then
+  echo "usage: install.sh camplat-<commit>.tar.gz   (build it on the dev machine: node setup/release.mjs)"
+  exit 1
+fi
 
 say "Packages"
 apt-get update -qq
@@ -26,18 +34,39 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
   ffmpeg smartmontools nut-client chrony xfsprogs curl ca-certificates
 
-if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -c2- | cut -d. -f1)" -lt 20 ]]; then
-  say "Node 22"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -c2- | cut -d. -f1)" -lt 24 ]]; then
+  say "Node 24"
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y nodejs
 fi
-node -v
+NODE_BIN="$(command -v node)"
+"$NODE_BIN" -v
+node -e "require('node:sqlite')" >/dev/null 2>&1 || { echo "node at $NODE_BIN has no node:sqlite — the recorder index needs it"; exit 1; }
 
 say "User and directories"
 id -u "$RUN_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$RUN_USER"
 # The render group is what lets ffmpeg use QuickSync for substream decode.
 usermod -aG video,render "$RUN_USER" 2>/dev/null || true
-install -d -o "$RUN_USER" -g "$RUN_USER" "$STATE_DIR" "$APP_DIR"
+install -d -o "$RUN_USER" -g "$RUN_USER" "$STATE_DIR"
+
+say "Program"
+if [[ -n "$RELEASE" ]]; then
+  rm -rf "$APP_DIR.new"
+  install -d -o root -g root -m 0755 "$APP_DIR.new"
+  tar -xzf "$RELEASE" -C "$APP_DIR.new" --no-same-owner
+  [[ -f "$APP_DIR.new/VERSION" && -f "$APP_DIR.new/agent/recorder-service.mjs" ]] || { echo "$RELEASE is not a camplat release"; rm -rf "$APP_DIR.new"; exit 1; }
+  # Root owns the program and the service user can only read it: a recorder
+  # that can rewrite its own code is one bug away from doing so.
+  chown -R root:root "$APP_DIR.new"
+  chmod -R u=rwX,go=rX "$APP_DIR.new"
+  rm -rf "$APP_DIR.old"
+  if [[ -d "$APP_DIR" ]]; then mv "$APP_DIR" "$APP_DIR.old"; fi
+  mv "$APP_DIR.new" "$APP_DIR"
+  echo "  installed $(cat "$APP_DIR/VERSION") into $APP_DIR (the previous release, if any, is at $APP_DIR.old)"
+  echo "  a running recorder keeps the old code until: systemctl restart camplat-recorder camplat-api"
+else
+  echo "  no release given; keeping $(cat "$APP_DIR/VERSION")"
+fi
 
 say "Recording disks"
 IFS=',' read -ra ROOTS <<< "$STORE_ROOTS"
@@ -64,7 +93,15 @@ cat <<'DISKHELP'
 
   Then add to /etc/fstab, one line per disk:
 
-    UUID=<uuid>  /srv/camplat/disk0  xfs  defaults,noatime,nodiratime,allocsize=64m,logbsize=256k  0 2
+    UUID=<uuid>  /srv/camplat/disk0  xfs  defaults,noatime,nodiratime,allocsize=64m,logbsize=256k,nofail,x-systemd.device-timeout=30s  0 2
+
+  nofail keeps one dead disk from stopping the boot; the others keep recording.
+
+  Mount it, then give it to the service user (mounting hides the empty
+  directory this script made, and a fresh filesystem belongs to root):
+
+    mount /srv/camplat/disk0
+    chown camplat:camplat /srv/camplat/disk0
 
   allocsize=64m is the one that matters: without it eight concurrent writers
   fragment each segment across the platter, and playback seeks forever.
@@ -77,6 +114,9 @@ cat > /etc/systemd/system/camplat-recorder.service <<UNIT
 Description=camplat recorder
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=$STATE_DIR/config.json
+# A recorder that cannot restart is a truck roll, so never give up.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -84,18 +124,38 @@ User=$RUN_USER
 WorkingDirectory=$APP_DIR
 Environment=NODE_OPTIONS=--max-old-space-size=512
 Environment=CAMPLAT_STATE_DIR=$STATE_DIR
-Environment=CAMPLAT_STORE_ROOTS=$STORE_ROOTS
-ExecStart=/usr/bin/node $APP_DIR/agent/recorder-service.mjs
+ExecStart=$NODE_BIN $APP_DIR/agent/recorder-service.mjs
 Restart=always
 RestartSec=5
-# A recorder that cannot restart is a truck roll, so never give up.
-StartLimitIntervalSec=0
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+cat > /etc/systemd/system/camplat-api.service <<UNIT
+[Unit]
+Description=camplat api (loopback only; reach it over an SSH tunnel)
+After=camplat-recorder.service
+ConditionPathExists=$STATE_DIR/config.json
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$APP_DIR
+Environment=CAMPLAT_STATE_DIR=$STATE_DIR
+Environment=CAMPLAT_API_HOST=127.0.0.1
+Environment=CAMPLAT_API_PORT=8080
+ExecStart=$NODE_BIN $APP_DIR/agent/api-server.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=30s
 
 [Install]
 WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
-echo "  camplat-recorder.service written (not started — no config yet)"
+systemctl enable camplat-recorder.service camplat-api.service
+echo "  camplat-recorder and camplat-api enabled; they start at boot once $STATE_DIR/config.json exists"
 
 say "Watchdog"
 if [[ -c /dev/watchdog ]]; then
