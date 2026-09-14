@@ -12,6 +12,7 @@ import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ffmpegArgs } from "../agent/recorder.mjs";
+import { runLoad } from "../agent/loadtest.mjs";
 import { INPROGRESS } from "../agent/segstore.mjs";
 import { wipPattern, wipStartMs } from "../agent/wipNames.mjs";
 import { check, eq, report } from "./_assert.mjs";
@@ -120,6 +121,22 @@ try {
     const { r, dir, files: out } = await audioRun(src, "cam-silent");
     eq(r.status, 0, `ffmpeg exit (stderr: ${String(r.stderr).trim().slice(0, 300)})`);
     eq(out.reduce((n, f) => n + packetCount(path.join(dir, f)), 0), sourcePackets, "every video packet");
+  });
+
+  // camctl load: the source file must loop, or a run longer than the file stops
+  // writing at the file's end and every camera looks like it fell behind.
+  await check("THE FEARED ONE: a load run loops the source past its end, on every camera", async () => {
+    const target = path.join(work, "load");
+    await mkdir(target, { recursive: true });
+    const s = await runLoad({ target, source: src, cameras: 2, seconds: 10, segmentSeconds: 2, sampleMs: 500, keep: true });
+    eq(s.exits, 0, "ffmpeg exits");
+    const [runDir] = await readdir(target);
+    for (const cam of ["load-01", "load-02"]) {
+      const files = (await readdir(path.join(target, runDir, cam), { recursive: true })).filter((f) => f.endsWith(".mp4"));
+      let packets = 0;
+      for (const f of files) { try { packets += packetCount(path.join(target, runDir, cam, f)); } catch { /* the segment cut by stop */ } }
+      eq(packets > sourcePackets, true, `${cam}: ${packets} video packets from a ${sourcePackets}-packet source over 10 s`);
+    }
   });
 } finally {
   await rm(work, { recursive: true, force: true });

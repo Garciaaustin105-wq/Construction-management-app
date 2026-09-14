@@ -8,6 +8,7 @@
  * prints as "not measured" rather than a plausible default.
  */
 import { preflight } from "./preflight.mjs";
+import { runLoad, formatLoadReport } from "./loadtest.mjs";
 import { audit } from "./recorder-service.mjs";
 import { sweep } from "./sweep.mjs";
 import { discoverSadp } from "./sadp.mjs";
@@ -317,6 +318,24 @@ async function cmdBench() {
   );
 }
 
+async function cmdLoad() {
+  const source = flag("source");
+  if (!source) { console.error("--source FILE required: a recording from the camera, e.g. a sealed segment"); process.exit(2); }
+  const target = flag("path", "/srv/camplat/disk0");
+  const cameras = Number(flag("cameras", "16"));
+  const seconds = Number(flag("seconds", "300"));
+  const segmentSeconds = Number(flag("segment-seconds", "60"));
+  const kbps = flag("kbps") === null ? null : Number(flag("kbps"));
+  const keep = args.includes("--keep");
+
+  console.log(`playing ${source} into ${cameras} recorders on ${target} for ${seconds}s`);
+  console.log("(no network and no camera: this measures CPU, disks and the index)\n");
+
+  const summary = await runLoad({ target, source, cameras, seconds, segmentSeconds, sourceKbps: kbps, keep });
+  console.log(formatLoadReport(summary));
+  if (keep) console.log(`\n  recordings kept under ${target}/.loadtest-*`);
+}
+
 async function cmdAudit() {
   const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? undefined;
   const { summary, refusedRoots, disks } = await audit({ stateDir });
@@ -353,7 +372,7 @@ async function cmdAudit() {
   }
 }
 
-const commands = { preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+const commands = { preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -368,6 +387,7 @@ if (!handler) {
   size [options]                disk sizing table for a store
   budget [options]              per-camera bitrate ceiling for a retention target
   bench [options]               concurrent write throughput of a recording drive
+  load --source FILE [options]  N recorders playing a file at once: CPU, write rate, who fell behind
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS
@@ -385,6 +405,11 @@ size options:
 
 bench options:
   --path DIR   --writers N (cameras per spindle)   --seconds N
+
+load options:
+  --path DIR (default /srv/camplat/disk0)   --cameras N (16)   --seconds N (300)
+  --segment-seconds N (60)   --kbps N      the source's measured bitrate; without it nothing is judged behind
+  --keep                        leave the recordings in DIR/.loadtest-* for inspection
 
 budget options:
   --cameras N  --days N  --disk-tb N  --fill 0.85
