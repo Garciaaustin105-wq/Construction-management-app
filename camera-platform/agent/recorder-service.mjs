@@ -9,7 +9,7 @@
 import { readFile, writeFile, statfs, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { openIndex } from "./segindex.mjs";
-import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, INPROGRESS } from "./segstore.mjs";
+import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, INPROGRESS } from "./segstore.mjs";
 import { createCameraRecorder } from "./recorder.mjs";
 import { planEvictionScalable } from "./evict.mjs";
 import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives, checkStoreRoot } from "./config.mjs";
@@ -236,7 +236,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
     const disks = [];
     for (const root of storeRoots) {
       const usage = await diskUsage(root).catch(() => null);
-      if (usage) disks.push({ root, ...usage });
+      if (usage) disks.push({ root, ...usage, quarantine: await quarantineUsage(root).catch(() => null) });
     }
     const retention = computeRetentionDays(
       currentRetention(index, config.cameras),

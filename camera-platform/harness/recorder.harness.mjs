@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { openIndex } from "../agent/segindex.mjs";
 import { assignCamerasToDrives, indexPathFor, XFS_MOUNT_OPTIONS } from "../agent/config.mjs";
-import { scanDisk, applyEviction, applyRecovery, ensureCameraDirs, removeStore, INPROGRESS, QUARANTINE }
+import { scanDisk, applyEviction, applyRecovery, ensureCameraDirs, removeStore, quarantineUsage, INPROGRESS, QUARANTINE }
   from "../agent/segstore.mjs";
 import { createCameraRecorder, ffmpegArgs } from "../agent/recorder.mjs";
 import { planRecovery } from "../dist/recovery.js";
@@ -187,6 +187,23 @@ await check("a quarantine move that fails is reported as failed, not as quaranti
   eq(applied.quarantined.length, 0, "nothing claimed as quarantined");
   eq(applied.failed.length, 1, "the failure is reported");
   eq(applied.failed[0].path, `${CAM}/gone.dat`, "names the file");
+});
+
+await check("quarantineUsage measures what quarantine holds, and a store with none reads zero", async () => {
+  const qroot = await mkdtemp(path.join(tmpdir(), "camplat-q2-"));
+  eq(await quarantineUsage(qroot), { files: 0, bytes: 0 }, "no quarantine directory yet");
+  await mkdir(path.join(qroot, QUARANTINE), { recursive: true });
+  await writeFile(path.join(qroot, QUARANTINE, "a.dat"), Buffer.alloc(111));
+  await writeFile(path.join(qroot, QUARANTINE, "b.dat"), Buffer.alloc(222));
+  eq(await quarantineUsage(qroot), { files: 2, bytes: 333 }, "two files, sizes summed");
+});
+
+await check("quarantineUsage refuses rather than reading an unreadable quarantine as empty", async () => {
+  const qroot = await mkdtemp(path.join(tmpdir(), "camplat-q2-"));
+  await writeFile(path.join(qroot, QUARANTINE), "a file where the directory should be");
+  let threw = false;
+  try { await quarantineUsage(qroot); } catch { threw = true; }
+  eq(threw, true, "an error that is not absence is not a zero");
 });
 
 await check("THE FEARED ONE: eviction deletes oldest first and spares a held segment", async () => {

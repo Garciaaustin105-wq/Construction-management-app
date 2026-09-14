@@ -177,6 +177,28 @@ export async function ensureCameraDirs(root, cameraId) {
   await mkdir(path.join(root, cameraId, INPROGRESS), { recursive: true });
 }
 
+/** Returns { files, bytes } measuring quarantine usage. */
+export async function quarantineUsage(root) {
+  const dir = path.join(root, QUARANTINE);
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err.code === "ENOENT") return { files: 0, bytes: 0 };
+    throw err;
+  }
+  let files = 0;
+  let bytes = 0;
+  for (const entry of entries) {
+    if (entry.isFile()) {
+      files += 1;
+      const statInfo = await stat(path.join(dir, entry.name));
+      bytes += statInfo.size;
+    }
+  }
+  return { files, bytes };
+}
+
 export async function removeStore(root) {
   await rm(root, { recursive: true, force: true });
 }
