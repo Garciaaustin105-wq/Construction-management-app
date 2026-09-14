@@ -219,6 +219,17 @@ they bit:
    than sealing them (it cannot parse bench-format names — item 5's fix covered
    recording, not recovery). They remain in `.quarantine/`. Linux appliances
    never see this; noted as a bench-only wart.
+7. **MSE forbids ffmpeg's default fMP4 addressing** (`TFHD base-data-offset
+   not allowed by MSE`): the live copy-mux without `+default_base_moof`
+   produced a stream ffmpeg itself decoded cleanly (ffprobe + decode exit 0),
+   but Chrome rejected the FIRST moof+mdat append — video decode error 3,
+   then every later append riding as InvalidStateError. Symptom was a tile
+   stuck on a stale status line ("waiting for the first frame…" is never
+   updated by the page — stage reporting added to the UI as part of the
+   diagnosis). Fix in `liveFfmpegArgs`: `-movflags
+   frag_keyframe+empty_moov+default_base_moof` (commit 7c85345). Verified:
+   headless Edge tile reaches `live` and holds it. The page's own box
+   accumulator, codec extraction and WS transport were all correct.
 
 Store size corrected mid-session: **16 cameras per store** (was 23 in the plan
 tables). Retention at the fleet recipe (1737 kbps measured): 2× 8 TB ≈ 48 d.
