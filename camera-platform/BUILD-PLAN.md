@@ -124,14 +124,50 @@ ports open. Three concurrent viewers degrade gracefully rather than failing.
 
 ## Phase C — the clients (6–7 weeks)
 
-### C1 — desktop web client (3 weeks)
-16-up grid on substreams, tap for main stream, timeline with gap reasons,
-export with hash. Matches what people already know — §2.55, faithful parity.
+The product is three programs:
 
-### C2 — mobile app (4 weeks)
+| Program | Runs on | Built in |
+|---|---|---|
+| **The recorder** | The NVR box, on Linux. That program is what the Linux system is for. | Phases A and B |
+| **Desktop app** | Windows and Mac | C1 |
+| **Mobile app** | iPhone and Android | C2 |
+
+**Both apps use the recorder's own API** (A2): directly on the LAN, through the
+relay (B2) off-site. No app gets a private route. A feature an app needs goes
+into the API first and is harness-tested there, so the web UI, the desktop app
+and the phones cannot disagree about what was recorded. The decisions the web UI
+makes (timeline layout, what a click means, gap wording, what an export will
+contain) live in pure modules such as `agent/ui/review-client.mjs`, for the apps
+to reuse rather than re-derive.
+
+**H.265 does not play everywhere.** The cameras record it. iPhones and Macs
+decode it in hardware; most recent Android phones do, but older and cheap ones
+may not; a Windows PC needs hardware decode or Microsoft's HEVC extension. Every
+client detects this and says so, as the review page already does. A black tile
+is never the answer.
+
+> The estimates below were set when C1 was a web client. Re-estimate C1 once the
+> desktop app's shell is chosen.
+
+### C1 — desktop app, Windows and Mac (3 weeks)
+An installed application, not a browser tab, grown out of the A3 web UI. 16-up
+grid on substreams, tap for main stream, timeline with gap reasons, export with
+hash. Matches what people already know — §2.55, faithful parity.
+
+- **One codebase for both.** Still to decide before C1 starts: a native build
+  per platform, or one web-view shell around the A3 UI.
+- **Signed installers.** Unsigned, Windows warns on first launch and macOS
+  refuses. Signing needs an Apple Developer account and a Windows code-signing
+  certificate, and both cost money.
+- **Several sites** in one app, each scoped as B1 allows.
+
+*Exit:* installed from a download onto a clean Windows PC and a clean Mac, it
+finds a site's recorder, shows live, plays yesterday, and exports a range.
+
+### C2 — mobile app, iPhone and Android (4 weeks)
 6-up paginated grid, swipe for more, tap to full quality, timeline, alerts.
 **Stop the previous page's streams on swipe** or streams accumulate as someone
-browses.
+browses. Both stores review the app before release; allow for that in the date.
 
 *Exit for both:* a manager uses it for a week without being taught, and prefers
 it to nothing. Compared against OpenEye by someone who uses OpenEye daily.
@@ -155,6 +191,12 @@ zoo, which ships permissively licensed and pre-compiled for their silicon.
 ---
 
 ## Sequencing notes
+
+**The recorder on Linux comes first, and gets finished before the apps start.**
+Decided by Austin, 2026-09-14. Phases A and B, the program on the NVR box,
+are built and proven on Linux before any work on C1 or C2. Development and
+bench tests run on Windows, but that proves nothing about the box: an item
+is only done once it passes on the Linux build.
 
 **Roughly 5 months to Phase C.** A is the one that must not be rushed — every
 number in this project is an assumption until A1 runs against real cameras.
