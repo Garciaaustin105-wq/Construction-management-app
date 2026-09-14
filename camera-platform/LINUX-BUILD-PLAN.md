@@ -1,7 +1,7 @@
 # Linux build plan: the recorder on the NVR box
 
 Written 2026-09-14 by Claude (opus-camera), with audit units run on gpt-oss (local)
-and GLM, while Austin was at work. Nothing in here has been committed, pushed, or
+and GLM, while Austin was at work. Stage 0 is committed (see its result below); nothing has been pushed or
 run on a Linux machine.
 
 This plan covers Phases A and B of BUILD-PLAN.md, the program on the box, and
@@ -270,6 +270,65 @@ Each stage has an exit, and a stage is not started until the one before it exits
   - `run-all` is green on Windows with the new checks;
   - each new check fails when its fix is reverted;
   - the installer has had a line-by-line review.
+
+### Stage 0 result (2026-09-14)
+
+- **Committed, not pushed**, on `claude/camera-service-plan-uwr6st`:
+  - `62d6126`: L1, L2, L3 (preflight half), L4, L8, L9, L11;
+  - `70f6ada`: the release script and installer, for L2, L3, L5, L6, L7 and L10.
+- `run-all` is green on Windows.
+- The installer and unit text stay unproven until stage 2.
+
+### Before the box: work that needs no Linux machine
+
+These items run in order. Each is agents only, and each FEARED check is written
+before its fix.
+
+1. **Q1. Quarantine can overwrite a file it set aside.**
+   - **Cause:** `applyRecovery` names the target from the file's path alone
+     (`segstore.mjs:145`). If the same path is quarantined on a later boot, it
+     replaces the first file.
+   - **Also:** a failed move is swallowed (`.catch(() => {})`) but still
+     reported as quarantined.
+   - **Fix:** use a unique name, as `sealSegment` already does, and report a
+     failed move as a failure.
+2. **Q2. Quarantine space is invisible.** Eviction works from `statfs`, so
+   `.quarantine/` silently takes space from retention.
+   - **Fix:** report its size in `health.json`, and warn above a limit.
+   - **Never auto-delete:** a human decides what happens to quarantined files.
+3. **A1. `camctl audit`.** Stage 4 needs it, and stage 2 can use it.
+   - It runs the recovery planner as a dry run against the index and a disk
+     scan, then prints lost, orphan, partial and quarantine counts.
+   - It is read-only.
+4. **R1. A real-ffmpeg check.** No harness runs a real ffmpeg yet.
+   - **What it does:** records a local `lavfi` test pattern through the
+     recorder's own output arguments for three short segments, then ffprobes
+     them.
+   - **Constraints:** file source only, no server and no network. Only the
+     input arguments change, because `-rtsp_transport` is RTSP-only. The check
+     skips when ffmpeg is missing.
+   - **Why it matters:** in stage 1 it tests the box's ffmpeg, which closes the
+     version gap described above.
+5. **S1. `setup/stage1-check.sh`.**
+   - It prints `node -v`, `ffmpeg -version` and `uname -r`, then runs
+     `run-all`, all into one file for Austin to send back.
+   - It installs nothing and starts nothing.
+6. **Installer text, proven in stage 2:**
+   - L17: a journald size cap.
+   - L16: a basic `smartd` config. The `health.json` half waits for real
+     `smartctl` output from the box.
+7. **L12. A `--iface` option for discovery.** The multicast half is proven only
+   in stage 3.
+
+Checked already: no harness writes outside a temp dir, so a read-only
+`/opt/camplat` will not break stage 1.
+
+Left for the box or for Austin:
+- L13 (stage 2 shows it);
+- L14 and L15 (stage 3);
+- L18 (needs a `Type=notify` design; do it after stage 2);
+- L19 (Phase D);
+- the D1–D6 decisions.
 
 ### Stage 1: the suite on Linux (the D1 machine; Austin sets it up)
 
