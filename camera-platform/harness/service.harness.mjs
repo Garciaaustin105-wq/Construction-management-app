@@ -44,6 +44,11 @@ check("THE FEARED ONE: an unresolvable camera is reported, never silently skippe
 const stateDir = await mkdtemp(path.join(tmpdir(), "camplat-svc-"));
 const disk0 = await mkdtemp(path.join(tmpdir(), "camplat-d0-"));
 const disk1 = await mkdtemp(path.join(tmpdir(), "camplat-d1-"));
+// The temp "drives" above are plain directories, not mount points, and on Linux
+// the real guard rightly refuses them — these three checks failed on the first
+// Linux run and passed on Windows, where the guard is off. Checks that are not
+// about mounting say the drives are mounted; the guard has its own checks below.
+const mounted = async () => ({ ok: true });
 
 await check("an uncommissioned appliance refuses to start rather than recording nothing", async () => {
   let threw = false;
@@ -77,7 +82,7 @@ await check("THE FEARED ONE: recovery runs before any recorder starts", async ()
     return c;
   };
 
-  const handle = await start({ stateDir, spawnFn });
+  const handle = await start({ stateDir, spawnFn, storeCheck: mounted });
   try {
     // The orphan was adopted by recovery, not mistaken for a live write.
     if (handle.recovered.adopted + handle.recovered.partials === 0) {
@@ -106,7 +111,7 @@ await check("cameras are split across the two drives", async () => {
     ],
   }));
   const spawnFn = () => { const c = new EventEmitter(); c.stderr = new EventEmitter(); c.kill = () => c.emit("exit", 0); return c; };
-  const handle = await start({ stateDir, spawnFn });
+  const handle = await start({ stateDir, spawnFn, storeCheck: mounted });
   try {
     eq(handle.recorders.length, 4, "all four started");
     const roots = new Set(handle.recorders.map((r) => r.root));
@@ -165,7 +170,7 @@ await check("THE FEARED ONE: a camera whose ffmpeg cannot start is logged, not s
       setImmediate(() => c.emit("error", Object.assign(new Error("spawn ffmpeg ENOENT"), { code: "ENOENT" })));
       return c;
     };
-    handle = await start({ stateDir, spawnFn });
+    handle = await start({ stateDir, spawnFn, storeCheck: mounted });
     await new Promise((r) => setTimeout(r, 100));
   } finally {
     await handle?.stop();
