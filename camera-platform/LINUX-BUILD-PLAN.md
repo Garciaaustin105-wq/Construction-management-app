@@ -67,6 +67,45 @@ Each has a recommendation, and nothing below waits on the last two.
   recording. A fix is needed before stage 4. The choices are transcoding audio to
   AAC, or a different container. That choice is a product decision, so it isn't
   made here.
+- **D7. Monitors on the box.** Decided by Austin on 2026-09-15: customers keep
+  the NVR on one monitor or several, and the box must boot straight into our
+  live view. A customer never sees Linux. How:
+  - no desktop; the GRUB menu is hidden; our logo shows while it starts
+    (Plymouth);
+  - a locked-down kiosk user logs in automatically and runs a one-app
+    compositor with Chromium in kiosk mode on `http://127.0.0.1:<port>/`.
+    That is `cage` for one monitor; several monitors need a locked sway config
+    that pins one full-screen window to each output. There is no taskbar and
+    no way out to Linux;
+  - its own systemd unit restarts the screen if it closes or crashes. The
+    recorder does not depend on it, so a crashed screen never stops
+    recording;
+  - each monitor keeps its own camera layout on the box, and plugging a
+    monitor in does not need a reboot;
+  - the screen is view-only until Phase B login decides who may change
+    layouts;
+  - the monitors are wall-mounted TVs showing live feeds non-stop, so the
+    screen never blanks or sleeps, a tile whose camera drops reconnects on its
+    own and says so in the tile, and the screen comes back by itself after a
+    power cut.
+
+  Stage 3 must prove these on the reference board before the fleet:
+  - **H.265 in the browser, the biggest risk.** The cameras are H.265, and
+    Chromium on Linux plays it only through VA-API hardware decode, which is
+    not a given. Test it first. If it fails, the screen uses a native player
+    (mpv or GStreamer with VA-API) instead of the browser page.
+  - **Decode load.** Grid tiles use substreams, and a tapped tile gets the main
+    stream. Measure how many tiles the N150 decodes smoothly, at one and at two
+    or more monitors, while the recorder runs.
+  - **Video outputs.** The N150 drives up to three displays, but the NAS board
+    may expose only one or two ports. Check the board before buying; more
+    monitors than ports means different hardware.
+  - **Days, not minutes.** Run the screen for the whole 7-day soak and watch
+    browser memory. If it grows, restart the screen on a schedule; recording
+    is not touched.
+  - **The TVs.** Many TVs switch themselves off after a while with no remote
+    input, or when the input blinks during a reboot. Find the setting, and
+    test HDMI-CEC for turning a TV back on.
 
 ## Problems found on 2026-09-14
 
