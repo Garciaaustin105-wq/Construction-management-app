@@ -80,6 +80,11 @@ Each stage is contract, then harness, then code, then UI.
   expected events. Every later stage is scored against them.
 - **Exit:** all contracts have FEARED checks (a headlight sweep is not a
   person; a schedule crossing midnight; a holiday).
+- **Status (2026-09-16):** `detection.ts` and `alertRules.ts` done, with
+  harnesses (two people at once stay apart; daylight saving in both
+  directions; hours past midnight; holidays; cooldown; zones by the feet).
+  Still to do: timeline markers in `uploadPolicy.ts`, the global plate switch
+  in a contract, and the clip library (needs the bench camera).
 
 ### D1. The detector service (laptop, CPU/GPU)
 - `camplat-detect` reads one substream, runs a permissive person/vehicle
