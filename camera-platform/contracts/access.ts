@@ -62,8 +62,12 @@ export type Permission =
   /** Read the audit log. */
   | "audit.view";
 
-/** Every permission, in one place, so a new one cannot be forgotten below. */
-export const ALL_PERMISSIONS: readonly Permission[] = [
+/**
+ * Every permission, in one place, so a new one cannot be forgotten below.
+ * Frozen: `readonly` stops a TypeScript caller, not a JavaScript one, and a
+ * push onto this array would hand the new permission to every installer.
+ */
+export const ALL_PERMISSIONS: readonly Permission[] = Object.freeze([
   "live.view",
   "playback.view",
   "export.create",
@@ -74,15 +78,15 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "system.manage",
   "account.manage",
   "audit.view",
-];
+]);
 
-const STORE_PERMISSIONS: readonly Permission[] = [
+const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([
   "live.view",
   "playback.view",
   "export.create",
   "segment.hold",
   "layout.edit",
-];
+]);
 
 /**
  * A wall on a TV is not a person and must not hold a person's account.
@@ -137,7 +141,7 @@ export function permissionsFor(role: Role): Permission[] {
 }
 
 /** A display may only watch. It cannot review, export, or hold. */
-const DISPLAY_PERMISSIONS: readonly Permission[] = ["live.view"];
+const DISPLAY_PERMISSIONS: readonly Permission[] = Object.freeze(["live.view"]);
 
 export function can(principal: Principal, permission: Permission): boolean {
   switch (principal.kind) {
@@ -185,7 +189,7 @@ export type PasswordVerdict =
  * strings that got a generation of cameras enrolled into botnets, and the one
  * this codebase's own bench camera shipped with.
  */
-const FORBIDDEN = [
+const FORBIDDEN: readonly string[] = [
   "12345",
   "123456",
   "1234567",
@@ -201,6 +205,15 @@ const FORBIDDEN = [
   "default",
   "changeme",
 ];
+
+/**
+ * Every entry above is shorter than the minimum length, so on its own the list
+ * would never fire. What people type to get past a length rule is the same
+ * word padded out -- `password1234`, `admin1234567` -- so the check strips the
+ * digits and punctuation from both ends first. A password that is nothing BUT
+ * digits and punctuation is refused too: `123456789012` is a keyboard row.
+ */
+const PADDING = /^[\d\s!-/:-@[-`{-~]+|[\d\s!-/:-@[-`{-~]+$/g;
 
 /**
  * Minimum length, not a character-class rule.
@@ -221,17 +234,22 @@ export function validatePassword(candidate: unknown, username?: string): Passwor
   if (candidate !== candidate.trim()) {
     return { kind: "rejected", reason: "a password cannot begin or end with a space" };
   }
-  if (candidate.length < MIN_PASSWORD_LENGTH) {
+  // Counted in code points, the characters a person types. `.length` counts
+  // UTF-16 units, where an emoji is two and six of them would pass as twelve.
+  if ([...candidate].length < MIN_PASSWORD_LENGTH) {
     return {
       kind: "rejected",
       reason: `at least ${MIN_PASSWORD_LENGTH} characters — length is what makes a password hard to guess`,
     };
   }
   const lowered = candidate.toLowerCase();
-  if (FORBIDDEN.includes(lowered)) {
+  const core = lowered.replace(PADDING, "");
+  if (core === "" || FORBIDDEN.includes(core)) {
     return { kind: "rejected", reason: "that is one of the first passwords anyone tries" };
   }
-  if (username !== undefined && username !== "" && lowered === username.toLowerCase()) {
+  // Accounts arrive as JSON: a username that is not a string is compared as
+  // nothing rather than crashing the check.
+  if (typeof username === "string" && username !== "" && lowered === username.toLowerCase()) {
     return { kind: "rejected", reason: "the password cannot be the username" };
   }
   return { kind: "ok" };
@@ -247,7 +265,7 @@ export function validatePassword(candidate: unknown, username?: string): Passwor
  * require, and for the same reason.
  */
 export function needsActivation(installerCount: number): boolean {
-  return !Number.isFinite(installerCount) || installerCount < 1;
+  return !Number.isInteger(installerCount) || installerCount < 1;
 }
 
 /**
@@ -261,7 +279,9 @@ export function canRemoveAccount(
   target: { username: string; role: Role },
   installerCount: number,
 ): { kind: "ok" } | { kind: "refused"; reason: string } {
-  if (target.role === "installer" && installerCount <= 1) {
+  // A count that is not a whole number is a bug upstream, and the safe reading
+  // of "unknown" is "this might be the last one".
+  if (target.role === "installer" && (!Number.isInteger(installerCount) || installerCount <= 1)) {
     return {
       kind: "refused",
       reason: "this is the only installer account — create another before removing this one",
