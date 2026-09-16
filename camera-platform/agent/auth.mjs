@@ -13,9 +13,9 @@
 // - First boot needs an activation code unless the request comes from the box
 //   itself. There is no default account; the code is written to
 //   <stateDir>/activation-code (0600), so creating the first installer needs a
-//   shell on the box or a console, not just a LAN cable. (Loopback is trusted
-//   because nothing proxies to this server. A reverse proxy would make every
-//   request loopback, and this exemption would have to go.)
+//   shell on the box or a console, not just a LAN cable. A proxy on the box
+//   (Tailscale serve) makes every remote request loopback too, so "the box
+//   itself" also means no forwarding header and a loopback Host; see clientOf.
 // - scrypt, from node:crypto, with its parameters stored beside each hash, so
 //   raising the cost later does not lock out existing accounts. Parameters read
 //   back from the file are bounded: a tampered N = 2^30 must not become a
@@ -63,6 +63,31 @@ const AUDIT_READ_LINES = 500;
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+// Any of these on a loopback connection means a proxy on the box sent it.
+const PROXY_HEADERS = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'x-forwarded-host', 'tailscale-user-login', 'tailscale-headers-info'];
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/i;
+const ADDRESS = /^[0-9a-f:.]{2,45}$/i;
+
+/**
+ * Who is on the other end: { address, local }. `local` is true only for a
+ * direct connection from the box itself. Behind a proxy on the box the
+ * address is the proxy's rightmost X-Forwarded-For entry (the one the proxy
+ * added; anything left of it came from the client), so one guesser is locked
+ * out alone rather than everybody who comes in through the proxy. A proxied
+ * request without a usable entry shares one bucket: slower for honest users,
+ * never a way around the throttle. Forwarding headers from a LAN connection
+ * are ignored; anyone can send them.
+ */
+export function clientOf(req) {
+  const remote = req?.socket?.remoteAddress ?? null;
+  if (!LOOPBACK.has(remote)) return { address: remote, local: false };
+  const h = req.headers ?? {};
+  const proxied = PROXY_HEADERS.some((k) => h[k] !== undefined) || !LOOPBACK_HOST.test(String(h.host ?? ''));
+  if (!proxied) return { address: remote, local: true };
+  const hops = String(h['x-forwarded-for'] ?? '').split(',').map((x) => x.trim());
+  const last = hops[hops.length - 1];
+  return { address: ADDRESS.test(last) ? `proxied:${last}` : 'proxied', local: false };
+}
 
 /** 50 bits from an alphabet with no 0/O or 1/I/L to misread off a screen. */
 function activationCode() {
@@ -253,7 +278,7 @@ export async function createAuth({
     const line = JSON.stringify({
       t: now().toISOString(),
       event,
-      ip: req?.socket?.remoteAddress ?? null,
+      ip: req ? clientOf(req).address : null,
       ...fields,
     }) + '\n';
     appendFile(auditPath, line, { mode: 0o600 }).catch((err) => log('error', 'audit write failed', { error: err.message }));
@@ -309,13 +334,13 @@ export async function createAuth({
   }
 
   function lockedFor(req) {
-    const e = throttle.get(req.socket.remoteAddress);
+    const e = throttle.get(clientOf(req).address);
     if (!e) return 0;
     const left = e.lockedUntilMs - now().getTime();
     return left > 0 ? Math.ceil(left / 1000) : 0;
   }
   function recordFailure(req) {
-    const key = req.socket.remoteAddress;
+    const key = clientOf(req).address;
     const t = now().getTime();
     if (!throttle.has(key) && throttle.size >= MAX_THROTTLE_ENTRIES) {
       for (const [k, e] of throttle) if (e.lockedUntilMs < t) throttle.delete(k);
@@ -328,7 +353,7 @@ export async function createAuth({
     }
     throttle.set(key, e);
   }
-  const clearFailures = (req) => throttle.delete(req.socket.remoteAddress);
+  const clearFailures = (req) => throttle.delete(clientOf(req).address);
 
   /** 429 already sent when locked out. */
   function throttled(req, res) {
@@ -376,7 +401,7 @@ export async function createAuth({
       sendJson(res, 200, {
         ok: true,
         needsActivation: needsActivation(installerCount()),
-        activationNeedsCode: !(trustLoopback && LOOPBACK.has(req.socket.remoteAddress)),
+        activationNeedsCode: !(trustLoopback && clientOf(req).local),
         principal: principalView(principal),
         permissions: ALL_PERMISSIONS.filter((perm) => can(principal, perm)),
       });
@@ -392,7 +417,7 @@ export async function createAuth({
         refuse(res, 409, 'already_activated', 'this recorder already has an installer account');
         return true;
       }
-      if (!(trustLoopback && LOOPBACK.has(req.socket.remoteAddress))) {
+      if (!(trustLoopback && clientOf(req).local)) {
         const given = typeof body.code === 'string' ? body.code.trim().toUpperCase() : '';
         const ok = code !== null && given.length === code.length
           && timingSafeEqual(Buffer.from(given), Buffer.from(code));

@@ -308,6 +308,49 @@ await check("from the box itself, activation needs no code", async () => {
   eq((await call(D.base, "POST", "/auth/activate", { body: { username: "tech", password: INSTALLER_PW } })).status, 200, "activated");
 });
 
+await check("FEARED: through a proxy on the box (Tailscale serve), activation still needs the code", async () => {
+  const dir = await stateDir();
+  const P = await boot(dir);
+  for (const headers of [{ "X-Forwarded-For": "100.64.0.7" }, { "Tailscale-User-Login": "someone@example.com" }, { Forwarded: "for=100.64.0.7" }]) {
+    eq((await call(P.base, "GET", "/auth/state", { headers })).json.activationNeedsCode, true, JSON.stringify(headers));
+    eq((await call(P.base, "POST", "/auth/activate", { headers, body: { username: "tech", password: INSTALLER_PW } })).status === 200, false, "not activated");
+  }
+  // Tailscale serve passes the tailnet name as Host; a request naming the box
+  // by anything but a loopback name did not come from the box.
+  const viaName = await new Promise((resolve, reject) => {
+    const r = httpRequest(P.base + "/auth/state", { headers: { Host: "camplat-nvr.example.ts.net" } }, (res) => {
+      let t = ""; res.on("data", (c) => (t += c)); res.on("end", () => resolve(JSON.parse(t)));
+    });
+    r.on("error", reject); r.end();
+  });
+  eq(viaName.activationNeedsCode, true, "tailnet Host");
+  eq((await call(P.base, "GET", "/auth/state")).json.activationNeedsCode, false, "the box itself still needs none");
+});
+
+await check("FEARED: behind the proxy one guesser is locked out alone, and forged hops do not help", async () => {
+  const dir = await stateDir();
+  const T = await boot(dir);
+  await call(T.base, "POST", "/auth/activate", { body: { username: "tech", password: INSTALLER_PW } });
+  const guess = (xff, i) => call(T.base, "POST", "/auth/login", { headers: { "X-Forwarded-For": xff }, body: { username: "tech", password: "guess guess " + i } });
+  const codes = [];
+  // The attacker varies the part it controls; the proxy appends the real hop.
+  for (let i = 0; i < 6; i++) codes.push((await guess(`10.9.9.${i}, 100.64.0.66`, i)).status);
+  eq(codes, [401, 401, 401, 401, 401, 429], "the real hop is what gets locked");
+  const honest = await call(T.base, "POST", "/auth/login", { headers: { "X-Forwarded-For": "100.64.0.8" }, body: { username: "tech", password: INSTALLER_PW } });
+  eq(honest.status, 200, "another tailnet device still signs in");
+  eq((await call(T.base, "POST", "/auth/login", { headers: { "X-Forwarded-For": "not an address" }, body: { username: "tech", password: INSTALLER_PW } })).status, 200, "unusable hop shares a bucket, still works");
+  const lines = (await readFile(join(dir, "audit.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+  eq(lines.some((l) => l.ip === "proxied:100.64.0.66"), true, "audit names the real hop");
+});
+
+await check("forwarding headers from a LAN connection are ignored", async () => {
+  const { clientOf } = await import("../agent/auth.mjs");
+  const lan = { socket: { remoteAddress: "192.168.4.20" }, headers: { host: "localhost", "x-forwarded-for": "127.0.0.1" } };
+  eq(clientOf(lan), { address: "192.168.4.20", local: false }, "LAN");
+  eq(clientOf({ socket: { remoteAddress: "::1" }, headers: { host: "[::1]:8080" } }), { address: "::1", local: true }, "box");
+  eq(clientOf({ socket: { remoteAddress: "127.0.0.1" }, headers: {} }), { address: "proxied", local: false }, "no Host is not the box");
+});
+
 await check("a damaged accounts file locks the box; it never reopens activation", async () => {
   const dir = await stateDir();
   await writeFile(join(dir, "accounts.json"), "{ not json");
