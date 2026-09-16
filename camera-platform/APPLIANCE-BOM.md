@@ -11,7 +11,23 @@ would mean paying for their recording software and then not using it.
 
 So the order is a short parts list, and the assembly is about 20 minutes a unit.
 
-## What to order — one store
+## Two models (Austin, 2026-09-16)
+
+| | **Standard NVR** (no AI) | **AI NVR** |
+|---|---|---|
+| Board | N150 6-bay NAS board | **i3-N305** 6-bay NAS board, same design |
+| AI chip | none | **Hailo-8 M.2 2280** (26 TOPS) in the second NVMe slot |
+| Everything else | the list below | the same list |
+| ~Cost | **~$800** | **~$1,050** (+~$50 board, +$199 chip) |
+
+Both run the same software and handle at least 16 cameras. The AI NVR adds
+the detector service (AI-PLAN.md); the N305 has 8 cores for decoding 16
+detection substreams, and the Hailo-8L (13 TOPS) is short at 16. The chip
+slot must be PCIe NVMe, not SATA M.2. Upgrading a Standard NVR to AI later
+means swapping the board and adding the chip. Prices are estimates; recheck
+before ordering.
+
+## What to order — one store (Standard NVR)
 
 | # | Item | Notes | ~Cost |
 |---|---|---|---|
@@ -23,10 +39,7 @@ So the order is a short parts list, and the assembly is about 20 minutes a unit.
 | 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
 | | | **Total** | **~$800** |
 
-Optional: **Hailo-8 M.2 2280** (26 TOPS, ~$199) in the second NVMe slot, only when
-detection moves on-box. Nothing in Phase 1–3 needs it. Sized for the
-16-camera floor (AI-PLAN.md); the Hailo-8L (13 TOPS) is likely short at 16.
-The slot must be PCIe NVMe, not SATA M.2.
+AI NVR: swap item 1 for the i3-N305 board and add the Hailo-8 (table above).
 
 ### Best bang for the buck
 
