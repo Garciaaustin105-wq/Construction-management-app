@@ -47,6 +47,17 @@ const UI_FILES = {
   '/ui/alert-banner.js': 'alert-banner.mjs',
   '/system': 'system.html',
   '/ui/system-client.js': 'system-client.mjs',
+  '/ui/wall-client.js': 'wall-client.mjs',
+};
+
+// Compiled contracts the browser runs directly, served from dist rather than
+// copied into ui. The live wall's layout maths has to be the SAME code the
+// harness proves: a copy under ui would drift from it silently, and the first
+// symptom would be a wall laying out cells the contract never agreed to. The
+// relative path holds in both trees -- agent/../dist in the checkout, and
+// /opt/camplat/agent/../dist on the appliance.
+const UI_CONTRACTS = {
+  '/ui/grid-layout.js': 'gridLayout.js',
 };
 
 const sendError = (res, status, code, message) => {
@@ -546,6 +557,20 @@ export function createApiServer({
           return;
         }
         res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+        res.end(body);
+        return;
+      }
+
+      if (Object.hasOwn(UI_CONTRACTS, pathname)) {
+        const file = join(import.meta.dirname, '..', 'dist', UI_CONTRACTS[pathname]);
+        let body;
+        try {
+          body = await readFile(file);
+        } catch {
+          sendError(res, 500, 'ui_missing', 'the compiled contracts are not installed');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' });
         res.end(body);
         return;
       }

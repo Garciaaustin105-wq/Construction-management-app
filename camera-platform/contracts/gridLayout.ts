@@ -101,6 +101,47 @@ export function gridPage(input: GridLayoutInput): GridPage {
   return { shape, pageIndex, pageCount, cells, cameraCount };
 }
 
+export interface WallStreamPlan {
+  /** Already streaming and still on screen: leave the socket alone. */
+  keep: string[];
+  /** On screen but not streaming: open a socket. */
+  open: string[];
+  /** Streaming but no longer on screen: close the socket. */
+  close: string[];
+}
+
+/**
+ * Which sockets a wall should be holding, given what it is holding now.
+ *
+ * Refuses to stream what nobody is looking at. A sixteen-camera site left on
+ * a 2x2 wall must hold four streams, not sixteen: the box decodes every
+ * stream it opens whether or not a cell shows it, and the first sign of
+ * getting this wrong is not a slow page but a wall where all four visible
+ * cameras stutter.
+ *
+ * Refuses to reopen a socket that is already live. Closing and reopening a
+ * stream that never left the screen costs a black tile and a keyframe wait,
+ * which on a paging wall would flash every camera on every page turn.
+ *
+ * `streaming` may hold ids that are no longer configured at all -- a camera
+ * deleted while the wall was up -- and those come back in `close`.
+ */
+export function wallStreams(streaming: readonly string[], page: GridPage): WallStreamPlan {
+  const onScreen: string[] = [];
+  for (const cell of page.cells) {
+    if (cell.kind === "camera" && !onScreen.includes(cell.cameraId)) onScreen.push(cell.cameraId);
+  }
+  const live = new Set(streaming);
+  const keep = onScreen.filter((id) => live.has(id));
+  const open = onScreen.filter((id) => !live.has(id));
+  const wanted = new Set(onScreen);
+  const close: string[] = [];
+  for (const id of streaming) {
+    if (!wanted.has(id) && !close.includes(id)) close.push(id);
+  }
+  return { keep, open, close };
+}
+
 /**
  * The CSS aspect ratio a wall cell should hold. A 16:9 camera stretched to
  * fill a 4:3 cell makes every car look like a van, and the first thing an

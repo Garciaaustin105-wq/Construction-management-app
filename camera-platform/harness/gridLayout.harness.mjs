@@ -12,7 +12,7 @@
  * cameras are removed; "page 1 of 0"; a blank cameraId shuffling every camera
  * after it into the wrong slot; and a shared shapes table a caller can edit.
  */
-import { GRID_SHAPES, gridShape, gridPage, cellAspectRatio } from "../dist/gridLayout.js";
+import { GRID_SHAPES, gridShape, gridPage, wallStreams, cellAspectRatio } from "../dist/gridLayout.js";
 import { check, eq, same, report } from "./_assert.mjs";
 
 console.log("gridLayout");
@@ -123,6 +123,88 @@ check("editing a returned shape cannot change the next wall", () => {
 
 check("a cell holds a camera's shape, so nothing gets stretched into a van", () => {
   for (const s of GRID_SHAPES) eq(cellAspectRatio(s), "16 / 9", `${s.id}`);
+});
+
+check("a sixteen-camera site on a 2x2 wall opens four streams, not sixteen", () => {
+  // The failure this exists to prevent: the box decodes every stream it opens,
+  // shown or not, so a wall that opens all sixteen makes the four the operator
+  // is actually watching stutter -- and it looks like a camera fault.
+  const page = gridPage({ cameraIds: ids(16), layout: "2x2", page: 0 });
+  const plan = wallStreams([], page);
+  eq(plan.open.length, 4, "four sockets");
+  eq(plan.open, ["cam1", "cam2", "cam3", "cam4"], "the four on screen");
+  eq(plan.keep, [], "nothing was open yet");
+  eq(plan.close, [], "and nothing to close");
+});
+
+check("turning the page keeps the cameras that stayed on screen", () => {
+  // A 3x3 page of nine, then a 2x2 view of the same list: cam1-4 never left
+  // the screen, so they must not be torn down and rebuilt. A reopened stream
+  // is a black tile until the next keyframe, on every camera, on every turn.
+  const nine = ids(9);
+  const before = gridPage({ cameraIds: nine, layout: "3x3", page: 0 });
+  const opened = wallStreams([], before).open;
+  eq(opened.length, 9, "nine open on the 3x3");
+
+  const after = gridPage({ cameraIds: nine, layout: "2x2", page: 0 });
+  const plan = wallStreams(opened, after);
+  eq(plan.keep, ["cam1", "cam2", "cam3", "cam4"], "kept, not reopened");
+  eq(plan.open, [], "nothing needs opening");
+  eq(plan.close, ["cam5", "cam6", "cam7", "cam8", "cam9"], "the five that left are closed");
+});
+
+check("paging forward closes exactly what left and opens exactly what arrived", () => {
+  const nine = ids(9);
+  const p0 = gridPage({ cameraIds: nine, layout: "2x2", page: 0 });
+  const p1 = gridPage({ cameraIds: nine, layout: "2x2", page: 1 });
+  const live = wallStreams([], p0).open;
+  const plan = wallStreams(live, p1);
+  eq(plan.open, ["cam5", "cam6", "cam7", "cam8"], "the new page");
+  eq(plan.close, ["cam1", "cam2", "cam3", "cam4"], "the old one");
+  eq(plan.keep, [], "no overlap between these two pages");
+});
+
+check("a camera shown twice on one wall is still one stream", () => {
+  // Pulling the same camera twice is a wiring cost, not a layout choice: two
+  // sockets for one camera doubles the bandwidth for a picture already on
+  // screen, and the second copy is what gets dropped when the box is busy.
+  const page = gridPage({ cameraIds: ["cam1", "cam1", "cam2", "cam1"], layout: "2x2" });
+  const plan = wallStreams([], page);
+  eq(plan.open, ["cam1", "cam2"], "one socket per camera, however many cells show it");
+});
+
+check("an empty cell asks for nothing", () => {
+  const page = gridPage({ cameraIds: ["cam1", "", "  "], layout: "2x2" });
+  const plan = wallStreams([], page);
+  eq(plan.open, ["cam1"], "blanks and empties are not cameras to stream");
+});
+
+check("a camera deleted while the wall was up gets closed, not left running", () => {
+  // It is off the list, so no cell will ever ask for it again. Without this it
+  // streams forever, and the bandwidth is charged to a camera nobody can see.
+  const page = gridPage({ cameraIds: ["cam1"], layout: "2x2" });
+  const plan = wallStreams(["cam1", "ghost"], page);
+  eq(plan.keep, ["cam1"], "the real one stays");
+  eq(plan.close, ["ghost"], "the vanished one is torn down");
+  eq(plan.open, [], "nothing new");
+});
+
+check("a wall with no cameras holds no sockets open", () => {
+  const page = gridPage({ cameraIds: [], layout: "4x4" });
+  const plan = wallStreams(["cam1", "cam2"], page);
+  eq(plan.open, [], "nothing to open");
+  eq(plan.close, ["cam1", "cam2"], "and everything still running is released");
+});
+
+check("asking twice in a row changes nothing", () => {
+  // Idempotence matters because the page re-plans on every render. If a second
+  // identical plan reopened anything, the wall would flicker continuously.
+  const page = gridPage({ cameraIds: ids(4), layout: "2x2" });
+  const first = wallStreams([], page);
+  const second = wallStreams(first.open, page);
+  eq(second.open, [], "nothing reopened");
+  eq(second.close, [], "nothing closed");
+  eq(second.keep, ids(4), "all four simply kept");
 });
 
 report("gridLayout");

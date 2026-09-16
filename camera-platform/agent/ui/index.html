@@ -2,7 +2,10 @@
 <!-- Live camera grid (A3 slice 1). Contract: LIVE-GRID-UI-SPEC.md section 2.
      Plain page, no framework: the appliance is a box in a closet. The feared
      part (box re-assembly) lives in /ui/live-client.js and is harness-tested;
-     this file only wires sockets, MSE and tile state. -->
+     this file only wires sockets, MSE and per-stream state. The grid itself
+     -- layout, paging, empty cells and which streams stay open -- is
+     /ui/wall-client.js over the /ui/grid-layout.js contract, both
+     harness-tested. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -29,148 +32,227 @@
     color: #ffb4b4;
     display: none;
   }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 10px;
-  }
-  .tile {
-    position: relative;
-    border: 1px solid #2c2f36;
-    border-radius: 8px;
-    overflow: hidden;
-    background: #1b1d22;
-    cursor: pointer;
-  }
-  .tile.enlarged { grid-column: span 2; grid-row: span 2; }
-  .tile header {
+  .controls {
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: #23262c;
-    font-weight: 600;
+    gap: 6px;
+    margin: 0 0 10px;
   }
-  .tile header .quality {
-    font-weight: 400;
-    font-size: 12px;
-    color: #9aa0a6;
-  }
-  .tile video {
-    display: block;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    background: #000;
-  }
-  .tile .status {
-    padding: 6px 10px;
-    min-height: 1.4em;
-    color: #9aa0a6;
-  }
-  .tile .status.problem { color: #ffb4b4; }
-  .tile .status button {
-    margin-left: 8px;
-    padding: 2px 10px;
+  .controls button {
+    padding: 5px 12px;
     border: 1px solid #4a4f58;
     border-radius: 5px;
     background: #2c2f36;
     color: #e8eaed;
     cursor: pointer;
   }
+  .controls button:disabled { opacity: 0.4; cursor: default; }
+  .controls .layout-btn.active { background: #3f6ea8; border-color: #5b8fd0; }
+  .controls #pageLabel { margin: 0 4px; color: #9aa0a6; }
+  .controls #fullscreen { margin-left: auto; }
+
+  /* The grid's own columns and gap are set by wall-client from the shape, so
+     they are not declared here -- two places deciding the column count is how
+     a 3x3 wall ends up drawing four across. */
+  .cell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #2c2f36;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1b1d22;
+  }
+  .cell-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 9px;
+    background: #23262c;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .cell-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell-stream {
+    margin-left: auto;
+    background: #2c2f36;
+    color: #e8eaed;
+    border: 1px solid #4a4f58;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .cell-warn { color: #f1e3a0; font-weight: 400; font-size: 12px; }
+  .cell-body { position: relative; flex: 1; min-height: 0; background: #000; }
+  .cell-body video { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .cell-body .status {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 4px 9px;
+    background: rgba(20, 22, 26, 0.82);
+    color: #9aa0a6;
+    font-size: 12px;
+  }
+  .cell-body .status.problem { color: #ffb4b4; }
+  .cell-body .status button {
+    margin-left: 8px;
+    padding: 1px 9px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    cursor: pointer;
+  }
+  /* An empty cell is a LABELLED thing, never a black rectangle: on a TV in an
+     office a black rectangle looks exactly like a dead camera, and staff ring
+     the installer out for a fault that was never there. */
+  .cell-empty {
+    align-items: center;
+    justify-content: center;
+    background: #1b1d22;
+    border-style: dashed;
+  }
+  .cell-empty-label { color: #6d737b; font-size: 13px; text-align: center; padding: 0 8px; }
+
+  /* Full screen is the TV wall: the cells fill the screen, nothing else shows. */
+  .grid:fullscreen { background: #000; padding: 6px; }
+  .grid:fullscreen .cell { border-radius: 0; }
+
 </style>
 </head>
 <body>
 <nav style="margin: 0 0 10px"><a href="/review" style="color: #8ab4f8">Review</a></nav>
 <div class="alertBanner" id="alertBanner" role="status" hidden></div>
 <div class="pageError" id="pageError"></div>
+<div class="controls" id="controls"></div>
 <div class="grid" id="grid"></div>
 
 <script type="module">
 import { createBoxAccumulator, extractMimeCodec, planLiveBuffer } from '/ui/live-client.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
+import { createWall } from '/ui/wall-client.js';
+import * as gridMaths from '/ui/grid-layout.js';
 
-const grid = document.getElementById('grid');
+const gridRoot = document.getElementById('grid');
+const controlsRoot = document.getElementById('controls');
 const pageError = document.getElementById('pageError');
 
-// Per-tile connection state. One WS per camera at a time: a toggle closes the
-// old socket BEFORE opening the new one (spec: never two streams per camera).
-const tiles = new Map();
+// Per-STREAM connection state, keyed by cameraId. One WS per camera at a time:
+// a toggle closes the old socket BEFORE opening the new one (spec: never two
+// streams per camera). Everything in here is the socket and MSE work that the
+// wall module deliberately knows nothing about; the wall only says which
+// cameraIds should be live, and that decision is harness-tested in gridLayout.
+const streams = new Map();
 
 const showPageError = (msg) => {
   pageError.textContent = msg;
   pageError.style.display = 'block';
 };
 
-function setStatus(tile, msg, kind) {
-  const el = tile.querySelector('.status');
-  el.className = kind === 'problem' ? 'status problem' : 'status';
-  el.textContent = msg;
+function setStatus(t, msg, kind) {
+  t.statusEl.className = kind === 'problem' ? 'status problem' : 'status';
+  t.statusEl.textContent = msg;
 }
 
 // Reconnect button: click stops propagation so the tap does not also toggle
-// the tile's quality (a reconnect must not flip the stream).
-function addReconnect(tile, label) {
-  const el = tile.querySelector('.status');
+// the cell's quality (a reconnect must not flip the stream).
+function addReconnect(t, label) {
   const btn = document.createElement('button');
   btn.textContent = 'Reconnect';
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const t = tiles.get(tile.dataset.cameraId);
     connect(t, t.quality);
   });
-  el.textContent = label + ' ';
-  el.appendChild(btn);
+  t.statusEl.textContent = label + ' ';
+  t.statusEl.appendChild(btn);
 }
 
-async function loadCameras() {
+/**
+ * The wall asks for a stream. It hands us the cell body to draw into and
+ * nothing else -- it does not know what a socket is.
+ */
+function openStream(cameraId, body) {
+  const video = document.createElement('video');
+  video.muted = true; // autoplay policies require muted for unattended pages
+  video.playsInline = true;
+  video.autoplay = true;
+
+  const status = document.createElement('div');
+  status.className = 'status';
+  body.append(video, status);
+
+  const t = { cameraId, body, video, statusEl: status, quality: 'substream' };
+  streams.set(cameraId, t);
+
+  // Tap toggles between the camera's sub and main stream. It no longer resizes
+  // anything: the grid is the wall's business now, and a tap that silently
+  // changed the layout would fight the layout buttons.
+  body.addEventListener('click', () => {
+    connect(t, t.quality === 'substream' ? 'mainstream' : 'substream');
+  });
+
+  connect(t, 'substream');
+}
+
+/** The wall says this camera is off screen. Release everything it holds. */
+function closeStream(cameraId) {
+  const t = streams.get(cameraId);
+  if (!t) return;
+  closeQuietly(t);
+  teardownMedia(t);
+  // Detach the source before the element leaves the document. A detached
+  // <video> still holding a MediaSource keeps its decoder allocated, and on a
+  // wall that pages every few seconds those accumulate until playback stops
+  // starting at all -- which looks like the cameras failing, not the page.
+  t.video.removeAttribute('src');
+  try { t.video.load(); } catch { /* already torn down */ }
+  streams.delete(cameraId);
+}
+
+/**
+ * localStorage is read through a guard because some browsers throw on the
+ * PROPERTY, not just on the call, when site data is blocked. A TV in kiosk
+ * mode must still show cameras; remembering the layout is the optional part.
+ */
+function safeStorage() {
+  try {
+    return window.localStorage ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const wall = createWall({
+  doc: document,
+  gridRoot,
+  controlsRoot,
+  grid: gridMaths,
+  openStream,
+  closeStream,
+  storage: safeStorage(),
+});
+
+/**
+ * /devices, not /cameras: one physical camera answering on two channels is two
+ * entries in /cameras, and rendering that list directly put the bench camera on
+ * the wall twice. The folding is cameraGroups.ts, harness-tested.
+ */
+async function loadDevices() {
   let data;
   try {
-    const res = await fetch('/cameras');
+    const res = await fetch('/devices');
     data = await res.json();
   } catch {
     showPageError('Failed to reach the appliance (' + location.host + ')');
     return;
   }
   if (!Array.isArray(data)) {
-    showPageError('The appliance answered /cameras with an unexpected response');
+    showPageError('The appliance answered /devices with an unexpected response');
     return;
   }
-  for (const cam of data) {
-    const tile = document.createElement('div');
-    tile.className = 'tile';
-    tile.dataset.cameraId = cam.cameraId;
-
-    const header = document.createElement('header');
-    const name = document.createElement('span');
-    name.textContent = cam.name ?? cam.cameraId;
-    const quality = document.createElement('span');
-    quality.className = 'quality';
-    header.append(name, quality);
-
-    const video = document.createElement('video');
-    video.muted = true; // autoplay policies require muted for unattended pages
-    video.playsInline = true;
-    video.autoplay = true;
-
-    const status = document.createElement('div');
-    status.className = 'status';
-
-    tile.append(header, video, status);
-    tile.addEventListener('click', () => {
-      const t = tiles.get(cam.cameraId);
-      if (!t) return;
-      // Tap toggles quality AND enlargement together (spec): substream ->
-      // mainstream enlarged; tapping again returns to substream at normal size.
-      const toMain = t.quality === 'substream';
-      tile.classList.toggle('enlarged', toMain);
-      connect(t, toMain ? 'mainstream' : 'substream');
-    });
-
-    grid.appendChild(tile);
-    tiles.set(cam.cameraId, { tile, video, qualityEl: quality, quality: 'substream' });
-    connect(tiles.get(cam.cameraId), 'substream');
-  }
+  wall.setDevices(data);
 }
 
 // Close the current socket without touching tile state — used before a
@@ -199,7 +281,7 @@ function teardownMedia(t) {
 }
 
 function connect(t, quality) {
-  const { tile, video } = t;
+  const { video } = t;
   closeQuietly(t);
   teardownMedia(t);
 
@@ -210,17 +292,19 @@ function connect(t, quality) {
   t.pending = [];
   t.appendQueued = false;
   t.accumulator = createBoxAccumulator();
-  t.qualityEl.textContent = quality;
 
-  setStatus(tile, 'connecting…');
+  setStatus(t, 'connecting…');
   video.src = '';
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(proto + '//' + location.host + '/live/' + tile.dataset.cameraId + '?quality=' + quality);
+  // The id is encoded: it comes from config an installer wrote, and an
+  // unencoded one would silently truncate the path at the first ? or #.
+  const socket = new WebSocket(proto + '//' + location.host + '/live/' +
+    encodeURIComponent(t.cameraId) + '?quality=' + quality);
   socket.binaryType = 'arraybuffer'; // media arrives as binary; text frames are control envelopes
   t.socket = socket;
 
-  socket.onopen = () => setStatus(tile, 'waiting for the first frame…');
+  socket.onopen = () => setStatus(t, 'waiting for the first frame… (' + quality + ')');
 
   socket.onmessage = (event) => {
     if (typeof event.data === 'string') {
@@ -240,9 +324,9 @@ function connect(t, quality) {
     if (t.socket !== socket) return; // superseded by a newer connection
     t.socket = null;
     if (event.code === 1000) {
-      setStatus(tile, 'disconnected');
+      setStatus(t, 'disconnected');
     } else {
-      setStatus(tile, 'connection closed (code ' + event.code + ')', 'problem');
+      setStatus(t, 'connection closed (code ' + event.code + ')', 'problem');
     }
   };
 
@@ -250,7 +334,6 @@ function connect(t, quality) {
 }
 
 function handleControl(t, env) {
-  const { tile } = t;
   if (env.ok === false && env.code === 'substream_unavailable') {
     // The camera cannot serve the substream: retry mainstream exactly once,
     // automatically (spec default). A second failure surfaces as a refusal.
@@ -258,40 +341,40 @@ function handleControl(t, env) {
       t.retryMainstream = true;
       connect(t, 'mainstream');
     } else {
-      setStatus(tile, 'substream unavailable, mainstream retry failed', 'problem');
+      setStatus(t, 'substream unavailable, mainstream retry failed', 'problem');
     }
     return;
   }
   if (env.ok === false && env.code === 'live_source_failed') {
     teardownMedia(t);
-    addReconnect(tile, 'camera source failed: ' + (env.message ?? env.code));
+    addReconnect(t, 'camera source failed: ' + (env.message ?? env.code));
     return;
   }
   if (env.ok === false && env.code === 'live_stalled') {
-    addReconnect(tile, 'stream stalled: ' + (env.message ?? env.code));
+    addReconnect(t, 'stream stalled: ' + (env.message ?? env.code));
     return;
   }
   if (env.ok === false && env.code === 'live_ended') {
-    addReconnect(tile, 'stream ended: ' + (env.message ?? env.code));
+    addReconnect(t, 'stream ended: ' + (env.message ?? env.code));
     return;
   }
   if (env.ok === false) {
-    setStatus(tile, env.code + (env.message ? ' — ' + env.message : ''), 'problem');
+    setStatus(t, env.code + (env.message ? ' — ' + env.message : ''), 'problem');
   }
 }
 
 function handleInit(t, initSegment) {
-  const { tile, video } = t;
+  const { video } = t;
   const codec = extractMimeCodec(initSegment);
   if (codec.error) {
-    setStatus(tile, 'cannot read this camera’s codec from its stream', 'problem');
+    setStatus(t, 'cannot read this camera’s codec from its stream', 'problem');
     t.socket.close();
     return;
   }
   if (!MediaSource.isTypeSupported(codec.mime)) {
     // Say it out loud in the tile — HEVC needs hardware decode; never silently
     // black-frame.
-    setStatus(tile, 'this browser cannot decode this camera’s codec (' +
+    setStatus(t, 'this browser cannot decode this camera’s codec (' +
       codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + ')', 'problem');
     t.socket.close();
     return;
@@ -301,16 +384,16 @@ function handleInit(t, initSegment) {
   // Stage reporting: 'waiting for the first frame' is what the tile says at
   // socket open, so init reaching this far must be visible in the status line
   // too — otherwise a stuck player and a live one are indistinguishable.
-  setStatus(tile, 'init ok (' + codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + '), opening player…');
+  setStatus(t, 'init ok (' + codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + '), opening player…');
 
   const ms = new MediaSource();
   t.mediaSource = ms;
   t.objectUrl = URL.createObjectURL(ms);
   video.src = t.objectUrl;
-  video.addEventListener('playing', () => setStatus(tile, 'live'), { once: true });
+  video.addEventListener('playing', () => setStatus(t, 'live (' + t.quality + ')'), { once: true });
   video.addEventListener('error', () => {
     const code = video.error ? video.error.code : 0;
-    setStatus(tile, 'video element error ' + code + ' (1 aborted, 2 network, 3 decode, 4 src not supported)', 'problem');
+    setStatus(t, 'video element error ' + code + ' (1 aborted, 2 network, 3 decode, 4 src not supported)', 'problem');
   }, { once: true });
 
   ms.addEventListener('sourceopen', () => {
@@ -321,7 +404,7 @@ function handleInit(t, initSegment) {
     sb.addEventListener('error', () => {
       // appendBuffer failures are usually ASYNC: MSE fires this event and
       // readyState drops to 'ended' rather than throwing synchronously.
-      setStatus(tile, 'MSE rejected a segment (decode error)', 'problem');
+      setStatus(t, 'MSE rejected a segment (decode error)', 'problem');
     });
     sb.addEventListener('updateend', () => {
       if (t.sourceBuffer !== sb) return;
@@ -329,7 +412,7 @@ function handleInit(t, initSegment) {
       // the video element's business — distinguishable from 'playing' below.
       if (!t.appendSeen) {
         t.appendSeen = true;
-        setStatus(tile, 'buffering…');
+        setStatus(t, 'buffering…');
       }
       // A viewer of a live grid never rewinds, and unbounded buffering grows
       // forever: trim behind the playhead and keep it at the live edge. A
@@ -399,11 +482,11 @@ function pumpAppend(t) {
     // (server side or watchdog) surfaces through onclose. Say so in the tile:
     // a silently poisoned buffer would look exactly like a stalled stream.
     t.appendQueued = false;
-    setStatus(t.tile, 'player rejected a stream segment (' + (e && e.name ? e.name + ': ' + e.message : 'unknown') + ')', 'problem');
+    setStatus(t, 'player rejected a stream segment (' + (e && e.name ? e.name + ': ' + e.message : 'unknown') + ')', 'problem');
   }
 }
 
-loadCameras();
+loadDevices();
 startAlertBanner(document.getElementById('alertBanner'));
 </script>
 </body>
