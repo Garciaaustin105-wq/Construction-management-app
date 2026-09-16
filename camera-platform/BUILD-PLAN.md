@@ -176,6 +176,9 @@ it to nothing. Compared against OpenEye by someone who uses OpenEye daily.
 
 ## Phase D — detection (3–4 weeks)
 
+**Superseded by AI-PLAN.md (2026-09-16), which adds plate search and
+plain-English search.**
+
 Hailo pipeline on the substream, perimeter and gate cameras only. Person,
 vehicle, plate. `uploadPolicy.ts` decides what becomes a timeline marker.
 
