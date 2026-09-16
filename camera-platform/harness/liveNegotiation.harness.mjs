@@ -96,15 +96,22 @@ check("refusal details never echo a credential-bearing url", () => {
     "unresolved detail too");
 });
 
-check("liveFfmpegArgs: copy only, ends pipe:1, url appears once after -i", () => {
+check("liveFfmpegArgs: video copied, audio re-encoded, ends pipe:1, url once after -i", () => {
   const args = liveFfmpegArgs("rtsp://u:p@10.0.0.5:554/ch1");
   same(args[args.length - 1], "pipe:1", "stdout is the pipe");
-  same(args.includes("-c") && args[args.indexOf("-c") + 1], "copy", "-c copy");
-  same(args.includes("-vf") || args.includes("-c:v") || args.includes("-c:a"), false,
-    "no transcode flags");
+  same(args.includes("-c:v") && args[args.indexOf("-c:v") + 1], "copy", "-c:v copy");
+  // The appliance is not a transcoding farm: no video filter, no video encoder.
+  same(args.includes("-vf"), false, "video never filtered");
+  same(args.includes("-c"), false, "no blanket -c that would recopy audio too");
+  // Audio IS re-encoded, on purpose: mp4 cannot hold G.711, and a failed mux
+  // takes the picture down with it.
+  same(args.includes("-c:a") && args[args.indexOf("-c:a") + 1], "aac", "audio to aac");
+  same(args.includes("-b:a") && args[args.indexOf("-b:a") + 1], "32k", "voice-grade audio rate");
+  same(args.includes("0:a:0?"), true, "optional audio map: mic-less cameras still work");
+  same(args.includes("0:v:0"), true, "explicit video map");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1") >= 0, true, "url present");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1"), args.indexOf("-i") + 1, "url right after -i");
-  same(args.length, 19, "exact shape");
+  same(args.length, 27, "exact shape");
   same(args.includes("frag_keyframe+empty_moov+default_base_moof"), true, "fragmented mp4, MSE-safe addressing");
   // `default_base_moof` is load-bearing: MSE forbids tfhd's absolute
   // base_data_offset ("TFHD base-data-offset not allowed by MSE"), and a

@@ -147,8 +147,21 @@ export function liveFfmpegArgs(url: string): string[] {
     "500000",
     "-i",
     url,
-    "-c",
+    // Video is still never transcoded. Audio must be, because a camera speaks
+    // G.711/G.726 and the mp4 muxer will not carry those -- ffmpeg fails the
+    // whole mux, so a copied microphone takes the picture down with it.
+    // AAC at 32k is voice-grade and costs a fraction of a video transcode.
+    // The trailing ? on the audio map keeps mic-less cameras working.
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a:0?",
+    "-c:v",
     "copy",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "32k",
     "-f",
     "mp4",
     "-movflags",
