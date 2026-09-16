@@ -83,8 +83,11 @@ Each stage is contract, then harness, then code, then UI.
 - **Status (2026-09-16):** `detection.ts` and `alertRules.ts` done, with
   harnesses (two people at once stay apart; daylight saving in both
   directions; hours past midnight; holidays; cooldown; zones by the feet).
-  Still to do: timeline markers in `uploadPolicy.ts`, the global plate switch
-  in a contract, and the clip library (needs the bench camera).
+  `uploadPolicy.ts` now takes opening hours in the site's time zone (its old
+  fixed UTC offset was an hour wrong all winter). `aiSettings.ts` holds the
+  NVR-wide plate switch: off by default, no plate stored while off, an audit
+  entry for every flip, and stored reads expire on schedule either way.
+  Still to do: the clip library (needs the bench camera).
 
 ### D1. The detector service (laptop, CPU/GPU)
 - `camplat-detect` reads one substream, runs a permissive person/vehicle

@@ -10,7 +10,8 @@ import { check, eq, report } from "./_assert.mjs";
 console.log("upload policy");
 
 const CLIP = 9_400_000;   // a 30s span, for budget arithmetic only — not uploaded
-const hours = { openMinute: 7 * 60, closeMinute: 20 * 60, utcOffsetMinutes: -5 * 60 };
+const everyDay = (open, close) => Array.from({ length: 7 }, () => [{ open, close }]);
+const hours = { timeZone: "America/Chicago", weekly: everyDay(7 * 60, 20 * 60), closedDates: [] };
 const carwash = { siteKind: "carwash", hours, ...DEFAULT_POLICY.carwash };
 const storage = { siteKind: "storage", hours, ...DEFAULT_POLICY.storage };
 const budget = (over = {}) => ({
@@ -18,7 +19,7 @@ const budget = (over = {}) => ({
   spentMonthBytes: 0, monthlyBudgetBytes: 3000 * CLIP,
   lastUploadMs: {}, ...over,
 });
-// 14:00 and 02:00 local, given a -5h offset.
+// 14:00 and 02:00 local on 2026-09-11, when Chicago is on CDT (UTC-5).
 const at = (localHour) => new Date(Date.UTC(2026, 8, 11, localHour + 5, 0, 0)).toISOString();
 const cand = (over = {}) => ({
   cameraId: "cam-1", atUtc: at(14), kind: "vehicle", confidence: 0.9, estimatedBytes: CLIP, ...over,
@@ -97,11 +98,20 @@ check("the monthly budget catches what the daily one lets through", () => {
 });
 
 check("overnight opening hours crossing midnight are handled", () => {
-  const nightShift = { siteKind: "storage", hours: { openMinute: 22 * 60, closeMinute: 6 * 60, utcOffsetMinutes: -5 * 60 }, ...DEFAULT_POLICY.storage };
+  const nightShift = { siteKind: "storage", hours: { ...hours, weekly: everyDay(22 * 60, 6 * 60) }, ...DEFAULT_POLICY.storage };
   const during = decideUpload(cand({ atUtc: at(23), kind: "motion" }), nightShift, budget());
   eq(during.kind, "index_only", "23:00 counts as open, so motion is routine");
   const outside = decideUpload(cand({ atUtc: at(12), kind: "motion" }), nightShift, budget());
   eq(outside.kind, "upload", "midday counts as closed for a night-shift site");
+});
+
+check("FEARED: winter hours are not an hour off (no fixed UTC offset)", () => {
+  // 2026-01-14 19:30 CST is 01:30Z. A fixed -5h offset calls it 20:30, closed,
+  // and every washed car in the last open hour of a winter day becomes a marker.
+  const lastHour = decideUpload(cand({ atUtc: "2026-01-15T01:30:00.000Z" }), carwash, budget());
+  eq(lastHour.kind, "index_only", "19:30 CST is still open");
+  const closed = decideUpload(cand({ atUtc: "2026-01-15T02:30:00.000Z" }), carwash, budget());
+  eq(closed.kind, "upload", "20:30 CST is after hours");
 });
 
 check("projection sizes a budget before anyone is surprised by a bill", () => {

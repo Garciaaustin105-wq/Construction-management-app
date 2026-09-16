@@ -33,16 +33,9 @@
 
 import { parseUtc } from "./time.js";
 import type { DetectionKind } from "./timeline.js";
+import { isOpen as scheduleIsOpen, type Schedule } from "./alertRules.js";
 
 export type SiteKind = "storage" | "carwash" | "generic";
-
-export interface OpenHours {
-  /** Minutes from local midnight. 480 = 08:00. */
-  openMinute: number;
-  closeMinute: number;
-  /** IANA-style offset in minutes applied to the UTC instant. */
-  utcOffsetMinutes: number;
-}
 
 export interface UploadCandidate {
   cameraId: string;
@@ -65,7 +58,9 @@ export interface BudgetState {
 
 export interface PolicyConfig {
   siteKind: SiteKind;
-  hours: OpenHours;
+  /** Opening hours in the site's own time zone (alertRules.ts). A fixed UTC
+   *  offset was used here once; it was an hour wrong for half the year. */
+  hours: Schedule;
   /** Minimum gap between uploads for the same camera and kind. */
   cooldownSeconds: number;
   minConfidence: number;
@@ -86,13 +81,8 @@ export const DEFAULT_POLICY: Record<SiteKind, Omit<PolicyConfig, "hours" | "site
   generic: { cooldownSeconds: 120, minConfidence: 0.65 },
 };
 
-function isOpen(atUtc: string, hours: OpenHours): boolean {
-  const localMs = parseUtc(atUtc) + hours.utcOffsetMinutes * 60_000;
-  const minute = Math.floor(localMs / 60_000) % 1440;
-  // A window crossing midnight (22:00–06:00) is two ranges, not one.
-  return hours.openMinute <= hours.closeMinute
-    ? minute >= hours.openMinute && minute < hours.closeMinute
-    : minute >= hours.openMinute || minute < hours.closeMinute;
+function isOpen(atUtc: string, hours: Schedule): boolean {
+  return scheduleIsOpen(hours, parseUtc(atUtc));
 }
 
 /** Higher is more worth the bytes. */
