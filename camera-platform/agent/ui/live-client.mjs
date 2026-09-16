@@ -335,3 +335,41 @@ export function planLiveBuffer(ranges, currentTime) {
   }
   return { seekTo, removeEnd };
 }
+
+// ── Reconnecting a live tile ─────────────────────────────────────────────────
+//
+// A TV on the wall has nobody to press "Reconnect". A camera reboot, a Wi-Fi
+// blip or the watchdog restarting the recorder would otherwise leave dead
+// tiles until someone walks over. THE FEARED FAILURES: a tile that retries in
+// a tight loop and floods the recorder, and a tile that retries something that
+// can never work (this browser cannot decode the codec) forever.
+
+export const RECONNECT_FIRST_MS = 2000;
+export const RECONNECT_MAX_MS = 30000;
+
+/** Why a tile stopped. Only these are worth trying again. */
+export const RECONNECT_REASONS = Object.freeze(["closed", "stalled", "ended", "source_failed", "mainstream_failed"]);
+
+/**
+ * How long to wait before reconnecting a tile, or null for never.
+ *
+ * `reason`: a string saying why the tile stopped.
+ * `attempt`: how many reconnects have already been tried since the tile last
+ *   played (0 for the first retry).
+ *
+ * 1. If `reason` is not one of RECONNECT_REASONS (by ===), return null. That
+ *    includes "codec_unsupported" and "codec_unreadable": the same browser
+ *    will refuse the same stream again.
+ * 2. If `attempt` is not a number, not finite, not an integer or negative,
+ *    return RECONNECT_MAX_MS (keep trying, slowly, rather than stop).
+ * 3. Otherwise return Math.min(RECONNECT_FIRST_MS * 2 ** attempt,
+ *    RECONNECT_MAX_MS). So 2 s, 4 s, 8 s, 16 s, then 30 s for good; a huge
+ *    attempt must still return RECONNECT_MAX_MS, never Infinity or NaN.
+ * 4. Never throw.
+ */
+export function reconnectDelayMs(reason, attempt) {
+  if (!RECONNECT_REASONS.includes(reason)) return null;
+  if (!Number.isInteger(attempt) || attempt < 0) return RECONNECT_MAX_MS;
+  if (attempt >= 30) return RECONNECT_MAX_MS; // 2 ** attempt would overflow the cap
+  return Math.min(RECONNECT_FIRST_MS * 2 ** attempt, RECONNECT_MAX_MS);
+}

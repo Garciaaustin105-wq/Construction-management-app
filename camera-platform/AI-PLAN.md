@@ -31,6 +31,9 @@ working when the internet is down.
 - **Plates are personal data.** Plate reads get their own retention setting,
   shorter than video by default, and every plate search is written to the audit
   log.
+- **Plate reading has one on/off switch for the whole NVR** (installer only).
+  Off stops new reads at once. Reads already stored follow their retention;
+  turning it off is logged in the audit log with who did it.
 
 ## How it fits together
 

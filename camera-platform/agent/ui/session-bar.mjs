@@ -77,10 +77,39 @@ function hideRefusedLinks(permissions) {
   }
 }
 
+// A wall display is a TV nobody touches: keep its screen on, and hide the
+// pointer once it stops moving. Only for a display login -- a person's own
+// screen keeps its normal sleep (and an OLED is not held on by a forgotten tab).
+function tvMode() {
+  let lock = null;
+  const hold = async () => {
+    if (document.visibilityState !== "visible" || lock !== null || !navigator.wakeLock) return;
+    try {
+      lock = await navigator.wakeLock.request("screen");
+      lock.addEventListener("release", () => { lock = null; });
+    } catch {
+      // Refused (battery saver, or not a secure context): the TV's own settings decide.
+    }
+  };
+  hold();
+  // The browser drops the lock whenever the tab is hidden; take it back on return.
+  document.addEventListener("visibilitychange", hold);
+
+  let idle;
+  const wake = () => {
+    document.documentElement.style.cursor = "";
+    clearTimeout(idle);
+    idle = setTimeout(() => { document.documentElement.style.cursor = "none"; }, 3000);
+  };
+  document.addEventListener("pointermove", wake);
+  wake();
+}
+
 try {
   const res = await realFetch("/auth/state", { credentials: "same-origin" });
   const state = await res.json();
   if (Array.isArray(state?.permissions)) hideRefusedLinks(state.permissions);
+  if (state?.principal?.kind === "display") tvMode();
   if (state?.principal?.kind === "user") bar(state.principal);
   else if (state?.principal?.kind === "anonymous") signInAgain();
 } catch {
