@@ -31,6 +31,8 @@ import { groupCamerasByDevice } from '../dist/cameraGroups.js';
 import { siteHealth } from '../dist/siteHealth.js';
 import { planExport } from '../dist/exportPlan.js';
 import { streamExport } from './exportStream.mjs';
+import { decideRoute, safeNext } from '../dist/routeAccess.js';
+import { createAuth } from './auth.mjs';
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -48,6 +50,10 @@ const UI_FILES = {
   '/system': 'system.html',
   '/ui/system-client.js': 'system-client.mjs',
   '/ui/wall-client.js': 'wall-client.mjs',
+  '/login': 'login.html',
+  '/ui/login-client.js': 'login-client.mjs',
+  '/accounts-page': 'accounts.html',
+  '/ui/accounts-client.js': 'accounts-client.mjs',
 };
 
 // Compiled contracts the browser runs directly, served from dist rather than
@@ -227,7 +233,28 @@ function serveExportPlan(res, parsedUrl, ctx) {
   res.end(JSON.stringify(body));
 }
 
+/**
+ * A request that changes something must come from a page this box served.
+ * SameSite=Strict already keeps the cookie off a cross-site request; this is
+ * the second lock, for browsers and proxies that get SameSite wrong. A form
+ * post cannot send application/json without a CORS preflight, which this
+ * server never answers, and Origin / Sec-Fetch-Site name the page that sent it.
+ */
+export function sameOrigin(req) {
+  const site = req.headers['sec-fetch-site'];
+  if (site !== undefined && site !== 'same-origin' && site !== 'none') return false;
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 export function createApiServer({
+  // Required: see the check below.
+  auth,
   stateDir,
   config,
   index,
@@ -239,6 +266,12 @@ export function createApiServer({
   maxPerCamera = 2,
   maxTotal = 16,
 }) {
+  // No auth, no server. A default here would be an open recorder the first
+  // time someone forgot to pass one.
+  if (auth === null || typeof auth !== 'object' || typeof auth.principalOf !== 'function' || typeof auth.handle !== 'function') {
+    throw new TypeError('createApiServer needs auth (from createAuth)');
+  }
+
   const driveAssignment = assignCamerasToDrives(
     config.cameras.map((c) => c.cameraId),
     config.storeRoots.length
@@ -250,11 +283,37 @@ export function createApiServer({
       const parsedUrl = new URL(url, `http://${req.headers.host}`);
       const pathname = parsedUrl.pathname;
 
-      // Only GET is supported
+      // ---------- access, before any route ----------
+      // Default deny: routeAccess knows every route and what it needs. A route
+      // added below without a line there is refused, not served.
+      const principal = auth.principalOf(req);
+      const decision = decideRoute(principal, method, pathname);
+      if (decision.kind === 'redirect') {
+        res.writeHead(302, { Location: decision.location, 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+      if (decision.kind === 'refuse') {
+        sendError(res, decision.status, decision.code, decision.message);
+        return;
+      }
+      if (method !== 'GET' && !sameOrigin(req)) {
+        sendError(res, 403, 'cross_origin', 'this request did not come from this recorder\'s own pages');
+        return;
+      }
+
+      // Already signed in: the login page has nothing to offer but a way back.
+      if (pathname === '/login' && principal.kind !== 'anonymous') {
+        res.writeHead(302, { Location: safeNext(parsedUrl.searchParams.get('next')), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+
+      if (await auth.handle(req, res, pathname, principal)) return;
+
+      // Every route past here reads; the table only lets GET through to them.
       if (method !== 'GET') {
-        const envelope = { ok: false, code: 'method_not_allowed', message: 'Method not allowed' };
-        res.writeHead(405, { Allow: 'GET', 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(envelope));
+        sendError(res, 404, 'no_such_route', 'No such route');
         return;
       }
 
@@ -539,6 +598,13 @@ export function createApiServer({
 
       // ---------- /export ----------
       if (pathname === '/export') {
+        // Footage leaving the box is the one read worth a line in the audit.
+        auth.audit('export', req, {
+          actor: principal.username ?? principal.displayId ?? null,
+          camera: parsedUrl.searchParams.get('camera'),
+          start: parsedUrl.searchParams.get('start'),
+          end: parsedUrl.searchParams.get('end'),
+        });
         await serveExport(res, parsedUrl, { config, index, now, driveAssignment });
         return;
       }
@@ -595,7 +661,22 @@ export function createApiServer({
   // the caller's clock (the harness pins a fixed instant), but a LIVE stream
   // runs on the wall clock, and a stale-harness timestamp would make every
   // fresh stream look already-stalled to the watchdog.
-  attachLive(server, { config, spawnFn, maxPerCamera, maxTotal });
+  attachLive(server, {
+    config, spawnFn, maxPerCamera, maxTotal,
+    authorize: (request) => {
+      let pathname;
+      try {
+        pathname = new URL(request.url, 'http://localhost').pathname;
+      } catch {
+        return { kind: 'refuse', status: 401, code: 'unauthenticated', message: 'sign in first' };
+      }
+      // A WebSocket is not bound by the same-origin policy: a page on any
+      // site can open one to this box, so the Origin is checked here too.
+      if (!sameOrigin(request)) return { kind: 'refuse', status: 403, code: 'cross_origin', message: 'not from this recorder' };
+      const d = decideRoute(auth.principalOf(request), 'GET', pathname);
+      return d.kind === 'allow' ? d : { kind: 'refuse', status: d.status ?? 401, code: d.code ?? 'unauthenticated', message: d.message ?? 'sign in first' };
+    },
+  });
 
   return server;
 }
@@ -605,7 +686,8 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
   const stateDir = process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
   const config = await loadConfig(stateDir);
   const index = openIndex(indexPathFor(stateDir));
-  const server = createApiServer({ stateDir, config, index });
+  const auth = await createAuth({ stateDir, log });
+  const server = createApiServer({ stateDir, config, index, auth });
 
   const port = Number(process.env.CAMPLAT_API_PORT ?? 8080);
   const host = process.env.CAMPLAT_API_HOST ?? '127.0.0.1';

@@ -289,3 +289,26 @@ export function canRemoveAccount(
   }
   return { kind: "ok" };
 }
+
+export type NameVerdict =
+  | { kind: "ok"; name: string }
+  | { kind: "rejected"; reason: string };
+
+/**
+ * An account username or a display id, normalised to lowercase.
+ *
+ * Lowercased because "Tech" and "tech" as two accounts is a support call
+ * waiting to happen, and restricted to a URL-safe alphabet because these
+ * names go into paths (/accounts/<name>) and into the audit log verbatim.
+ */
+export function validateName(candidate: unknown): NameVerdict {
+  if (typeof candidate !== "string") return { kind: "rejected", reason: "a name is required" };
+  const name = candidate.toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(name)) {
+    return {
+      kind: "rejected",
+      reason: "1 to 32 letters, digits, dots, dashes or underscores, starting with a letter or digit",
+    };
+  }
+  return { kind: "ok", name };
+}

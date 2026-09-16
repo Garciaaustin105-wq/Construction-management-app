@@ -21,6 +21,13 @@ import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { readZip } from "./_zipReader.mjs";
 import { createApiServer } from "../agent/api-server.mjs";
+// These suites test the routes, not sign-in: an installer is always signed in.
+// Access itself is proven in auth.harness.mjs against the real module.
+const installerAuth = {
+  principalOf: () => ({ kind: "user", username: "tech", role: "installer" }),
+  handle: async () => false,
+  audit: () => {},
+};
 import { openIndex } from "../agent/segindex.mjs";
 import { liveRegistry, closeAll } from "../agent/live.mjs";
 import { createBoxAccumulator, extractMimeCodec, parseTopLevelBoxes } from "../agent/ui/live-client.mjs";
@@ -93,7 +100,7 @@ index.put(seg("cam-1", "2026-09-11T10:05:00Z", "2026-09-11T10:06:00Z", `cam-1/${
 index.put(seg("cam-1", "2026-09-11T11:58:00Z", null, `cam-1/${ms(T.open)}.mp4`, null, "open"));
 index.addGap({ cameraId: "cam-1", startUtc: "2026-09-11T10:02:00Z", endUtc: "2026-09-11T10:05:00Z", reason: "camera_offline" });
 
-const server = createApiServer({ stateDir, config, index, now });
+const server = createApiServer({ stateDir, config, index, now, auth: installerAuth });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 
@@ -399,10 +406,10 @@ await check("unknown, malformed and open segment ids each get their own refusal"
   eq(open.json.code, "segment_open", "open code");
 });
 
-await check("only GET exists", async () => {
+await check("a method the route table does not list is no route at all", async () => {
   const post = await fetch(`${base}/cameras`, { method: "POST" });
-  eq(post.status, 405, "post status");
-  eq(post.headers.get("allow"), "GET", "allow header");
+  eq(post.status, 404, "post status");
+  eq((await post.json()).code, "no_such_route", "post code");
   const { json } = await fetchJson(`${base}/nope`);
   eq(json.code, "no_such_route", "unknown route");
 });
@@ -435,7 +442,7 @@ const fakeSpawn = (cmd, args, opts) => {
   return child;
 };
 
-const liveServer = createApiServer({ stateDir, config, index, spawnFn: fakeSpawn, maxPerCamera: 1 });
+const liveServer = createApiServer({ stateDir, config, index, spawnFn: fakeSpawn, maxPerCamera: 1, auth: installerAuth });
 await new Promise((resolve) => liveServer.listen(0, "127.0.0.1", resolve));
 const liveBase = `http://127.0.0.1:${liveServer.address().port}`;
 

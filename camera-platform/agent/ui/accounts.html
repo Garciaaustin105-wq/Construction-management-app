@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Accounts</title>
+<style>
+:root { color-scheme: dark; } * { box-sizing: border-box; }
+body { margin:0; padding:12px; background:#14161a; color:#e8eaed; font:14px/1.4 system-ui, sans-serif; }
+.panel { background:#1b1d22; border:1px solid #2c2f36; border-radius:8px; padding:12px; }
+.dim { color:#9aa0a6; }
+.error { color:#ffb4b4; }
+.good { color:#7ddc9a; }
+button { font:inherit; padding:8px 12px; border:0; border-radius:6px; background:#4c8bf5; color:#fff; }
+button.danger { background:#5a2323; color:#ffb4b4; }
+button:disabled { opacity:0.6; }
+input, select { font:inherit; color:inherit; background:#14161a; border:1px solid #2c2f36; border-radius:6px; padding:8px; }
+.row input, .row select { max-width:100%; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.row strong, .row span { overflow-wrap:anywhere; }
+label { display:flex; flex-direction:column; gap:4px; }
+label > span { color:#9aa0a6; }
+nav { margin:0 0 12px; }
+nav a { color:#9aa0a6; margin-right:12px; }
+h1 { font-size:18px; margin:0 0 12px; }
+h2 { font-size:16px; margin:0 0 8px; }
+h3 { font-size:14px; margin:16px 0 8px; }
+form { margin:0; }
+#message { min-height:1.4em; margin:12px 0; }
+section.panel { margin-bottom:12px; }
+#accountList > .row, #displayList > .row { border-top:1px solid #2c2f36; padding:8px 0; }
+#newDisplayLink { flex:1 1 220px; min-width:0; }
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Live</a>
+  <a href="/review">Review</a>
+  <a href="/system">System</a>
+</nav>
+<h1>Accounts</h1>
+<div class="row">
+  <span id="whoami" class="dim"></span>
+  <button id="signOut" type="button">Sign out</button>
+</div>
+<p id="message" role="status" aria-live="polite"></p>
+
+<section class="panel">
+  <h2>Sign-in accounts</h2>
+  <div id="accountList"></div>
+  <form id="addAccountForm">
+    <h3>Add account</h3>
+    <div class="row">
+      <label><span>Username</span><input id="addUsername" autocomplete="off" required></label>
+      <label><span>Role</span><select id="addRole">
+          <option value="store" selected>Store — watch, review, export</option>
+          <option value="installer">Installer — everything</option>
+        </select></label>
+      <label><span>Password</span><input id="addPassword" type="password" autocomplete="new-password" minlength="12" required></label>
+      <label><span>Confirm password</span><input id="addConfirm" type="password" autocomplete="new-password" required></label>
+      <button id="addAccountButton" type="submit">Add account</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Wall displays</h2>
+  <div id="displayList"></div>
+  <form id="addDisplayForm">
+    <h3>Add display</h3>
+    <div class="row">
+      <label><span>Display ID</span><input id="addDisplayId" autocomplete="off" required></label>
+      <button id="addDisplayButton" type="submit">Add display</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel" id="newDisplayToken" hidden>
+  <h2>New display pairing link</h2>
+  <p class="dim">Open this link once on the TV. It is shown only now.</p>
+  <div class="row">
+    <input id="newDisplayLink" readonly spellcheck="false">
+    <button id="copyDisplayLink" type="button">Copy link</button>
+    <button id="dismissDisplayToken" type="button">Dismiss</button>
+  </div>
+</section>
+
+<script type="module" src="/ui/accounts-client.js"></script>
+</body>
+</html>

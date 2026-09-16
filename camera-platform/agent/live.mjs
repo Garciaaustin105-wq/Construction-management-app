@@ -101,7 +101,10 @@ const textFrame = (obj) => encodeServerFrame(1, Buffer.from(JSON.stringify(obj))
 const closeFrame = () => encodeServerFrame(8, Buffer.alloc(0));
 
 export function attachLive(server, deps) {
-  const { config, spawnFn, now = () => new Date(), maxPerCamera = 2, maxTotal = 16 } = deps;
+  const { config, spawnFn, authorize, now = () => new Date(), maxPerCamera = 2, maxTotal = 16 } = deps;
+  // Required, not defaulted: a live edge with no gate streams every camera to
+  // anyone on the LAN, and a forgotten argument must not be how that happens.
+  if (typeof authorize !== "function") throw new TypeError("attachLive needs an authorize(request) function");
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
@@ -113,6 +116,24 @@ export function attachLive(server, deps) {
     const key = request.headers["sec-websocket-key"];
     if (!cameraId || !key) {
       socket.destroy();
+      return;
+    }
+
+    // Who is asking is decided BEFORE the 101. Once the upgrade is written the
+    // connection is a stream, and a refusal after it is a courtesy the client
+    // may ignore; a plain HTTP status before it is the end of the conversation.
+    const verdict = authorize(request);
+    if (verdict?.kind !== "allow") {
+      const status = verdict?.status ?? 401;
+      const body = JSON.stringify({ ok: false, code: verdict?.code ?? "unauthenticated", message: verdict?.message ?? "sign in first" });
+      socket.end(
+        `HTTP/1.1 ${status} ${status === 403 ? "Forbidden" : "Unauthorized"}\r\n` +
+          "Content-Type: application/json\r\n" +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+          "Connection: close\r\n\r\n" +
+          body,
+      );
+      socket.once("finish", () => socket.destroy());
       return;
     }
 

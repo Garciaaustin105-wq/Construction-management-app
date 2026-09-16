@@ -133,7 +133,7 @@ const server = createServer(() => {});
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
 const port = server.address().port;
-attachLive(server, { config, spawnFn, maxPerCamera: 2, maxTotal: 16 });
+attachLive(server, { config, spawnFn, maxPerCamera: 2, maxTotal: 16, authorize: () => ({ kind: "allow" }) });
 
 const wsOpen = (path) =>
   new Promise((resolve, reject) => {

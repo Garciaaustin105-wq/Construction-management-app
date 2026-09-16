@@ -22,6 +22,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { createApiServer } from "../agent/api-server.mjs";
+// These suites test the routes, not sign-in: an installer is always signed in.
+// Access itself is proven in auth.harness.mjs against the real module.
+const installerAuth = {
+  principalOf: () => ({ kind: "user", username: "tech", role: "installer" }),
+  handle: async () => false,
+  audit: () => {},
+};
 import { openIndex } from "../agent/segindex.mjs";
 import { closeAll } from "../agent/live.mjs";
 import { check, eq, report } from "./_assert.mjs";
@@ -58,7 +65,7 @@ for (const [s, e] of [["2026-09-11T10:00:00Z", "2026-09-11T10:01:00Z"],
 index.put(seg("2026-09-11T11:58:00Z", null, "open"));
 index.addGap({ cameraId: "cam-1", startUtc: "2026-09-11T10:02:00Z", endUtc: "2026-09-11T10:05:00Z", reason: "camera_offline" });
 
-const server = createApiServer({ stateDir, config, index, now });
+const server = createApiServer({ stateDir, config, index, now, auth: installerAuth });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const host = `127.0.0.1:${server.address().port}`;
 const idOf = (iso) => `cam-1.${ms(iso)}`;

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<!--
+  Sign-in page for the camera NVR.
+
+  Three jobs, one of them visible at a time:
+   - First boot: create the installer account. Needs the activation code
+     from the recorder unless the browser is on the recorder itself.
+   - Every day: sign in.
+   - A wall TV: open /login#display=<token> once. The token rides in the
+     fragment, which the browser never sends to a server or a log, and is
+     wiped from the address bar as soon as it has been exchanged.
+
+  All behaviour is in /ui/login-client.js.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sign in</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         padding:16px; background:#14161a; color:#e8eaed; font:15px/1.4 system-ui, sans-serif; }
+  main { width:100%; max-width:360px; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  p { margin:0 0 16px; }
+  .dim { color:#9aa0a6; font-size:13px; }
+  form { display:flex; flex-direction:column; gap:12px; padding:18px; background:#1b1d22;
+         border:1px solid #2c2f36; border-radius:10px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:#9aa0a6; }
+  input { font:inherit; color:inherit; background:#14161a; border:1px solid #2c2f36;
+          border-radius:6px; padding:10px; }
+  input:focus { outline:2px solid #4c8bf5; outline-offset:0; }
+  button { font:inherit; font-weight:600; padding:10px; border:0; border-radius:6px;
+           background:#4c8bf5; color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  #message { min-height:1.4em; margin:12px 0 0; }
+  .bad { color:#ffb4b4; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="signIn" hidden>
+    <h1>Sign in</h1>
+    <p class="dim">Camera recorder</p>
+    <form id="signInForm" autocomplete="on">
+      <label>Username <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+      <label>Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
+      <button id="signInButton" type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <section id="activate" hidden>
+    <h1>Set up this recorder</h1>
+    <p class="dim">Create the installer account. It can do everything, including adding the store account.</p>
+    <form id="activateForm" autocomplete="off">
+      <label id="codeLabel">Activation code <span class="dim">in <code>activation-code</code> in the recorder's state folder</span>
+        <input id="code" name="code" autocapitalize="characters" spellcheck="false"></label>
+      <label>Installer username <input id="newUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+      <label>Password <span class="dim">12 characters or more</span>
+        <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+      <label>Password again <input id="confirmPassword" type="password" autocomplete="new-password" required></label>
+      <button id="activateButton" type="submit">Create installer account</button>
+    </form>
+  </section>
+
+  <section id="pairing" hidden>
+    <h1>Connecting this display</h1>
+    <p class="dim">One moment.</p>
+  </section>
+
+  <section id="locked" hidden>
+    <h1>Sign-in unavailable</h1>
+    <p class="dim">The recorder's account file is damaged. Nobody can sign in until an installer repairs it on the recorder.</p>
+  </section>
+
+  <p id="message" role="status" aria-live="polite"></p>
+</main>
+<script type="module" src="/ui/login-client.js"></script>
+</body>
+</html>
