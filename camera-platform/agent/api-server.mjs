@@ -31,7 +31,7 @@ import { groupCamerasByDevice } from '../dist/cameraGroups.js';
 import { siteHealth } from '../dist/siteHealth.js';
 import { planExport } from '../dist/exportPlan.js';
 import { streamExport } from './exportStream.mjs';
-import { decideRoute, safeNext } from '../dist/routeAccess.js';
+import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
 import { createAuth } from './auth.mjs';
 
 const log = (level, msg, extra) =>
@@ -72,6 +72,18 @@ const sendError = (res, status, code, message) => {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: false, code, message }));
 };
+
+// A person who followed a link to a page their account may not open gets a
+// page that says so, not a line of JSON. Fixed text: nothing from the request
+// is echoed into it.
+const REFUSED_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Not for this account</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111317;color:#e8eaed;font:15px/1.5 system-ui,sans-serif}
+main{max-width:320px;padding:16px;text-align:center}a{color:#8ab4f8}</style></head>
+<body><main><h1 style="font-size:18px">This account cannot open that page</h1>
+<p>Ask the installer if you need it.</p><p><a href="/">Back to live</a></p></main></body></html>
+`;
 
 /**
  * The shared first half of GET /export and GET /export/plan: read the query,
@@ -295,6 +307,11 @@ export function createApiServer({
         return;
       }
       if (decision.kind === 'refuse') {
+        if (decision.status === 403 && method === 'GET' && ruleFor(method, pathname)?.kind === 'page') {
+          res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(REFUSED_PAGE);
+          return;
+        }
         sendError(res, decision.status, decision.code, decision.message);
         return;
       }

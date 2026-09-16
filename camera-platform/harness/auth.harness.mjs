@@ -224,6 +224,10 @@ await check("a wall display watches live, nothing else, and survives a restart",
   for (const p of ["/review", "/export", "/timeline", "/segments/cam-1.1", "/accounts"]) {
     eq((await call(A.base, "GET", p, { cookie: displayCookie })).status, 403, `display ${p}`);
   }
+  const page = await call(A.base, "GET", "/review", { cookie: displayCookie });
+  eq([page.headers.get("content-type").startsWith("text/html"), page.text.includes("cannot open that page")], [true, true], "a refused page reads as a page");
+  const api = await call(A.base, "GET", "/timeline", { cookie: displayCookie });
+  eq([api.headers.get("content-type"), api.json?.code], ["application/json", "forbidden"], "a refused api call stays JSON");
   eq((await call(A.base, "POST", "/auth/password", { body: { currentPassword: "x", newPassword: "y" }, cookie: displayCookie })).status, 403, "no password to change");
 });
 

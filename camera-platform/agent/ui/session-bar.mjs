@@ -66,9 +66,21 @@ function bar(principal) {
   document.body.append(el);
 }
 
+// Links to pages this account may not open. The server refuses them anyway;
+// this only spares a wall display or a store login the dead end.
+const PAGE_NEEDS = { "/review": "playback.view", "/system": "live.view", "/accounts-page": "account.manage" };
+
+function hideRefusedLinks(permissions) {
+  for (const a of document.querySelectorAll("a[href]")) {
+    const need = PAGE_NEEDS[new URL(a.href, location.href).pathname];
+    if (need !== undefined && !permissions.includes(need)) a.hidden = true;
+  }
+}
+
 try {
   const res = await realFetch("/auth/state", { credentials: "same-origin" });
   const state = await res.json();
+  if (Array.isArray(state?.permissions)) hideRefusedLinks(state.permissions);
   if (state?.principal?.kind === "user") bar(state.principal);
   else if (state?.principal?.kind === "anonymous") signInAgain();
 } catch {
