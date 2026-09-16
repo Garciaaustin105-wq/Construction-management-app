@@ -31,6 +31,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/review": { kind: "page", permission: "playback.view" },
   "/system": { kind: "page", permission: "live.view" },
   "/accounts-page": { kind: "page", permission: "account.manage" },
+  "/cameras-page": { kind: "page", permission: "camera.manage" },
 
   // Page scripts carry no data and are already public source; they still sit
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
@@ -42,6 +43,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/grid-layout.js": { kind: "api", permission: "live.view" },
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
   "/ui/accounts-client.js": { kind: "api", permission: "account.manage" },
+  "/ui/cameras-client.js": { kind: "api", permission: "camera.manage" },
   // Every signed-in page loads it, a wall display included (it draws nothing there).
   "/ui/session.js": { kind: "api", permission: "live.view" },
 
@@ -56,6 +58,8 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/accounts": { kind: "api", permission: "account.manage" },
   "/displays": { kind: "api", permission: "account.manage" },
   "/audit": { kind: "api", permission: "audit.view" },
+  // Camera addresses and the login user name: the installer's, not the store's.
+  "/camera-settings": { kind: "api", permission: "camera.manage" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -67,6 +71,8 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/auth/password": { kind: "api", permission: "live.view" },
   "/accounts": { kind: "api", permission: "account.manage" },
   "/displays": { kind: "api", permission: "account.manage" },
+  "/cameras": { kind: "api", permission: "camera.manage" },
+  "/camera-login": { kind: "api", permission: "camera.manage" },
 });
 
 /**
@@ -79,6 +85,8 @@ const PREFIXED: ReadonlyArray<{ method: string; prefix: string; suffix: string; 
   { method: "DELETE", prefix: "/accounts/", suffix: "", rule: { kind: "api", permission: "account.manage" } },
   { method: "POST", prefix: "/accounts/", suffix: "/password", rule: { kind: "api", permission: "account.manage" } },
   { method: "DELETE", prefix: "/displays/", suffix: "", rule: { kind: "api", permission: "account.manage" } },
+  { method: "POST", prefix: "/cameras/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
+  { method: "DELETE", prefix: "/cameras/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
 ]);
 
 /** The rule for a request, or null when the server has no such route. */

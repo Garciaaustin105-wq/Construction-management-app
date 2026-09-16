@@ -89,6 +89,24 @@ check("the installer reaches every route in the table", () => {
   }
 });
 
+const CAMERA_EDIT = [["GET", "/cameras-page"], ["GET", "/ui/cameras-client.js"], ["GET", "/camera-settings"],
+  ["POST", "/cameras"], ["POST", "/cameras/cam-1"], ["DELETE", "/cameras/cam-1"], ["POST", "/camera-login"]];
+
+check("FEARED: only the installer edits cameras or sees their addresses and login", () => {
+  for (const [m, p] of CAMERA_EDIT) {
+    eq(d(installer, m, p).kind, "allow", `installer ${m} ${p}`);
+    const s = d(store, m, p);
+    eq(s.kind === "refuse" && s.status === 403, true, `store ${m} ${p}: ${JSON.stringify(s)}`);
+    eq(d(display, m, p).kind, "refuse", `display ${m} ${p}`);
+    eq(d(nobody, m, p).kind === "allow", false, `signed out ${m} ${p}`);
+  }
+  for (const [m, p] of [["DELETE", "/cameras"], ["PUT", "/cameras/cam-1"], ["POST", "/cameras/"], ["POST", "/cameras/a/b"],
+    ["DELETE", "/camera-login"], ["GET", "/cameras/cam-1"]]) {
+    eq(ruleFor(m, p), null, `${m} ${p}`);
+  }
+  eq(d(store, "GET", "/cameras").kind, "allow", "the store still sees the camera list itself");
+});
+
 check("after sign-in, only a page on this box is a destination", () => {
   eq(safeNext("/review"), "/review", "a page");
   for (const bad of ["//evil.example", "https://evil.example", "/login", "/health", "/review?x=1", "", null, 7, "/__proto__"]) {

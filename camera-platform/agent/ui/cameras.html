@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Cameras</title>
+<style>
+:root { color-scheme: dark; } * { box-sizing: border-box; }
+body { margin:0; padding:12px; background:#14161a; color:#e8eaed; font:14px/1.4 system-ui, sans-serif; }
+.panel { background:#1b1d22; border:1px solid #2c2f36; border-radius:8px; padding:12px; }
+.dim { color:#9aa0a6; }
+.error { color:#ffb4b4; }
+.good { color:#7ddc9a; }
+button { font:inherit; padding:8px 12px; border:0; border-radius:6px; background:#4c8bf5; color:#fff; }
+button.danger { background:#5a2323; color:#ffb4b4; }
+button:disabled { opacity:0.6; }
+input, select { font:inherit; color:inherit; background:#14161a; border:1px solid #2c2f36; border-radius:6px; padding:8px; }
+.row input, .row select { max-width:100%; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.row strong, .row span { overflow-wrap:anywhere; }
+.row label { min-width:0; }
+label { display:flex; flex-direction:column; gap:4px; }
+label > span { color:#9aa0a6; }
+nav { margin:0 0 12px; }
+nav a { color:#9aa0a6; margin-right:12px; }
+h1 { font-size:18px; margin:0 0 12px; }
+h2 { font-size:16px; margin:0 0 8px; }
+h3 { font-size:14px; margin:16px 0 8px; }
+form { margin:0; }
+#message { min-height:1.4em; margin:12px 0; }
+section.panel { margin-bottom:12px; }
+#cameraList > .row { border-top:1px solid #2c2f36; padding:8px 0; }
+input.bad, select.bad { border-color:#ffb4b4; }
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Live</a>
+  <a href="/review">Review</a>
+  <a href="/system">System</a>
+  <a href="/accounts-page">Accounts</a>
+</nav>
+<h1>Cameras</h1>
+<div class="row">
+  <span id="whoami" class="dim"></span>
+  <button id="signOut" type="button">Sign out</button>
+</div>
+<p id="message" role="status" aria-live="polite"></p>
+
+<section class="panel" id="cameraNotice" hidden>
+  <p class="error" id="cameraNoticeText"></p>
+</section>
+
+<section class="panel">
+  <h2>Cameras</h2>
+  <div id="cameraList"></div>
+  <p class="dim">Saving restarts recording on the new list within about 5 seconds.</p>
+</section>
+
+<section class="panel">
+  <form id="cameraForm">
+    <h2 id="formTitle">Add camera</h2>
+    <div class="row">
+      <label><span>Camera ID</span><input id="cameraId" autocomplete="off" required></label>
+      <label><span>Name</span><input id="cameraName" maxlength="60"></label>
+      <label><span>Brand</span><select id="vendor">
+        <option value="hikvision" selected>Hikvision</option>
+        <option value="axis">Axis</option>
+        <option value="hanwha">Hanwha</option>
+        <option value="avigilon">Avigilon</option>
+        <option value="avycon">Avycon</option>
+        <option value="other">Other brand (enter the stream address)</option>
+      </select></label>
+    </div>
+    <div id="hostFields">
+      <div class="row">
+        <label><span>IP address</span><input id="host" autocomplete="off"></label>
+        <label><span>Channel</span><input id="channel" type="number" min="1" max="256" value="1"></label>
+        <label><span>Stream</span><select id="stream">
+          <option value="main" selected>Main (full quality)</option>
+          <option value="sub">Sub (lower quality)</option>
+        </select></label>
+      </div>
+    </div>
+    <div id="urlFields" hidden>
+      <div class="row">
+        <label><span>Stream address</span><input id="url" placeholder="rtsp://192.168.1.64:554/stream1" spellcheck="false"></label>
+      </div>
+      <p class="dim">Leave the user name and password out; set them under Camera login.</p>
+    </div>
+    <div class="row">
+      <label><span>Bitrate</span><input id="bitrate" type="number" placeholder="optional kbps"></label>
+      <button id="saveCamera" type="submit">Add camera</button>
+      <button id="cancelEdit" type="button" hidden>Cancel</button>
+    </div>
+  </form>
+  <p class="dim">lowercase letters, digits and dashes</p>
+</section>
+
+<section class="panel">
+  <h2>Camera login</h2>
+  <p class="dim" id="loginStatus"></p>
+  <form id="loginForm">
+    <div class="row">
+      <label><span>Username</span><input id="loginUser" autocomplete="off"></label>
+      <label><span>Password</span><input id="loginPassword" type="password" autocomplete="new-password"></label>
+      <button id="saveLogin" type="submit">Save login</button>
+    </div>
+  </form>
+</section>
+
+<script type="module" src="/ui/cameras-client.js"></script>
+</body>
+</html>

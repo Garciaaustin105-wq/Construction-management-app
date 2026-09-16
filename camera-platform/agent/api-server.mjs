@@ -33,6 +33,7 @@ import { planExport } from '../dist/exportPlan.js';
 import { streamExport } from './exportStream.mjs';
 import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
 import { createAuth } from './auth.mjs';
+import { createCameraSettings } from './camera-settings.mjs';
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -54,6 +55,8 @@ const UI_FILES = {
   '/ui/login-client.js': 'login-client.mjs',
   '/accounts-page': 'accounts.html',
   '/ui/accounts-client.js': 'accounts-client.mjs',
+  '/cameras-page': 'cameras.html',
+  '/ui/cameras-client.js': 'cameras-client.mjs',
   '/ui/session.js': 'session-bar.mjs',
 };
 
@@ -285,10 +288,16 @@ export function createApiServer({
     throw new TypeError('createApiServer needs auth (from createAuth)');
   }
 
-  const driveAssignment = assignCamerasToDrives(
+  const assignDrives = () => assignCamerasToDrives(
     config.cameras.map((c) => c.cameraId),
     config.storeRoots.length
   );
+  // Recomputed when the Cameras page changes the list, as the recorder does on restart.
+  let driveAssignment = assignDrives();
+  const cameraSettings = createCameraSettings({
+    stateDir, config, audit: auth.audit, log,
+    onChange: () => { driveAssignment = assignDrives(); },
+  });
 
   const server = createServer(async (req, res) => {
     try {
@@ -328,6 +337,7 @@ export function createApiServer({
       }
 
       if (await auth.handle(req, res, pathname, principal)) return;
+      if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
 
       // Every route past here reads; the table only lets GET through to them.
       if (method !== 'GET') {

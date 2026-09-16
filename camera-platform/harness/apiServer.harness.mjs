@@ -407,7 +407,7 @@ await check("unknown, malformed and open segment ids each get their own refusal"
 });
 
 await check("a method the route table does not list is no route at all", async () => {
-  const post = await fetch(`${base}/cameras`, { method: "POST" });
+  const post = await fetch(`${base}/cameras`, { method: "PUT" });
   eq(post.status, 404, "post status");
   eq((await post.json()).code, "no_such_route", "post code");
   const { json } = await fetchJson(`${base}/nope`);

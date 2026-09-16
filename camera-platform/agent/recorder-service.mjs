@@ -18,6 +18,7 @@ import { bytesToFreeFor } from "../dist/eviction.js";
 import { computeRetentionDays, usableBytesFromRaw } from "../dist/retention.js";
 import { buildRtspUrl, redactRtspUrl, urlForPath } from "../dist/rtsp.js";
 import { parseRtspUrl } from "../dist/cameraSource.js";
+import { parseCameraFile } from "../dist/cameraEdit.js";
 
 const EVICTION_INTERVAL_MS = 5 * 60_000;
 const HEALTH_INTERVAL_MS = 30_000;
@@ -48,11 +49,27 @@ export function resolveCameraUrl(camera, credentials) {
     return { kind: "unresolved", reason: "camera has neither a url nor a host" };
   }
   const built = buildRtspUrl(
-    { vendor: camera.vendor ?? "generic", ip: camera.host, channel: camera.channel ?? 1, stream: "main" },
+    { vendor: camera.vendor ?? "generic", ip: camera.host, channel: camera.channel ?? 1, stream: camera.stream ?? "main" },
     credentials,
   );
   if (built.kind !== "ok") return { kind: "unresolved", reason: built.message };
   return { kind: "ok", url: built.url, origin: "discovered" };
+}
+
+/** Cameras edited on the Cameras page; see contracts/cameraEdit.ts. */
+export const CAMERAS_FILE = "cameras.json";
+
+/**
+ * cameras.json: { kind: "absent" } | { kind: "ok", cameras, login } |
+ * { kind: "broken", reason }. Broken is refused whole, never half-read; the
+ * caller keeps config.json's cameras and reports the reason.
+ */
+export async function readCameraFile(stateDir) {
+  const raw = await readFile(path.join(stateDir, CAMERAS_FILE), "utf8").catch((err) => (err.code === "ENOENT" ? null : { error: err.code ?? err.message }));
+  if (raw === null) return { kind: "absent" };
+  if (typeof raw !== "string") return { kind: "broken", reason: `unreadable: ${raw.error}` };
+  const parsed = parseCameraFile(raw);
+  return parsed.ok ? { kind: "ok", cameras: parsed.cameras, login: parsed.login } : { kind: "broken", reason: parsed.reason };
 }
 
 export async function loadConfig(stateDir) {
@@ -61,13 +78,21 @@ export async function loadConfig(stateDir) {
   if (raw === null) throw new Error(`no config at ${file} — the appliance has not been commissioned`);
   let config;
   try { config = JSON.parse(raw); } catch (err) { throw new Error(`${file} is not valid JSON: ${err.message}`); }
-  if (!Array.isArray(config.cameras) || config.cameras.length === 0) {
+  // A broken cameras.json keeps recording what config.json lists rather than
+  // nothing; the problem is carried out so the Cameras page can show it.
+  const overlay = await readCameraFile(stateDir);
+  const cameras = overlay.kind === "ok" ? overlay.cameras : config.cameras;
+  if (!Array.isArray(cameras) || cameras.length === 0) {
     throw new Error("config has no cameras");
   }
   return {
     siteId: config.siteId ?? "unknown-site",
-    cameras: config.cameras,
-    credentials: config.credentials ?? { username: "", password: "" },
+    cameras,
+    credentials: (overlay.kind === "ok" ? overlay.login : null) ?? config.credentials ?? { username: "", password: "" },
+    camerasSource: overlay.kind === "ok" ? CAMERAS_FILE : "config.json",
+    camerasFileProblem: overlay.kind === "broken" ? overlay.reason : null,
+    // The login set on the Cameras page, kept apart so saving writes back only that one.
+    camerasLogin: overlay.kind === "ok" ? overlay.login : null,
     storeRoots: config.storeRoots ?? DEFAULT_PATHS.storeRoots,
     segmentSeconds: config.segmentSeconds ?? 60,
     retentionTargetDays: config.retentionTargetDays ?? 30,
@@ -330,8 +355,25 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
 
 // Only run when executed directly, so tests can import the pieces.
 if (process.argv[1] && process.argv[1].endsWith("recorder-service.mjs")) {
-  const handle = await start({ stateDir: process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir });
-  for (const signal of ["SIGTERM", "SIGINT"]) {
-    process.on(signal, () => { handle.stop().finally(() => process.exit(0)); });
-  }
+  const stateDir = process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  // The Cameras page writes cameras.json; the recorder applies it by stopping
+  // cleanly and letting systemd (Restart=always) start it on the new list.
+  // Taken before start(), so an edit landing during start-up is not missed.
+  const camerasPath = path.join(stateDir, CAMERAS_FILE);
+  const signature = () => stat(camerasPath).then((s) => `${s.mtimeMs}:${s.size}`, (err) => (err.code === "ENOENT" ? "absent" : "unreadable"));
+  const startedWith = await signature();
+  const handle = await start({ stateDir });
+  let stopping = false;
+  const stopAndExit = () => {
+    if (stopping) return;
+    stopping = true;
+    handle.stop().finally(() => process.exit(0));
+  };
+  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, stopAndExit);
+  const reloadTimer = setInterval(async () => {
+    if (stopping || (await signature()) === startedWith) return;
+    clearInterval(reloadTimer);
+    log("info", "camera list changed, restarting to apply it", {});
+    stopAndExit();
+  }, 5000);
 }

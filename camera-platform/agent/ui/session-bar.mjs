@@ -36,12 +36,15 @@ function bar(principal) {
   who.textContent = `${principal.username} (${principal.role})`;
   el.append(who);
 
-  if (principal.role === "installer" && location.pathname !== "/accounts-page") {
-    const link = document.createElement("a");
-    link.href = "/accounts-page";
-    link.textContent = "Accounts";
-    link.style.cssText = "color:#8ab4f8";
-    el.append(link);
+  if (principal.role === "installer") {
+    for (const [href, text] of [["/cameras-page", "Cameras"], ["/accounts-page", "Accounts"]]) {
+      if (location.pathname === href) continue;
+      const link = document.createElement("a");
+      link.href = href;
+      link.textContent = text;
+      link.style.cssText = "color:#8ab4f8";
+      el.append(link);
+    }
   }
 
   const out = document.createElement("button");
@@ -68,7 +71,7 @@ function bar(principal) {
 
 // Links to pages this account may not open. The server refuses them anyway;
 // this only spares a wall display or a store login the dead end.
-const PAGE_NEEDS = { "/review": "playback.view", "/system": "live.view", "/accounts-page": "account.manage" };
+const PAGE_NEEDS = { "/review": "playback.view", "/system": "live.view", "/accounts-page": "account.manage", "/cameras-page": "camera.manage" };
 
 function hideRefusedLinks(permissions) {
   for (const a of document.querySelectorAll("a[href]")) {
