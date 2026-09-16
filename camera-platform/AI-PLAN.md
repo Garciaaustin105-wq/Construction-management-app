@@ -40,7 +40,7 @@ working when the internet is down.
 ```
 camera substream ──> camplat-detect ──> events table (SQLite, own file)
                       │  decode (QuickSync)       │
-                      │  detector (Hailo-8L)      ├─> Review: markers + search
+                      │  detector (Hailo-8)       ├─> Review: markers + search
                       │  plate reader             ├─> alert rules ─> phone
                       │  picture embedder         └─> plain-English search
                       └─ small crops on disk, own retention
@@ -57,10 +57,18 @@ camera substream ──> camplat-detect ──> events table (SQLite, own file)
 
 ## Hardware
 
-- **Chip:** Hailo-8L M.2 (13 TOPS, about $70), already the optional part in
-  APPLIANCE-BOM.md. Its model zoo ships detectors, a plate reader and CLIP
-  pre-compiled for it. **To verify:** each model's license, and how many
-  cameras it keeps up with at 5 frames a second.
+- **Sizing floor: 16 cameras per NVR** (Austin, 2026-09-16). At 5 frames a
+  second that is about 80 detector frames a second, before plates and search.
+- **Chip:** Hailo-8 M.2 2280 M-key (26 TOPS, about $199 standalone in
+  September 2026). The Hailo-8L (13 TOPS) in APPLIANCE-BOM.md is sized for a
+  handful of cameras and is likely short at 16; it stays the fallback if D1
+  measures it keeping up. Both vendors' model zoos ship detectors, a plate
+  reader and CLIP pre-compiled. **To verify:** each model's license; measured
+  frames a second on the N150 board's second NVMe slot (likely fewer PCIe lanes
+  than the card can use); QuickSync decoding 16 substreams at once.
+- **Slot:** the second M.2 must be PCIe NVMe. A SATA-only M.2 (common on mini
+  PCs' second slot) will not take the card. The 6-bay N150 board in the BOM
+  has two NVMe slots: one OS drive, one chip.
 - **Decoding** the substreams uses the N150's QuickSync, not the Hailo chip.
 - **Development** happens on the laptop NVR (G14) with the same models on
   ONNX Runtime, so D0–D2 do not wait for the Hailo chip.
@@ -131,7 +139,8 @@ Each stage is contract, then harness, then code, then UI.
 
 1. **Alert delivery:** a phone app push (waits for the mobile app), a text
    message (costs per message, needs a provider), or email first?
-2. **Buy a Hailo-8L now** for the laptop, or wait until D1 runs on CPU?
+2. **Buy a Hailo-8 now**, or wait until D1 runs on the laptop CPU with the
+   YOLOX test models (already downloaded to the bench PC)?
 3. **Plate retention:** default days to keep plate reads (suggest 30), and
    whether store accounts can search plates.
 4. **Which site first:** the car-wash gate camera is the obvious D4 test.

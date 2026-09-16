@@ -23,8 +23,10 @@ So the order is a short parts list, and the assembly is about 20 minutes a unit.
 | 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
 | | | **Total** | **~$800** |
 
-Optional: **Hailo-8L M.2** (13 TOPS, ~$70) in the second M.2 slot, only when
-detection moves on-box. Nothing in Phase 1–3 needs it.
+Optional: **Hailo-8 M.2 2280** (26 TOPS, ~$199) in the second NVMe slot, only when
+detection moves on-box. Nothing in Phase 1–3 needs it. Sized for the
+16-camera floor (AI-PLAN.md); the Hailo-8L (13 TOPS) is likely short at 16.
+The slot must be PCIe NVMe, not SATA M.2.
 
 ### Best bang for the buck
 
