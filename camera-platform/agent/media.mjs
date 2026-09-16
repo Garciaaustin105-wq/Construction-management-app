@@ -7,6 +7,39 @@ import { stat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseFfprobeJson, bitrateFromCapture } from "../dist/ffprobe.js";
+
+// A sealed segment is not necessarily segmentSeconds long, and a camera's
+// configured bitrate is a setting rather than a measurement, so both are
+// measured from the finished file instead of assumed.
+export async function measureSealedSegment(absolutePath, bytes, { timeoutMs = 15_000 } = {}) {
+  const probe = await run("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-print_format",
+    "json",
+    absolutePath,
+  ], { timeoutMs });
+  if (probe.code !== 0) {
+    return { seconds: null, bitrateKbps: null };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(probe.stdout);
+  } catch {
+    return { seconds: null, bitrateKbps: null };
+  }
+  const seconds = Number(parsed?.format?.duration);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return { seconds: null, bitrateKbps: null };
+  }
+  const result = bitrateFromCapture(bytes, seconds);
+  if (result.kind === "ok") {
+    return { seconds, bitrateKbps: result.bitrateKbps };
+  }
+  return { seconds, bitrateKbps: null };
+}
 import { redactRtspUrl } from "../dist/rtsp.js";
 
 function run(command, args, { timeoutMs = 60_000 } = {}) {

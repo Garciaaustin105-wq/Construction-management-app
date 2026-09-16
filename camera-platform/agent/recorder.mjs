@@ -23,6 +23,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { ensureCameraDirs, sealSegment, INPROGRESS } from "./segstore.mjs";
 import { wipPattern, wipCompare, wipStartMs } from "./wipNames.mjs";
+import { measureSealedSegment } from "./media.mjs";
 import { redactRtspUrl } from "../dist/rtsp.js";
 
 /**
@@ -141,16 +142,25 @@ export function createCameraRecorder({
     for (const file of complete) {
       try {
         const result = await sealSegment(root, cameraId, file);
+        const measured = await measureSealedSegment(path.join(root, result.path), result.bytes);
+        let endUtc = null;
+        let measuredBitrateKbps = bitrateKbps;
+        if (measured.seconds !== null) {
+          endUtc = new Date(result.startMs + Math.round(measured.seconds * 1000)).toISOString();
+          measuredBitrateKbps = measured.bitrateKbps;
+        } else {
+          onEvent({ kind: "duration_unmeasured", cameraId, path: result.path });
+        }
         sealed.push({
           cameraId,
           startUtc: new Date(result.startMs).toISOString(),
-          endUtc: new Date(result.startMs + segmentSeconds * 1000).toISOString(),
+          endUtc,
           path: result.path,
           bytes: result.bytes,
           state: "sealed",
           hold: false,
           pendingUpload: false,
-          bitrateKbps,
+          bitrateKbps: measuredBitrateKbps,
         });
       } catch (err) {
         onEvent({ kind: "seal_failed", cameraId, file, error: err.message });
