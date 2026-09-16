@@ -42,7 +42,7 @@ cat /opt/camplat/VERSION; systemctl is-active camplat-recorder camplat-api
    prints the rollback command.
 
 ```bash
-tar -xzf /tmp/camplat-<sha>.tar.gz -C /tmp setup/upgrade.sh && sudo bash /tmp/setup/upgrade.sh /tmp/camplat-<sha>.tar.gz
+tar -xzf /tmp/camplat-<sha>.tar.gz -C /tmp ./setup/upgrade.sh && sudo bash /tmp/setup/upgrade.sh /tmp/camplat-<sha>.tar.gz
 ```
 
 5. Recording must not have stopped: a segment newer than the restart should
