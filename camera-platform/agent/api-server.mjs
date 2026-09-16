@@ -58,6 +58,7 @@ const UI_FILES = {
 // /opt/camplat/agent/../dist on the appliance.
 const UI_CONTRACTS = {
   '/ui/grid-layout.js': 'gridLayout.js',
+  '/ui/playback.js': 'playback.js',
 };
 
 const sendError = (res, status, code, message) => {

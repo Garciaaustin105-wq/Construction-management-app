@@ -102,6 +102,14 @@
 </div>
 
 <video id="video" controls playsinline></video>
+<div class="controls">
+  <button id="back10" type="button">-10s</button>
+  <button id="slower" type="button">Slower</button>
+  <span id="rate">1x</span>
+  <button id="faster" type="button">Faster</button>
+  <button id="fwd10" type="button">+10s</button>
+  <span id="clock">--:--:--</span>
+</div>
 <div class="status" id="status"></div>
 
 <div class="export">
@@ -113,6 +121,7 @@
 
 <script type="module">
 import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer } from '/ui/review-client.js';
+import { PLAYBACK_RATES, nextRate, rateLabel } from '/ui/playback.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 
 const el = {
@@ -130,6 +139,12 @@ const el = {
   exportTo: document.getElementById('exportTo'),
   exportBtn: document.getElementById('exportBtn'),
   exportStatus: document.getElementById('exportStatus'),
+  slower: document.getElementById('slower'),
+  faster: document.getElementById('faster'),
+  rate: document.getElementById('rate'),
+  back10: document.getElementById('back10'),
+  fwd10: document.getElementById('fwd10'),
+  clock: document.getElementById('clock'),
 };
 
 // What is on screen now. `requested` is the /timeline body's requested range
@@ -482,6 +497,7 @@ function applyPlan(plan) {
     el.video.src = plan.src;
     el.video.addEventListener('loadedmetadata', () => {
       el.video.currentTime = plan.offsetSeconds;
+      el.video.playbackRate = view.rate; // a new src resets the browser's rate
       const playPromise = el.video.play();
       if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch(() => {});
@@ -512,12 +528,15 @@ function applyPlan(plan) {
   } else {
     setStatus('unexpected plan', 'problem');
   }
+  showSteps();
 }
 
 /**
  * Stop playback and forget it: view.playing = null; view.playSeq += 1 (any
  * /playback answer still on its way is now stale); el.video.pause();
- * el.video.removeAttribute("src"); el.video.load(); movePlayhead(null).
+ * el.video.removeAttribute("src"); el.video.load(); movePlayhead(null);
+ * el.clock.textContent = "--:--:--" (an unknown time must not read as
+ * midnight); showSteps().
  */
 function stopVideo() {
   view.playing = null;
@@ -526,6 +545,60 @@ function stopVideo() {
   el.video.removeAttribute('src');
   el.video.load();
   movePlayhead(null);
+  el.clock.textContent = '--:--:--';
+  showSteps();
+}
+
+/* ── playback controls: speed and ±10s steps ───────────────────────────── */
+
+/**
+ * Step the playback speed one notch in `direction` (-1 slower, 1 faster) via
+ * nextRate(), which clamps to PLAYBACK_RATES, then showRate().
+ */
+function setRate(direction) {
+  view.rate = nextRate(view.rate, direction);
+  showRate();
+}
+
+/**
+ * Put view.rate on the video and its label, and disable Slower/Faster at the
+ * ends of PLAYBACK_RATES so a click that would change nothing is impossible.
+ */
+function showRate() {
+  el.video.playbackRate = view.rate;
+  el.video.defaultPlaybackRate = view.rate;
+  el.rate.textContent = rateLabel(view.rate);
+  el.slower.disabled = view.rate === PLAYBACK_RATES[0];
+  el.faster.disabled = view.rate === PLAYBACK_RATES[PLAYBACK_RATES.length - 1];
+}
+
+/**
+ * -10s/+10s are enabled only while something is playing: a button that
+ * silently does nothing makes an operator think the recorder is broken.
+ */
+function showSteps() {
+  const off = view.playing === null;
+  el.back10.disabled = off;
+  el.fwd10.disabled = off;
+}
+
+/**
+ * Move by deltaS seconds while the target stays inside the playing segment;
+ * past either end (or with no known end, a NaN lengthS) hand the jump to
+ * playAt(): the recorder decides, including reporting a gap. Never skip past
+ * a gap.
+ */
+function step(deltaS) {
+  if (view.playing === null) {
+    return;
+  }
+  const lengthS = (Date.parse(view.playing.segmentEndUtc) - Date.parse(view.playing.segmentStartUtc)) / 1000;
+  const target = el.video.currentTime + deltaS;
+  if (target >= 0 && target < lengthS) {
+    el.video.currentTime = target;
+    return;
+  }
+  playAt(new Date(Date.parse(view.playing.segmentStartUtc) + target * 1000).toISOString());
 }
 
 /**
@@ -600,6 +673,8 @@ function wireEvents() {
     if (view.playing !== null) {
       const iso = new Date(Date.parse(view.playing.segmentStartUtc) + el.video.currentTime * 1000).toISOString();
       movePlayhead(iso);
+      const now = new Date(iso);
+      el.clock.textContent = two(now.getHours()) + ':' + two(now.getMinutes()) + ':' + two(now.getSeconds());
     }
   });
   el.video.addEventListener('error', () => {
@@ -607,6 +682,14 @@ function wireEvents() {
       setStatus('This browser cannot play this recording (H.265 needs hardware decoding)', 'problem');
     }
   });
+  // Playback speed: 1x to start; stopVideo deliberately leaves it alone.
+  view.rate = 1;
+  el.slower.addEventListener('click', () => { setRate(-1); });
+  el.faster.addEventListener('click', () => { setRate(1); });
+  el.back10.addEventListener('click', () => { step(-10); });
+  el.fwd10.addEventListener('click', () => { step(10); });
+  showRate();
+  showSteps();
 }
 
 /* ── export: one camera, a time range on the shown day, as a ZIP ──────────── */

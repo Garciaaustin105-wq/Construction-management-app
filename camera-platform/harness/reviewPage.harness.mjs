@@ -124,7 +124,7 @@ class FakeEl {
 const textNode = (s) => { const t = new FakeEl("#text"); t._text = s; return t; };
 
 class FakeVideo extends FakeEl {
-  constructor(id) { super("video", id); this.src = ""; this.currentTime = 0; this.plays = 0; this.paused = true; this.loads = 0; }
+  constructor(id) { super("video", id); this.src = ""; this.currentTime = 0; this.playbackRate = 1; this.defaultPlaybackRate = 1; this.plays = 0; this.paused = true; this.loads = 0; }
   play() { this.plays++; this.paused = false; return Promise.reject(new Error("autoplay blocked")); }
   pause() { this.paused = true; }
   load() { this.loads++; }
@@ -135,8 +135,11 @@ function freshDom() {
   const byId = {};
   for (const [id, tag] of [["camera", "select"], ["day", "input"], ["prevDay", "button"], ["nextDay", "button"],
     ["pageError", "div"], ["strip", "div"], ["playhead", "div"], ["hours", "div"], ["status", "div"],
-    ["exportFrom", "input"], ["exportTo", "input"], ["exportBtn", "button"], ["exportStatus", "div"]]) {
+    ["exportFrom", "input"], ["exportTo", "input"], ["exportBtn", "button"], ["exportStatus", "div"],
+    ["slower", "button"], ["faster", "button"], ["rate", "span"], ["back10", "button"], ["fwd10", "button"],
+    ["clock", "span"]]) {
     byId[id] = new FakeEl(tag, id);
+    byId[id].disabled = false;
   }
   byId.video = new FakeVideo("video");
   byId.pageError.hidden = true;
@@ -182,13 +185,16 @@ const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
 const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
   "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents",
-  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport"];
+  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport", "setRate", "step"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireEvents();\nloadCameras();\n";
 if (!script.includes(START)) throw new Error("review.html must end its script with wireEvents(); loadCameras();");
 const bannerUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "alert-banner.mjs")).href;
+// The speed ladder is the compiled contract, as the server serves it from dist.
+const playbackUrl = pathToFileURL(join(import.meta.dirname, "..", "dist", "playback.js")).href;
 const transformed = script.replace("'/ui/review-client.js'", `'${clientUrl}'`).replace("'/ui/alert-banner.js'", `'${bannerUrl}'`)
+  .replace("'/ui/playback.js'", `'${playbackUrl}'`)
   .replace(START, `\nglobalThis.__page = { ${NAMES.join(", ")} };${START}`);
 const tmpScript = join(stateDir, "review-page.mjs");
 await writeFile(tmpScript, transformed);
@@ -582,6 +588,90 @@ await check("an unreachable recorder is named, not a blank page", async () => {
   await page.playAt("2026-09-11T10:00:10Z");
   eq(dom.status.textContent, "unreachable: cannot reach the recorder", "playback too");
   fetchBroken = false;
+});
+
+/* ── playback controls: speed, +/-10 s, the clock ──────────────────────────── */
+
+await check("with nothing playing the steps are off and the clock reads unknown, not midnight", async () => {
+  page.stopVideo();
+  eq(dom.rate.textContent, "1x", "starts at 1x");
+  eq(dom.slower.disabled, false, "slower available at 1x");
+  eq(dom.faster.disabled, false, "faster available at 1x");
+  eq(dom.back10.disabled, true, "-10s off with nothing playing");
+  eq(dom.fwd10.disabled, true, "+10s off with nothing playing");
+  eq(dom.clock.textContent, "--:--:--", "an unknown time is not 00:00:00");
+});
+
+await check("speed stops at both ends and the button at the end says so", async () => {
+  for (let i = 0; i < 6; i++) dom.slower.fire("click");
+  eq(dom.rate.textContent, "0.25x", "bottom of the ladder");
+  eq(dom.video.playbackRate, 0.25, "the video runs at it");
+  eq(dom.slower.disabled, true, "slower off at the bottom");
+  eq(dom.faster.disabled, false, "faster still on");
+  for (let i = 0; i < 7; i++) dom.faster.fire("click");
+  eq(dom.rate.textContent, "8x", "top, not wrapped round to 0.25x");
+  eq(dom.video.playbackRate, 8, "the video runs at 8x");
+  eq(dom.faster.disabled, true, "faster off at the top");
+  dom.slower.fire("click");
+  dom.slower.fire("click");
+  eq(dom.rate.textContent, "2x", "back down to 2x");
+});
+
+await check("a new segment keeps the chosen speed", async () => {
+  await page.playAt("2026-09-11T10:00:10Z");
+  eq(dom.video.src, `/segments/${idOf("2026-09-11T10:00:00Z")}`, "segment A");
+  dom.video.playbackRate = 1; // what a browser does to a new src
+  dom.video.fire("loadedmetadata");
+  eq(dom.video.playbackRate, 2, "still 2x after the load");
+  eq(dom.back10.disabled, false, "-10s on while playing");
+  eq(dom.fwd10.disabled, false, "+10s on while playing");
+});
+
+await check("the clock shows the local second being played", async () => {
+  dom.video.currentTime = 30;
+  dom.video.fire("timeupdate");
+  eq(dom.clock.textContent, "06:00:30", "10:00:30Z in New York");
+});
+
+await check("a step inside the segment moves the video without asking the recorder", async () => {
+  dom.video.currentTime = 20;
+  const before = fetchLog.length;
+  dom.fwd10.fire("click");
+  eq(dom.video.currentTime, 30, "+10s");
+  dom.back10.fire("click");
+  dom.back10.fire("click");
+  eq(dom.video.currentTime, 10, "-10s twice");
+  await settle();
+  eq(fetchLog.length, before, "no /playback request for a step that stays inside");
+});
+
+await check("a step off the front of a segment asks the recorder for that instant", async () => {
+  await page.playAt("2026-09-11T10:01:10Z");
+  eq(dom.video.src, `/segments/${idOf("2026-09-11T10:01:00Z")}`, "segment B");
+  dom.video.fire("loadedmetadata");
+  dom.video.currentTime = 4;
+  const before = fetchLog.length;
+  dom.back10.fire("click");
+  await until(() => dom.video.src === `/segments/${idOf("2026-09-11T10:00:00Z")}`, "segment A again");
+  const asked = fetchLog.slice(before).find((u) => u.startsWith("/playback?"));
+  eq(new URLSearchParams(asked.split("?")[1]).get("at"), "2026-09-11T10:00:54.000Z", "B's start minus 6 s");
+  dom.video.fire("loadedmetadata");
+  eq(Math.abs(dom.video.currentTime - 54) < 1e-6, true, `54 s into A: ${dom.video.currentTime}`);
+});
+
+await check("a step into a gap stops and says why instead of skipping to the next footage", async () => {
+  await page.playAt("2026-09-11T10:01:10Z");
+  dom.video.fire("loadedmetadata");
+  dom.video.currentTime = 55;
+  dom.fwd10.fire("click");
+  await until(() => dom.video.src === "", "the video stopped");
+  await settle();
+  eq(dom.video.src, "", "not segment C");
+  eq(dom.status.textContent.startsWith("Playing"), false, `a gap, not playback: ${dom.status.textContent}`);
+  eq(dom.back10.disabled, true, "-10s off in a gap");
+  eq(dom.fwd10.disabled, true, "+10s off in a gap");
+  eq(dom.clock.textContent, "--:--:--", "clock cleared");
+  eq(dom.rate.textContent, "2x", "the speed choice survives the stop");
 });
 
 globalThis.fetch = realFetch;
