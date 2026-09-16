@@ -257,6 +257,11 @@ await check("the sign-in and account pages are installed and served", async () =
   const page = await call(A.base, "GET", "/accounts-page", { cookie: s });
   eq([page.status, page.text.includes("/ui/accounts-client.js")], [200, true], "accounts page");
   eq((await call(A.base, "GET", "/ui/accounts-client.js", { cookie: s })).status, 200, "accounts script");
+  for (const p of ["/", "/review", "/system"]) {
+    eq((await call(A.base, "GET", p, { cookie: s })).text.includes('src="/ui/session.js"'), true, `${p} carries the session bar`);
+  }
+  eq((await call(A.base, "GET", "/ui/session.js", { cookie: s })).status, 200, "session script");
+  eq((await call(A.base, "GET", "/ui/session.js")).status, 401, "session script, signed out");
 });
 
 await check("logout ends the session on the server, not just in the browser", async () => {

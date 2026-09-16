@@ -42,6 +42,8 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/grid-layout.js": { kind: "api", permission: "live.view" },
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
   "/ui/accounts-client.js": { kind: "api", permission: "account.manage" },
+  // Every signed-in page loads it, a wall display included (it draws nothing there).
+  "/ui/session.js": { kind: "api", permission: "live.view" },
 
   "/health": { kind: "api", permission: "live.view" },
   "/alerts": { kind: "api", permission: "live.view" },

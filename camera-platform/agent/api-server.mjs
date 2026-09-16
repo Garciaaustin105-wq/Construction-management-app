@@ -54,6 +54,7 @@ const UI_FILES = {
   '/ui/login-client.js': 'login-client.mjs',
   '/accounts-page': 'accounts.html',
   '/ui/accounts-client.js': 'accounts-client.mjs',
+  '/ui/session.js': 'session-bar.mjs',
 };
 
 // Compiled contracts the browser runs directly, served from dist rather than
