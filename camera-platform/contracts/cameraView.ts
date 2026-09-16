@@ -42,7 +42,16 @@ export interface CameraView {
   origin: "manual_url" | "discovered" | null;
   resolved: boolean;
   unresolvedReason: string | null;
+  /** What the camera was ASKED for, from config. A request, not an observation. */
   bitrateKbps: number | null;
+  /**
+   * What the camera actually sent, measured from its sealed segments. Null
+   * means not measured yet — never the configured figure wearing a different
+   * name. Kept as its own field on purpose: a camera quietly ignoring its
+   * bitrate cap is the commonest reason a store fills early, and that is only
+   * visible while the two numbers can still disagree on screen.
+   */
+  measuredKbps: number | null;
 }
 
 /**
@@ -63,8 +72,16 @@ export interface CameraView {
  *   from the password: passwords contain `$`, `.` and `*`.
  *   A password shorter than 3 characters is not scrubbed as a substring (it
  *   would mangle ordinary words); the url itself still is.
+ * - measuredKbps: the caller's measurement, passed straight through, defaulting
+ *   to null. It is never read from `camera`: config holds what was asked for,
+ *   and blending a measurement with a request is how a store ends up full three
+ *   weeks before the number on the screen says it should (build rule 17).
  */
-export function cameraView(camera: CameraConfigEntry, resolution: CameraResolution): CameraView {
+export function cameraView(
+  camera: CameraConfigEntry,
+  resolution: CameraResolution,
+  measuredKbps: number | null = null,
+): CameraView {
   const name = camera.name ?? null;
   const vendor = camera.vendor ?? null;
   const channel = camera.channel ?? null;
@@ -111,5 +128,6 @@ export function cameraView(camera: CameraConfigEntry, resolution: CameraResoluti
     resolved: resolution.kind === "ok",
     unresolvedReason,
     bitrateKbps,
+    measuredKbps,
   };
 }

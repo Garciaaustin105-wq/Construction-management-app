@@ -142,11 +142,75 @@ await check("a resolved camera exposes its configured host and the port its url 
 await check("/health counts what it knows, including what it cannot resolve", async () => {
   const { res, json } = await fetchJson(`${base}/health`);
   eq(res.status, 200, "status");
-  eq(json.ok, true, "ok");
   eq(json.siteId, "carwash-01", "site");
-  eq(json.cameras, 4, "configured");
-  eq(json.unresolved, 2, "cam-3 and cam-4 unresolved");
-  eq(json.segments, 5, "indexed segments");
+  eq(json.totals.cameras, 4, "configured");
+  eq(json.totals.unresolved, 2, "cam-3 and cam-4 unresolved");
+  eq(json.totals.segments, 4, "four SEALED segments; the open one is not a finished recording");
+  eq(json.totals.bytes, 1600, "bytes of the segments that have a byte count");
+});
+
+// THE FEARED ONE, and the reason this endpoint was rewritten: this fixture is
+// a wreck — two cameras with no usable URL, one that stopped two hours ago, one
+// that has never recorded, a store root that is not a mounted disk, and no
+// recorder at all — and the old /health answered ok:true through every bit of
+// it, because all it did was count rows. Each assertion below is a failure
+// that used to be invisible on a green page.
+await check("/health refuses to call a broken site healthy", async () => {
+  const { json } = await fetchJson(`${base}/health`);
+  eq(json.ok, false, "ok is EARNED");
+  eq(json.status, "down", "the worst part decides");
+
+  const byId = Object.fromEntries(json.cameras.map((c) => [c.cameraId, c]));
+  eq(json.cameras.length, 4, "every camera is listed, not only the broken ones");
+  eq(byId["cam-1"].state, "silent", "cam-1 last sealed at 10:06 and it is now 12:00");
+  eq(Math.round(byId["cam-1"].secondsSinceSealed), 6840, "how long it has been silent, in seconds");
+  eq(byId["cam-2"].state, "never_recorded", "resolvable, but nothing was ever written for it");
+  eq(byId["cam-3"].state, "unresolved", "no usable URL");
+  eq(byId["cam-4"].state, "unresolved", "not an rtsp url at all");
+  eq(json.totals.silent, 1, "silent count");
+  eq(json.totals.recording, 0, "nothing is actually recording");
+
+  eq(json.stores.length, 1, "one store root");
+  eq(json.stores[0].state, "unmounted", "a plain directory is not the disk we were promised");
+
+  eq(json.recorderRunning, false, "no health.json has ever been written");
+  eq(json.retention.kind, "unknown", "nothing measured, so no retention number is invented");
+});
+
+await check("/devices folds streams back into the cameras they came from", async () => {
+  const { res, json } = await fetchJson(`${base}/devices`);
+  eq(res.status, 200, "status");
+  // cam-1 (10.0.0.5) and cam-2 (10.0.0.6) are different hosts here, and cam-3
+  // is a third; cam-4's url does not parse, so it has no host and stands alone.
+  // What matters is that the grid draws DEVICES, and that every stream reaches
+  // exactly one of them -- a camera that vanishes on the way to the wall is a
+  // camera nobody is watching.
+  const streamIds = json.flatMap((d) => d.streams.map((s) => s.cameraId)).sort();
+  eq(streamIds, ["cam-1", "cam-2", "cam-3", "cam-4"], "every stream lands on exactly one device");
+  eq(json.every((d) => typeof d.label === "string" && d.label !== ""), true, "every device is labelled");
+  const cam4 = json.find((d) => d.deviceId === "camera:cam-4");
+  eq(cam4?.host, null, "an unparseable url has no host, so the device is keyed by camera id");
+  eq(cam4?.resolved, false, "and it is not pretending to work");
+});
+
+await check("THE FEARED ONE: /devices never echoes a camera password", async () => {
+  const text = await (await fetch(`${base}/devices`)).text();
+  for (const secret of ["hunter2", "p@ss", "admin:"]) {
+    if (text.includes(secret)) {
+      throw new Error(`/devices leaked ${JSON.stringify(secret)}`);
+    }
+  }
+});
+
+await check("THE FEARED ONE: /health never echoes a camera password", async () => {
+  const text = await (await fetch(`${base}/health`)).text();
+  // Credentials and userinfo only. NOT the bare scheme: cameraSource's refusal
+  // deliberately says "must begin rtsp:// or rtsps://", which is help, not a leak.
+  for (const secret of ["hunter2", "p@ss", "admin:", "10.0.0.5:8554"]) {
+    if (text.includes(secret)) {
+      throw new Error(`/health leaked ${JSON.stringify(secret)}: ${text.slice(0, 400)}`);
+    }
+  }
 });
 
 await check("/alerts tells a check that never ran, a current one and a corrupt file apart", async () => {
@@ -847,7 +911,10 @@ await check("/export/plan refuses exactly what /export refuses, with the same wo
 await check("the server outlives a broken export", async () => {
   const { res, json } = await fetchJson(`${base}/health`);
   eq(res.status, 200, "status");
-  eq(json.ok, true, "still answering");
+  // Liveness, not health. A 200 carrying the site id proves the PROCESS
+  // survived the aborted export; `ok` now reports the SITE, which this fixture
+  // breaks on purpose, so it is the wrong thing to ask here.
+  eq(json.siteId, "carwash-01", "still answering");
 });
 
 closeAll(); // the live registry and its watchdog end here — nothing outlives the harness

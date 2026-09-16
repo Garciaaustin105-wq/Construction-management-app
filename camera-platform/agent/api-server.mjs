@@ -17,6 +17,7 @@ import { loadConfig, resolveCameraUrl } from './recorder-service.mjs';
 import { attachLive, closeAll } from './live.mjs';
 import { openIndex } from './segindex.mjs';
 import { readHealth, alertsResponse } from './alerts-run.mjs';
+import { gatherHealthFacts, cameraFacts } from './healthfacts.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
 
 // The pure contracts, compiled. Refusals are VALUES (ok === false), not
@@ -26,6 +27,8 @@ import { parseWindow, parseInstant, parseSegmentId, isCameraId } from '../dist/a
 import { planByteRange, ByteRangeError } from '../dist/httpRange.js';
 import { coverageFromIndex, resolvePlayback, IndexCoverageError } from '../dist/indexCoverage.js';
 import { cameraView } from '../dist/cameraView.js';
+import { groupCamerasByDevice } from '../dist/cameraGroups.js';
+import { siteHealth } from '../dist/siteHealth.js';
 import { planExport } from '../dist/exportPlan.js';
 import { streamExport } from './exportStream.mjs';
 
@@ -42,6 +45,8 @@ const UI_FILES = {
   '/review': 'review.html',
   '/ui/review-client.js': 'review-client.mjs',
   '/ui/alert-banner.js': 'alert-banner.mjs',
+  '/system': 'system.html',
+  '/ui/system-client.js': 'system-client.mjs',
 };
 
 const sendError = (res, status, code, message) => {
@@ -242,21 +247,22 @@ export function createApiServer({
       }
 
       // ---------- /health ----------
+      // This used to answer ok:true whenever the HTTP server could reply, so a
+      // recorder that died on Tuesday, a store root that never mounted, and a
+      // camera silent for three days all looked exactly like a working site.
+      // The facts are now measured (healthfacts) and judged (siteHealth); green
+      // is earned. The old fields are all still here, inside `totals`.
       if (pathname === '/health') {
-        // resolveCameraUrl returns { kind: "unresolved" } — it does not throw.
-        const unresolved = config.cameras.filter(
-          (cam) => resolveCameraUrl(cam, config.credentials).kind !== 'ok'
-        ).length;
-        const envelope = {
-          ok: true,
-          siteId: config.siteId,
-          atUtc: now().toISOString(),
-          cameras: config.cameras.length,
-          unresolved,
-          segments: index.count(),
-        };
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(envelope));
+        const facts = await gatherHealthFacts({
+          config,
+          index,
+          healthFile: join(stateDir, 'health.json'),
+          now,
+          // resolveCameraUrl returns { kind: "unresolved" } — it does not throw.
+          resolveOne: (cam) => resolveCameraUrl(cam, config.credentials),
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(siteHealth(facts)));
         return;
       }
 
@@ -276,10 +282,34 @@ export function createApiServer({
         // The config URLs carry camera passwords; cameraView alone decides what
         // the client sees. The transport adds no fields and catches nothing:
         // resolveCameraUrl reports an unresolvable camera as a value.
+        // measuredKbps comes from the index, not from config — it is what the
+        // camera actually sent, and it is the number retention is computed from.
+        const measured = cameraFacts(index, config.cameras.map((c) => c.cameraId));
         const views = config.cameras.map((cam) =>
-          cameraView(cam, resolveCameraUrl(cam, config.credentials)));
+          cameraView(
+            cam,
+            resolveCameraUrl(cam, config.credentials),
+            measured.get(cam.cameraId)?.measuredKbps ?? null,
+          ));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(views));
+        return;
+      }
+
+      // ---------- /devices ----------
+      // The same cameras, folded back into the physical devices they belong to.
+      // A two-stream camera is ONE thing on the wall; /cameras answers streams
+      // and the grid would otherwise draw 16 tiles for an 8-camera store.
+      if (pathname === '/devices') {
+        const measured = cameraFacts(index, config.cameras.map((c) => c.cameraId));
+        const views = config.cameras.map((cam) =>
+          cameraView(
+            cam,
+            resolveCameraUrl(cam, config.credentials),
+            measured.get(cam.cameraId)?.measuredKbps ?? null,
+          ));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(groupCamerasByDevice(views)));
         return;
       }
 

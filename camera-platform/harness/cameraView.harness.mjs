@@ -9,8 +9,8 @@ import { check, same, report } from "./_assert.mjs";
 console.log("cameraView");
 
 const OK = { kind: "ok", origin: "manual_url", url: "rtsp://unused" };
-const KEYS = ["bitrateKbps", "cameraId", "channel", "host", "name", "origin", "port", "resolved",
-  "unresolvedReason", "vendor"];
+const KEYS = ["bitrateKbps", "cameraId", "channel", "host", "measuredKbps", "name", "origin", "port",
+  "resolved", "unresolvedReason", "vendor"];
 
 function clean(view, secrets, what) {
   same(Object.keys(view).sort(), KEYS, `${what}: exactly the named fields, nothing else`);
@@ -27,6 +27,7 @@ check("a url with credentials gives its host and port, and nothing else of itsel
   same(v, {
     cameraId: "cam-1", name: "Front door", vendor: "hikvision", host: "10.0.0.5", port: 8554, channel: 1,
     origin: "manual_url", resolved: true, unresolvedReason: null, bitrateKbps: 4000,
+    measuredKbps: null,
   }, "view");
   clean(v, ["hunter2", "admin", "Streaming", "rtsp:", url], "userinfo");
 });
@@ -127,6 +128,17 @@ check("THE FEARED ONE: blanks stay blank — no channel 1, no bitrate 0, no vend
     bitrateKbps: null }, OK);
   same([n.name, n.vendor, n.channel, n.bitrateKbps], [null, null, null, null], "explicit nulls");
   same(cameraView({ cameraId: "cam-10", host: "h", channel: 0 }, OK).channel, 0, "a real 0 is kept");
+});
+
+check("a measurement never comes from config, and never replaces it", () => {
+  const cfg = { cameraId: "cam-6", url: "rtsp://10.0.0.5/live", bitrateKbps: 4000 };
+  same(cameraView(cfg, OK).measuredKbps, null, "unmeasured until someone measures it");
+  const m = cameraView(cfg, OK, 171);
+  // THE POINT: the camera was asked for 4000 and is sending 171. Both numbers
+  // survive to the screen, because only their disagreement shows the fault.
+  same([m.bitrateKbps, m.measuredKbps], [4000, 171], "both kept, neither overwritten");
+  same(cameraView({ cameraId: "cam-7", url: "rtsp://10.0.0.5/live" }, OK, 0).measuredKbps, 0,
+    "a measured 0 is a real measurement -- a camera sending nothing -- not a missing one");
 });
 
 report("cameraView");
