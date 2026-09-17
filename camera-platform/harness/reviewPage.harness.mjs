@@ -126,8 +126,10 @@ class FakeEl {
     this.listeners[type] = ls.filter((l) => !l.once);
     for (const l of ls) l.fn({ type, target: this, currentTarget: this, preventDefault() {}, stopPropagation() {}, ...extra });
   }
+  dispatchEvent(ev) { this.fire(ev && ev.type); return true; }
   set innerHTML(_) { throw new Error("the page must not use innerHTML"); }
 }
+globalThis.Event = class { constructor(type) { this.type = String(type); } };
 const textNode = (s) => { const t = new FakeEl("#text"); t._text = s; return t; };
 
 class FakeVideo extends FakeEl {
@@ -142,7 +144,15 @@ function freshDom() {
   const byId = {};
   for (const [id, tag] of [["camera", "select"], ["day", "input"], ["prevDay", "button"], ["nextDay", "button"],
     ["pageError", "div"], ["strip", "div"], ["playhead", "div"], ["hours", "div"], ["status", "div"],
-    ["exportFrom", "input"], ["exportTo", "input"], ["exportBtn", "button"], ["exportStatus", "div"],
+    ["exportFrom", "select"], ["exportTo", "select"], ["exportBtn", "button"], ["exportStatus", "div"],
+    ["cameraTiles", "div"], ["dayBtn", "button"], ["calendar", "div"], ["calPrev", "button"],
+    ["calNext", "button"], ["calLabel", "span"], ["calGrid", "div"],
+    ["saveVideoBtn", "button"], ["teachBtn", "button"], ["sheet", "div"], ["sheetTitle", "h2"],
+    ["sheetClose", "button"], ["sheetGo", "button"], ["sheetStatus", "div"], ["sheetRange", "div"],
+    ["lengthChips", "div"], ["teachFields", "div"], ["teachProgress", "div"], ["nobodyChip", "button"],
+    ["exactNote", "div"],
+    ["peopleMinus", "button"], ["peopleN", "span"], ["peoplePlus", "button"],
+    ["vehiclesMinus", "button"], ["vehiclesN", "span"], ["vehiclesPlus", "button"],
     ["slower", "button"], ["faster", "button"], ["rate", "span"], ["back10", "button"], ["fwd10", "button"],
     ["clock", "span"], ["clipPeople", "select"], ["clipVehicles", "select"], ["clipSaveBtn", "button"],
     ["clipStatus", "div"]]) {
@@ -157,6 +167,9 @@ function freshDom() {
   byId.video = new FakeVideo("video");
   byId.pageError.hidden = true;
   byId.playhead.hidden = true;
+  byId.calendar.hidden = true;
+  byId.sheet.hidden = true;
+  byId.teachFields.hidden = true;
   byId.strip.appendChild(byId.playhead);
   byId.strip.getBoundingClientRect = () => ({ left: 100, width: 1000, top: 0, height: 36 });
   return byId;
@@ -198,11 +211,15 @@ const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
 const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
   "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents",
-  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport", "setRate", "step", "saveTestClip", "wireTestClip"];
+  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport", "setRate", "step", "saveTestClip", "wireTestClip",
+  "watchedInstant", "drawCameraTiles", "chooseCamera", "chooseDay", "drawDayButton", "showCalendar",
+  "stepMonth", "drawCalendar", "loadMonth", "fillTimeDropdowns", "chosenWindow", "openSheet",
+  "closeSheet", "drawLengthChips", "pickLength", "sheetGo", "showCounts", "bumpCount", "tapNobody",
+  "loadTeachProgress", "wireFriendly"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
-const START = "\nwireEvents();\nloadCameras();\n";
-if (!script.includes(START)) throw new Error("review.html must end its script with wireEvents(); loadCameras();");
+const START = "\nwireFriendly();\nwireEvents();\nloadCameras();\n";
+if (!script.includes(START)) throw new Error("review.html must end its script with wireFriendly(); wireEvents(); loadCameras();");
 const bannerUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "alert-banner.mjs")).href;
 // The speed ladder is the compiled contract, as the server serves it from dist.
 const playbackUrl = pathToFileURL(join(import.meta.dirname, "..", "dist", "playback.mjs")).href;
@@ -258,7 +275,7 @@ await check("on load: cameras listed by name, today defaulted, a future day refu
   eq(/^\d{4}-\d{2}-\d{2}$/.test(dom.day.value), true, `today as YYYY-MM-DD: ${dom.day.value}`);
   // The server's clock is 2026-09-11, so the machine's real today is the future to it.
   eq(dom.pageError.hidden, false, "the error line is shown");
-  eq(dom.pageError.textContent.startsWith("window_in_future: "), true, `code: message — ${dom.pageError.textContent}`);
+  eq(dom.pageError.textContent, "That day has not happened yet.", "the refusal in plain words, not a code");
   eq(barsOf().length, 0, "nothing drawn for a refused day");
 });
 
@@ -289,7 +306,7 @@ await check("THE FEARED ONE: a slow answer for a day already left is not drawn",
   dom.day.value = "2030-01-01";
   const second = page.loadDay();
   await Promise.all([first, second]);
-  eq(dom.pageError.textContent.startsWith("window_in_future"), true, "the day on screen is the second one");
+  eq(dom.pageError.textContent, "That day has not happened yet.", "the day on screen is the second one");
   eq(barsOf().length, 0, "the first day's bars never land");
   dom.day.value = "2030-01-01";
   const a = page.loadDay();
@@ -518,11 +535,12 @@ await check("an offer names files, size, delivered local times and gaps, and its
 await check("refusals, bad times and an unreachable recorder each say so and offer nothing", async () => {
   await offer("07:00", "08:00");
   eq(dom.exportStatus.className, "exportStatus problem", "a problem");
-  eq(dom.exportStatus.textContent.startsWith("export_reaches_recording: "), true, `code: message — ${dom.exportStatus.textContent}`);
+  eq(dom.exportStatus.textContent,
+    "That stretch runs into footage still being recorded. Pick a time that has finished.", "in plain words");
   eq(linkOf(), null, "no link");
 
   await offer("06:03", "06:04");
-  eq(dom.exportStatus.textContent.startsWith("export_nothing_recorded: "), true, `code: message — ${dom.exportStatus.textContent}`);
+  eq(dom.exportStatus.textContent, "Nothing was recorded in that stretch.", "in plain words");
   eq(linkOf(), null, "no link");
 
   await offer("06:06", "06:00");
@@ -733,9 +751,176 @@ await check("a step into a gap stops and says why instead of skipping to the nex
   eq(dom.rate.textContent, "2x", "the speed choice survives the stop");
 });
 
+/* ── the friendly page: a camera, a calendar, a moment ─────────────────────
+ * The failures feared here: a tile and the page disagreeing about which
+ * camera is being shown, a calendar that marks a day with no footage (or
+ * hides one that has it), a dropdown that loses the quarter hour it was on,
+ * and a length chip that downloads the dropdowns' range instead of the moment
+ * the person is actually watching.
+ */
+
+await check("a camera is a tile to tap, and tapping one draws that camera's day", async () => {
+  dom.day.value = "2026-09-11";
+  dom.camera.value = "cam-1";
+  page.drawCameraTiles();
+  eq(dom.cameraTiles.children.map((t) => t.textContent), ["Bay 1", "cam-2"], "one tile per camera, by name");
+  eq(dom.cameraTiles.children.map((t) => t.className), ["camTile chosen", "camTile"], "the one being shown is marked");
+  fetchLog = [];
+  dom.cameraTiles.children[1].fire("click");
+  await until(() => fetchLog.some((u) => u.startsWith("/timeline?") && u.includes("camera=cam-2")), "cam-2's timeline");
+  eq(dom.camera.value, "cam-2", "the select is the page's one answer, and the tap moved it");
+  eq(dom.cameraTiles.children.map((t) => t.className), ["camTile", "camTile chosen"], "and the tiles followed");
+  dom.cameraTiles.children[0].fire("click");
+  await until(() => dom.camera.value === "cam-1", "back on cam-1");
+  await settle();
+});
+
+await check("the day is picked from a calendar, with the days that have footage marked", async () => {
+  dom.camera.value = "cam-1";
+  dom.day.value = "2026-09-11";
+  fetchLog = [];
+  page.showCalendar(true);
+  eq(dom.calendar.hidden, false, "the calendar is open");
+  eq(dom.calLabel.textContent, "September 2026", "on the month of the day being shown");
+  await until(() => dom.calGrid.children.some((c) => c.className.includes("recorded")), "the recorded days marked");
+  eq(dom.calGrid.children.length, 35, "five weeks of seven cells");
+  eq(dom.calGrid.children.slice(0, 2).map((c) => c.className), ["calBlank", "calBlank"],
+    "the 1st is a Tuesday, so the week starts with two blanks");
+  eq(dom.calGrid.children.filter((c) => c.className.includes("recorded")).map((c) => c.textContent),
+    ["11"], "only the day this camera has footage on");
+  eq(dom.calGrid.children.filter((c) => c.className.includes("chosen")).map((c) => c.textContent),
+    ["11"], "and the day on screen is the chosen one");
+
+  fetchLog = [];
+  const twelfth = dom.calGrid.children.find((c) => c.className.startsWith("calDay") && c.textContent === "12");
+  twelfth.fire("click");
+  eq(dom.day.value, "2026-09-12", "the date input is the page's one answer, and the tap moved it");
+  eq(dom.calendar.hidden, true, "the calendar closes once a day is chosen");
+  eq(dom.dayBtn.textContent, "Day: 2026-09-12", "the button says which day is on screen");
+  await until(() => fetchLog.some((u) => u.startsWith("/timeline?") && u.includes("start=2026-09-12")), "that day's timeline");
+  dom.day.value = "2026-09-11";
+  await page.loadDay();
+});
+
+await check("the times are a dropdown of the day's quarter hours, never typed", async () => {
+  dom.camera.value = "cam-1";
+  dom.day.value = "2026-09-11";
+  await page.loadDay();
+  eq(dom.exportFrom.children.length, 97, "96 quarter hours and the end of the day");
+  eq(dom.exportTo.children.length, 97, "on both dropdowns");
+  eq(dom.exportFrom.children[0].textContent, "12:00 AM (nothing recorded)",
+    "a step with no footage is offered and said to be empty, not hidden");
+  const recorded = dom.exportFrom.children.filter((o) => !o.textContent.includes("nothing recorded"));
+  eq(recorded.map((o) => o.textContent), ["6:00 AM"], "the one quarter hour this camera recorded in");
+  eq(dom.exportFrom.value, "2026-09-11T10:00:00.000Z",
+    "From starts on it, and its value is a whole instant, not a wall clock");
+
+  fetchLog = [];
+  dom.exportTo.value = "2026-09-11T10:15:00.000Z";
+  await page.offerExport();
+  const q = planQuery();
+  eq([q.get("start"), q.get("end")],
+    ["2026-09-11T10:00:00.000Z", "2026-09-11T10:15:00.000Z"], "the chosen instants, straight through");
+});
+
+await check("Save video and Teach the AI open the same sheet, with the lengths each needs", async () => {
+  page.openSheet("save");
+  eq(dom.sheet.hidden, false, "the sheet is open");
+  eq([dom.sheetTitle.textContent, dom.sheetGo.textContent], ["Save video", "Get the video"], "in plain words");
+  eq(dom.lengthChips.children.map((c) => c.textContent), ["1 min", "5 min", "15 min", "1 hour"], "download lengths");
+  eq(dom.teachFields.hidden, true, "and nothing about teaching");
+  page.openSheet("teach");
+  eq([dom.sheetTitle.textContent, dom.sheetGo.textContent], ["Teach the AI", "Save what I said"], "in plain words");
+  eq(dom.lengthChips.children.map((c) => c.textContent), ["1 min", "2 min", "5 min"],
+    "teaching lengths: short enough for a person to check by hand");
+  eq(dom.lengthChips.children.map((c) => c.className), ["chip", "chip on", "chip"], "two minutes to start");
+  eq(dom.teachFields.hidden, false, "and the teaching fields are there");
+  page.closeSheet();
+  eq(dom.sheet.hidden, true, "closed");
+});
+
+await check("THE FEARED ONE: a length chip takes the moment being watched, not what the dropdowns say", async () => {
+  dom.camera.value = "cam-1";
+  dom.day.value = "2026-09-11";
+  await page.loadDay();
+  dom.strip.fire("click", { clientX: 350.5 });
+  await until(() => dom.video.src !== "", "a src");
+  dom.video.fire("loadedmetadata");
+  eq(page.watchedInstant(), "2026-09-11T10:00:43.200Z", "the instant on screen");
+
+  page.openSheet("save");
+  page.pickLength(1);
+  eq(dom.sheetRange.textContent, "06:00 to 06:01", "half a minute either side, in local time");
+  fetchLog = [];
+  dom.sheetGo.fire("click");
+  await until(() => planQuery() !== null, "a plan for the chip's range");
+  eq([planQuery().get("start"), planQuery().get("end")],
+    ["2026-09-11T10:00:13.200Z", "2026-09-11T10:01:13.200Z"],
+    "a minute around the moment, not the dropdowns' range");
+  // Two ranges on screen for one download is exactly the kind of thing that
+  // looks fine and is wrong, so Exact times says which one is in force.
+  eq(dom.exactNote.textContent,
+    "The length button above is in use (06:00 to 06:01). Choose a time here to use these instead.",
+    "the dropdowns do not stand there as if they decided it");
+
+  dom.exportFrom.fire("change");
+  fetchLog = [];
+  await page.offerExport();
+  eq(planQuery().get("start"), dom.exportFrom.value, "an exact time chosen by hand takes the range back");
+  eq(dom.exactNote.textContent, "These times are the ones that will be used.", "and the note says so");
+  page.closeSheet();
+});
+
+await check("with nothing playing the sheet asks for a moment instead of choosing one", async () => {
+  page.stopVideo();
+  page.openSheet("save");
+  page.pickLength(5);
+  eq(dom.sheetRange.textContent, "Play the moment you want first, then pick a length.", "says what is missing");
+  eq(page.chosenWindow(), page.exportWindow(dom.day.value, dom.exportFrom.value, dom.exportTo.value),
+    "and falls back to the dropdowns rather than inventing a time");
+  page.closeSheet();
+});
+
+await check("teaching is tapped, not typed: the counters are what gets saved", async () => {
+  page.openSheet("teach");
+  dom.clipPeople.value = "0";
+  dom.clipVehicles.value = "0";
+  dom["clipTag-empty"].checked = false;
+  dom["clipTag-person"].checked = false;
+  dom["clipTag-vehicle"].checked = false;
+  page.showCounts();
+  dom.peoplePlus.fire("click");
+  dom.peoplePlus.fire("click");
+  eq([dom.peopleN.textContent, dom.clipPeople.value], ["2", "2"],
+    "what is shown and what is saved are the same two people");
+  eq([dom["clipTag-person"].checked, dom["clipTag-empty"].checked], [true, false], "a count ticks its own box");
+  dom.peopleMinus.fire("click");
+  dom.peopleMinus.fire("click");
+  eq([dom.peopleN.textContent, dom["clipTag-person"].checked], ["0", false],
+    "back to none, and the claim that there was a person goes with it");
+  dom.peopleMinus.fire("click");
+  eq(dom.peopleN.textContent, "0", "a count never goes below zero");
+  dom.nobodyChip.fire("click");
+  eq([dom["clipTag-empty"].checked, dom.nobodyChip.className], [true, "chip on"], "Nobody is the empty scene");
+  dom.vehiclesPlus.fire("click");
+  eq([dom.vehiclesN.textContent, dom["clipTag-empty"].checked], ["1", false],
+    "and a car means the scene was not empty after all");
+  page.closeSheet();
+});
+
+await check("the sheet counts what has been taught and states no verdict on it", async () => {
+  page.openSheet("teach");
+  await until(() => dom.teachProgress.textContent !== "", "the count");
+  eq(/^\d+ clips? saved so far: \d+ people, \d+ cars, \d+ min of nobody\. Still wanted: \d+ people, \d+ min of nobody\.$/
+    .test(dom.teachProgress.textContent), true, dom.teachProgress.textContent);
+  eq(/enough|ready|good|done/i.test(dom.teachProgress.textContent), false, "counts, not a verdict");
+  page.closeSheet();
+});
+
 globalThis.fetch = realFetch;
 closeAll();
 server.close();
+
 index.close();
 await rm(stateDir, { recursive: true, force: true });
 report("review page");

@@ -637,15 +637,26 @@ export function rangeAround(momentUtc, lengthMin, nowUtc, dayStartUtc, dayEndUtc
  *
  * A code it knows is answered in plain words and the recorder's message is
  * dropped - the plain sentence replaces the jargon, it does not decorate it:
- *   export_too_large -> "That is more video than one download can hold. Pick a shorter length."
- *   nothing_recorded -> "Nothing was recorded at that time."
- *   camera_unknown   -> "That camera is not set up on this recorder."
- *   bad_range        -> "Pick an end time after the start time."
- *   busy             -> "The recorder is busy with another download. Try again in a minute."
- *   disk_full        -> "The recorder has no room left. Nothing new can be saved."
- *   forbidden        -> "This account is not allowed to do that."
- *   bad_response     -> "The recorder sent something this page could not read."
- *   unreachable      -> "Cannot reach the recorder."
+ * The table is the recorder's own codes, from contracts/apiQuery.ts,
+ * contracts/exportPlan.ts and agent/api-server.mjs:
+ *   export_too_large         -> "That is more video than one download can hold. Pick a shorter length."
+ *   export_nothing_recorded  -> "Nothing was recorded in that stretch."
+ *   export_reaches_recording -> "That stretch runs into footage still being recorded. Pick a time that has finished."
+ *   export_size_unknown      -> "The recorder cannot say yet how big that download would be. Try a shorter stretch."
+ *   no_coverage              -> "Nothing was recorded then."
+ *   no_usable_bytes          -> "The footage for that stretch cannot be read."
+ *   window_in_future         -> "That day has not happened yet."
+ *   window_too_large         -> "That is too long a stretch to ask for at once."
+ *   inverted_window          -> "Pick an end time after the start time."
+ *   no_such_camera           -> "That camera is not set up on this recorder."
+ *   bad_camera               -> the same sentence
+ *   bad_camera_id            -> the same sentence
+ *   no_cameras               -> "No cameras are set up on this recorder yet."
+ *   index_state_invalid      -> "The recorder kept a record of what it holds that disagrees with itself. Nothing is hidden, but it needs a look."
+ *   forbidden                -> "This account is not allowed to do that."
+ *   unauthorized             -> "Sign in to do that."
+ *   bad_response             -> "The recorder sent something this page could not read."
+ *   unreachable              -> "Cannot reach the recorder."
  *
  * Anything else is REPORTED, never guessed at: "Something went wrong" then,
  * when message is a non-empty string, ": " and the message, then, when code is
@@ -661,12 +672,21 @@ export function rangeAround(momentUtc, lengthMin, nowUtc, dayStartUtc, dayEndUtc
 export function friendlyProblem(code, message) {
   const mapping = {
     export_too_large: "That is more video than one download can hold. Pick a shorter length.",
-    nothing_recorded: "Nothing was recorded at that time.",
-    camera_unknown: "That camera is not set up on this recorder.",
-    bad_range: "Pick an end time after the start time.",
-    busy: "The recorder is busy with another download. Try again in a minute.",
-    disk_full: "The recorder has no room left. Nothing new can be saved.",
+    export_nothing_recorded: "Nothing was recorded in that stretch.",
+    export_reaches_recording: "That stretch runs into footage still being recorded. Pick a time that has finished.",
+    export_size_unknown: "The recorder cannot say yet how big that download would be. Try a shorter stretch.",
+    no_coverage: "Nothing was recorded then.",
+    no_usable_bytes: "The footage for that stretch cannot be read.",
+    window_in_future: "That day has not happened yet.",
+    window_too_large: "That is too long a stretch to ask for at once.",
+    inverted_window: "Pick an end time after the start time.",
+    no_such_camera: "That camera is not set up on this recorder.",
+    bad_camera: "That camera is not set up on this recorder.",
+    bad_camera_id: "That camera is not set up on this recorder.",
+    no_cameras: "No cameras are set up on this recorder yet.",
+    index_state_invalid: "The recorder kept a record of what it holds that disagrees with itself. Nothing is hidden, but it needs a look.",
     forbidden: "This account is not allowed to do that.",
+    unauthorized: "Sign in to do that.",
     bad_response: "The recorder sent something this page could not read.",
     unreachable: "Cannot reach the recorder."
   };

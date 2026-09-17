@@ -23,7 +23,8 @@
   header h1 { margin: 0; font-size: 18px; }
   .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
   .controls select, .controls input, .controls button, .status button {
-    padding: 4px 10px;
+    min-height: 44px;
+    padding: 8px 12px;
     border: 1px solid #4a4f58;
     border-radius: 5px;
     background: #2c2f36;
@@ -56,9 +57,11 @@
   .bar.gap { background: #c62828; }
   .bar.future { box-sizing: border-box; border: 1px dashed #6b7078; background: transparent; }
   .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; }
-  .hours { position: relative; height: 18px; margin: 2px 0 8px; color: #9aa0a6; font-size: 12px; }
+  .hours { position: relative; height: 18px; margin: 2px 0 8px; color: #b6bcc4; font-size: 12px; }
+  /* The first label sits at left: 0, so centring it puts half of it off the screen. */
+  .hours span:first-child { transform: none; }
   .hours span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-  .legend { display: flex; gap: 14px; margin: 0 0 12px; color: #9aa0a6; font-size: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 12px; color: #b6bcc4; font-size: 12px; }
   .legend i { display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; border-radius: 2px; }
   .legend .recorded { background: #2e7d32; }
   .legend .gap { background: #c62828; }
@@ -76,7 +79,7 @@
     font: inherit;
   }
   .export button { cursor: pointer; }
-  .exportStatus { flex-basis: 100%; min-height: 1.4em; color: #9aa0a6; }
+  .exportStatus { flex-basis: 100%; color: #b6bcc4; }
   .exportStatus.problem { color: #ffb4b4; }
   .testclip {
     display: flex;
@@ -103,8 +106,7 @@
   }
   .clipStatus {
     flex-basis: 100%;
-    min-height: 1.4em;
-    color: #9aa0a6;
+    color: #b6bcc4;
   }
   .clipStatus.problem {
     color: #ffb4b4;
@@ -112,17 +114,176 @@
   .clipStatus.saved {
     color: #9fe0a8;
   }
+  /* ── the friendly Review page: a phone is the screen this is used on, so
+     every tap target is at least 44px and nothing is typed. ─────────────── */
+  .hidden, #camera, #day, #clipPeople, #clipVehicles { display: none; }
+  .cameras { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+  .camTile {
+    flex: 1 1 130px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .camTile.chosen { border-color: #8ab4f8; background: #33415c; }
+  .daybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; }
+  .daybar button {
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .daybar #dayBtn { flex: 1 1 auto; text-align: left; font-weight: 600; }
+  .calendar {
+    max-width: 380px;
+    margin: 0 0 12px;
+    padding: 10px;
+    border: 1px solid #2c2f36;
+    border-radius: 8px;
+    background: #1b1d22;
+  }
+  .calHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+  .calHead button {
+    min-width: 44px;
+    min-height: 40px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .calDow { text-align: center; font-size: 12px; color: #9aa0a6; }
+  .calDay {
+    min-height: 46px;
+    border: 1px solid #383c44;
+    border-radius: 8px;
+    background: #22252b;
+    color: #6b7078;
+    font: inherit;
+    cursor: pointer;
+  }
+  .calDay.recorded { border-color: #2e7d32; background: #24322a; color: #e8eaed; }
+  .calDot { display: block; width: 6px; height: 6px; margin: 2px auto 0; border-radius: 50%; background: #5cc463; }
+  .exactNote { margin: 0 0 8px; color: #b6bcc4; }
+  .calDay.chosen { border-color: #8ab4f8; background: #33415c; color: #fff; }
+  .calBlank { min-height: 46px; }
+  .moment { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+  .big {
+    flex: 1 1 160px;
+    min-height: 52px;
+    padding: 10px 14px;
+    border: 1px solid #4a4f58;
+    border-radius: 10px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .big.go { border-color: #2e7d32; background: #24322a; }
+  .sheet {
+    margin: 12px 0 0;
+    padding: 12px;
+    border: 1px solid #2c2f36;
+    border-radius: 10px;
+    background: #1b1d22;
+  }
+  .sheetHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+  .sheetHead h2 { margin: 0; font-size: 16px; }
+  .sheetHead button {
+    min-height: 40px;
+    padding: 6px 12px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+  .chip, .chips .tag {
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 1px solid #4a4f58;
+    border-radius: 22px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .chips .tag { display: inline-flex; align-items: center; gap: 6px; }
+  .chip.on { border-color: #8ab4f8; background: #33415c; }
+  .sheetRange { margin: 0 0 10px; color: #b6bcc4; font-size: 15px; }
+  .counts { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 0 0 10px; }
+  .counter { display: inline-flex; align-items: center; gap: 6px; }
+  .counter .cLabel { display: inline-block; min-width: 4.5em; }
+  .counter button {
+    width: 46px;
+    min-height: 46px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .counter .n { min-width: 2em; text-align: center; font-size: 16px; }
+  .sheetStatus { min-height: 1.4em; margin: 8px 0 0; color: #9aa0a6; }
+  .sheetStatus.problem { color: #ffb4b4; }
+  .sheetStatus.saved { color: #9fe0a8; }
+  .progress { margin: 8px 0 0; color: #b6bcc4; font-size: 13px; }
+  details.exact { margin: 10px 0 0; color: #9aa0a6; }
+  details.exact summary { min-height: 40px; cursor: pointer; }
+  details.exact select {
+    min-height: 44px;
+    padding: 6px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+  }
 </style>
 </head>
 <body>
 <header><a href="/">Live</a><h1>Review</h1></header>
 <div class="alertBanner" id="alertBanner" role="status" hidden></div>
 
-<div class="controls">
-  <select id="camera" aria-label="Camera"></select>
+<!-- Pick a camera by tapping it; the select is the page's single answer to
+     "which camera", kept out of sight rather than removed. -->
+<div class="cameras" id="cameraTiles"></div>
+<select id="camera" aria-label="Camera"></select>
+
+<div class="daybar">
+  <button id="dayBtn" type="button" aria-expanded="false">Pick a day</button>
   <button id="prevDay" type="button">Previous day</button>
-  <input id="day" type="date" aria-label="Day">
   <button id="nextDay" type="button">Next day</button>
+</div>
+<input id="day" type="date" aria-label="Day">
+
+<div class="calendar" id="calendar" hidden>
+  <div class="calHead">
+    <button id="calPrev" type="button" aria-label="Previous month">&lt;</button>
+    <span id="calLabel"></span>
+    <button id="calNext" type="button" aria-label="Next month">&gt;</button>
+  </div>
+  <div class="calGrid">
+    <span class="calDow">Sun</span><span class="calDow">Mon</span><span class="calDow">Tue</span><span class="calDow">Wed</span><span class="calDow">Thu</span><span class="calDow">Fri</span><span class="calDow">Sat</span>
+  </div>
+  <div class="calGrid" id="calGrid"></div>
 </div>
 
 <div class="pageError" id="pageError" hidden></div>
@@ -146,31 +307,74 @@
 </div>
 <div class="status" id="status"></div>
 
-<div class="export">
-  <label>Export from <input id="exportFrom" type="time" step="60"></label>
-  <label>to <input id="exportTo" type="time" step="60"></label>
-  <button id="exportBtn" type="button">Check export</button>
-  <div class="exportStatus" id="exportStatus"></div>
+<!-- What to do with the moment on screen. Both buttons open the same sheet;
+     the only choice inside it is how long a stretch around that moment. -->
+<div class="moment">
+  <button id="saveVideoBtn" class="big" type="button">Save video</button>
+  <button id="teachBtn" class="big" type="button">Teach the AI</button>
 </div>
 
-<div class="testclip">
-  <span class="testclipLead">Save the same range as a test clip for the AI:</span>
-  <label class="tag"><input type="checkbox" id="clipTag-empty" name="clipTag" value="empty"> Empty</label>
-  <label class="tag"><input type="checkbox" id="clipTag-person" name="clipTag" value="person"> Person</label>
-  <label class="tag"><input type="checkbox" id="clipTag-vehicle" name="clipTag" value="vehicle"> Vehicle</label>
-  <label class="tag"><input type="checkbox" id="clipTag-shadows" name="clipTag" value="shadows"> Shadows</label>
-  <label class="tag"><input type="checkbox" id="clipTag-headlights" name="clipTag" value="headlights"> Headlights</label>
-  <label class="tag"><input type="checkbox" id="clipTag-rain" name="clipTag" value="rain"> Rain</label>
-  <label class="tag"><input type="checkbox" id="clipTag-animal" name="clipTag" value="animal"> Animal</label>
-  <label class="tag"><input type="checkbox" id="clipTag-night" name="clipTag" value="night"> Night</label>
-  <label>People <select id="clipPeople"></select></label>
-  <label>Vehicles <select id="clipVehicles"></select></label>
-  <button id="clipSaveBtn" type="button">Save as test clip</button>
+<div class="sheet" id="sheet" hidden>
+  <div class="sheetHead">
+    <h2 id="sheetTitle">Save video</h2>
+    <button id="sheetClose" type="button">Close</button>
+  </div>
+  <div class="chips" id="lengthChips"></div>
+  <div class="sheetRange" id="sheetRange"></div>
+
+  <div id="teachFields" hidden>
+    <div class="chips">
+      <button id="nobodyChip" class="chip" type="button">Nobody</button>
+    </div>
+    <div class="counts">
+      <span class="counter"><span class="cLabel">People</span>
+        <button id="peopleMinus" type="button" aria-label="Fewer people">-</button>
+        <span class="n" id="peopleN">0</span>
+        <button id="peoplePlus" type="button" aria-label="More people">+</button>
+      </span>
+      <span class="counter"><span class="cLabel">Cars</span>
+        <button id="vehiclesMinus" type="button" aria-label="Fewer cars">-</button>
+        <span class="n" id="vehiclesN">0</span>
+        <button id="vehiclesPlus" type="button" aria-label="More cars">+</button>
+      </span>
+    </div>
+    <div class="chips">
+      <label class="tag"><input type="checkbox" id="clipTag-night" name="clipTag" value="night"> Night</label>
+      <label class="tag"><input type="checkbox" id="clipTag-rain" name="clipTag" value="rain"> Rain</label>
+      <label class="tag"><input type="checkbox" id="clipTag-shadows" name="clipTag" value="shadows"> Shadows</label>
+      <label class="tag"><input type="checkbox" id="clipTag-headlights" name="clipTag" value="headlights"> Headlights</label>
+      <label class="tag"><input type="checkbox" id="clipTag-animal" name="clipTag" value="animal"> Animal</label>
+    </div>
+    <!-- What the counters and the Nobody chip actually set. Kept as the page's
+         one answer for each, out of sight rather than removed. -->
+    <label class="hidden"><input type="checkbox" id="clipTag-empty" name="clipTag" value="empty"> Empty</label>
+    <label class="hidden"><input type="checkbox" id="clipTag-person" name="clipTag" value="person"> Person</label>
+    <label class="hidden"><input type="checkbox" id="clipTag-vehicle" name="clipTag" value="vehicle"> Vehicle</label>
+    <select id="clipPeople"></select>
+    <select id="clipVehicles"></select>
+    <div class="progress" id="teachProgress"></div>
+  </div>
+
+  <button id="sheetGo" class="big go" type="button">Save video</button>
+  <button id="clipSaveBtn" class="hidden" type="button">Save as test clip</button>
+  <div class="sheetStatus" id="sheetStatus"></div>
   <div class="clipStatus" id="clipStatus"></div>
+  <div class="exportStatus" id="exportStatus"></div>
+
+  <details class="exact" id="exactTimes">
+    <summary>Exact times</summary>
+    <div class="exactNote" id="exactNote"></div>
+    <div class="export">
+      <label>From <select id="exportFrom"></select></label>
+      <label>to <select id="exportTo"></select></label>
+      <button id="exportBtn" type="button">Check export</button>
+    </div>
+  </details>
 </div>
 
 <script type="module">
-import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer } from '/ui/review-client.js';
+import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer,
+  monthCalendar, timeOptions, recordedDays, rangeAround, friendlyProblem, clipProgress } from '/ui/review-client.js';
 import { PLAYBACK_RATES, nextRate, rateLabel } from '/ui/playback.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 
@@ -195,6 +399,34 @@ const el = {
   back10: document.getElementById('back10'),
   fwd10: document.getElementById('fwd10'),
   clock: document.getElementById('clock'),
+  cameraTiles: document.getElementById('cameraTiles'),
+  dayBtn: document.getElementById('dayBtn'),
+  calendar: document.getElementById('calendar'),
+  calPrev: document.getElementById('calPrev'),
+  calNext: document.getElementById('calNext'),
+  calLabel: document.getElementById('calLabel'),
+  calGrid: document.getElementById('calGrid'),
+  saveVideoBtn: document.getElementById('saveVideoBtn'),
+  teachBtn: document.getElementById('teachBtn'),
+  sheet: document.getElementById('sheet'),
+  sheetTitle: document.getElementById('sheetTitle'),
+  sheetClose: document.getElementById('sheetClose'),
+  sheetGo: document.getElementById('sheetGo'),
+  sheetStatus: document.getElementById('sheetStatus'),
+  sheetRange: document.getElementById('sheetRange'),
+  lengthChips: document.getElementById('lengthChips'),
+  teachFields: document.getElementById('teachFields'),
+  teachProgress: document.getElementById('teachProgress'),
+  exactNote: document.getElementById('exactNote'),
+  nobodyChip: document.getElementById('nobodyChip'),
+  peopleMinus: document.getElementById('peopleMinus'),
+  peopleN: document.getElementById('peopleN'),
+  peoplePlus: document.getElementById('peoplePlus'),
+  vehiclesMinus: document.getElementById('vehiclesMinus'),
+  vehiclesN: document.getElementById('vehiclesN'),
+  vehiclesPlus: document.getElementById('vehiclesPlus'),
+  clipPeople: document.getElementById('clipPeople'),
+  clipVehicles: document.getElementById('clipVehicles'),
 };
 
 // What is on screen now. `requested` is the /timeline body's requested range
@@ -204,7 +436,12 @@ const el = {
 // a day the user has already left is dropped instead of drawn.
 // `exportSeq` does the same for /export/plan: every offerExport and every
 // clearExport increments it, so a slow plan never offers a stale download.
-const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq: 0 };
+// `sheetWindow` is the range a length chip chose, or null when the Exact
+// times dropdowns are the answer. `recordedDays` is the days of the month in
+// view that have footage, and monthSeq drops a slow answer for a month left.
+const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq: 0,
+  calYear: 0, calMonth: 0, recordedDays: [], monthSeq: 0,
+  sheetMode: null, sheetLength: 5, sheetWindow: null };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
@@ -314,6 +551,7 @@ async function loadCameras() {
     if (firstValue === null) firstValue = o.value;
   }
   if (firstValue !== null) el.camera.value = firstValue;
+  drawCameraTiles();
   showPageError(null);
   await loadDay();
 }
@@ -331,14 +569,15 @@ async function loadCameras() {
  *    the fetch and res.json(); steps 6 to 8 run outside it, so an error thrown
  *    while drawing reaches the caller as itself. (Step 4's check comes first
  *    for a failure too: a stale failure touches nothing.)
- * 6. body.ok === false: showPageError(code + ": " + message) using body.code
- *    and body.message, clearStrip(), stop. (A day entirely in the future
- *    arrives here as window_in_future.)
+ * 6. body.ok === false: showPageError(friendlyProblem(body.code, body.message)),
+ *    clearStrip(), stop. (A day entirely in the future arrives here as
+ *    window_in_future, which reads "That day has not happened yet.")
  * 7. layout = layoutCoverage(body). layout.error: showPageError("The recorder
  *    sent a timeline this page cannot draw: " + layout.error), clearStrip(),
  *    stop.
  * 8. showPageError(null); view.requested = body.requested;
- *    drawStrip(layout.bars); drawHours(win); movePlayhead(null).
+ *    drawStrip(layout.bars); drawHours(win); movePlayhead(null);
+ *    fillTimeDropdowns(body.runs).
  */
 async function loadDay() {
   const seq = ++view.loadSeq;
@@ -368,7 +607,7 @@ async function loadDay() {
     return;
   }
   if (body.ok === false) {
-    showPageError(body.code + ': ' + body.message);
+    showPageError(friendlyProblem(body.code, body.message));
     clearStrip();
     return;
   }
@@ -383,6 +622,8 @@ async function loadDay() {
   drawStrip(layout.bars);
   drawHours(win);
   movePlayhead(null);
+  fillTimeDropdowns(body.runs);
+  drawDayButton();
 }
 
 /**
@@ -759,6 +1000,16 @@ function wireEvents() {
 function exportWindow(day, from, to) {
   const win = dayWindow(day);
   if (win === null) return null;
+  // A From/To option carries a whole instant, because the two 1 AMs of a
+  // fall-back day are different instants with the same wall clock. A typed
+  // "HH:MM" still works below.
+  if (typeof from === 'string' && from.includes('T') && typeof to === 'string' && to.includes('T')) {
+    const fromMs = Date.parse(from);
+    const toMs = Date.parse(to);
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs) || toMs <= fromMs) return null;
+    if (fromMs < Date.parse(win.startUtc) || toMs > Date.parse(win.endUtc)) return null;
+    return {startUtc: new Date(fromMs).toISOString(), endUtc: new Date(toMs).toISOString()};
+  }
   const timeRe = /^([0-9]{2}):([0-9]{2})$/;
   const parse = (t) => {
     if (typeof t !== 'string') return null;
@@ -824,7 +1075,7 @@ function clearExport() {
  */
 async function offerExport() {
   const seq = ++view.exportSeq;
-  const win = exportWindow(el.day.value, el.exportFrom.value, el.exportTo.value);
+  const win = chosenWindow();
   if (!win) {
     setExportStatus(['Pick a start and an end time on this day, the end after the start'], 'problem');
     return;
@@ -845,7 +1096,7 @@ async function offerExport() {
   }
   const offer = planExportOffer(body);
   if (offer.action === 'error') {
-    setExportStatus([offer.code + ': ' + offer.message], 'problem');
+    setExportStatus([friendlyProblem(offer.code, offer.message)], 'problem');
     return;
   }
   const a = document.createElement('a');
@@ -892,7 +1143,7 @@ function setClipStatus(text, kind) {
 // saveTestClip handles the async saving of a test clip
 async function saveTestClip() {
   const seq = ++view.clipSeq;
-  const win = exportWindow(el.day.value, el.exportFrom.value, el.exportTo.value);
+  const win = chosenWindow();
   if (!win) {
     setClipStatus('Pick a start and an end time above, the end after the start', 'problem');
     return;
@@ -969,7 +1220,9 @@ async function saveTestClip() {
   }
   setClipStatus(
     'Not saved: ' +
-      (body && body.message ? body.message : 'the recorder refused (' + res.status + ')'),
+      (body && (body.code || body.message)
+        ? friendlyProblem(body.code, body.message)
+        : 'the recorder refused (' + res.status + ')'),
     'problem'
   );
 }
@@ -1039,8 +1292,407 @@ function wireTestClip() {
   clipSaveBtn.addEventListener('click', saveTestClip);
 }
 
+/* ── the friendly page: a camera, a day, a moment ──────────────────────────
+ * Every decision that can be wrong without looking wrong lives in
+ * /ui/review-client.js and is harness-tested. What is here only draws what
+ * those helpers decided and asks the recorder.
+ */
+
+// The zone the wall clock on this phone is in. Every local time the page shows
+// or offers is formatted in it, and it is passed in rather than assumed.
+const LOCAL_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const SAVE_LENGTHS = [1, 5, 15, 60];
+const TEACH_LENGTHS = [1, 2, 5];
+
+/** The instant on screen, or null when nothing is playing. */
+function watchedInstant() {
+  if (view.playing === null) return null;
+  const ms = Date.parse(view.playing.segmentStartUtc) + el.video.currentTime * 1000;
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/**
+ * One tile per camera, from the same list the (hidden) select holds, so the
+ * tiles and the page's answer to "which camera" cannot drift apart. The
+ * chosen one carries the class "chosen".
+ */
+function drawCameraTiles() {
+  const tiles = [];
+  for (const opt of Array.from(el.camera.childNodes)) {
+    const tile = document.createElement('button');
+    tile.setAttribute('type', 'button');
+    tile.className = opt.value === el.camera.value ? 'camTile chosen' : 'camTile';
+    tile.textContent = opt.textContent;
+    tile.addEventListener('click', () => { chooseCamera(opt.value); });
+    tiles.push(tile);
+  }
+  el.cameraTiles.replaceChildren(...tiles);
+}
+
+/** Tapping a tile is choosing in the select: same event, same consequences. */
+function chooseCamera(cameraId) {
+  if (el.camera.value === cameraId) return;
+  el.camera.value = cameraId;
+  el.camera.dispatchEvent(new Event('change'));
+}
+
+/** Tapping a day in the calendar is choosing in the date input. */
+function chooseDay(day) {
+  if (el.day.value !== day) {
+    el.day.value = day;
+    el.day.dispatchEvent(new Event('change'));
+  }
+  showCalendar(false);
+}
+
+/** What the day button reads. */
+function drawDayButton() {
+  el.dayBtn.textContent = el.day.value ? 'Day: ' + el.day.value : 'Pick a day';
+}
+
+/**
+ * Open or close the calendar. Opening moves it to the month of the day being
+ * shown and asks the recorder which of that month's days have footage.
+ */
+function showCalendar(show) {
+  el.calendar.hidden = !show;
+  el.dayBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+  if (!show) return;
+  const m = /^([0-9]{4})-([0-9]{2})-[0-9]{2}$/.exec(el.day.value || '');
+  if (m) {
+    view.calYear = Number(m[1]);
+    view.calMonth = Number(m[2]);
+  }
+  drawCalendar();
+  loadMonth();
+}
+
+/** Step the calendar a month at a time. */
+function stepMonth(delta) {
+  let month = view.calMonth + delta;
+  let year = view.calYear;
+  if (month < 1) { month = 12; year -= 1; }
+  if (month > 12) { month = 1; year += 1; }
+  view.calYear = year;
+  view.calMonth = month;
+  view.recordedDays = [];
+  drawCalendar();
+  loadMonth();
+}
+
+/**
+ * Draw the month grid from monthCalendar. A day with footage is marked; a day
+ * without one is still tappable, because an empty strip is an answer too.
+ */
+function drawCalendar() {
+  const cal = monthCalendar(view.calYear, view.calMonth, view.recordedDays);
+  if (cal.error) {
+    el.calLabel.textContent = 'No calendar';
+    el.calGrid.replaceChildren();
+    return;
+  }
+  el.calLabel.textContent = cal.label;
+  const cells = [];
+  for (const week of cal.weeks) {
+    for (const cell of week) {
+      if (cell === null) {
+        const blank = document.createElement('span');
+        blank.className = 'calBlank';
+        cells.push(blank);
+        continue;
+      }
+      const btn = document.createElement('button');
+      btn.setAttribute('type', 'button');
+      btn.textContent = String(cell.dayOfMonth);
+      btn.className = 'calDay' + (cell.recorded ? ' recorded' : '')
+        + (cell.day === el.day.value ? ' chosen' : '');
+      btn.title = cell.recorded ? cell.day + ': recorded' : cell.day + ': nothing recorded';
+      // A dot, not just a colour: the chosen day is coloured too, and one
+      // meaning must not hide the other.
+      if (cell.recorded) {
+        const dot = document.createElement('span');
+        dot.className = 'calDot';
+        btn.appendChild(dot);
+      }
+      btn.addEventListener('click', () => { chooseDay(cell.day); });
+      cells.push(btn);
+    }
+  }
+  el.calGrid.replaceChildren(...cells);
+}
+
+/**
+ * Which days of the shown month have footage. One /timeline call for the whole
+ * month (MAX_WINDOW_SECONDS is 35 days, so a month fits), then recordedDays
+ * over its runs. A month that has not started yet, or a recorder that will not
+ * answer, marks nothing rather than guessing. view.monthSeq drops the answer
+ * for a month or camera the user has already left.
+ */
+async function loadMonth() {
+  const seq = ++view.monthSeq;
+  const two2 = (n) => String(n).padStart(2, '0');
+  const first = dayWindow(view.calYear + '-' + two2(view.calMonth) + '-01');
+  const lastOfMonth = new Date(Date.UTC(view.calYear, view.calMonth, 0)).getUTCDate();
+  const last = dayWindow(view.calYear + '-' + two2(view.calMonth) + '-' + two2(lastOfMonth));
+  if (first === null || last === null) return;
+  const nowUtc = new Date().toISOString();
+  const end = Date.parse(last.endUtc) > Date.parse(nowUtc) ? nowUtc : last.endUtc;
+  if (Date.parse(end) <= Date.parse(first.startUtc)) {
+    view.recordedDays = [];
+    drawCalendar();
+    return;
+  }
+  const q = new URLSearchParams({ camera: el.camera.value, start: first.startUtc, end });
+  let body = null;
+  try {
+    const res = await fetch('/timeline?' + q.toString());
+    body = await res.json();
+  } catch (e) {
+    body = null;
+  }
+  if (seq !== view.monthSeq) return;
+  const runs = body !== null && typeof body === 'object' && body.ok === true && Array.isArray(body.runs)
+    ? body.runs : [];
+  const found = recordedDays(runs, LOCAL_ZONE);
+  view.recordedDays = found.error ? [] : found.days;
+  drawCalendar();
+}
+
+/**
+ * Fill the From and To dropdowns with every quarter hour of the shown day, so
+ * a time is tapped and never typed. A step with no recording is offered and
+ * said to be empty rather than hidden: the person may want the boundary.
+ * A selection that survives the refill is kept; otherwise From goes to the
+ * first recorded step and To to the last.
+ */
+function fillTimeDropdowns(runs) {
+  const win = dayWindow(el.day.value);
+  const built = win === null
+    ? { error: 'no day' }
+    : timeOptions(Array.isArray(runs) ? runs : [], win.startUtc, win.endUtc, 15, LOCAL_ZONE);
+  if (built.error) {
+    el.exportFrom.replaceChildren();
+    el.exportTo.replaceChildren();
+    return;
+  }
+  const recorded = built.options.filter((o) => o.recorded);
+  for (const [select, fallback] of [[el.exportFrom, recorded[0]], [el.exportTo, recorded.at(-1)]]) {
+    const keep = select.value;
+    select.replaceChildren(...built.options.map((o) => {
+      const option = document.createElement('option');
+      option.value = o.value;
+      option.textContent = o.recorded ? o.label : o.label + ' (nothing recorded)';
+      return option;
+    }));
+    const kept = built.options.some((o) => o.value === keep);
+    select.value = kept ? keep : (fallback ? fallback.value : built.options[0].value);
+  }
+}
+
+/**
+ * The range every action uses. A length chip wins while the sheet is showing
+ * one, because that is what the person last touched; otherwise it is whatever
+ * the Exact times dropdowns say.
+ */
+function chosenWindow() {
+  if (view.sheetWindow !== null) return view.sheetWindow;
+  return exportWindow(el.day.value, el.exportFrom.value, el.exportTo.value);
+}
+
+/**
+ * Say, inside Exact times, which of the two answers is in force. Two ranges on
+ * screen for one download is the kind of thing that looks fine and is wrong, so
+ * the dropdowns are never left standing as if they decided it.
+ */
+function showExactNote() {
+  if (view.sheetWindow === null) {
+    el.exactNote.textContent = 'These times are the ones that will be used.';
+    return;
+  }
+  el.exactNote.textContent = 'The length button above is in use ('
+    + localTime(view.sheetWindow.startUtc) + ' to ' + localTime(view.sheetWindow.endUtc)
+    + '). Choose a time here to use these instead.';
+}
+
+/** Replace what the sheet's status line says. */
+function setSheetStatus(text, kind) {
+  el.sheetStatus.textContent = text;
+  el.sheetStatus.className = kind === 'problem' ? 'sheetStatus problem'
+    : kind === 'saved' ? 'sheetStatus saved' : 'sheetStatus';
+}
+
+/**
+ * Open the sheet for the moment on screen. "save" downloads a stretch of it;
+ * "teach" saves the same stretch as an answer for the AI. The only thing to
+ * choose is how long.
+ */
+function openSheet(mode) {
+  view.sheetMode = mode;
+  el.sheet.hidden = false;
+  el.sheetTitle.textContent = mode === 'teach' ? 'Teach the AI' : 'Save video';
+  el.sheetGo.textContent = mode === 'teach' ? 'Save what I said' : 'Get the video';
+  el.teachFields.hidden = mode !== 'teach';
+  setSheetStatus('');
+  setExportStatus([]);
+  setClipStatus('');
+  pickLength(mode === 'teach' ? 2 : 5);
+  if (mode === 'teach') loadTeachProgress();
+}
+
+/** Close the sheet and forget the length it had chosen. */
+function closeSheet() {
+  el.sheet.hidden = true;
+  view.sheetMode = null;
+  view.sheetWindow = null;
+  setSheetStatus('');
+}
+
+/** The length chips for the mode the sheet is in, the chosen one marked. */
+function drawLengthChips() {
+  const lengths = view.sheetMode === 'teach' ? TEACH_LENGTHS : SAVE_LENGTHS;
+  el.lengthChips.replaceChildren(...lengths.map((min) => {
+    const chip = document.createElement('button');
+    chip.setAttribute('type', 'button');
+    chip.className = min === view.sheetLength ? 'chip on' : 'chip';
+    chip.textContent = min === 60 ? '1 hour' : min + ' min';
+    chip.addEventListener('click', () => { pickLength(min); });
+    return chip;
+  }));
+}
+
+/**
+ * Choose how long a stretch around the moment on screen. rangeAround decides
+ * the window and says when it had to move it; this only shows what it decided.
+ * With nothing playing there is no moment, so the sheet says so and chooses
+ * nothing rather than picking a time of its own.
+ */
+function pickLength(min) {
+  view.sheetLength = min;
+  drawLengthChips();
+  const moment = watchedInstant();
+  const win = dayWindow(el.day.value);
+  if (moment === null || win === null) {
+    view.sheetWindow = null;
+    el.sheetRange.textContent = 'Play the moment you want first, then pick a length.';
+    showExactNote();
+    return;
+  }
+  const around = rangeAround(moment, min, new Date().toISOString(), win.startUtc, win.endUtc);
+  if (around.error) {
+    view.sheetWindow = null;
+    el.sheetRange.textContent = 'That length does not fit in this day.';
+    showExactNote();
+    return;
+  }
+  view.sheetWindow = { startUtc: around.startUtc, endUtc: around.endUtc };
+  el.sheetRange.textContent = localTime(around.startUtc) + ' to ' + localTime(around.endUtc)
+    + (around.clamped ? ' (moved to stay inside this day)' : '');
+  showExactNote();
+}
+
+/** The Save button in the sheet does whichever thing the sheet was opened for. */
+function sheetGo() {
+  if (view.sheetMode === 'teach') saveTestClip();
+  else offerExport();
+}
+
+/** Show the counts the hidden selects hold, and whether Nobody is on. */
+function showCounts() {
+  el.peopleN.textContent = el.clipPeople.value === '' ? '0' : el.clipPeople.value;
+  el.vehiclesN.textContent = el.clipVehicles.value === '' ? '0' : el.clipVehicles.value;
+  el.nobodyChip.className = clipTagBox('empty').checked ? 'chip on' : 'chip';
+}
+
+/**
+ * People and Cars by tapping rather than by choosing from a list. The hidden
+ * select stays the page's one answer for each, so what is saved cannot drift
+ * from what is shown. A count back at zero drops the claim that there was one.
+ */
+function bumpCount(which, delta) {
+  const select = which === 'people' ? el.clipPeople : el.clipVehicles;
+  const n = Math.min(10, Math.max(0, Number(select.value === '' ? '0' : select.value) + delta));
+  select.value = String(n);
+  select.dispatchEvent(new Event('change'));
+  if (n === 0) clipTagBox(which === 'people' ? 'person' : 'vehicle').checked = false;
+  showCounts();
+}
+
+/** Nobody is the "empty" scene: turning it on zeroes both counts. */
+function tapNobody() {
+  const box = clipTagBox('empty');
+  box.checked = !box.checked;
+  box.dispatchEvent(new Event('change'));
+  showCounts();
+}
+
+/**
+ * How much the AI has been taught so far, counted by clipProgress. Numbers
+ * only: the page does not say whether that is enough, and it names what it
+ * could not read rather than counting it as nothing.
+ */
+async function loadTeachProgress() {
+  let body = null;
+  try {
+    const res = await fetch('/clip-library');
+    body = await res.json();
+  } catch (e) {
+    body = null;
+  }
+  if (body === null || typeof body !== 'object' || body.ok !== true) {
+    el.teachProgress.textContent = '';
+    return;
+  }
+  const p = clipProgress(body.library);
+  if (p.error) {
+    el.teachProgress.textContent = '';
+    return;
+  }
+  el.teachProgress.textContent = p.clipCount + (p.clipCount === 1 ? ' clip' : ' clips')
+    + ' saved so far: ' + p.personCount + ' people, ' + p.vehicleCount + ' cars, '
+    + p.emptyMinutes + ' min of nobody'
+    + (p.skipped === 0 ? '' : ' (' + p.skipped + ' could not be read)')
+    + '. Still wanted: ' + p.personsStillNeeded + ' people, '
+    + p.emptyMinutesStillNeeded + ' min of nobody.';
+}
+
+/**
+ * Hook up the calendar, the tiles, the sheet and the counters. Choosing an
+ * exact time by hand drops the length chip's window, because the dropdowns are
+ * then the more recent answer.
+ */
+function wireFriendly() {
+  el.dayBtn.addEventListener('click', () => { showCalendar(el.calendar.hidden); });
+  el.calPrev.addEventListener('click', () => { stepMonth(-1); });
+  el.calNext.addEventListener('click', () => { stepMonth(1); });
+  el.saveVideoBtn.addEventListener('click', () => { openSheet('save'); });
+  el.teachBtn.addEventListener('click', () => { openSheet('teach'); });
+  el.sheetClose.addEventListener('click', closeSheet);
+  el.sheetGo.addEventListener('click', sheetGo);
+  el.nobodyChip.addEventListener('click', tapNobody);
+  el.peopleMinus.addEventListener('click', () => { bumpCount('people', -1); });
+  el.peoplePlus.addEventListener('click', () => { bumpCount('people', 1); });
+  el.vehiclesMinus.addEventListener('click', () => { bumpCount('vehicles', -1); });
+  el.vehiclesPlus.addEventListener('click', () => { bumpCount('vehicles', 1); });
+  el.exportFrom.addEventListener('change', () => { view.sheetWindow = null; showExactNote(); });
+  el.exportTo.addEventListener('change', () => { view.sheetWindow = null; showExactNote(); });
+  el.camera.addEventListener('change', () => {
+    drawCameraTiles();
+    view.sheetWindow = null;
+    if (!el.calendar.hidden) loadMonth();
+  });
+  el.day.addEventListener('change', () => {
+    drawDayButton();
+    view.sheetWindow = null;
+  });
+  el.prevDay.addEventListener('click', () => { view.sheetWindow = null; });
+  el.nextDay.addEventListener('click', () => { view.sheetWindow = null; });
+  drawDayButton();
+  showCounts();
+}
+
 wireExport();
 wireTestClip();
+wireFriendly();
 wireEvents();
 loadCameras();
 startAlertBanner(document.getElementById('alertBanner'));

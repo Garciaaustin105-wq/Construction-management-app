@@ -577,11 +577,16 @@ await check("moment: refusals are values, never throws", () => {
 await check("problems: the recorder's codes are said in plain words", () => {
   eq(friendlyProblem("export_too_large", "range exceeds limit"),
     "That is more video than one download can hold. Pick a shorter length.", "too large");
-  eq(friendlyProblem("nothing_recorded", "no segments"), "Nothing was recorded at that time.", "nothing recorded");
-  eq(friendlyProblem("camera_unknown", "no such camera"), "That camera is not set up on this recorder.", "unknown camera");
-  eq(friendlyProblem("bad_range", "end before start"), "Pick an end time after the start time.", "bad range");
-  eq(friendlyProblem("busy", "another export is running"), "The recorder is busy with another download. Try again in a minute.", "busy");
-  eq(friendlyProblem("disk_full", "no space"), "The recorder has no room left. Nothing new can be saved.", "disk full");
+  eq(friendlyProblem("export_nothing_recorded", "no segments"), "Nothing was recorded in that stretch.", "nothing recorded");
+  eq(friendlyProblem("export_reaches_recording", "open segment"),
+    "That stretch runs into footage still being recorded. Pick a time that has finished.", "reaches the open segment");
+  eq(friendlyProblem("window_in_future", "the window starts at 2026-09-17T00:00:00.000Z, which is not before now"),
+    "That day has not happened yet.", "a future day");
+  eq(friendlyProblem("window_too_large", "3628800 seconds"), "That is too long a stretch to ask for at once.", "too long");
+  eq(friendlyProblem("inverted_window", "end is not after start"), "Pick an end time after the start time.", "inverted");
+  eq(friendlyProblem("no_such_camera", "cam-9"), "That camera is not set up on this recorder.", "unknown camera");
+  eq(friendlyProblem("bad_camera_id", "Invalid camera id"), "That camera is not set up on this recorder.", "and a bad id reads the same");
+  eq(friendlyProblem("no_cameras", "none configured"), "No cameras are set up on this recorder yet.", "no cameras");
   eq(friendlyProblem("forbidden", "role"), "This account is not allowed to do that.", "forbidden");
   eq(friendlyProblem("bad_response", "unreadable"), "The recorder sent something this page could not read.", "bad response");
   eq(friendlyProblem("unreachable", ""), "Cannot reach the recorder.", "unreachable");
