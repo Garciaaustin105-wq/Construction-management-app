@@ -39,6 +39,9 @@ export function createWall(options) {
   // nobody is standing at. It is remembered like a layout so it survives a
   // power cut.
   let touring = layout === TOUR;
+  // Whether the layout choices are showing. Closed on every pick, so the wall
+  // is never left with a panel over it.
+  let menuOpen = false;
   if (touring) layout = "1x1";
   let tourTimer = null;
   let quality = knownQuality(options.quality) || knownQuality(readStored(QUALITY_KEY)) || "auto";
@@ -212,34 +215,74 @@ export function createWall(options) {
     button.setAttribute("aria-label", label);
     button.setAttribute("aria-pressed", current ? "true" : "false");
     button.appendChild(icon);
-    button.addEventListener("click", () => setLayout(value));
+    button.addEventListener("click", () => {
+      menuOpen = false;
+      setLayout(value);
+    });
     return button;
+  }
+
+  /** The icon for a layout id, rotation included. */
+  function iconFor(id) {
+    if (id === TOUR) {
+      // Rotation is one camera lit out of four, because that is what it does.
+      const icon = layoutIcon(2, 2, 4);
+      for (let i = 1; i < icon.children.length; i++) {
+        icon.children[i].className = "layout-icon-box layout-icon-box-off";
+      }
+      return icon;
+    }
+    const shape = shapeFor(id);
+    return layoutIcon(shape.columns, shape.rows, shape.cells);
+  }
+
+  /** What a layout is called, for a title, a label, or a reader. */
+  function labelFor(id) {
+    if (id === TOUR) return "Rotate cameras, one at a time";
+    const shape = shapeFor(id);
+    return shape.cells === 1 ? "1 camera" : shape.cells + " cameras (" + shape.id + ")";
   }
 
   function renderControls(page) {
     emptyEl(controlsRoot);
-    // Layouts are shown, not named: "3x3" is a word to decode, and this is read
-    // from across a room. Generated from GRID_SHAPES -- a hardcoded list would
-    // drift from gridPage.
+    // One control, and it shows layouts rather than naming them: "3x3" is a
+    // word to decode and this is read from across a room. The choices are
+    // generated from GRID_SHAPES -- a hardcoded list would drift from gridPage.
     const picker = doc.createElement("div");
     picker.id = "layoutPicker";
     picker.className = "layout-picker";
+
+    const current = touring ? TOUR : layout;
+    const trigger = doc.createElement("button");
+    trigger.id = "layoutTrigger";
+    trigger.className = "layout-trigger";
+    trigger.value = current;
+    trigger.title = labelFor(current);
+    trigger.setAttribute("type", "button");
+    trigger.setAttribute("aria-label", labelFor(current));
+    trigger.setAttribute("aria-haspopup", "true");
+    trigger.setAttribute("aria-expanded", menuOpen ? "true" : "false");
+    trigger.appendChild(iconFor(current));
+    const caret = doc.createElement("span");
+    caret.className = "layout-caret";
+    trigger.appendChild(caret);
+    trigger.addEventListener("click", () => {
+      menuOpen = !menuOpen;
+      renderControls(page);
+    });
+    picker.appendChild(trigger);
+
+    const menu = doc.createElement("div");
+    menu.id = "layoutMenu";
+    menu.className = menuOpen ? "layout-menu layout-menu-open" : "layout-menu";
     const shapes = grid.GRID_SHAPES;
-    for (let i = 0; i < shapes.length; i++) {
-      const shape = shapes[i];
-      picker.appendChild(layoutButton(
-        shape.id,
-        shape.cells === 1 ? "1 camera" : shape.cells + " cameras (" + shape.id + ")",
-        layoutIcon(shape.columns, shape.rows, shape.cells),
-        !touring && shape.id === layout,
-      ));
+    const ids = [];
+    for (let i = 0; i < shapes.length; i++) ids.push(shapes[i].id);
+    ids.push(TOUR);
+    for (let i = 0; i < ids.length; i++) {
+      menu.appendChild(layoutButton(ids[i], labelFor(ids[i]), iconFor(ids[i]), ids[i] === current));
     }
-    // Rotation is one camera lit out of four, because that is what it does.
-    const tourIcon = layoutIcon(2, 2, 4);
-    for (let i = 1; i < tourIcon.children.length; i++) {
-      tourIcon.children[i].className = "layout-icon-box layout-icon-box-off";
-    }
-    picker.appendChild(layoutButton(TOUR, "Rotate cameras, one at a time", tourIcon, touring));
+    picker.appendChild(menu);
     controlsRoot.appendChild(picker);
     const qualitySelect = doc.createElement("select");
     qualitySelect.id = "qualitySelect";

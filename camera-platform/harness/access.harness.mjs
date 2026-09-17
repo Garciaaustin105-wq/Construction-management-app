@@ -51,8 +51,14 @@ check("the store cannot reach anything that destroys footage or reconfigures the
   eq(can(store, "audit.view"), false, "audit.view");
 });
 
-check("a wall display can only watch live", () => {
-  same(ALL_PERMISSIONS.filter((p) => can(display, p)), ["live.view"], "display permissions");
+check("a wall display can watch and look back, and take nothing away", () => {
+  // The line is between looking and taking, not between live and recorded: a
+  // manager at the wall may scrub back without signing in, but a clip leaving
+  // the building has to be signed for, because the audit log needs a name and
+  // a display is a device.
+  same(ALL_PERMISSIONS.filter((p) => can(display, p)), ["live.view", "playback.view"], "display permissions");
+  eq(can(display, "export.create"), false, "THE FEARED ONE: a token left on a TV cannot walk out with the footage");
+  eq(can(display, "segment.hold"), false, "nor decide what retention may not evict");
 });
 
 check("nobody signed in can do nothing at all", () => {

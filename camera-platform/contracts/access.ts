@@ -96,8 +96,18 @@ const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([
  * account, then anyone alone with that TV has the store account — including its
  * ability to export footage and to reach the review page for any day.
  *
- * So a display gets its own credential: view-only, no export, no playback,
- * revocable on its own without changing anybody's password.
+ * So a display gets its own credential, revocable on its own without changing
+ * anybody's password.
+ *
+ * It may watch live AND scrub back through what was recorded. A manager
+ * standing at the wall wanting to see what happened ten minutes ago should not
+ * have to sign in; that is what the wall is for, and the footage is already on
+ * screen in the room they are standing in.
+ *
+ * It may NOT export. Export is footage leaving the building, and the audit log
+ * has to name who took it — a display is a device, not a person, and has no
+ * name to record. So pulling a clip means signing in, and the line falls
+ * between looking and taking rather than between live and recorded.
  */
 export interface DisplayPrincipal {
   kind: "display";
@@ -140,8 +150,8 @@ export function permissionsFor(role: Role): Permission[] {
   }
 }
 
-/** A display may only watch. It cannot review, export, or hold. */
-const DISPLAY_PERMISSIONS: readonly Permission[] = Object.freeze(["live.view"]);
+/** A display may watch and look back. It cannot export or hold. */
+const DISPLAY_PERMISSIONS: readonly Permission[] = Object.freeze(["live.view", "playback.view"]);
 
 export function can(principal: Principal, permission: Permission): boolean {
   switch (principal.kind) {

@@ -58,7 +58,38 @@
   }
   /* The layout picker: a box per camera the layout shows, so it reads at a
      glance from across a room instead of having to be decoded. */
-  .controls .layout-picker { display: flex; align-items: center; gap: 6px; }
+  .controls .layout-picker { position: relative; display: inline-flex; align-items: center; }
+  .controls .layout-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 44px;
+    padding: 0 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    cursor: pointer;
+  }
+  .layout-caret {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #9aa0a6;
+  }
+  .layout-menu {
+    display: none;
+    position: absolute;
+    top: 48px;
+    left: 0;
+    z-index: 10;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid #4a4f58;
+    border-radius: 6px;
+    background: #22252b;
+  }
+  .layout-menu-open { display: flex; }
   .controls .layout-button {
     display: inline-flex;
     align-items: center;

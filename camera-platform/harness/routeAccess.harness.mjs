@@ -69,12 +69,18 @@ check("the store has its daily job and nothing that manages the box", () => {
   }
 });
 
-check("a wall display watches live and reaches nothing recorded", () => {
-  for (const [m, p] of [["GET", "/"], ["GET", "/cameras"], ["GET", "/devices"], ["GET", "/live/cam-1"], ["GET", "/ui/wall-client.js"]]) {
+check("a wall display watches live and looks back, and takes nothing away", () => {
+  // The line is between looking and taking. Someone standing at the wall may
+  // scrub back without signing in; a clip leaving the building is signed for,
+  // because the audit log needs a name and a display is a device.
+  for (const [m, p] of [["GET", "/"], ["GET", "/cameras"], ["GET", "/devices"], ["GET", "/live/cam-1"],
+    ["GET", "/ui/wall-client.js"], ["GET", "/review"], ["GET", "/timeline"], ["GET", "/playback"],
+    ["GET", "/segments/cam-1.1"]]) {
     eq(d(display, m, p).kind, "allow", `${m} ${p}`);
   }
-  for (const [m, p] of [["GET", "/review"], ["GET", "/timeline"], ["GET", "/playback"], ["GET", "/segments/cam-1.1"],
-    ["GET", "/export"], ["GET", "/export/plan"], ["GET", "/accounts"]]) {
+  // THE FEARED ONE: a token that lives on a TV forever, reachable by whoever is
+  // in the room, must not be able to copy the footage out of the building.
+  for (const [m, p] of [["GET", "/export"], ["GET", "/export/plan"], ["GET", "/accounts"]]) {
     eq(d(display, m, p).kind, "refuse", `${m} ${p}`);
   }
   same(d(display, "GET", "/export"), { kind: "refuse", status: 403, code: "forbidden",

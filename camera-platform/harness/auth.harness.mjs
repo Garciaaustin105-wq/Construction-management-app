@@ -209,7 +209,7 @@ await check("a password change signs out every other session of that account", a
 
 let displayToken;
 let displayCookie;
-await check("a wall display watches live, nothing else, and survives a restart", async () => {
+await check("a wall display watches live and looks back, takes nothing, and survives a restart", async () => {
   const made = await call(A.base, "POST", "/displays", { body: { displayId: "backroom-tv" }, cookie: installer });
   eq(made.status, 200, "created");
   displayToken = made.json.token;
@@ -221,12 +221,18 @@ await check("a wall display watches live, nothing else, and survives a restart",
   eq(paired.status, 200, "paired");
   displayCookie = paired.jar;
   eq((await call(A.base, "GET", "/ui/wall-client.js", { cookie: displayCookie })).status, 200, "live script");
-  for (const p of ["/review", "/export", "/timeline", "/segments/cam-1.1", "/accounts"]) {
+  // Looking back is allowed: a manager at the wall should not have to sign in
+  // to see what happened ten minutes ago.
+  eq((await call(A.base, "GET", "/review", { cookie: displayCookie })).status, 200, "display reviews");
+  eq((await call(A.base, "GET", "/ui/review-client.js", { cookie: displayCookie })).status, 200, "and gets its script");
+  // THE FEARED ONE: this token sits on a TV forever and anyone in the room can
+  // reach it, so it must not be able to copy footage out of the building.
+  for (const p of ["/export", "/export/plan", "/accounts", "/accounts-page", "/cameras-page"]) {
     eq((await call(A.base, "GET", p, { cookie: displayCookie })).status, 403, `display ${p}`);
   }
-  const page = await call(A.base, "GET", "/review", { cookie: displayCookie });
+  const page = await call(A.base, "GET", "/accounts-page", { cookie: displayCookie });
   eq([page.headers.get("content-type").startsWith("text/html"), page.text.includes("cannot open that page")], [true, true], "a refused page reads as a page");
-  const api = await call(A.base, "GET", "/timeline", { cookie: displayCookie });
+  const api = await call(A.base, "GET", "/accounts", { cookie: displayCookie });
   eq([api.headers.get("content-type"), api.json?.code], ["application/json", "forbidden"], "a refused api call stays JSON");
   eq((await call(A.base, "POST", "/auth/password", { body: { currentPassword: "x", newPassword: "y" }, cookie: displayCookie })).status, 403, "no password to change");
 });

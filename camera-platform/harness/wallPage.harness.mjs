@@ -265,14 +265,26 @@ const layoutPicker = (root) => {
   eq(found.length, 1, "ONE layout control");
   return found[0];
 };
+const layoutTrigger = (root) => {
+  const found = withClass(layoutPicker(root), "layout-trigger");
+  eq(found.length, 1, "one thing to tap to open it");
+  return found[0];
+};
+const layoutChoices = (root) => {
+  const menus = withClass(layoutPicker(root), "layout-menu");
+  eq(menus.length, 1, "one panel of choices");
+  return menus[0].children;
+};
+const menuIsOpen = (root) =>
+  withClass(layoutPicker(root), "layout-menu")[0].classList.contains("layout-menu-open");
 
-check("the layout buttons come from the contract, plus the rotation", () => {
+check("the layout choices come from the contract, plus the rotation", () => {
   const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
-  const picker = layoutPicker(controlsRoot);
-  eq(picker.children.map((b) => b.value), grid.GRID_SHAPES.map((s) => s.id).concat(["tour"]), "one per shape, in order");
-  eq(picker.children.filter((b) => b.classList.contains("layout-button-on")).map((b) => b.value),
+  const choices = layoutChoices(controlsRoot);
+  eq(choices.map((b) => b.value), grid.GRID_SHAPES.map((s) => s.id).concat(["tour"]), "one per shape, in order");
+  eq(choices.filter((b) => b.classList.contains("layout-button-on")).map((b) => b.value),
     ["2x2"], "exactly one marked, the current one");
-  eq(picker.children.map((b) => b.getAttribute("aria-pressed")),
+  eq(choices.map((b) => b.getAttribute("aria-pressed")),
     ["false", "true", "false", "false", "false"], "and it says so out loud");
 });
 
@@ -280,36 +292,57 @@ check("THE FEARED ONE: an icon draws the layout it actually picks", () => {
   // An icon that disagrees with its layout is a picture that lies, and nobody
   // would think to check it against the contract.
   const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
-  const picker = layoutPicker(controlsRoot);
+  const choices = layoutChoices(controlsRoot);
   for (const shape of grid.GRID_SHAPES) {
-    const button = picker.children.find((b) => b.value === shape.id);
-    const icon = button.children[0];
+    const icon = choices.find((b) => b.value === shape.id).children[0];
     eq(icon.children.length, shape.cells, shape.id + ": one box per camera it shows");
     eq(icon.style.gridTemplateColumns, "repeat(" + shape.columns + ", 1fr)", shape.id + ": columns");
     eq(icon.style.gridTemplateRows, "repeat(" + shape.rows + ", 1fr)", shape.id + ": rows");
   }
   // Rotation is one lit box out of four: one camera at a time, from many.
-  const tour = picker.children.find((b) => b.value === "tour");
-  eq(tour.children[0].children.map((c) => c.className),
+  eq(choices.find((b) => b.value === "tour").children[0].children.map((c) => c.className),
     ["layout-icon-box", "layout-icon-box layout-icon-box-off",
       "layout-icon-box layout-icon-box-off", "layout-icon-box layout-icon-box-off"], "one lit, three dim");
 });
 
-check("the words are not lost with the dropdown: every button still says what it is", () => {
-  const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
-  const picker = layoutPicker(controlsRoot);
-  const labels = picker.children.map((b) => b.getAttribute("aria-label"));
-  eq(labels, ["1 camera", "4 cameras (2x2)", "9 cameras (3x3)", "16 cameras (4x4)",
-    "Rotate cameras, one at a time"], "every layout names itself for anyone who cannot see the icon");
-  eq(picker.children.map((b) => b.title), labels, "and on hover");
+check("the closed control shows the layout you are on, in a picture", () => {
+  const { controlsRoot } = makeWall({ layout: "3x3", devices: devices(9) });
+  eq(menuIsOpen(controlsRoot), false, "it starts closed, so nothing covers the wall");
+  const trigger = layoutTrigger(controlsRoot);
+  eq(trigger.value, "3x3", "it knows what is showing");
+  eq(trigger.getAttribute("aria-expanded"), "false", "and says it is closed");
+  eq(trigger.children[0].children.length, 9, "and draws the nine cameras on screen");
 });
 
-check("tapping a layout button changes the wall", () => {
+check("the words are not lost with the pictures: every choice still says what it is", () => {
+  const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
+  const choices = layoutChoices(controlsRoot);
+  const labels = choices.map((b) => b.getAttribute("aria-label"));
+  eq(labels, ["1 camera", "4 cameras (2x2)", "9 cameras (3x3)", "16 cameras (4x4)",
+    "Rotate cameras, one at a time"], "every layout names itself for anyone who cannot see the icon");
+  eq(choices.map((b) => b.title), labels, "and on hover");
+  eq(layoutTrigger(controlsRoot).getAttribute("aria-label"), "4 cameras (2x2)", "the closed control too");
+});
+
+check("opening it shows the choices, and picking one changes the wall and closes it", () => {
   const { wall, controlsRoot, gridRoot } = makeWall({ layout: "2x2", devices: devices(9) });
-  const picker = layoutPicker(controlsRoot);
-  picker.children.find((b) => b.value === "3x3").fire("click");
+  layoutTrigger(controlsRoot).fire("click");
+  eq(menuIsOpen(controlsRoot), true, "open");
+  eq(layoutTrigger(controlsRoot).getAttribute("aria-expanded"), "true", "and says so");
+  layoutChoices(controlsRoot).find((b) => b.value === "3x3").fire("click");
   eq(wall.state().layout, "3x3", "layout changed");
   eq(withClass(gridRoot, "cell").length, 9, "and the wall redrew");
+  // THE FEARED ONE: a panel left open over a wall nobody is standing at.
+  eq(menuIsOpen(controlsRoot), false, "and it closed itself");
+  eq(layoutTrigger(controlsRoot).value, "3x3", "the closed control now shows the new layout");
+});
+
+check("opening it twice closes it again", () => {
+  const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
+  layoutTrigger(controlsRoot).fire("click");
+  eq(menuIsOpen(controlsRoot), true, "open");
+  layoutTrigger(controlsRoot).fire("click");
+  eq(menuIsOpen(controlsRoot), false, "closed");
 });
 
 check("sixteen cameras on 4x4 are all on screen at once", () => {

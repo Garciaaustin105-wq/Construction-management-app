@@ -295,7 +295,9 @@ await check("reading the key is review; saving copies footage out, so it is expo
   eq(decideRoute(principal, "GET", "/clip-library").kind, "allow", "installer reads");
   eq(decideRoute(principal, "POST", "/clip-library").kind, "allow", "installer saves");
   eq(decideRoute(display, "POST", "/clip-library").kind === "allow", false, "a wall display cannot save");
-  eq(decideRoute(display, "GET", "/clip-library").kind === "allow", false, "a wall display cannot read");
+  // Reading the key is looking, which a display may now do; saving copies
+  // footage out of the building, which it may not.
+  eq(decideRoute(display, "GET", "/clip-library").kind, "allow", "a wall display may read");
   eq(typeof decideRoute(store, "GET", "/clip-library").kind, "string", "store decided, not thrown");
 });
 
