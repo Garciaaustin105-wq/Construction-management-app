@@ -98,6 +98,14 @@ export function openIndex(file) {
       WHERE root = ? AND hold = 0 AND pending_upload = 0 AND state != 'open' AND bytes IS NOT NULL
       ORDER BY start_ms LIMIT ?`),
     setRoot: db.prepare("UPDATE segments SET root = ? WHERE path = ? AND root IS NOT ?"),
+    // Past the age limit: ENDED before the cutoff, and deletable at all.
+    olderOn: db.prepare(`SELECT * FROM segments
+      WHERE root = ? AND end_ms IS NOT NULL AND end_ms < ?
+        AND hold = 0 AND pending_upload = 0 AND state != 'open'
+      ORDER BY start_ms LIMIT ?`),
+    olderStats: db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(bytes),0) AS bytes, MIN(start_ms) AS oldest
+      FROM segments WHERE end_ms IS NOT NULL AND end_ms < ?
+        AND hold = 0 AND pending_upload = 0 AND state != 'open'`),
     delByPath: db.prepare("DELETE FROM segments WHERE path = ?"),
     totalBytes: db.prepare("SELECT COALESCE(SUM(bytes),0) AS total FROM segments"),
     countAll: db.prepare("SELECT COUNT(*) AS n FROM segments"),
@@ -161,6 +169,13 @@ export function openIndex(file) {
         throw err;
       }
       return changed;
+    },
+    /** Deletable segments on `root` that ended before `cutoffMs`, oldest first. */
+    olderThan: (cutoffMs, root, limit) => stmts.olderOn.all(root, cutoffMs, limit).map(rowToSegment),
+    /** What an age limit at `cutoffMs` would delete, on every drive. */
+    olderThanStats(cutoffMs) {
+      const r = stmts.olderStats.get(cutoffMs);
+      return { segments: Number(r.n), bytes: Number(r.bytes), oldestUtc: toIso(r.oldest) };
     },
     remove: (path) => stmts.delByPath.run(path),
     removeMany(paths) {

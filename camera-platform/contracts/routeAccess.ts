@@ -32,6 +32,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/system": { kind: "page", permission: "live.view" },
   "/accounts-page": { kind: "page", permission: "account.manage" },
   "/cameras-page": { kind: "page", permission: "camera.manage" },
+  "/recording-page": { kind: "page", permission: "storage.manage" },
 
   // Page scripts carry no data and are already public source; they still sit
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
@@ -44,6 +45,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
   "/ui/accounts-client.js": { kind: "api", permission: "account.manage" },
   "/ui/cameras-client.js": { kind: "api", permission: "camera.manage" },
+  "/ui/recording-client.js": { kind: "api", permission: "storage.manage" },
   // Every signed-in page loads it, a wall display included (it draws nothing there).
   "/ui/session.js": { kind: "api", permission: "live.view" },
 
@@ -60,6 +62,8 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/audit": { kind: "api", permission: "audit.view" },
   // Camera addresses and the login user name: the installer's, not the store's.
   "/camera-settings": { kind: "api", permission: "camera.manage" },
+  // The age limit deletes footage.
+  "/recording-settings": { kind: "api", permission: "storage.manage" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -73,6 +77,7 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/displays": { kind: "api", permission: "account.manage" },
   "/cameras": { kind: "api", permission: "camera.manage" },
   "/camera-login": { kind: "api", permission: "camera.manage" },
+  "/recording-settings": { kind: "api", permission: "storage.manage" },
 });
 
 /**

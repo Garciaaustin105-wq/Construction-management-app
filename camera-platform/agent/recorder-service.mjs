@@ -19,6 +19,7 @@ import { computeRetentionDays, usableBytesFromRaw } from "../dist/retention.js";
 import { buildRtspUrl, redactRtspUrl, urlForPath } from "../dist/rtsp.js";
 import { parseRtspUrl } from "../dist/cameraSource.js";
 import { parseCameraFile } from "../dist/cameraEdit.js";
+import { RECORDING_FILE, readRecordingFile, ageCutoffMs } from "../dist/recordingSettings.js";
 
 const EVICTION_INTERVAL_MS = 5 * 60_000;
 const HEALTH_INTERVAL_MS = 30_000;
@@ -164,6 +165,41 @@ export async function runRecovery(index, storeRoots, { dryRun = false } = {}) {
   return summary;
 }
 
+const AGE_PAGE = 500;
+
+/**
+ * Delete footage past the Recording page's age limit (recording.json), read
+ * fresh each pass so a change applies without a restart. A file that is not
+ * valid is no limit: it is logged and deletes nothing.
+ */
+export async function runAgeEviction(index, storeRoots, stateDir, { now = () => new Date(), log: log_ = log } = {}) {
+  let text;
+  try {
+    text = await readFile(path.join(stateDir, RECORDING_FILE), "utf8");
+  } catch (err) {
+    text = err.code === "ENOENT" ? null : undefined;
+  }
+  const { settings, problem } = readRecordingFile(text);
+  if (problem !== null) log_("warn", "recording settings ignored; no age limit", { problem });
+  const cutoff = ageCutoffMs(settings, now().getTime());
+  const result = { segments: 0, bytesFreed: 0 };
+  if (cutoff === null) return result;
+  for (const root of storeRoots) {
+    for (;;) {
+      const segments = index.olderThan(cutoff, root, AGE_PAGE);
+      if (segments.length === 0) break;
+      const plan = { evict: segments.map((segment) => ({ segment, bytes: segment.bytes ?? 0 })) };
+      const applied = await applyEviction(root, plan);
+      index.removeMany(applied.deleted);
+      result.segments += applied.deleted.length;
+      result.bytesFreed += applied.bytesFreed;
+      if (segments.length < AGE_PAGE) break;
+    }
+  }
+  if (result.segments > 0) log_("info", "deleted past the age limit", { maxDays: settings.maxDays, ...result });
+  return result;
+}
+
 async function runEviction(index, storeRoots, log_) {
   for (const root of storeRoots) {
     const usage = await diskUsage(root).catch(() => null);
@@ -307,7 +343,10 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
   }
 
   const evictionTimer = setInterval(() => {
-    runEviction(index, storeRoots, log).catch((err) => log("error", "eviction failed", { err: err.message }));
+    runAgeEviction(index, storeRoots, stateDir)
+      .catch((err) => log("error", "age eviction failed", { err: err.message }))
+      .then(() => runEviction(index, storeRoots, log))
+      .catch((err) => log("error", "eviction failed", { err: err.message }));
   }, EVICTION_INTERVAL_MS);
 
   // Read by `camctl alerts` (contracts/alerts.ts HealthSnapshot), a separate process.

@@ -56,7 +56,7 @@ const refuse = (res, status, code, message, extra = {}) => sendJson(res, status,
 const refuseEdit = (res, r) => refuse(res, STATUS[r.reason] ?? 400, r.reason, MESSAGES[r.reason] ?? r.reason, { field: r.field });
 
 /** A JSON object body, or a refusal already sent (null). */
-async function readJsonBody(req, res) {
+export async function readJsonBody(req, res) {
   if (!/^application\/json(;|$)/i.test(String(req.headers['content-type'] ?? ''))) {
     refuse(res, 415, 'json_required', 'send application/json');
     return null;

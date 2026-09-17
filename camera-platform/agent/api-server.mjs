@@ -34,6 +34,7 @@ import { streamExport } from './exportStream.mjs';
 import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
 import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
+import { createRecordingSettings } from './recording-settings.mjs';
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -56,7 +57,9 @@ const UI_FILES = {
   '/accounts-page': 'accounts.html',
   '/ui/accounts-client.js': 'accounts-client.mjs',
   '/cameras-page': 'cameras.html',
+  '/recording-page': 'recording.html',
   '/ui/cameras-client.js': 'cameras-client.mjs',
+  '/ui/recording-client.js': 'recording-client.mjs',
   '/ui/session.js': 'session-bar.mjs',
 };
 
@@ -307,6 +310,7 @@ export function createApiServer({
     stateDir, config, audit: auth.audit, log,
     onChange: () => { driveAssignment = assignDrives(); },
   });
+  const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
 
   const server = createServer(async (req, res) => {
     try {
@@ -347,6 +351,7 @@ export function createApiServer({
 
       if (await auth.handle(req, res, pathname, principal)) return;
       if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
+      if (await recordingSettings.handle(req, res, pathname, method, principal)) return;
 
       // Every route past here reads; the table only lets GET through to them.
       if (method !== 'GET') {
