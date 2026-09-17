@@ -206,7 +206,13 @@ function install(byId) {
 
 // The script, verbatim, with its one import pointed at the file on disk and a
 // handle on its top-level names appended. Nothing else about it changes.
-const html = await readFile(join(import.meta.dirname, "..", "agent", "ui", "review.html"), "utf8");
+// A Windows checkout is CRLF and everything below matches exact multi-line
+// strings, so the line endings are normalised here rather than depended on.
+// (They cost a green suite once: a rebase re-checked the file out as CRLF and
+// the startup anchor stopped matching, for a reason nothing to do with the
+// change.)
+const html = (await readFile(join(import.meta.dirname, "..", "agent", "ui", "review.html"), "utf8"))
+  .replaceAll("\r\n", "\n");
 const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
 const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
