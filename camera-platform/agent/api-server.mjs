@@ -69,9 +69,13 @@ const UI_FILES = {
 // symptom would be a wall laying out cells the contract never agreed to. The
 // relative path holds in both trees -- agent/../dist in the checkout, and
 // /opt/camplat/agent/../dist on the appliance.
+//
+// Both are .mts so tsc emits ES modules: the rest of dist is CommonJS, which
+// Node imports happily and a browser refuses ("exports is not defined"), and
+// the Live page drew nothing at all.
 const UI_CONTRACTS = {
-  '/ui/grid-layout.js': 'gridLayout.js',
-  '/ui/playback.js': 'playback.js',
+  '/ui/grid-layout.js': 'gridLayout.mjs',
+  '/ui/playback.js': 'playback.mjs',
 };
 
 const sendError = (res, status, code, message) => {

@@ -199,7 +199,7 @@ const START = "\nwireEvents();\nloadCameras();\n";
 if (!script.includes(START)) throw new Error("review.html must end its script with wireEvents(); loadCameras();");
 const bannerUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "alert-banner.mjs")).href;
 // The speed ladder is the compiled contract, as the server serves it from dist.
-const playbackUrl = pathToFileURL(join(import.meta.dirname, "..", "dist", "playback.js")).href;
+const playbackUrl = pathToFileURL(join(import.meta.dirname, "..", "dist", "playback.mjs")).href;
 const transformed = script.replace("'/ui/review-client.js'", `'${clientUrl}'`).replace("'/ui/alert-banner.js'", `'${bannerUrl}'`)
   .replace("'/ui/playback.js'", `'${playbackUrl}'`)
   .replace(START, `\nglobalThis.__page = { ${NAMES.join(", ")} };${START}`);

@@ -21,7 +21,7 @@
 import {
   PLAYBACK_RATES, nextRate, rateLabel,
   summariseRanges, seekTo, stepBy, nextGapEdge, clockText,
-} from "../dist/playback.js";
+} from "../dist/playback.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
 console.log("playback");

@@ -12,7 +12,7 @@
  * cameras are removed; "page 1 of 0"; a blank cameraId shuffling every camera
  * after it into the wrong slot; and a shared shapes table a caller can edit.
  */
-import { GRID_SHAPES, gridShape, gridPage, wallStreams, cellAspectRatio } from "../dist/gridLayout.js";
+import { GRID_SHAPES, gridShape, gridPage, wallStreams, cellAspectRatio } from "../dist/gridLayout.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
 console.log("gridLayout");

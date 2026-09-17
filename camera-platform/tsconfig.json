@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["contracts/**/*.ts"]
+  "include": ["contracts/**/*.ts", "contracts/**/*.mts"]
 }

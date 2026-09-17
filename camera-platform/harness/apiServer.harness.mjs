@@ -235,6 +235,18 @@ await check("/alerts tells a check that never ran, a current one and a corrupt f
   await rm(join(stateDir, "alerts.json"));
 });
 
+await check("THE FEARED ONE: the contracts the browser imports load as ES modules, not CommonJS", async () => {
+  // Node imports CommonJS from dist without complaint, so every harness passed
+  // while the Live page threw "exports is not defined" and drew nothing. A data:
+  // URL is always an ES module: this loads the served text the way a browser does.
+  for (const [path, name] of [["/ui/grid-layout.js", "gridShape"], ["/ui/playback.js", "nextRate"]]) {
+    const res = await fetch(base + path);
+    eq(res.status, 200, path);
+    const mod = await import("data:text/javascript," + encodeURIComponent(await res.text()));
+    eq(typeof mod[name], "function", `${path} exports ${name}`);
+  }
+});
+
 await check("/timeline answers recorded, logged gap, recorded", async () => {
   const { res, json } = await fetchJson(
     `${base}/timeline?camera=cam-1&start=2026-09-11T10:00:00Z&end=2026-09-11T10:06:00Z`);

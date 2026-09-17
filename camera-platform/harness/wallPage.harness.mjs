@@ -22,7 +22,7 @@
  */
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import * as grid from "../dist/gridLayout.js";
+import * as grid from "../dist/gridLayout.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
 const { createWall } = await import(
