@@ -158,7 +158,7 @@ export function cellAspectRatio(_shape: GridShape): string {
  * four-up is big enough that the substream looks broken -- no recorder a
  * customer has used starts a full-screen camera on it. Nine and sixteen up,
  * the mainstream is decode the browser cannot keep up with across the wall,
- * and the tile is too small to show the difference. A tap still overrides.
+ * and the tile is too small to show the difference. The quality menu overrides.
  */
 export function liveQuality(
   shape: GridShape,
