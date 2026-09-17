@@ -50,6 +50,7 @@ function rowToSegment(row) {
     hold: row.hold === 1,
     pendingUpload: row.pending_upload === 1,
     bitrateKbps: row.bitrate_kbps,    // NULL stays null
+    root: row.root ?? null,
   };
 }
 
@@ -58,15 +59,22 @@ export function openIndex(file) {
   db.exec("PRAGMA journal_mode = WAL");   // survives a power cut mid-write
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec(SCHEMA);
+  // Indexes made before segments recorded their drive gain the column; the
+  // rows stay null until recovery sees their files (assignRoot).
+  if (!db.prepare("PRAGMA table_info(segments)").all().some((c) => c.name === "root")) {
+    db.exec("ALTER TABLE segments ADD COLUMN root TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_segments_root_start ON segments(root, start_ms)");
 
   const stmts = {
     upsert: db.prepare(`
-      INSERT INTO segments (camera_id,start_ms,end_ms,path,bytes,state,hold,pending_upload,bitrate_kbps)
-      VALUES (?,?,?,?,?,?,?,?,?)
+      INSERT INTO segments (camera_id,start_ms,end_ms,path,bytes,state,hold,pending_upload,bitrate_kbps,root)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(camera_id,start_ms) DO UPDATE SET
         end_ms=excluded.end_ms, path=excluded.path, bytes=excluded.bytes,
         state=excluded.state, hold=excluded.hold,
-        pending_upload=excluded.pending_upload, bitrate_kbps=excluded.bitrate_kbps`),
+        pending_upload=excluded.pending_upload, bitrate_kbps=excluded.bitrate_kbps,
+        root=COALESCE(excluded.root, segments.root)`),
     byPath: db.prepare("SELECT * FROM segments WHERE path = ?"),
     // The API serves by the client-facing id (cameraId + startMs), never by
     // path — a client never sends a path and the server never builds one from
@@ -83,6 +91,13 @@ export function openIndex(file) {
     oldestEvictable: db.prepare(`SELECT * FROM segments
       WHERE hold = 0 AND pending_upload = 0 AND state != 'open' AND bytes IS NOT NULL
       ORDER BY start_ms LIMIT ?`),
+    // The same, for one drive. A row whose drive is unknown is never offered:
+    // deleting "the oldest" from the wrong drive frees nothing there and, on
+    // ENOENT, drops footage that still exists from the index.
+    oldestEvictableOn: db.prepare(`SELECT * FROM segments
+      WHERE root = ? AND hold = 0 AND pending_upload = 0 AND state != 'open' AND bytes IS NOT NULL
+      ORDER BY start_ms LIMIT ?`),
+    setRoot: db.prepare("UPDATE segments SET root = ? WHERE path = ? AND root IS NOT ?"),
     delByPath: db.prepare("DELETE FROM segments WHERE path = ?"),
     totalBytes: db.prepare("SELECT COALESCE(SUM(bytes),0) AS total FROM segments"),
     countAll: db.prepare("SELECT COUNT(*) AS n FROM segments"),
@@ -103,16 +118,17 @@ export function openIndex(file) {
         segment.hold ? 1 : 0,
         segment.pendingUpload ? 1 : 0,
         segment.bitrateKbps,
+        segment.root ?? null,
       );
     },
     /** Many segments in one transaction — sealing is frequent and fsync is not free. */
     putMany(segments) {
-      this.db.exec("BEGIN");
+      db.exec("BEGIN");
       try {
         for (const s of segments) this.put(s);
-        this.db.exec("COMMIT");
+        db.exec("COMMIT");
       } catch (err) {
-        this.db.exec("ROLLBACK");
+        db.exec("ROLLBACK");
         throw err;
       }
     },
@@ -129,15 +145,31 @@ export function openIndex(file) {
     inRange: (cameraId, startUtc, endUtc) =>
       stmts.inRange.all(cameraId, fromIso(endUtc), fromIso(startUtc)).map(rowToSegment),
     withState: (state) => stmts.byState.all(state).map(rowToSegment),
-    oldestEvictable: (limit) => stmts.oldestEvictable.all(limit).map(rowToSegment),
+    /** Without `root`, across every drive: only right on a single-drive box. */
+    oldestEvictable: (limit, root) => (root === undefined
+      ? stmts.oldestEvictable.all(limit)
+      : stmts.oldestEvictableOn.all(root, limit)).map(rowToSegment),
+    /** Record that these paths were found on `root`. Returns rows changed. */
+    assignRoot(root, paths) {
+      let changed = 0;
+      db.exec("BEGIN");
+      try {
+        for (const p of paths) changed += Number(stmts.setRoot.run(root, p, root).changes);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      return changed;
+    },
     remove: (path) => stmts.delByPath.run(path),
     removeMany(paths) {
-      this.db.exec("BEGIN");
+      db.exec("BEGIN");
       try {
         for (const p of paths) stmts.delByPath.run(p);
-        this.db.exec("COMMIT");
+        db.exec("COMMIT");
       } catch (err) {
-        this.db.exec("ROLLBACK");
+        db.exec("ROLLBACK");
         throw err;
       }
     },

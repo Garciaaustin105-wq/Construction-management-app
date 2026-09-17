@@ -271,7 +271,9 @@ await check("THE FEARED ONE: a restart with held segments on both drives changes
     eq(summary.lost, 0, "lost");
     eq(summary.adopted, 0, "adopted");
     eq(summary.confirmed, 2, "confirmed");
-    eq(JSON.stringify(index.all()), before, "index rows");
+    // The one change: rows from before segments recorded their drive learn it.
+    eq(JSON.stringify(index.all().map((r) => ({ ...r, root: null }))), before, "index rows");
+    eq(index.all().map((r) => r.root), [d0, d1], "each row learns the drive its file is on");
     eq(index.gapsFor("cam-1").length + index.gapsFor("cam-2").length, 0, "gaps");
   } finally {
     await cleanup();

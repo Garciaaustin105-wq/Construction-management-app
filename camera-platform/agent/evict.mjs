@@ -15,7 +15,8 @@ import { planEviction } from "../dist/eviction.js";
 const FIRST_PAGE = 512;
 const MAX_PAGE = 16_384;
 
-export function planEvictionScalable(index, bytesToFree, { firstPage = FIRST_PAGE } = {}) {
+/** Pass `root` on a multi-drive box: candidates then come from that drive only. */
+export function planEvictionScalable(index, bytesToFree, { firstPage = FIRST_PAGE, root } = {}) {
   if (!Number.isFinite(bytesToFree) || bytesToFree <= 0) {
     return { kind: "ok", evict: [], bytesFreed: 0, blocked: [], pagesRead: 0 };
   }
@@ -24,7 +25,7 @@ export function planEvictionScalable(index, bytesToFree, { firstPage = FIRST_PAG
   let pagesRead = 0;
 
   for (;;) {
-    const candidates = index.oldestEvictable(limit);
+    const candidates = index.oldestEvictable(limit, root);
     pagesRead++;
     const plan = planEviction(candidates, bytesToFree);
 

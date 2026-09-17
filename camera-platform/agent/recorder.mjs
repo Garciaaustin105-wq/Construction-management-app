@@ -161,6 +161,7 @@ export function createCameraRecorder({
           hold: false,
           pendingUpload: false,
           bitrateKbps: measuredBitrateKbps,
+          root,
         });
       } catch (err) {
         onEvent({ kind: "seal_failed", cameraId, file, error: err.message });
@@ -184,6 +185,7 @@ export function createCameraRecorder({
         hold: false,
         pendingUpload: false,
         bitrateKbps,
+        root,
       });
       lastSeenOpen = open;
       onEvent({ kind: "opened", cameraId, path: open });

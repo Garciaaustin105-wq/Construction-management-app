@@ -128,23 +128,27 @@ export async function runRecovery(index, storeRoots, { dryRun = false } = {}) {
     }
 
     const applied = await applyRecovery(root, plan);
+    // Every file this drive holds is on this drive: fills in rows indexed
+    // before segments recorded it, and corrects any that were wrong.
+    index.assignRoot(root, onDisk.map((f) => f.path));
 
     const writes = [];
     for (const action of plan.actions) {
-      if (action.kind === "correct_size") writes.push({ ...action.segment, bytes: action.actualBytes });
+      if (action.kind === "correct_size") writes.push({ ...action.segment, bytes: action.actualBytes, root });
       if (action.kind === "seal_partial") {
         writes.push({
           ...action.segment,
           state: "partial",
           bytes: action.actualBytes,
           endUtc: action.estimatedEndUtc,
+          root,
         });
       }
     }
     for (const orphan of applied.adopted) {
       writes.push({
         cameraId: orphan.cameraId, startUtc: orphan.startUtc, endUtc: null, path: orphan.path,
-        bytes: orphan.bytes, state: "sealed", hold: false, pendingUpload: false, bitrateKbps: null,
+        bytes: orphan.bytes, state: "sealed", hold: false, pendingUpload: false, bitrateKbps: null, root,
       });
     }
     if (writes.length > 0) index.putMany(writes);
@@ -168,7 +172,7 @@ async function runEviction(index, storeRoots, log_) {
     const toFree = bytesToFreeFor(usage.used, budget, 0);
     if (toFree <= 0) continue;
 
-    const plan = planEvictionScalable(index, toFree);
+    const plan = planEvictionScalable(index, toFree, { root });
     if (plan.evict.length === 0) {
       // Nothing evictable and still over budget: everything left is held,
       // pending upload, or open. That is an operator problem, not a bug, and it

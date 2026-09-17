@@ -164,7 +164,7 @@ function prepareExport(parsedUrl, ctx) {
  *      'Content-Disposition': `attachment; filename="${filename}"`,
  *      'Cache-Control': 'no-store' }).
  *    No Content-Length: a body cut off mid-stream must not look complete.
- * 3. const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0].
+ * 3. Each file resolves on the drive its row recorded (rootOf).
  *    In try/catch:
  *      await streamExport(res, plan, { resolvePath: (p) => join(root, p),
  *        siteId: ctx.config.siteId, generatedAtUtc: nowUtc });
@@ -175,6 +175,16 @@ function prepareExport(parsedUrl, ctx) {
  *
  * Returns a Promise that resolves once the response has been ended or destroyed.
  */
+/**
+ * The drive a segment is on: the one it recorded, when that drive is still
+ * configured; otherwise (rows from before segments recorded it) where its
+ * camera is assigned now.
+ */
+function rootOf(segment, cameraId, ctx) {
+  if (typeof segment?.root === 'string' && ctx.config.storeRoots.includes(segment.root)) return segment.root;
+  return ctx.config.storeRoots[ctx.driveAssignment.get(cameraId) ?? 0];
+}
+
 async function serveExport(res, parsedUrl, ctx) {
   const prep = prepareExport(parsedUrl, ctx);
   if (!prep.ok) {
@@ -184,9 +194,8 @@ async function serveExport(res, parsedUrl, ctx) {
   const { camera, effective, nowUtc, plan } = prep;
   const filename = `${camera}_${effective.startUtc}_${effective.endUtc}.zip`.replace(/:/g, '-');
   res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' });
-  const root = ctx.config.storeRoots[ctx.driveAssignment.get(camera) ?? 0];
   try {
-    await streamExport(res, plan, { resolvePath: (p) => join(root, p), siteId: ctx.config.siteId, generatedAtUtc: nowUtc });
+    await streamExport(res, plan, { resolvePath: (p) => join(rootOf(ctx.index.get(p), camera, ctx), p), siteId: ctx.config.siteId, generatedAtUtc: nowUtc });
     res.end();
   } catch (e) {
     log('warn', 'export aborted', { cameraId: camera, code: e.code ?? null, error: e.message });
@@ -547,8 +556,7 @@ export function createApiServer({
           return;
         }
 
-        const driveIndex = driveAssignment.get(cameraId) ?? 0;
-        const absPath = join(config.storeRoots[driveIndex], row.path);
+        const absPath = join(rootOf(row, cameraId, { config, driveAssignment }), row.path);
 
         let fileStat;
         try {

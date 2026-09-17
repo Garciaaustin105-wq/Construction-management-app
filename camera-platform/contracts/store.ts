@@ -33,6 +33,13 @@ export interface StoredSegment {
   pendingUpload: boolean;
   /** Measured bitrate of the stream that produced it. Null if unmeasured. */
   bitrateKbps: number | null;
+  /**
+   * The store root (drive) the file is on. Recorded, never derived: which
+   * drive a camera writes to follows the camera list and the drives that
+   * mounted, and both change. Null or absent on rows indexed before this was
+   * kept, until recovery finds the file on a drive.
+   */
+  root?: string | null;
 }
 
 /** A file as a directory scan sees it. No interpretation. */
