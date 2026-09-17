@@ -35,6 +35,7 @@ import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
 import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
+import { createClipLibrary } from './clip-library.mjs';
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -315,6 +316,14 @@ export function createApiServer({
     onChange: () => { driveAssignment = assignDrives(); },
   });
   const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
+  const clipLibrary = createClipLibrary({
+    stateDir, audit: auth.audit, log,
+    prepare: (camera, start, end) => {
+      const q = new URLSearchParams({ camera, start, end });
+      return prepareExport(new URL('http://x/?' + q.toString()), { config, index, now, driveAssignment });
+    },
+    rootFor: (file, cameraId) => rootOf(index.get(file.path), cameraId, { config, driveAssignment }),
+  });
 
   const server = createServer(async (req, res) => {
     try {
@@ -356,6 +365,7 @@ export function createApiServer({
       if (await auth.handle(req, res, pathname, principal)) return;
       if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
       if (await recordingSettings.handle(req, res, pathname, method, principal)) return;
+      if (await clipLibrary.handle(req, res, pathname, method, principal)) return;
 
       // Every route past here reads; the table only lets GET through to them.
       if (method !== 'GET') {

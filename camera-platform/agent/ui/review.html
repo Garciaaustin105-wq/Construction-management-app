@@ -78,6 +78,40 @@
   .export button { cursor: pointer; }
   .exportStatus { flex-basis: 100%; min-height: 1.4em; color: #9aa0a6; }
   .exportStatus.problem { color: #ffb4b4; }
+  .testclip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 0 0;
+  }
+  .testclip input,
+  .testclip select,
+  .testclip button {
+    padding: 4px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+  }
+  .testclip button {
+    cursor: pointer;
+  }
+  .testclip .tag {
+    white-space: nowrap;
+  }
+  .clipStatus {
+    flex-basis: 100%;
+    min-height: 1.4em;
+    color: #9aa0a6;
+  }
+  .clipStatus.problem {
+    color: #ffb4b4;
+  }
+  .clipStatus.saved {
+    color: #9fe0a8;
+  }
 </style>
 </head>
 <body>
@@ -117,6 +151,22 @@
   <label>to <input id="exportTo" type="time" step="60"></label>
   <button id="exportBtn" type="button">Check export</button>
   <div class="exportStatus" id="exportStatus"></div>
+</div>
+
+<div class="testclip">
+  <span class="testclipLead">Save the same range as a test clip for the AI:</span>
+  <label class="tag"><input type="checkbox" id="clipTag-empty" name="clipTag" value="empty"> Empty</label>
+  <label class="tag"><input type="checkbox" id="clipTag-person" name="clipTag" value="person"> Person</label>
+  <label class="tag"><input type="checkbox" id="clipTag-vehicle" name="clipTag" value="vehicle"> Vehicle</label>
+  <label class="tag"><input type="checkbox" id="clipTag-shadows" name="clipTag" value="shadows"> Shadows</label>
+  <label class="tag"><input type="checkbox" id="clipTag-headlights" name="clipTag" value="headlights"> Headlights</label>
+  <label class="tag"><input type="checkbox" id="clipTag-rain" name="clipTag" value="rain"> Rain</label>
+  <label class="tag"><input type="checkbox" id="clipTag-animal" name="clipTag" value="animal"> Animal</label>
+  <label class="tag"><input type="checkbox" id="clipTag-night" name="clipTag" value="night"> Night</label>
+  <label>People <select id="clipPeople"></select></label>
+  <label>Vehicles <select id="clipVehicles"></select></label>
+  <button id="clipSaveBtn" type="button">Save as test clip</button>
+  <div class="clipStatus" id="clipStatus"></div>
 </div>
 
 <script type="module">
@@ -824,7 +874,173 @@ function wireExport() {
   el.nextDay.addEventListener('click', clearExport);
 }
 
+/* ── test clips: the same range, kept as an answer for the AI (AI-PLAN D0) ── */
+
+// The scene boxes, in page order. Looked up by id: the page never queries by selector.
+const CLIP_TAGS = ['empty', 'person', 'vehicle', 'shadows', 'headlights', 'rain', 'animal', 'night'];
+const clipTagBox = (tag) => document.getElementById('clipTag-' + tag);
+
+// setClipStatus updates the status element with optional styling
+function setClipStatus(text, kind) {
+  const statusEl = document.getElementById('clipStatus');
+  statusEl.textContent = text;
+  statusEl.className = 'clipStatus';
+  if (kind === 'problem') statusEl.className += ' problem';
+  else if (kind === 'saved') statusEl.className += ' saved';
+}
+
+// saveTestClip handles the async saving of a test clip
+async function saveTestClip() {
+  const seq = ++view.clipSeq;
+  const win = exportWindow(el.day.value, el.exportFrom.value, el.exportTo.value);
+  if (!win) {
+    setClipStatus('Pick a start and an end time above, the end after the start', 'problem');
+    return;
+  }
+  const scenes = CLIP_TAGS.filter((tag) => clipTagBox(tag).checked);
+  const clipPeople = document.getElementById('clipPeople');
+  const clipVehicles = document.getElementById('clipVehicles');
+  const people = Number(clipPeople.value);
+  const vehicles = Number(clipVehicles.value);
+  if (scenes.length === 0) {
+    setClipStatus('Tick at least one box that describes the clip', 'problem');
+    return;
+  }
+  const clipSaveBtn = document.getElementById('clipSaveBtn');
+  clipSaveBtn.disabled = true;
+  setClipStatus('Saving...');
+  let reached = true;
+  let res, body;
+  try {
+    res = await fetch('/clip-library', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cameraId: el.camera.value,
+        startUtc: win.startUtc,
+        endUtc: win.endUtc,
+        scenes,
+        people,
+        vehicles
+      })
+    });
+    body = await res.json();
+  } catch {
+    reached = false;
+  } finally {
+    clipSaveBtn.disabled = false;
+  }
+  if (seq !== view.clipSeq) return;
+  if (!reached) {
+    setClipStatus('Cannot reach the recorder (' + location.host + ')', 'problem');
+    return;
+  }
+  if (res.status === 403) {
+    setClipStatus('This account cannot save test clips', 'problem');
+    return;
+  }
+  if (body && body.ok) {
+    const fileText = body.fileCount === 1 ? ' file, ' : ' files, ';
+    const peopleText = people
+      ? people + (people === 1 ? ' person' : ' people')
+      : 'no people';
+    const vehicleText = vehicles
+      ? vehicles + (vehicles === 1 ? ' vehicle' : ' vehicles')
+      : 'no vehicles';
+    setClipStatus(
+      'Saved test clip: ' +
+        body.fileCount +
+        fileText +
+        localTime(body.clip.startUtc) +
+        ' to ' +
+        localTime(body.clip.endUtc) +
+        ', ' +
+        peopleText +
+        ', ' +
+        vehicleText +
+        '.',
+      'saved'
+    );
+    return;
+  }
+  if (body && body.code === 'bad_clip' && Array.isArray(body.errors)) {
+    setClipStatus('Not saved: ' + body.errors.join('; '), 'problem');
+    return;
+  }
+  setClipStatus(
+    'Not saved: ' +
+      (body && body.message ? body.message : 'the recorder refused (' + res.status + ')'),
+    'problem'
+  );
+}
+
+// wireTestClip sets up the test clip UI and event handlers
+function wireTestClip() {
+  const clipPeople = document.getElementById('clipPeople');
+  const clipVehicles = document.getElementById('clipVehicles');
+  const emptyBox = clipTagBox('empty');
+  const personBox = clipTagBox('person');
+  const vehicleBox = clipTagBox('vehicle');
+  const clipSaveBtn = document.getElementById('clipSaveBtn');
+
+  // Populate selects 0..10
+  for (let i = 0; i <= 10; i++) {
+    const optP = document.createElement('option');
+    optP.value = String(i);
+    optP.textContent = String(i);
+    clipPeople.appendChild(optP);
+    const optV = document.createElement('option');
+    optV.value = String(i);
+    optV.textContent = String(i);
+    clipVehicles.appendChild(optV);
+  }
+  clipPeople.value = '0';
+  clipVehicles.value = '0';
+  view.clipSeq = 0;
+
+  const clearStatus = () => {
+    setClipStatus('');
+    view.clipSeq += 1;
+  };
+
+  clipPeople.addEventListener('change', () => {
+    if (Number(clipPeople.value) > 0) {
+      personBox.checked = true;
+      emptyBox.checked = false;
+    }
+    clearStatus();
+  });
+
+  clipVehicles.addEventListener('change', () => {
+    if (Number(clipVehicles.value) > 0) {
+      vehicleBox.checked = true;
+      emptyBox.checked = false;
+    }
+    clearStatus();
+  });
+
+  emptyBox.addEventListener('change', () => {
+    if (emptyBox.checked) {
+      personBox.checked = false;
+      vehicleBox.checked = false;
+      clipPeople.value = '0';
+      clipVehicles.value = '0';
+    }
+    clearStatus();
+  });
+
+  el.camera.addEventListener('change', clearStatus);
+  el.day.addEventListener('change', clearStatus);
+  el.exportFrom.addEventListener('change', clearStatus);
+  el.exportTo.addEventListener('change', clearStatus);
+  el.prevDay.addEventListener('click', clearStatus);
+  el.nextDay.addEventListener('click', clearStatus);
+
+  clipSaveBtn.addEventListener('click', saveTestClip);
+}
+
 wireExport();
+wireTestClip();
 wireEvents();
 loadCameras();
 startAlertBanner(document.getElementById('alertBanner'));

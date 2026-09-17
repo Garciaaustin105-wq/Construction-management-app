@@ -144,9 +144,15 @@ function freshDom() {
     ["pageError", "div"], ["strip", "div"], ["playhead", "div"], ["hours", "div"], ["status", "div"],
     ["exportFrom", "input"], ["exportTo", "input"], ["exportBtn", "button"], ["exportStatus", "div"],
     ["slower", "button"], ["faster", "button"], ["rate", "span"], ["back10", "button"], ["fwd10", "button"],
-    ["clock", "span"]]) {
+    ["clock", "span"], ["clipPeople", "select"], ["clipVehicles", "select"], ["clipSaveBtn", "button"],
+    ["clipStatus", "div"]]) {
     byId[id] = new FakeEl(tag, id);
     byId[id].disabled = false;
+  }
+  for (const tag of ["empty", "person", "vehicle", "shadows", "headlights", "rain", "animal", "night"]) {
+    const box = new FakeEl("input", "clipTag-" + tag);
+    box.checked = false;
+    byId[box.id] = box;
   }
   byId.video = new FakeVideo("video");
   byId.pageError.hidden = true;
@@ -192,7 +198,7 @@ const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
 const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
   "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents",
-  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport", "setRate", "step"];
+  "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport", "setRate", "step", "saveTestClip", "wireTestClip"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireEvents();\nloadCameras();\n";
@@ -430,6 +436,52 @@ async function offer(from, to) {
   fetchLog = [];
   await page.offerExport();
 }
+
+await check("test clip: the boxes follow the counts, so nobody types a contradiction", async () => {
+  dom.clipPeople.value = "2";
+  dom.clipPeople.fire("change");
+  eq([dom["clipTag-person"].checked, dom["clipTag-empty"].checked], [true, false], "people tick person");
+  dom["clipTag-empty"].checked = true;
+  dom["clipTag-empty"].fire("change");
+  eq([dom["clipTag-person"].checked, dom.clipPeople.value, dom.clipVehicles.value], [false, "0", "0"], "empty clears them");
+  eq(dom.clipPeople.options.map((o) => o.value).join(","), "0,1,2,3,4,5,6,7,8,9,10", "0 to 10");
+});
+
+await check("test clip: a save posts the shown range, and the same stretch again is refused out loud", async () => {
+  dom.day.value = "2026-09-11";
+  dom.exportFrom.value = "06:00";
+  dom.exportTo.value = "06:02";
+  dom["clipTag-empty"].checked = false;
+  dom.clipPeople.value = "1";
+  dom.clipPeople.fire("change");
+  fetchLog = [];
+  await page.saveTestClip();
+  eq(fetchLog, ["/clip-library"], "one POST");
+  eq(dom.clipStatus.className, "clipStatus saved", "saved: " + dom.clipStatus.textContent);
+  if (!dom.clipStatus.textContent.includes("2 files") || !dom.clipStatus.textContent.includes("1 person")) {
+    throw new Error("says what it kept: " + dom.clipStatus.textContent);
+  }
+  const saved = JSON.parse(await readFile(join(stateDir, "clip-library.json"), "utf8"));
+  eq(saved.clips.map((c) => [c.cameraId, c.startUtc, c.endUtc, c.scenes, c.expected.length]),
+    [["cam-1", "2026-09-11T10:00:00.000Z", "2026-09-11T10:02:00.000Z", ["person"], 1]], "the answer on disk");
+  eq(dom.clipSaveBtn.disabled, false, "button back");
+  await page.saveTestClip();
+  eq(dom.clipStatus.className, "clipStatus problem", "refused");
+  if (!dom.clipStatus.textContent.startsWith("Not saved: ")) throw new Error(dom.clipStatus.textContent);
+});
+
+await check("test clip: a range with a gap is not saved, and nothing is ticked is asked for", async () => {
+  dom.exportFrom.value = "06:03";
+  dom.exportTo.value = "06:06";
+  dom.exportTo.fire("change");
+  await page.saveTestClip();
+  eq(dom.clipStatus.className, "clipStatus problem", "gap refused: " + dom.clipStatus.textContent);
+  for (const t of ["person", "empty", "vehicle"]) dom["clipTag-" + t].checked = false;
+  fetchLog = [];
+  await page.saveTestClip();
+  eq(fetchLog, [], "no request");
+  eq(dom.clipStatus.textContent, "Tick at least one box that describes the clip", "asks");
+});
 
 await check("exportWindow is local times on the shown day, and refuses what did not happen", async () => {
   eq(page.exportWindow("2026-09-11", "06:00", "06:06"),

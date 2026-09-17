@@ -64,6 +64,8 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/camera-settings": { kind: "api", permission: "camera.manage" },
   // The age limit deletes footage.
   "/recording-settings": { kind: "api", permission: "storage.manage" },
+  // The AI answer key: what someone watching the footage says is in it.
+  "/clip-library": { kind: "api", permission: "playback.view" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -78,6 +80,8 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/cameras": { kind: "api", permission: "camera.manage" },
   "/camera-login": { kind: "api", permission: "camera.manage" },
   "/recording-settings": { kind: "api", permission: "storage.manage" },
+  // Saving a test clip keeps footage past retention: the same reach as an export.
+  "/clip-library": { kind: "api", permission: "export.create" },
 });
 
 /**
