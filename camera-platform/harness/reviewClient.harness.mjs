@@ -4,7 +4,8 @@
  *  response text, and the storage path reaching the page. */
 import {
   layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback,
-  formatBytes, planExportOffer,
+  formatBytes, planExportOffer, monthCalendar, timeOptions, rangeAround, friendlyProblem,
+  clipProgress, recordedDays,
 } from "../agent/ui/review-client.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
@@ -366,6 +367,336 @@ await check("planExportOffer passes refusals through and refuses what it cannot 
     ["delivered empty", planBody({ delivered: { startUtc: "2026-09-11T10:05:00.000Z", endUtc: "2026-09-11T10:05:00.000Z" } })],
     ["gaps missing", planBody({ gaps: undefined })], ["gaps object", planBody({ gaps: {} })],
   ]) eq(planExportOffer(body), unreadable, what);
+});
+
+/* ── the friendly Review page: a calendar, time dropdowns, Save video and
+ *    Teach the AI. The failures feared here: a calendar that drops the 31st or
+ *    shifts a day across a time zone, a dropdown that hides the last quarter
+ *    hour of a day, a length chip that asks the recorder for footage from the
+ *    future, and a refusal shown to the user in the recorder's own jargon. ─── */
+
+const NY = "America/New_York";
+const SEP_START = "2026-09-11T04:00:00.000Z"; // local midnight, America/New_York
+const SEP_END = "2026-09-12T04:00:00.000Z";
+
+// === monthCalendar ===
+
+await check("calendar: a month is a Sunday-first grid with the recorded days marked", () => {
+  const cal = monthCalendar(2026, 9, ["2026-09-01", "2026-09-11", "2026-09-30"]);
+  eq(Object.keys(cal), ["year", "month", "label", "weeks"], "keys in order");
+  eq(cal.label, "September 2026", "label in plain words");
+  eq(cal.weeks.every((w) => Array.isArray(w) && w.length === 7), true, "every week has seven cells");
+  eq(cal.weeks[0][0], null, "the 1st is a Tuesday, so Sunday is blank");
+  eq(cal.weeks[0][1], null, "and Monday is blank");
+  eq(cal.weeks[0][2], { day: "2026-09-01", dayOfMonth: 1, recorded: true }, "the 1st, recorded");
+  eq(Object.keys(cal.weeks[0][2]), ["day", "dayOfMonth", "recorded"], "cell keys in order");
+  eq(cal.weeks[0][3], { day: "2026-09-02", dayOfMonth: 2, recorded: false }, "the 2nd, nothing recorded");
+});
+
+await check("THE FEARED ONE: no day of the month is dropped off the grid", () => {
+  for (const [y, m, days] of [[2026, 9, 30], [2026, 1, 31], [2026, 2, 28], [2024, 2, 29],
+    [2026, 12, 31], [2026, 8, 31], [2026, 11, 30]]) {
+    const cells = monthCalendar(y, m, []).weeks.flat().filter((c) => c !== null);
+    eq(cells.length, days, `${y}-${m} has ${days} days`);
+    eq(cells[0].dayOfMonth, 1, `${y}-${m} starts at 1`);
+    eq(cells.at(-1).dayOfMonth, days, `${y}-${m} ends at ${days}`);
+    eq(cells.at(-1).day, `${y}-${String(m).padStart(2, "0")}-${days}`, `${y}-${m} last day string`);
+  }
+});
+
+await check("calendar: February 2026 is exactly four weeks, with no padding at all", () => {
+  const cal = monthCalendar(2026, 2, []);
+  eq(cal.weeks.length, 4, "four rows");
+  eq(cal.weeks.flat().filter((c) => c === null).length, 0, "no blanks");
+  eq(cal.weeks[0][0].day, "2026-02-01", "the 1st is a Sunday");
+});
+
+await check("calendar: the recorded list is matched as whole day strings, never parsed", () => {
+  const cal = monthCalendar(2026, 9, ["2026-09-11", "2026-9-12", "2026-09-13T00:00:00Z", "2026-10-01", 11, null, {}]);
+  const on = cal.weeks.flat().filter((c) => c !== null && c.recorded).map((c) => c.day);
+  eq(on, ["2026-09-11"], "only the exact day string counts");
+});
+
+await check("calendar: refusals are values, never throws", () => {
+  for (const [what, args] of [
+    ["month 0", [2026, 0, []]], ["month 13", [2026, 13, []]], ["month text", [2026, "9", []]],
+    ["month fractional", [2026, 9.5, []]], ["year text", ["2026", 9, []]], ["year fractional", [2026.5, 9, []]],
+    ["year too small", [1969, 9, []]], ["year too large", [10000, 9, []]],
+    ["recordedDays missing", [2026, 9, undefined]], ["recordedDays object", [2026, 9, {}]],
+    ["recordedDays string", [2026, 9, "2026-09-11"]], ["nothing", []],
+  ]) eq(isError(monthCalendar(...args)), true, what);
+});
+
+// === timeOptions ===
+
+const optRuns = [run("recorded", "2026-09-11T08:00:00Z", "2026-09-11T12:00:00Z")];
+
+await check("times: a whole day of quarter hours, plus the end of the day", () => {
+  const { options } = timeOptions(optRuns, SEP_START, SEP_END, 15, NY);
+  eq(options.length, 97, "96 quarter hours and the end of the day");
+  eq(Object.keys(options[0]), ["value", "hhmm", "label", "recorded"], "keys in order");
+  eq(options[0], { value: SEP_START, hhmm: "00:00", label: "12:00 AM", recorded: false }, "the first option");
+  eq(options[1].hhmm, "00:15", "a quarter hour later");
+  eq(options[1].label, "12:15 AM", "and it reads as one");
+  eq(options[96], { value: SEP_END, hhmm: "24:00", label: "Midnight (end of day)", recorded: false }, "the last option is the end of the day");
+});
+
+await check("THE FEARED ONE: the last quarter hour of the day is reachable", () => {
+  const { options } = timeOptions(optRuns, SEP_START, SEP_END, 15, NY);
+  eq(options.at(-2).hhmm, "23:45", "11:45 PM is offered");
+  eq(options.at(-2).label, "11:45 PM", "in plain words");
+  eq(options.at(-1).value, SEP_END, "and the end of the day after it, as an instant");
+});
+
+await check("times: only the instants inside a recorded run say recorded", () => {
+  const { options } = timeOptions(optRuns, SEP_START, SEP_END, 15, NY);
+  const byHhmm = Object.fromEntries(options.map((o) => [o.hhmm, o.recorded]));
+  eq(byHhmm["04:00"], true, "08:00Z is 4 AM local, inside the run");
+  eq(byHhmm["07:45"], true, "the last quarter hour inside it");
+  eq(byHhmm["08:00"], false, "12:00Z is the run's end: half-open, so not recorded");
+  eq(byHhmm["03:45"], false, "just before it starts");
+  eq(options.filter((o) => o.recorded).length, 16, "four hours of quarter hours");
+});
+
+await check("times: a gap run is not a recording", () => {
+  const { options } = timeOptions([run("gap", "2026-09-11T08:00:00Z", "2026-09-11T12:00:00Z")], SEP_START, SEP_END, 15, NY);
+  eq(options.some((o) => o.recorded), false, "nothing is offered as recorded");
+});
+
+await check("times: the end-of-day option reads the last instant of the day, not the next day", () => {
+  const all = [run("recorded", SEP_START, SEP_END)];
+  const { options } = timeOptions(all, SEP_START, SEP_END, 60, NY);
+  eq(options.at(-1).recorded, true, "recorded right up to midnight");
+  eq(options.length, 25, "24 hours and the end of the day");
+});
+
+await check("THE FEARED ONE: a 25 hour fall-back day offers all 25 hours", () => {
+  const start = "2026-11-01T04:00:00.000Z";
+  const end = "2026-11-02T05:00:00.000Z";
+  const { options } = timeOptions([], start, end, 60, NY);
+  eq(options.length, 26, "25 hours and the end of the day");
+  const oneAm = options.filter((o) => o.label === "1:00 AM");
+  eq(oneAm.length, 2, "1 AM happens twice and both are offered");
+  eq(oneAm[0].value, "2026-11-01T05:00:00.000Z", "the first 1 AM is an instant of its own");
+  eq(oneAm[1].value, "2026-11-01T06:00:00.000Z", "and so is the second");
+});
+
+await check("times: a 23 hour spring-forward day skips the hour that does not exist", () => {
+  const { options } = timeOptions([], "2026-03-08T05:00:00.000Z", "2026-03-09T04:00:00.000Z", 60, NY);
+  eq(options.length, 24, "23 hours and the end of the day");
+  eq(options.some((o) => o.label === "2:00 AM"), false, "2 AM never happens that day");
+});
+
+await check("times: labels are plain ASCII, so they render the same everywhere", () => {
+  const { options } = timeOptions(optRuns, SEP_START, SEP_END, 15, NY);
+  for (const o of options) {
+    eq(/^[ -~]+$/.test(o.label), true, `ASCII label: ${JSON.stringify(o.label)}`);
+    eq(/^([01][0-9]|2[0-4]):[0-5][0-9]$/.test(o.hhmm), true, `hhmm: ${o.hhmm}`);
+  }
+});
+
+await check("times: refusals are values, never throws", () => {
+  for (const [what, args] of [
+    ["no day start", [[], "soon", SEP_END, 15, NY]],
+    ["no day end", [[], SEP_START, "later", 15, NY]],
+    ["inverted day", [[], SEP_END, SEP_START, 15, NY]],
+    ["empty day", [[], SEP_START, SEP_START, 15, NY]],
+    ["step 0", [[], SEP_START, SEP_END, 0, NY]],
+    ["step negative", [[], SEP_START, SEP_END, -15, NY]],
+    ["step fractional", [[], SEP_START, SEP_END, 1.5, NY]],
+    ["step too large", [[], SEP_START, SEP_END, 721, NY]],
+    ["step as text", [[], SEP_START, SEP_END, "15", NY]],
+    ["runs not an array", [{}, SEP_START, SEP_END, 15, NY]],
+    ["zone missing", [[], SEP_START, SEP_END, 15, undefined]],
+    ["zone not a zone", [[], SEP_START, SEP_END, 15, "Mars/Olympus"]],
+    ["nothing", []],
+  ]) eq(isError(timeOptions(...args)), true, what);
+});
+
+await check("times: a run it cannot read is ignored, not guessed at", () => {
+  const { options } = timeOptions([null, "recorded", { kind: "recorded" },
+    { kind: "recorded", startUtc: "soon", endUtc: "2026-09-11T12:00:00Z" },
+    run("recorded", "2026-09-11T08:00:00Z", "2026-09-11T09:00:00Z")], SEP_START, SEP_END, 60, NY);
+  eq(options.filter((o) => o.recorded).length, 1, "only the run that reads as a run counts");
+});
+
+// === rangeAround ===
+
+const NOW = "2026-09-11T12:00:00.000Z";
+
+await check("moment: a length chip centres the window on what is being watched", () => {
+  const r = rangeAround("2026-09-11T10:00:00Z", 5, NOW, SEP_START, SEP_END);
+  eq(Object.keys(r), ["startUtc", "endUtc", "lengthMin", "clamped"], "keys in order");
+  eq(r, { startUtc: "2026-09-11T09:57:30.000Z", endUtc: "2026-09-11T10:02:30.000Z", lengthMin: 5, clamped: false }, "five minutes around it");
+});
+
+await check("THE FEARED ONE: a window is never asked for footage from the future", () => {
+  const r = rangeAround("2026-09-11T11:59:00Z", 60, NOW, SEP_START, SEP_END);
+  eq(r.endUtc, NOW, "it stops at now");
+  eq(r.startUtc, "2026-09-11T11:00:00.000Z", "and keeps its length by shifting back");
+  eq(r.lengthMin, 60, "a full hour, all of it in the past");
+  eq(r.clamped, true, "and it says it moved");
+});
+
+await check("THE FEARED ONE: a window never runs into the day before or after", () => {
+  const early = rangeAround("2026-09-11T04:01:00Z", 60, NOW, SEP_START, SEP_END);
+  eq(early.startUtc, SEP_START, "the day's first instant");
+  eq(early.endUtc, "2026-09-11T05:00:00.000Z", "an hour of it");
+  eq(early.clamped, true, "moved");
+  const yesterday = rangeAround("2026-09-10T20:00:00Z", 5, "2026-09-12T00:00:00Z", "2026-09-10T04:00:00.000Z", "2026-09-11T04:00:00.000Z");
+  eq(yesterday.endUtc, "2026-09-10T20:02:30.000Z", "a past day is not clipped to now");
+});
+
+await check("moment: a window longer than the day it can have takes what there is", () => {
+  const r = rangeAround("2026-09-11T05:00:00Z", 60, "2026-09-11T04:30:00.000Z", SEP_START, SEP_END);
+  eq(r, { startUtc: SEP_START, endUtc: "2026-09-11T04:30:00.000Z", lengthMin: 30, clamped: true }, "half an hour is all there is");
+});
+
+await check("moment: a moment outside the day is pulled into it rather than refused", () => {
+  const after = rangeAround("2026-09-11T20:00:00Z", 5, NOW, SEP_START, SEP_END);
+  eq(after.endUtc, NOW, "later than now: the window ends at now");
+  eq(after.startUtc, "2026-09-11T11:55:00.000Z", "and holds its length");
+});
+
+await check("moment: refusals are values, never throws", () => {
+  for (const [what, args] of [
+    ["moment does not parse", ["soon", 5, NOW, SEP_START, SEP_END]],
+    ["length 0", ["2026-09-11T10:00:00Z", 0, NOW, SEP_START, SEP_END]],
+    ["length negative", ["2026-09-11T10:00:00Z", -5, NOW, SEP_START, SEP_END]],
+    ["length as text", ["2026-09-11T10:00:00Z", "5", NOW, SEP_START, SEP_END]],
+    ["length infinite", ["2026-09-11T10:00:00Z", Infinity, NOW, SEP_START, SEP_END]],
+    ["now does not parse", ["2026-09-11T10:00:00Z", 5, "now", SEP_START, SEP_END]],
+    ["day inverted", ["2026-09-11T10:00:00Z", 5, NOW, SEP_END, SEP_START]],
+    ["the day has not started", ["2026-09-11T10:00:00Z", 5, "2026-09-11T03:00:00Z", SEP_START, SEP_END]],
+    ["nothing", []],
+  ]) eq(isError(rangeAround(...args)), true, what);
+});
+
+// === friendlyProblem ===
+
+await check("problems: the recorder's codes are said in plain words", () => {
+  eq(friendlyProblem("export_too_large", "range exceeds limit"),
+    "That is more video than one download can hold. Pick a shorter length.", "too large");
+  eq(friendlyProblem("nothing_recorded", "no segments"), "Nothing was recorded at that time.", "nothing recorded");
+  eq(friendlyProblem("camera_unknown", "no such camera"), "That camera is not set up on this recorder.", "unknown camera");
+  eq(friendlyProblem("bad_range", "end before start"), "Pick an end time after the start time.", "bad range");
+  eq(friendlyProblem("busy", "another export is running"), "The recorder is busy with another download. Try again in a minute.", "busy");
+  eq(friendlyProblem("disk_full", "no space"), "The recorder has no room left. Nothing new can be saved.", "disk full");
+  eq(friendlyProblem("forbidden", "role"), "This account is not allowed to do that.", "forbidden");
+  eq(friendlyProblem("bad_response", "unreadable"), "The recorder sent something this page could not read.", "bad response");
+  eq(friendlyProblem("unreachable", ""), "Cannot reach the recorder.", "unreachable");
+});
+
+await check("THE FEARED ONE: a code it does not know is reported, never guessed at", () => {
+  eq(friendlyProblem("solar_flare", "the sun did it"),
+    "Something went wrong: the sun did it (solar_flare).", "an unknown code keeps both");
+  eq(friendlyProblem("solar_flare", ""), "Something went wrong (solar_flare).", "no message to add");
+  eq(friendlyProblem("solar_flare", 7), "Something went wrong (solar_flare).", "a message that is not text is left out");
+  eq(friendlyProblem("", ""), "Something went wrong.", "nothing to say at all");
+  eq(friendlyProblem(null, null), "Something went wrong.", "nothing at all");
+  eq(friendlyProblem("constructor", ""), "Something went wrong (constructor).", "a prototype key is not a code");
+});
+
+await check("problems: what it says is plain ASCII and bounded in length", () => {
+  const long = friendlyProblem("solar_flare", "x".repeat(5000));
+  eq(long.length <= 240, true, `bounded, got ${long.length}`);
+  eq(/^[ -~]+$/.test(long), true, "ASCII");
+  eq(friendlyProblem("x y", "a\nb\tc"), "Something went wrong: a b c (x y).", "control characters become spaces");
+});
+
+// === clipProgress ===
+
+const clip = (startUtc, endUtc, scenes, expected = []) => ({
+  id: "c" + startUtc, cameraId: "cam-1", startUtc, endUtc, scenes, expected,
+});
+const expected = (kind, count) => ({ kind, fromUtc: "2026-09-11T10:00:00Z", toUtc: "2026-09-11T10:01:00Z", count });
+
+await check("teaching: what has been taught so far, and what is still short", () => {
+  const p = clipProgress({ version: 1, clips: [
+    clip("2026-09-11T10:00:00Z", "2026-09-11T10:05:00Z", ["person"], [expected("person", 3)]),
+    clip("2026-09-11T11:00:00Z", "2026-09-11T11:30:00Z", ["empty", "night"]),
+    clip("2026-09-11T12:00:00Z", "2026-09-11T12:02:00Z", ["vehicle"], [expected("vehicle", 2), expected("person", 1)]),
+  ] });
+  eq(Object.keys(p), ["clipCount", "personCount", "vehicleCount", "emptyMinutes",
+    "personsStillNeeded", "emptyMinutesStillNeeded", "skipped"], "keys in order");
+  eq(p.clipCount, 3, "three clips");
+  eq(p.personCount, 4, "four people expected across them");
+  eq(p.vehicleCount, 2, "two vehicles");
+  eq(p.emptyMinutes, 30, "half an hour of empty scene");
+  eq(p.personsStillNeeded, 16, "20 is the gate, so 16 short");
+  eq(p.emptyMinutesStillNeeded, 30, "an hour is the gate, so 30 minutes short");
+  eq(p.skipped, 0, "nothing skipped");
+});
+
+await check("teaching: the gates stop at zero, they never go negative", () => {
+  const p = clipProgress({ version: 1, clips: [
+    clip("2026-09-11T10:00:00Z", "2026-09-11T12:00:00Z", ["empty", "person"], [expected("person", 25)]),
+  ] });
+  eq(p.personsStillNeeded, 0, "enough people");
+  eq(p.emptyMinutesStillNeeded, 0, "enough empty footage");
+  eq(p.emptyMinutes, 120, "two hours of it");
+});
+
+await check("THE FEARED ONE: a clip it cannot read is counted as skipped, not as zero", () => {
+  const p = clipProgress({ version: 1, clips: [
+    clip("2026-09-11T10:00:00Z", "2026-09-11T10:30:00Z", ["empty"]),
+    null, "a clip", { id: "x" },
+    clip("soon", "2026-09-11T10:30:00Z", ["empty"]),
+    clip("2026-09-11T10:30:00Z", "2026-09-11T10:00:00Z", ["empty"]),
+    clip("2026-09-11T13:00:00Z", "2026-09-11T13:10:00Z", "empty"),
+    clip("2026-09-11T14:00:00Z", "2026-09-11T14:10:00Z", ["person"], [{ kind: "person", count: 1.5 }]),
+    clip("2026-09-11T15:00:00Z", "2026-09-11T15:10:00Z", ["person"], "two"),
+  ] });
+  eq(p.clipCount, 1, "one clip could be counted");
+  eq(p.skipped, 8, "and eight could not");
+  eq(p.emptyMinutes, 30, "only the readable one counts");
+  eq(p.personCount, 0, "nothing is assumed about the rest");
+});
+
+await check("teaching: partial minutes are counted, then floored once at the end", () => {
+  const p = clipProgress({ version: 1, clips: [
+    clip("2026-09-11T10:00:00Z", "2026-09-11T10:00:40Z", ["empty"]),
+    clip("2026-09-11T11:00:00Z", "2026-09-11T11:00:40Z", ["empty"]),
+  ] });
+  eq(p.emptyMinutes, 1, "40 s twice is a minute and a third, floored to 1");
+});
+
+await check("teaching: refusals are values, never throws", () => {
+  for (const [what, v] of [["null", null], ["a string", "library"], ["an array", []],
+    ["no clips", { version: 1 }], ["clips as an object", { version: 1, clips: {} }],
+    ["nothing", undefined]]) eq(isError(clipProgress(v)), true, what);
+});
+
+// === recordedDays ===
+
+await check("month: which local days have footage, for the calendar's dots", () => {
+  eq(recordedDays([run("recorded", "2026-09-11T08:00:00Z", "2026-09-11T09:00:00Z")], NY),
+    { days: ["2026-09-11"] }, "one day");
+  eq(recordedDays([run("recorded", "2026-09-12T02:00:00Z", "2026-09-12T06:00:00Z")], NY),
+    { days: ["2026-09-11", "2026-09-12"] }, "10 PM to 2 AM names both local days");
+  eq(recordedDays([run("recorded", "2026-09-12T04:00:00.000Z", "2026-09-13T04:00:00.000Z")], NY),
+    { days: ["2026-09-12"] }, "exactly one local day, half-open");
+  eq(recordedDays([run("recorded", "2026-09-11T08:00:00Z", "2026-09-11T09:00:00Z"),
+    run("recorded", "2026-09-11T10:00:00Z", "2026-09-11T11:00:00Z")], NY),
+    { days: ["2026-09-11"] }, "no duplicates");
+  eq(recordedDays([run("gap", "2026-09-11T08:00:00Z", "2026-09-11T09:00:00Z")], NY), { days: [] }, "a gap is not footage");
+});
+
+await check("THE FEARED ONE: a month-long run is walked in days, not in milliseconds", () => {
+  const { days } = recordedDays([run("recorded", "2026-08-15T12:00:00Z", "2026-09-20T12:00:00Z")], NY);
+  eq(days.length, 37, "36 days of footage touch 37 local days");
+  eq(days[0], "2026-08-15", "the first");
+  eq(days.at(-1), "2026-09-20", "the last");
+});
+
+await check("month: a run it cannot read is ignored, and refusals are values", () => {
+  eq(recordedDays([null, "recorded", { kind: "recorded" },
+    { kind: "recorded", startUtc: "soon", endUtc: "2026-09-11T12:00:00Z" },
+    run("recorded", "2026-09-11T10:00:00Z", "2026-09-11T09:00:00Z"),
+    run("recorded", "2026-09-11T08:00:00Z", "2026-09-11T09:00:00Z")], NY),
+    { days: ["2026-09-11"] }, "only what reads as a run counts");
+  for (const [what, args] of [["runs not an array", [{}, NY]], ["not a zone", [[], "Mars/Olympus"]],
+    ["no zone", [[], undefined]], ["nothing", []]]) eq(isError(recordedDays(...args)), true, what);
 });
 
 report("reviewClient");
