@@ -12,7 +12,7 @@
  * cameras are removed; "page 1 of 0"; a blank cameraId shuffling every camera
  * after it into the wrong slot; and a shared shapes table a caller can edit.
  */
-import { GRID_SHAPES, gridShape, gridPage, wallStreams, cellAspectRatio } from "../dist/gridLayout.mjs";
+import { GRID_SHAPES, gridShape, gridPage, wallStreams, cellAspectRatio, liveQuality } from "../dist/gridLayout.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
 console.log("gridLayout");
@@ -205,6 +205,13 @@ check("asking twice in a row changes nothing", () => {
   eq(second.open, [], "nothing reopened");
   eq(second.close, [], "nothing closed");
   eq(second.keep, ids(4), "all four simply kept");
+});
+
+check("one camera or four-up opens full quality; nine and sixteen up open the substream", () => {
+  eq(liveQuality(gridShape("1x1")), "mainstream", "1x1");
+  eq(liveQuality(gridShape("2x2")), "mainstream", "2x2");
+  eq(liveQuality(gridShape("3x3")), "substream", "3x3");
+  eq(liveQuality(gridShape("4x4")), "substream", "4x4");
 });
 
 report("gridLayout");

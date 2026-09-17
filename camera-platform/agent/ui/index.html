@@ -48,7 +48,14 @@
     cursor: pointer;
   }
   .controls button:disabled { opacity: 0.4; cursor: default; }
-  .controls .layout-btn.active { background: #3f6ea8; border-color: #5b8fd0; }
+  .controls select {
+    padding: 5px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font-size: 15px;
+  }
   .controls #pageLabel { margin: 0 4px; color: #9aa0a6; }
   .controls #fullscreen { margin-left: auto; }
 
@@ -201,7 +208,7 @@ function scheduleReconnect(t, reason, label) {
  * The wall asks for a stream. It hands us the cell body to draw into and
  * nothing else -- it does not know what a socket is.
  */
-function openStream(cameraId, body) {
+function openStream(cameraId, body, shape) {
   const video = document.createElement('video');
   video.muted = true; // autoplay policies require muted for unattended pages
   video.playsInline = true;
@@ -211,17 +218,50 @@ function openStream(cameraId, body) {
   status.className = 'status';
   body.append(video, status);
 
-  const t = { cameraId, body, video, statusEl: status, quality: 'substream', attempt: 0, retryTimer: null, fatal: false };
+  const quality = shape ? gridMaths.liveQuality(shape) : 'substream';
+  const t = { cameraId, body, video, statusEl: status, quality, attempt: 0, retryTimer: null, fatal: false,
+    picked: false, mainUnplayable: null };
   streams.set(cameraId, t);
+  listenForTap(t, body);
+  connect(t, quality);
+}
 
-  // Tap toggles between the camera's sub and main stream. It no longer resizes
-  // anything: the grid is the wall's business now, and a tap that silently
-  // changed the layout would fight the layout buttons.
+// Tap toggles between the camera's sub and main stream. It no longer resizes
+// anything: the grid is the wall's business now, and a tap that silently
+// changed the layout would fight the layout buttons. A tap is a choice the
+// layout no longer overrides.
+function listenForTap(t, body) {
   body.addEventListener('click', () => {
+    if (streams.get(t.cameraId) !== t || t.body !== body) return; // a cell this tile has left
+    t.picked = true;
+    if (t.quality === 'substream' && t.mainUnplayable) {
+      setStatus(t, playingLabel(t));
+      return;
+    }
     connect(t, t.quality === 'substream' ? 'mainstream' : 'substream');
   });
+}
 
-  connect(t, 'substream');
+/** The wall redrew and this camera stayed: move it into its new cell. */
+function moveStream(cameraId, body, shape) {
+  const t = streams.get(cameraId);
+  if (!t || !body) return;
+  t.body = body;
+  body.append(t.video, t.statusEl);
+  listenForTap(t, body);
+  const wanted = gridMaths.liveQuality(shape);
+  if (!t.picked && wanted !== t.quality && !(wanted === 'mainstream' && t.mainUnplayable)) {
+    connect(t, wanted);
+    return;
+  }
+  // Leaving the document paused it.
+  t.video.play().catch(() => { /* autoplay refused; the status says live */ });
+}
+
+function playingLabel(t) {
+  return t.quality === 'substream' && t.mainUnplayable
+    ? 'live (substream) — full quality is ' + t.mainUnplayable + ', which this browser cannot play'
+    : 'live (' + t.quality + ')';
 }
 
 /** The wall says this camera is off screen. Release everything it holds. */
@@ -260,6 +300,7 @@ const wall = createWall({
   grid: gridMaths,
   openStream,
   closeStream,
+  moveStream,
   storage: safeStorage(),
 });
 
@@ -365,7 +406,7 @@ function handleControl(t, env) {
   if (env.ok === false && env.code === 'substream_unavailable') {
     // The camera cannot serve the substream: retry mainstream exactly once,
     // automatically (spec default). A second failure surfaces as a refusal.
-    if (!t.retryMainstream) {
+    if (!t.retryMainstream && !t.mainUnplayable) {
       t.retryMainstream = true;
       connect(t, 'mainstream');
     } else {
@@ -407,6 +448,16 @@ function handleInit(t, initSegment) {
     return;
   }
   if (!MediaSource.isTypeSupported(codec.mime)) {
+    const codecText = codec.mime.replace('video/mp4; codecs="', '').replace('"', '');
+    // Full quality the browser cannot play (usually H.265) falls back to the
+    // substream once, and the tile says why; a blank tile would read as a dead
+    // camera. mainUnplayable outlives connect() so it cannot ping-pong.
+    if (t.quality === 'mainstream' && !t.mainUnplayable) {
+      t.mainUnplayable = codecText;
+      t.fatal = true;
+      connect(t, 'substream');
+      return;
+    }
     // Say it out loud in the tile — HEVC needs hardware decode; never silently
     // black-frame.
     setStatus(t, 'this browser cannot decode this camera’s codec (' +
@@ -426,7 +477,7 @@ function handleInit(t, initSegment) {
   t.mediaSource = ms;
   t.objectUrl = URL.createObjectURL(ms);
   video.src = t.objectUrl;
-  video.addEventListener('playing', () => { t.attempt = 0; setStatus(t, 'live (' + t.quality + ')'); }, { once: true });
+  video.addEventListener('playing', () => { t.attempt = 0; setStatus(t, playingLabel(t)); }, { once: true });
   video.addEventListener('error', () => {
     const code = video.error ? video.error.code : 0;
     setStatus(t, 'video element error ' + code + ' (1 aborted, 2 network, 3 decode, 4 src not supported)', 'problem');

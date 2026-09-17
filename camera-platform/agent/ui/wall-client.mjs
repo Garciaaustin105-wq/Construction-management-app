@@ -10,6 +10,7 @@
  */
 
 const LAYOUT_KEY = "camplat.wall.layout";
+const TOUR = "tour";
 
 export function createWall(options) {
   const doc = options.doc;
@@ -18,7 +19,13 @@ export function createWall(options) {
   const grid = options.grid;
   const openStream = options.openStream;
   const closeStream = options.closeStream;
+  // Optional: a stream that stays on screen across a redraw is handed its new
+  // cell, or it keeps playing into a cell that was just removed.
+  const moveStream = options.moveStream || null;
   const storage = options.storage || null;
+  // Injectable so the harness can turn the rotation by hand.
+  const timers = options.timers || globalThis;
+  const tourMs = options.tourMs || 10000;
 
   let devices = [];
   // Prototype-less, because these are keyed by installer-supplied ids: on a
@@ -27,6 +34,12 @@ export function createWall(options) {
   let deviceIndex = Object.create(null);
   const chosenStream = Object.create(null);
   let layout = options.layout || readStoredLayout() || "2x2";
+  // "tour" is not a shape: it is 1x1 with the page turning itself, for a TV
+  // nobody is standing at. It is remembered like a layout so it survives a
+  // power cut.
+  let touring = layout === TOUR;
+  if (touring) layout = "1x1";
+  let tourTimer = null;
   let pageIndex = 0;
   let pageCount = 1;
   let streaming = [];
@@ -58,7 +71,7 @@ export function createWall(options) {
   function rememberLayout() {
     if (!storage) return;
     try {
-      storage.setItem(LAYOUT_KEY, layout);
+      storage.setItem(LAYOUT_KEY, touring ? TOUR : layout);
     } catch (err) {
       // a wall with no storage still has to show cameras
     }
@@ -153,17 +166,27 @@ export function createWall(options) {
 
   function renderControls(page) {
     emptyEl(controlsRoot);
-    // Generated from GRID_SHAPES -- a hardcoded list would drift from gridPage.
+    // One dropdown, not a row of buttons. Options are generated from
+    // GRID_SHAPES -- a hardcoded list would drift from gridPage.
+    const select = doc.createElement("select");
+    select.id = "layoutSelect";
+    select.className = "layout-select";
     const shapes = grid.GRID_SHAPES;
+    const addOption = (value, text) => {
+      const option = doc.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      option.selected = touring ? value === TOUR : value === layout;
+      select.appendChild(option);
+    };
     for (let i = 0; i < shapes.length; i++) {
       const shape = shapes[i];
-      const button = doc.createElement("button");
-      button.className = shape.id === layout ? "layout-btn active" : "layout-btn";
-      button.textContent = shape.id;
-      button.dataset.layout = shape.id;
-      button.addEventListener("click", () => setLayout(shape.id));
-      controlsRoot.appendChild(button);
+      addOption(shape.id, shape.cells === 1 ? "1 camera" : shape.cells + " cameras (" + shape.id + ")");
     }
+    addOption(TOUR, "Rotate cameras, one at a time");
+    select.value = touring ? TOUR : layout;
+    select.addEventListener("change", () => setLayout(select.value));
+    controlsRoot.appendChild(select);
     const prev = barButton("prevPage", "Prev", () => prevPage());
     const next = barButton("nextPage", "Next", () => nextPage());
     // A wall with one page must not offer a page turn that does nothing.
@@ -225,7 +248,12 @@ export function createWall(options) {
       closeStream(plan.close[i]);
     }
     for (let i = 0; i < plan.open.length; i++) {
-      openStream(plan.open[i], bodyForId[plan.open[i]]);
+      openStream(plan.open[i], bodyForId[plan.open[i]], shape);
+    }
+    if (moveStream) {
+      for (let i = 0; i < plan.keep.length; i++) {
+        moveStream(plan.keep[i], bodyForId[plan.keep[i]], shape);
+      }
     }
     // plan.keep streams never left the wall -- reopening one would cost a
     // black tile and a keyframe wait on every single page turn.
@@ -244,11 +272,22 @@ export function createWall(options) {
   }
 
   function setLayout(id) {
-    // An unknown id would desync the buttons from the layout gridPage draws.
-    if (!shapeFor(id)) return;
-    layout = id;
+    // An unknown id would desync the dropdown from the layout gridPage draws.
+    if (id !== TOUR && !shapeFor(id)) return;
+    touring = id === TOUR;
+    layout = touring ? "1x1" : id;
+    if (touring) pageIndex = 0;
     rememberLayout();
+    syncTour();
     render();
+  }
+
+  function syncTour() {
+    if (tourTimer !== null) {
+      timers.clearInterval(tourTimer);
+      tourTimer = null;
+    }
+    if (touring) tourTimer = timers.setInterval(() => nextPage(), tourMs);
   }
 
   function setPage(n) {
@@ -289,11 +328,14 @@ export function createWall(options) {
       layout: layout,
       pageIndex: pageIndex,
       pageCount: pageCount,
+      touring: touring,
       streaming: streaming.slice()
     };
   }
 
   function destroy() {
+    touring = false;
+    syncTour();
     for (let i = 0; i < streaming.length; i++) {
       closeStream(streaming[i]);
     }
@@ -307,6 +349,7 @@ export function createWall(options) {
     layout = "2x2";
   }
 
+  syncTour();
   render();
 
   return {

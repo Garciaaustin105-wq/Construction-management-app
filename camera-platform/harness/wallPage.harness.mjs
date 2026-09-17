@@ -165,16 +165,19 @@ function makeWall(opts = {}) {
     gridRoot,
     controlsRoot,
     grid,
-    openStream: (cameraId, body) => calls.push({ op: "open", cameraId, body }),
+    openStream: (cameraId, body, shape) => calls.push({ op: "open", cameraId, body, shape }),
+    moveStream: (cameraId, body, shape) => calls.push({ op: "move", cameraId, body, shape }),
     closeStream: (cameraId) => calls.push({ op: "close", cameraId }),
     storage: opts.storage,
     layout: opts.layout,
+    timers: opts.timers,
   });
   if (opts.devices) wall.setDevices(opts.devices);
   return { wall, gridRoot, controlsRoot, calls };
 }
 const opened = (calls) => calls.filter((c) => c.op === "open").map((c) => c.cameraId);
 const closed = (calls) => calls.filter((c) => c.op === "close").map((c) => c.cameraId);
+const sockets = (calls) => calls.filter((c) => c.op !== "move");
 
 /* ------------------------------------------------------------------ */
 
@@ -250,20 +253,80 @@ check("a stream is closed before its replacement is opened", () => {
   eq(opened(calls), ["cam5", "cam6", "cam7", "cam8"], "page 2's opened");
 });
 
-check("the layout buttons come from the contract, not a hardcoded list", () => {
+const layoutSelect = (root) => {
+  const found = withClass(root, "layout-select");
+  eq(found.length, 1, "ONE layout control, not a row of buttons");
+  return found[0];
+};
+
+check("the layout dropdown comes from the contract, plus the rotation", () => {
   const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
-  const btns = withClass(controlsRoot, "layout-btn");
-  eq(btns.map((b) => b.textContent), grid.GRID_SHAPES.map((s) => s.id), "one per shape, in order");
-  eq(btns.filter((b) => b.classList.contains("active")).map((b) => b.textContent), ["2x2"],
-    "exactly one marked active, and it is the current one");
+  const select = layoutSelect(controlsRoot);
+  eq(select.children.map((o) => o.value), grid.GRID_SHAPES.map((s) => s.id).concat(["tour"]), "one per shape, in order");
+  eq(select.children.filter((o) => o.selected).map((o) => o.value), ["2x2"], "exactly one selected, the current one");
+  eq(select.children.find((o) => o.value === "4x4").textContent, "16 cameras (4x4)", "says how many it shows");
 });
 
-check("a layout button changes the wall", () => {
+check("picking from the dropdown changes the wall", () => {
   const { wall, controlsRoot, gridRoot } = makeWall({ layout: "2x2", devices: devices(9) });
-  const btn = withClass(controlsRoot, "layout-btn").find((b) => b.textContent === "3x3");
-  btn.fire("click");
+  const select = layoutSelect(controlsRoot);
+  select.value = "3x3";
+  select.fire("change");
   eq(wall.state().layout, "3x3", "layout changed");
   eq(withClass(gridRoot, "cell").length, 9, "and the wall redrew");
+});
+
+check("sixteen cameras on 4x4 are all on screen at once", () => {
+  const { wall, calls, gridRoot } = makeWall({ layout: "2x2", devices: devices(16) });
+  calls.length = 0;
+  wall.setLayout("4x4");
+  eq(withClass(gridRoot, "cell-empty").length, 0, "no empty cells");
+  eq(wall.state().pageCount, 1, "one page");
+  eq(opened(calls).length + calls.filter((c) => c.op === "move").length, 16, "sixteen live");
+});
+
+function fakeTimers() {
+  const live = new Map();
+  let next = 1;
+  return {
+    setInterval: (fn, ms) => { live.set(next, { fn, ms }); return next++; },
+    clearInterval: (id) => { live.delete(id); },
+    tick() { for (const { fn } of [...live.values()]) fn(); },
+    get count() { return live.size; },
+  };
+}
+
+check("rotation shows one camera at a time and turns by itself, and stops when you pick a grid", () => {
+  const timers = fakeTimers();
+  const { wall, calls } = makeWall({ layout: "2x2", devices: devices(3), timers });
+  eq(timers.count, 0, "a grid does not rotate");
+  wall.setLayout("tour");
+  eq(wall.state().layout, "1x1", "one camera");
+  eq(wall.state().touring, true, "rotating");
+  eq(timers.count, 1, "one timer, not one per redraw");
+  calls.length = 0;
+  timers.tick();
+  eq(wall.state().pageIndex, 1, "moved on");
+  eq(opened(calls), ["cam2"], "to the next camera");
+  eq(closed(calls), ["cam1"], "and let the last one go");
+  timers.tick(); timers.tick();
+  eq(wall.state().pageIndex, 0, "and wraps back to the first");
+  wall.setLayout("3x3");
+  eq(timers.count, 0, "a grid stops the rotation");
+  wall.setLayout("tour");
+  wall.destroy();
+  eq(timers.count, 0, "destroy stops it too");
+});
+
+check("rotation survives a power cut", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
+  makeWall({ layout: "2x2", devices: devices(3), storage, timers: fakeTimers() }).wall.setLayout("tour");
+  const timers = fakeTimers();
+  const { wall } = makeWall({ devices: devices(3), storage, timers });
+  eq(wall.state().touring, true, "still rotating");
+  eq(wall.state().layout, "1x1", "one at a time");
+  eq(timers.count, 1, "and the timer is running");
 });
 
 check("the page label counts from one, and is drawn even on a single page", () => {
@@ -410,7 +473,8 @@ check("redrawing the same wall twice changes no sockets", () => {
   const { wall, calls } = makeWall({ layout: "2x2", devices: devices(4) });
   calls.length = 0;
   wall.setPage(0);
-  eq(calls, [], "no socket touched at all");
+  // A move hands a kept stream its redrawn cell; it opens and closes nothing.
+  eq(sockets(calls), [], "no socket touched at all");
 });
 
 check("a camera that resolved to no streams at all is a cell, not a phantom socket", () => {
@@ -426,7 +490,21 @@ check("a camera that resolved to no streams at all is a cell, not a phantom sock
   eq(wall.state().streaming, ["lot-1"], "and nothing nameless is remembered as live");
   calls.length = 0;
   wall.setPage(0);
-  eq(calls, [], "redrawing must not close a stream that was never opened");
+  eq(sockets(calls), [], "redrawing must not close a stream that was never opened");
+});
+
+check("a camera kept across a layout change is handed its new cell and shape", () => {
+  const { wall, gridRoot, calls } = makeWall({ layout: "2x2", devices: devices(1) });
+  const first = calls.find((c) => c.op === "open");
+  eq(first.shape.id, "2x2", "open is told the shape it opens into");
+  calls.length = 0;
+  wall.setLayout("1x1");
+  eq(opened(calls), [], "no reopen: the camera never left the screen");
+  const moves = calls.filter((c) => c.op === "move");
+  eq(moves.length, 1, "one move");
+  eq(moves[0].shape.id, "1x1", "with the new shape");
+  if (moves[0].body === first.body) throw new Error("moved into the removed cell");
+  if (!withClass(gridRoot, "cell-body").includes(moves[0].body)) throw new Error("the new body is not on the wall");
 });
 
 check("a camera named like a JavaScript internal is still just a camera", () => {
