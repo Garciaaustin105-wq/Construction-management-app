@@ -99,7 +99,16 @@ Each stage is contract, then harness, then code, then UI.
   fixed UTC offset was an hour wrong all winter). `aiSettings.ts` holds the
   NVR-wide plate switch: off by default, no plate stored while off, an audit
   entry for every flip, and stored reads expire on schedule either way.
-  Still to do: the clip library (needs the bench camera).
+  The clip library's machinery landed on 2026-09-16 as well: `clipLibrary.ts`
+  is the answer key and its scorer — `checkLibrary` refuses a key that could
+  be wrong, `scoreLibrary` refuses to flatter a detector, and `exitGate`
+  refuses a verdict on a sample too small to support one (20 expected people,
+  an hour of empty scene). Review can save a range as a library entry
+  (`agent/clip-library.mjs`), hard-linked into `.camplat-clips` so recorder
+  eviction cannot delete the footage an answer key points at.
+  Still to do: **the clips themselves** — real footage with hand-written
+  expected events, which needs the bench camera. Until they exist the scorer
+  has nothing to score, so D1 can be built but not passed.
 
 ### D1. The detector service (laptop, CPU/GPU)
 - `camplat-detect` reads one substream, runs a permissive person/vehicle
