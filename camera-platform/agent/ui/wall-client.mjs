@@ -11,6 +11,7 @@
 
 const LAYOUT_KEY = "camplat.wall.layout";
 const TOUR = "tour";
+const QUALITY_KEY = "camplat.wall.quality";
 
 export function createWall(options) {
   const doc = options.doc;
@@ -40,6 +41,7 @@ export function createWall(options) {
   let touring = layout === TOUR;
   if (touring) layout = "1x1";
   let tourTimer = null;
+  let quality = knownQuality(options.quality) || knownQuality(readStored(QUALITY_KEY)) || "auto";
   let pageIndex = 0;
   let pageCount = 1;
   let streaming = [];
@@ -59,11 +61,23 @@ export function createWall(options) {
   }
 
   function readStoredLayout() {
+    return readStored(LAYOUT_KEY);
+  }
+
+  function readStored(key) {
     if (!storage) return null;
     try {
-      return storage.getItem(LAYOUT_KEY);
+      return storage.getItem(key);
     } catch (err) {
       // a wall with no storage still has to show cameras
+    }
+    return null;
+  }
+
+  function knownQuality(id) {
+    const choices = grid.LIVE_QUALITY_CHOICES;
+    for (let i = 0; i < choices.length; i++) {
+      if (choices[i].id === id) return id;
     }
     return null;
   }
@@ -187,6 +201,20 @@ export function createWall(options) {
     select.value = touring ? TOUR : layout;
     select.addEventListener("change", () => setLayout(select.value));
     controlsRoot.appendChild(select);
+    const qualitySelect = doc.createElement("select");
+    qualitySelect.id = "qualitySelect";
+    qualitySelect.className = "quality-select";
+    const choices = grid.LIVE_QUALITY_CHOICES;
+    for (let i = 0; i < choices.length; i++) {
+      const option = doc.createElement("option");
+      option.value = choices[i].id;
+      option.textContent = choices[i].label;
+      option.selected = choices[i].id === quality;
+      qualitySelect.appendChild(option);
+    }
+    qualitySelect.value = quality;
+    qualitySelect.addEventListener("change", () => setQuality(qualitySelect.value));
+    controlsRoot.appendChild(qualitySelect);
     const prev = barButton("prevPage", "Prev", () => prevPage());
     const next = barButton("nextPage", "Next", () => nextPage());
     // A wall with one page must not offer a page turn that does nothing.
@@ -248,11 +276,11 @@ export function createWall(options) {
       closeStream(plan.close[i]);
     }
     for (let i = 0; i < plan.open.length; i++) {
-      openStream(plan.open[i], bodyForId[plan.open[i]], shape);
+      openStream(plan.open[i], bodyForId[plan.open[i]], shape, quality);
     }
     if (moveStream) {
       for (let i = 0; i < plan.keep.length; i++) {
-        moveStream(plan.keep[i], bodyForId[plan.keep[i]], shape);
+        moveStream(plan.keep[i], bodyForId[plan.keep[i]], shape, quality);
       }
     }
     // plan.keep streams never left the wall -- reopening one would cost a
@@ -279,6 +307,19 @@ export function createWall(options) {
     if (touring) pageIndex = 0;
     rememberLayout();
     syncTour();
+    render();
+  }
+
+  function setQuality(id) {
+    if (!knownQuality(id)) return;
+    quality = id;
+    if (storage) {
+      try {
+        storage.setItem(QUALITY_KEY, quality);
+      } catch (err) {
+        // a wall with no storage still has to show cameras
+      }
+    }
     render();
   }
 
@@ -329,6 +370,7 @@ export function createWall(options) {
       pageIndex: pageIndex,
       pageCount: pageCount,
       touring: touring,
+      quality: quality,
       streaming: streaming.slice()
     };
   }
@@ -355,6 +397,7 @@ export function createWall(options) {
   return {
     setDevices: setDevices,
     setLayout: setLayout,
+    setQuality: setQuality,
     setPage: setPage,
     nextPage: nextPage,
     prevPage: prevPage,

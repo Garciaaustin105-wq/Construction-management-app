@@ -165,8 +165,8 @@ function makeWall(opts = {}) {
     gridRoot,
     controlsRoot,
     grid,
-    openStream: (cameraId, body, shape) => calls.push({ op: "open", cameraId, body, shape }),
-    moveStream: (cameraId, body, shape) => calls.push({ op: "move", cameraId, body, shape }),
+    openStream: (cameraId, body, shape, quality) => calls.push({ op: "open", cameraId, body, shape, quality }),
+    moveStream: (cameraId, body, shape, quality) => calls.push({ op: "move", cameraId, body, shape, quality }),
     closeStream: (cameraId) => calls.push({ op: "close", cameraId }),
     storage: opts.storage,
     layout: opts.layout,
@@ -316,6 +316,33 @@ check("rotation shows one camera at a time and turns by itself, and stops when y
   wall.setLayout("tour");
   wall.destroy();
   eq(timers.count, 0, "destroy stops it too");
+});
+
+check("the quality menu is Auto, High, Low -- and a choice reaches every camera on screen", () => {
+  const { wall, controlsRoot, calls } = makeWall({ layout: "2x2", devices: devices(3) });
+  const found = withClass(controlsRoot, "quality-select");
+  eq(found.length, 1, "one quality menu");
+  eq(found[0].children.map((o) => o.value), ["auto", "high", "low"], "no medium it cannot deliver");
+  eq(found[0].children.filter((o) => o.selected).map((o) => o.value), ["auto"], "auto by default");
+  eq(calls.filter((c) => c.op === "open").map((c) => c.quality), ["auto", "auto", "auto"], "opened on auto");
+  calls.length = 0;
+  const select = withClass(controlsRoot, "quality-select")[0];
+  select.value = "low";
+  select.fire("change");
+  eq(wall.state().quality, "low", "changed");
+  eq(sockets(calls), [], "the wall reopens nothing itself");
+  eq(calls.filter((c) => c.op === "move").map((c) => c.quality), ["low", "low", "low"], "every camera told");
+  wall.setQuality("medium");
+  eq(wall.state().quality, "low", "an unknown choice is ignored");
+});
+
+check("the quality choice survives a power cut, and a junk stored value is auto", () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
+  makeWall({ devices: devices(1), storage }).wall.setQuality("high");
+  eq(makeWall({ devices: devices(1), storage }).wall.state().quality, "high", "remembered");
+  store.set("camplat.wall.quality", "ultra");
+  eq(makeWall({ devices: devices(1), storage }).wall.state().quality, "auto", "junk is auto");
 });
 
 check("rotation survives a power cut", () => {

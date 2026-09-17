@@ -160,6 +160,22 @@ export function cellAspectRatio(_shape: GridShape): string {
  * the mainstream is decode the browser cannot keep up with across the wall,
  * and the tile is too small to show the difference. A tap still overrides.
  */
-export function liveQuality(shape: GridShape): "mainstream" | "substream" {
+export function liveQuality(
+  shape: GridShape,
+  preference: LiveQualityPreference = "auto",
+): "mainstream" | "substream" {
+  if (preference === "high") return "mainstream";
+  if (preference === "low") return "substream";
   return shape.cells <= 4 ? "mainstream" : "substream";
 }
+
+/**
+ * The wall's quality menu. There is no "medium": a camera hands us two streams,
+ * and a third label would be one of those two under a name that promises more.
+ */
+export type LiveQualityPreference = "auto" | "high" | "low";
+export const LIVE_QUALITY_CHOICES: readonly { id: LiveQualityPreference; label: string }[] = Object.freeze([
+  Object.freeze({ id: "auto", label: "Quality: Auto" }),
+  Object.freeze({ id: "high", label: "Quality: High" }),
+  Object.freeze({ id: "low", label: "Quality: Low" }),
+]);

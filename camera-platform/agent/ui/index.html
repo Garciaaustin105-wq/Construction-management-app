@@ -208,7 +208,7 @@ function scheduleReconnect(t, reason, label) {
  * The wall asks for a stream. It hands us the cell body to draw into and
  * nothing else -- it does not know what a socket is.
  */
-function openStream(cameraId, body, shape) {
+function openStream(cameraId, body, shape, preference) {
   const video = document.createElement('video');
   video.muted = true; // autoplay policies require muted for unattended pages
   video.playsInline = true;
@@ -218,9 +218,9 @@ function openStream(cameraId, body, shape) {
   status.className = 'status';
   body.append(video, status);
 
-  const quality = shape ? gridMaths.liveQuality(shape) : 'substream';
+  const quality = shape ? gridMaths.liveQuality(shape, preference) : 'substream';
   const t = { cameraId, body, video, statusEl: status, quality, attempt: 0, retryTimer: null, fatal: false,
-    picked: false, mainUnplayable: null };
+    picked: false, wanted: quality, mainUnplayable: null };
   streams.set(cameraId, t);
   listenForTap(t, body);
   connect(t, quality);
@@ -243,13 +243,16 @@ function listenForTap(t, body) {
 }
 
 /** The wall redrew and this camera stayed: move it into its new cell. */
-function moveStream(cameraId, body, shape) {
+function moveStream(cameraId, body, shape, preference) {
   const t = streams.get(cameraId);
   if (!t || !body) return;
   t.body = body;
   body.append(t.video, t.statusEl);
   listenForTap(t, body);
-  const wanted = gridMaths.liveQuality(shape);
+  const wanted = gridMaths.liveQuality(shape, preference);
+  // A new layout or a new menu choice outranks an earlier tap.
+  if (wanted !== t.wanted) t.picked = false;
+  t.wanted = wanted;
   if (!t.picked && wanted !== t.quality && !(wanted === 'mainstream' && t.mainUnplayable)) {
     connect(t, wanted);
     return;
