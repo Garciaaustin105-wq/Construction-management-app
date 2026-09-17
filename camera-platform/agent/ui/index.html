@@ -56,6 +56,25 @@
     color: #e8eaed;
     font-size: 15px;
   }
+  /* The layout picker: a box per camera the layout shows, so it reads at a
+     glance from across a room instead of having to be decoded. */
+  .controls .layout-picker { display: flex; align-items: center; gap: 6px; }
+  .controls .layout-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    cursor: pointer;
+  }
+  .controls .layout-button-on { border-color: #8ab4f8; background: #33415c; }
+  .layout-icon { display: grid; gap: 2px; width: 26px; height: 26px; }
+  .layout-icon-box { background: #e8eaed; border-radius: 1px; }
+  .layout-icon-box-off { background: #8b9099; }
   .controls #pageLabel { margin: 0 4px; color: #9aa0a6; }
   .controls #fullscreen { margin-left: auto; }
 

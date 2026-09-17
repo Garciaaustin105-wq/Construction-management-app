@@ -178,29 +178,69 @@ export function createWall(options) {
     return button;
   }
 
+  /**
+   * A picture of a layout: a small grid with one box per camera it shows.
+   * Drawn from the shape's own columns and rows, so a shape added to the
+   * contract gets a correct icon without anybody drawing one -- an icon that
+   * disagrees with the layout it picks is a picture that lies, and nobody
+   * would think to check it.
+   */
+  function layoutIcon(columns, rows, cells) {
+    const icon = doc.createElement("span");
+    icon.className = "layout-icon";
+    icon.style.gridTemplateColumns = "repeat(" + columns + ", 1fr)";
+    icon.style.gridTemplateRows = "repeat(" + rows + ", 1fr)";
+    for (let i = 0; i < cells; i++) {
+      const box = doc.createElement("span");
+      box.className = "layout-icon-box";
+      icon.appendChild(box);
+    }
+    return icon;
+  }
+
+  /**
+   * One layout to tap. The icon carries the meaning and the label carries it
+   * for anyone who cannot see the icon, so the words are never dropped -- they
+   * move to title and aria-label.
+   */
+  function layoutButton(value, label, icon, current) {
+    const button = doc.createElement("button");
+    button.className = current ? "layout-button layout-button-on" : "layout-button";
+    button.value = value;
+    button.title = label;
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", current ? "true" : "false");
+    button.appendChild(icon);
+    button.addEventListener("click", () => setLayout(value));
+    return button;
+  }
+
   function renderControls(page) {
     emptyEl(controlsRoot);
-    // One dropdown, not a row of buttons. Options are generated from
-    // GRID_SHAPES -- a hardcoded list would drift from gridPage.
-    const select = doc.createElement("select");
-    select.id = "layoutSelect";
-    select.className = "layout-select";
+    // Layouts are shown, not named: "3x3" is a word to decode, and this is read
+    // from across a room. Generated from GRID_SHAPES -- a hardcoded list would
+    // drift from gridPage.
+    const picker = doc.createElement("div");
+    picker.id = "layoutPicker";
+    picker.className = "layout-picker";
     const shapes = grid.GRID_SHAPES;
-    const addOption = (value, text) => {
-      const option = doc.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      option.selected = touring ? value === TOUR : value === layout;
-      select.appendChild(option);
-    };
     for (let i = 0; i < shapes.length; i++) {
       const shape = shapes[i];
-      addOption(shape.id, shape.cells === 1 ? "1 camera" : shape.cells + " cameras (" + shape.id + ")");
+      picker.appendChild(layoutButton(
+        shape.id,
+        shape.cells === 1 ? "1 camera" : shape.cells + " cameras (" + shape.id + ")",
+        layoutIcon(shape.columns, shape.rows, shape.cells),
+        !touring && shape.id === layout,
+      ));
     }
-    addOption(TOUR, "Rotate cameras, one at a time");
-    select.value = touring ? TOUR : layout;
-    select.addEventListener("change", () => setLayout(select.value));
-    controlsRoot.appendChild(select);
+    // Rotation is one camera lit out of four, because that is what it does.
+    const tourIcon = layoutIcon(2, 2, 4);
+    for (let i = 1; i < tourIcon.children.length; i++) {
+      tourIcon.children[i].className = "layout-icon-box layout-icon-box-off";
+    }
+    picker.appendChild(layoutButton(TOUR, "Rotate cameras, one at a time", tourIcon, touring));
+    controlsRoot.appendChild(picker);
     const qualitySelect = doc.createElement("select");
     qualitySelect.id = "qualitySelect";
     qualitySelect.className = "quality-select";

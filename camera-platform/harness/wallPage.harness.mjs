@@ -49,6 +49,7 @@ class FakeEl {
     this.id = "";
     this._text = "";
     this._listeners = new Map();
+    this._attrs = new Map();
   }
   set innerHTML(_) {
     // An installer can name a camera "<img src=x onerror=...>". A page that
@@ -105,6 +106,12 @@ class FakeEl {
         else this.add(n);
       },
     };
+  }
+  setAttribute(name, value) {
+    this._attrs.set(String(name), String(value));
+  }
+  getAttribute(name) {
+    return this._attrs.has(String(name)) ? this._attrs.get(String(name)) : null;
   }
   addEventListener(type, fn) {
     const list = this._listeners.get(type) ?? [];
@@ -253,25 +260,54 @@ check("a stream is closed before its replacement is opened", () => {
   eq(opened(calls), ["cam5", "cam6", "cam7", "cam8"], "page 2's opened");
 });
 
-const layoutSelect = (root) => {
-  const found = withClass(root, "layout-select");
-  eq(found.length, 1, "ONE layout control, not a row of buttons");
+const layoutPicker = (root) => {
+  const found = withClass(root, "layout-picker");
+  eq(found.length, 1, "ONE layout control");
   return found[0];
 };
 
-check("the layout dropdown comes from the contract, plus the rotation", () => {
+check("the layout buttons come from the contract, plus the rotation", () => {
   const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
-  const select = layoutSelect(controlsRoot);
-  eq(select.children.map((o) => o.value), grid.GRID_SHAPES.map((s) => s.id).concat(["tour"]), "one per shape, in order");
-  eq(select.children.filter((o) => o.selected).map((o) => o.value), ["2x2"], "exactly one selected, the current one");
-  eq(select.children.find((o) => o.value === "4x4").textContent, "16 cameras (4x4)", "says how many it shows");
+  const picker = layoutPicker(controlsRoot);
+  eq(picker.children.map((b) => b.value), grid.GRID_SHAPES.map((s) => s.id).concat(["tour"]), "one per shape, in order");
+  eq(picker.children.filter((b) => b.classList.contains("layout-button-on")).map((b) => b.value),
+    ["2x2"], "exactly one marked, the current one");
+  eq(picker.children.map((b) => b.getAttribute("aria-pressed")),
+    ["false", "true", "false", "false", "false"], "and it says so out loud");
 });
 
-check("picking from the dropdown changes the wall", () => {
+check("THE FEARED ONE: an icon draws the layout it actually picks", () => {
+  // An icon that disagrees with its layout is a picture that lies, and nobody
+  // would think to check it against the contract.
+  const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
+  const picker = layoutPicker(controlsRoot);
+  for (const shape of grid.GRID_SHAPES) {
+    const button = picker.children.find((b) => b.value === shape.id);
+    const icon = button.children[0];
+    eq(icon.children.length, shape.cells, shape.id + ": one box per camera it shows");
+    eq(icon.style.gridTemplateColumns, "repeat(" + shape.columns + ", 1fr)", shape.id + ": columns");
+    eq(icon.style.gridTemplateRows, "repeat(" + shape.rows + ", 1fr)", shape.id + ": rows");
+  }
+  // Rotation is one lit box out of four: one camera at a time, from many.
+  const tour = picker.children.find((b) => b.value === "tour");
+  eq(tour.children[0].children.map((c) => c.className),
+    ["layout-icon-box", "layout-icon-box layout-icon-box-off",
+      "layout-icon-box layout-icon-box-off", "layout-icon-box layout-icon-box-off"], "one lit, three dim");
+});
+
+check("the words are not lost with the dropdown: every button still says what it is", () => {
+  const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
+  const picker = layoutPicker(controlsRoot);
+  const labels = picker.children.map((b) => b.getAttribute("aria-label"));
+  eq(labels, ["1 camera", "4 cameras (2x2)", "9 cameras (3x3)", "16 cameras (4x4)",
+    "Rotate cameras, one at a time"], "every layout names itself for anyone who cannot see the icon");
+  eq(picker.children.map((b) => b.title), labels, "and on hover");
+});
+
+check("tapping a layout button changes the wall", () => {
   const { wall, controlsRoot, gridRoot } = makeWall({ layout: "2x2", devices: devices(9) });
-  const select = layoutSelect(controlsRoot);
-  select.value = "3x3";
-  select.fire("change");
+  const picker = layoutPicker(controlsRoot);
+  picker.children.find((b) => b.value === "3x3").fire("click");
   eq(wall.state().layout, "3x3", "layout changed");
   eq(withClass(gridRoot, "cell").length, 9, "and the wall redrew");
 });
