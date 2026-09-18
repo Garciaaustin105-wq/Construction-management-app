@@ -12,6 +12,7 @@ STATE_DIR="${CAMPLAT_STATE_DIR:-/var/lib/camplat}"
 STORE_ROOTS="${CAMPLAT_STORE_ROOTS:-/srv/camplat/disk0,/srv/camplat/disk1}"
 APP_DIR="${CAMPLAT_APP_DIR:-/opt/camplat}"
 RUN_USER="${CAMPLAT_USER:-camplat}"
+TRUSTED_KEYS="${CAMPLAT_TRUSTED_KEYS:-/etc/camplat/trusted-keys.json}"
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m!! %s\033[0m\n' "$*"; }
@@ -24,6 +25,22 @@ if [[ -n "$RELEASE" ]]; then
 elif [[ ! -f "$APP_DIR/VERSION" ]]; then
   echo "usage: install.sh camplat-<commit>.tar.gz   (build it on the dev machine: node setup/release.mjs)"
   exit 1
+fi
+
+# Cheap check before anything is installed: a box with no trust anchor refuses
+# every upgrade (the safe failure), so an install that would leave it
+# anchorless is a mistake worth catching in the first second. setup/trust-anchor.sh
+# does the full work once node is available.
+if [[ ! -f "$TRUSTED_KEYS" && -z "${CAMPLAT_TRUSTED_KEYS_SOURCE:-}" && "${CAMPLAT_BOOTSTRAP:-}" != "1" ]]; then
+  echo "no trust anchor at $TRUSTED_KEYS, and no keys given" >&2
+  echo "a recorder with no anchor installs nothing, rather than installing anything:" >&2
+  echo "pass the public keys with CAMPLAT_TRUSTED_KEYS_SOURCE=<file>, or set" >&2
+  echo "CAMPLAT_BOOTSTRAP=1 to install without one on purpose (upgrades stay" >&2
+  echo "refused until an anchor is placed)." >&2
+  exit 1
+fi
+if [[ "${CAMPLAT_BOOTSTRAP:-}" == "1" ]]; then
+  warn "CAMPLAT_BOOTSTRAP=1: this install carries no trust anchor; every upgrade will be refused until one is placed"
 fi
 
 say "Packages"
@@ -42,6 +59,14 @@ fi
 NODE_BIN="$(command -v node)"
 "$NODE_BIN" -v
 node -e "require('node:sqlite')" >/dev/null 2>&1 || { echo "node at $NODE_BIN has no node:sqlite — the recorder index needs it"; exit 1; }
+
+say "Trust anchor"
+# The public keys an appliance installs releases against. They live OUTSIDE the
+# program, so a forged release cannot bring its own; without them every
+# upgrade is refused, so this is the step that makes the box upgradable.
+# trust-anchor.sh places, keeps, or refuses, and says which.
+CAMPLAT_APP_DIR="$APP_DIR" NODE_BIN="$NODE_BIN" \
+  bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/trust-anchor.sh"
 
 say "User and directories"
 id -u "$RUN_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$RUN_USER"

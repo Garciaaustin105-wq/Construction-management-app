@@ -26,7 +26,9 @@ clean. `camera-platform` has no `package.json`; do not run a bare `npx tsc`.
 | `setup/sign-release.mjs` | Signs the manifest bytes, Ed25519, key from `CAMPLAT_SIGNING_KEY` + `CAMPLAT_SIGNING_KEY_ID`. |
 | `agent/verify-release.mjs` | Verifies and decides. Trust anchor `/etc/camplat/trusted-keys.json`, override `CAMPLAT_TRUSTED_KEYS`. |
 | `setup/upgrade.sh` | Runs the **installed** verifier before swapping; refuses and deletes `$APP_DIR.new` on failure. |
+| `setup/trust-anchor.sh` | Places the anchor from `CAMPLAT_TRUSTED_KEYS_SOURCE`; anchorless installs refused unless `CAMPLAT_BOOTSTRAP=1`; rotation needs `CAMPLAT_TRUSTED_KEYS_FORCE=1`. Called by install.sh; harness-tested. |
 | `harness/releaseVerify.harness.mjs` | End-to-end with a throwaway generated key. 10 checks. |
+| `harness/trustAnchor.harness.mjs` | The anchor script under bash, every path, cross-checked against `readTrustedKeys`. 8 checks. |
 
 Two invariants that must not be weakened, both with checks on them:
 
@@ -43,17 +45,18 @@ Two invariants that must not be weakened, both with checks on them:
 
 ## Next, in order
 
-### 1. `setup/install.sh` must place the trust anchor
-It currently never writes `/etc/camplat/trusted-keys.json`. Without it a box has
-no anchor and `verify-release.mjs` refuses everything, which is the safe failure
-but makes upgrades impossible.
-
-- Create `/etc/camplat/` as `root:root 0755` and the file `0644`, root-owned.
-- Take the public keys from a path the installer passes
-  (`CAMPLAT_TRUSTED_KEYS_SOURCE`), never from inside the release.
-- Refuse to install with no anchor unless `CAMPLAT_BOOTSTRAP=1` is set, and say so.
-- File shape: `{"keys":[{"id":"...","publicKeyPem":"-----BEGIN PUBLIC KEY-----\n..."}]}`.
-  A key with `"revoked": true` is ignored — `readTrustedKeys` already does this.
+### 1. `setup/install.sh` must place the trust anchor — DONE 2026-09-17
+Shipped as specified above, as `setup/trust-anchor.sh`, called by install.sh
+(which gates on the anchor before apt runs, so an anchorless install is
+refused in the first second, and calls the script once node is available).
+`/etc/camplat/` is `root:root 0755`, the file `0644` root-owned, keys taken
+from `CAMPLAT_TRUSTED_KEYS_SOURCE` only — a source inside `$APP_DIR`, its
+`.new` or its `.old` is refused, so a release can never bring its own anchor.
+Rotation is the add/deploy/remove dance, and the deploy step is
+`CAMPLAT_TRUSTED_KEYS_FORCE=1`: a DIFFERENT anchor is never installed quietly.
+`harness/trustAnchor.harness.mjs` runs the script under bash with the paths
+redirected and holds its usable-key check against `readTrustedKeys`, so the
+two cannot drift. What is still true from §2: none of it has run on a real box.
 
 ### 2. Bench the whole path on the laptop NVR
 Not done, and nothing here has run against a real box.
