@@ -64,21 +64,22 @@ Generate a throwaway keypair, place the anchor, build, sign, upgrade. Then prove
 the refusals on real hardware: tamper one file, add an unlisted file, sign with
 an untrusted key, replay an older release. Record what happened in `FIELD-NOTES.md`.
 
-### 3. Document it
-`DEPLOY-SIGN-IN.md` and `setup/README.md` still describe an unsigned upgrade.
-They should state where the anchor lives, how to rotate a key (add the new id,
-deploy, then remove the old), and that `CAMPLAT_ALLOW_DOWNGRADE=1` and
-`CAMPLAT_ALLOW_DIRTY=1` exist and are deliberate human overrides.
+### 3. Document it — DONE 2026-09-17
+`DEPLOY-SIGN-IN.md` now signs the tarball in step 1 (with the key-location
+sentence), places the anchor as a one-time step 4, and carries a "Signed
+upgrades" section naming the two human overrides and the rotation dance.
+`setup/README.md` §5 names the anchor requirement, `CAMPLAT_BOOTSTRAP=1`, and
+fixes a stale "Node 22" (install.sh has installed Node 24 for a while).
+
+### 4. `APPLIANCE-BOM.md` is wrong about decoding — DONE 2026-09-17
+The "only decoding is the substream" claim corrected: decoding is the
+substream plus the nine-tile wall on the NVR's own HDMI, both on QuickSync;
+the site's other TVs are Mac Minis pulling tiles over the LAN, and serving
+those is stream-copy, so it stays cheap. The N150 conclusion kept.
 
 ---
 
 ## Next, elsewhere — larger, and independent of the above
-
-### 4. `APPLIANCE-BOM.md` is wrong about decoding
-Line 127 says *"The only decoding is the substream for detection."* That is false
-once a TV is attached: sites run 9 tiles on the NVR's own HDMI output, with other
-TVs driven by Mac Minis pulling over the LAN. Correct the claim and keep the
-conclusion honest — serving the other tiles is stream-copy and stays cheap.
 
 ### 5. The BOM must become tiers, not two models
 Bigger units are planned at 24+ cameras. The **software has no 16-camera cap** —

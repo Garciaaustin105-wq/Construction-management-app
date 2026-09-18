@@ -47,8 +47,15 @@ shape.
 sudo ./setup/install.sh
 ```
 
-Installs ffmpeg, Node 22, smartmontools, chrony and NUT; creates the service
+Installs ffmpeg, Node 24, smartmontools, chrony and NUT; creates the service
 user; writes the systemd unit; arms the watchdog.
+
+It also places the **trust anchor**: the public keys releases are signed with,
+passed as `CAMPLAT_TRUSTED_KEYS_SOURCE=<file>`. They land at
+`/etc/camplat/trusted-keys.json`, outside the program, so a forged release can
+never bring its own. Without them install.sh refuses to run unless
+`CAMPLAT_BOOTSTRAP=1` is set on purpose — a box with no anchor refuses every
+upgrade.
 
 **It does not format anything.** It prints the disk commands for you to run
 deliberately — a script that formats disks is one that eventually formats the

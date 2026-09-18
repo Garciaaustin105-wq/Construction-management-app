@@ -125,8 +125,11 @@ why fan noise in a store office is not an issue.
 ## Why this shape
 
 **The workload is trivial for the CPU and brutal for the disk.** Sixteen
-stream-copies is about half a core — we never transcode. The only decoding is
-the substream for detection, and Intel QuickSync does that in the iGPU. An N150
+stream-copies is about half a core — we never transcode. Decoding is the
+substream for detection, plus the nine-tile wall a site's own TV shows on the
+NVR's HDMI output — Intel QuickSync does both in the iGPU. The site's other
+TVs are driven by Mac Minis pulling their tiles over the LAN, and serving
+those is stream-copy, so it stays cheap. An N150
 is comfortably enough; an i3-N305/N355 buys 8 cores for ~$50 more if on-box
 analytics ever grow.
 

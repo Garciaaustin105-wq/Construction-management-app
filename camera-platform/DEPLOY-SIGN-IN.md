@@ -24,6 +24,14 @@ node harness/run-all.mjs
 node setup/release.mjs
 ```
 
+The build is UNSIGNED; the sign step is what makes it installable. The private
+key lives wherever the person holding it decided — hardware token, offline
+machine, or the build box — and nothing in this repo creates one.
+
+```bash
+CAMPLAT_SIGNING_KEY=<path to the Ed25519 private key PEM> CAMPLAT_SIGNING_KEY_ID=<key id> node setup/sign-release.mjs release/camplat-<sha>.tar.gz
+```
+
 2. Copy the tarball it names (`release/camplat-<sha>.tar.gz`) to the laptop.
 
 ```bash
@@ -38,14 +46,24 @@ scp -i ~/.ssh/camplat_laptop release/camplat-<sha>.tar.gz ausitn-garcia@192.168.
 cat /opt/camplat/VERSION; systemctl is-active camplat-recorder camplat-api
 ```
 
-4. Swap it in. It prints old and new versions, restarts both services, and
+4. Place the trust anchor — once, because this box predates signed upgrades.
+   The keys come from the PC, over the same SSH path the tarball arrived by.
+   The anchor lands at /etc/camplat/trusted-keys.json, outside the program,
+   so a forged release can never bring its own.
+
+```bash
+tar -xzf /tmp/camplat-<sha>.tar.gz -C /tmp ./setup/trust-anchor.sh && sudo CAMPLAT_TRUSTED_KEYS_SOURCE=<keys file> bash /tmp/setup/trust-anchor.sh
+```
+
+5. Swap it in. It verifies the release first — signature, manifest, build
+   time — and prints old and new versions, restarts both services, and
    prints the rollback command.
 
 ```bash
 tar -xzf /tmp/camplat-<sha>.tar.gz -C /tmp ./setup/upgrade.sh && sudo bash /tmp/setup/upgrade.sh /tmp/camplat-<sha>.tar.gz
 ```
 
-5. Recording must not have stopped: a segment newer than the restart should
+6. Recording must not have stopped: a segment newer than the restart should
    appear within a minute.
 
 ```bash
@@ -54,15 +72,15 @@ journalctl -u camplat-recorder --since "-2 min" --no-pager | tail -20
 
 ## First sign-in (from the PC)
 
-6. Open the tunnel, then browse to http://localhost:8088/login.
+7. Open the tunnel, then browse to http://localhost:8088/login.
 
 ```bash
 ssh -i ~/.ssh/camplat_laptop -N -L 8088:127.0.0.1:8080 ausitn-garcia@192.168.4.45
 ```
 
-7. The page offers "Create the installer account". Through the tunnel the
+8. The page offers "Create the installer account". Through the tunnel the
    request is loopback, so no activation code is asked for.
-8. Accounts page: add a `store` account; add a display and open its link once
+9. Accounts page: add a `store` account; add a display and open its link once
    on the TV (the link is shown only once).
 
 ## Checks
@@ -72,6 +90,15 @@ ssh -i ~/.ssh/camplat_laptop -N -L 8088:127.0.0.1:8080 ausitn-garcia@192.168.4.4
 - Sign out from the bar at the bottom right lands on /login.
 - Display: live wall loads, no bar, and Review is refused.
 - `/audit` (installer) shows the sign-ins above.
+
+## Signed upgrades
+
+upgrade.sh does not swap in what it cannot vouch for: the signature must be
+from a key in the box's anchor, every file must match MANIFEST.json, and the
+build must not be older than the one installed. `CAMPLAT_ALLOW_DOWNGRADE=1`
+and `CAMPLAT_ALLOW_DIRTY=1` exist and are deliberate human overrides, not
+workarounds. Key rotation: add the new key id to the keys file, deploy it to
+the boxes, then remove the old id.
 
 ## Rollback
 
