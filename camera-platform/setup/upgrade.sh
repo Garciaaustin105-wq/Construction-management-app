@@ -36,6 +36,26 @@ fi
 chown -R root:root "$APP_DIR.new"
 chmod -R u=rwX,go=rX "$APP_DIR.new"
 
+# A release is installed only once it can be shown to be genuine: signed by a
+# key this box trusts, every file matching the manifest, and not older than what
+# is installed. The trust anchor is /etc/camplat/trusted-keys.json, OUTSIDE the
+# release, so a forged tarball cannot bring its own keys along.
+#
+# The verifier that runs is the INSTALLED one, never the one inside the release
+# being checked -- code that has not been trusted yet must not be the thing
+# deciding whether to trust it. Only a first install falls back to the new copy,
+# and then there is nothing on the box to protect.
+VERIFIER="$APP_DIR/agent/verify-release.mjs"
+[[ -f "$VERIFIER" ]] || VERIFIER="$APP_DIR.new/agent/verify-release.mjs"
+VERIFY_FLAGS=()
+[[ "${CAMPLAT_ALLOW_DOWNGRADE:-}" == "1" ]] && VERIFY_FLAGS+=(--allow-downgrade)
+[[ "${CAMPLAT_ALLOW_DIRTY:-}" == "1" ]] && VERIFY_FLAGS+=(--allow-dirty)
+if ! node "$VERIFIER" "$APP_DIR.new" --installed "$APP_DIR" "${VERIFY_FLAGS[@]}"; then
+  echo "refusing to install $RELEASE: it could not be shown to be genuine"
+  rm -rf "$APP_DIR.new"
+  exit 1
+fi
+
 echo "current: $(cat "$APP_DIR/VERSION" 2>/dev/null || echo unknown)"
 echo "new:     $(cat "$APP_DIR.new/VERSION")"
 

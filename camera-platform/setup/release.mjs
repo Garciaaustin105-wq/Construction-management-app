@@ -9,8 +9,15 @@
 // It refuses a stale dist/ (the box would run code that is not the source) and
 // an uncommitted tree (VERSION would name a commit the code is not), unless
 // --allow-dirty, which marks VERSION "-dirty".
+//
+// It also writes MANIFEST.json: every shipped file with its sha256, plus the
+// commit and the build time. Nothing here signs it -- signing needs the key,
+// which lives wherever the person holding it decided, and this runs on a build
+// machine. `setup/sign-release.mjs` does that separately, and an appliance
+// refuses a release whose manifest carries no signature it trusts.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -83,6 +90,49 @@ export function stageFiles(root, stageDir) {
   return count;
 }
 
+/** Files a manifest never lists: it cannot contain its own hash, or its signature. */
+export const MANIFEST_NAME = "MANIFEST.json";
+export const SIGNATURE_NAME = "MANIFEST.sig";
+
+/**
+ * Every file under `stageDir`, hashed, as the manifest promises them.
+ * Paths are relative with forward slashes, so the same release verifies the
+ * same way whichever machine built it.
+ * @returns {{ path: string, sha256: string, bytes: number }[]}
+ */
+export function hashTree(stageDir) {
+  const files = [];
+  for (const rel of readdirSync(stageDir, { recursive: true })) {
+    const abs = path.join(stageDir, rel);
+    if (statSync(abs).isDirectory()) continue;
+    const relPath = String(rel).split(path.sep).join("/");
+    if (relPath === MANIFEST_NAME || relPath === SIGNATURE_NAME) continue;
+    const bytes = readFileSync(abs);
+    files.push({
+      path: relPath,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+  }
+  // Sorted, so two builds of the same tree produce byte-identical manifests and
+  // a diff between releases is readable.
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return files;
+}
+
+/**
+ * Write MANIFEST.json into the staged tree. Pretty-printed and newline
+ * terminated: it is signed as bytes, so what it looks like is what is signed,
+ * and a human should be able to read what they are signing.
+ * @returns {number} how many files it lists
+ */
+export function writeManifest(stageDir, version, builtAtUtc) {
+  const files = hashTree(stageDir);
+  const manifest = { version, builtAtUtc, files };
+  writeFileSync(path.join(stageDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n");
+  return files.length;
+}
+
 /**
  * @returns {number} the process exit code
  */
@@ -107,9 +157,13 @@ export function main(argv, root = process.cwd()) {
   try {
     const count = stageFiles(root, stageDir);
     writeFileSync(path.join(stageDir, "VERSION"), version + "\n");
+    const builtAtUtc = new Date().toISOString();
+    const listed = writeManifest(stageDir, version, builtAtUtc);
     const tarRel = `release/${name}.tar.gz`;
     execFileSync("tar", ["-czf", tarRel, "-C", stageRel, "."], { cwd: root, stdio: ["ignore", "inherit", "inherit"] });
     console.log(`${tarRel}  (${count} files, VERSION ${version})`);
+    console.log(`${MANIFEST_NAME} lists ${listed} files, built ${builtAtUtc} -- UNSIGNED.`);
+    console.log(`Sign it with:  node setup/sign-release.mjs ${tarRel}`);
     return 0;
   } finally {
     rmSync(stageDir, { recursive: true, force: true });
