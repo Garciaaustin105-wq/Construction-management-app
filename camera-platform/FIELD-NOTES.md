@@ -276,3 +276,93 @@ group. `camctl` probes both and `--raw-dir` writes every response to disk. Those
 captures are the difference between a parser that is a careful guess and one that
 is a known quantity — and they will show whether real cameras report fields the
 parser does not yet read.
+
+## Bench log — 2026-09-17, signed upgrades proven on the laptop NVR
+
+Handoff item 2: the whole signing path run against a real box, not a harness.
+The box is the ROG laptop NVR (Tailscale `100.104.228.7`), which was running
+release `1c075c1a` — a build from before releases were signed, so it has no
+manifest and no verifier of its own. That made it the honest first-install
+case: the installed release cannot vouch for anything, so `upgrade.sh` fell
+back to the incoming release's verifier, exactly the one documented exception.
+
+Setup, all deliberate:
+
+- A **throwaway keypair** generated on the PC outside the repo
+  (`Temp/camplat-bench/`, id `bench-throwaway-2026-09-17`), plus a second
+  throwaway "attacker" key never placed in any anchor. Neither key is or ever
+  was in the repository.
+- **Two releases built from the same clean tree at `6159197`** (`node
+  setup/release.mjs` twice, ~30 s apart) so the only difference is
+  `builtAtUtc`: A at `01:07:47.868Z`, B at `01:08:19.275Z`. After B installs,
+  replaying A is a real downgrade attempt, not a simulation.
+- A signed with the bench key, B signed with the bench key, a copy of A
+  re-signed with the attacker key (sign-release replaces the signature in
+  place — the manifest bytes are identical, only the signature envelope
+  differs).
+- The tampered and extra-file tarballs were built **on the laptop** from B's
+  tree after signing: `echo "TAMPERED" >> agent/api-server.mjs` for one,
+  `pwned-by-attacker.txt` added for the other — manifest and signature left
+  untouched, so the attack is purely "the tree is not what was signed."
+
+**Anchor placement** (extracted from the signed tarball, source from the PC):
+
+```
+  anchor placed: 1 key(s) trusted here: bench-throwaway-2026-09-17
+```
+
+`/etc/camplat/trusted-keys.json` landed `root:root 0644` in `/etc/camplat/`
+`root:root 0755`, contents byte-identical to the bench `trusted-keys.json`.
+
+**Upgrade 1 — old unsigned release to signed A:**
+
+```
+OK: 6159197b6e6a043b65f15510fc5842e3a058d454, signed by bench-throwaway-2026-09-17, 189 files verified
+current: 1c075c1a91d7bdef529c126a8835d7ef59b73f47
+new:     6159197b6e6a043b65f15510fc5842e3a058d454
+● camplat-recorder.service … Active: active (running) … 3s ago
+● camplat-api.service … Active: active (running) … 3s ago
+```
+
+**Upgrade 2 — signed A to signed B** (same version string, newer build):
+accepted and swapped the same way. `camplat-api`, which had been left inactive
+by a manual stop hours earlier, came back on the upgrade's restart of both
+services.
+
+**The five refusals, each attempted through `upgrade.sh` on the box, each
+refused before anything was touched, each leaving `/opt/camplat` on B and
+no `/opt/camplat.new` behind:**
+
+| Attack | Refusal message (verbatim) |
+|---|---|
+| replay release A after B installed (downgrade) | `REFUSED (downgrade): this release was built 2026-09-18T01:07:47.868Z, older than the installed 2026-09-18T01:08:19.275Z` |
+| copy of A signed by the attacker's key | `REFUSED (unsigned): this release carries no signature from a key this recorder trusts` |
+| `agent/api-server.mjs` modified after signing | `REFUSED (file_changed): agent/api-server.mjs is not the file the manifest signed for` |
+| `pwned-by-attacker.txt` added after signing | `REFUSED (file_extra): pwned-by-attacker.txt is in the release but not in the manifest` |
+| the old unsigned release the box was installed from | `REFUSED: this release has no MANIFEST.json, so there is nothing to check it against` |
+
+Every attempt also printed the wrapper line `refusing to install <tarball>: it
+could not be shown to be genuine` and exited 1. Two things worth keeping:
+an unknown key's signature is reported as "unsigned" — the verifier does not
+try unknown key ids, so an attacker learns nothing about *why*; and the
+downgrade message carries both build times, which is what makes a rollback
+deliberate (`CAMPLAT_ALLOW_DOWNGRADE=1`) rather than accidental.
+
+**Recorder continuity.** Both upgrades restarted the recorder, and both times
+it was back to "recovery complete … 473 confirmed, 0 lost" and both cameras
+re-opened within one second of the stop. The camera at `192.168.1.64` turned
+out to be unplugged for the whole session, so no footage was flowing; the
+recorder spent the evening doing the correct thing instead — recording gaps
+and retrying (its `exited code 146` loop was the camera being absent, not the
+box misbehaving; the identical loop appeared at 21:04, an hour before the
+first upgrade). When the camera was plugged back in (~21:28), the recorder's next retry
+latched on without any intervention and sealed real footage on release B —
+`cam1-main` sealing a growing 25.7 MB segment in `.inprogress/` within a
+minute of the camera answering ping, both cameras `opened` + `sealed` in the
+journal, eight minutes after the upgrade restart. Continuity through the
+signed upgrades held.
+
+A Windows bench gotcha for the next person: `sign-release.mjs` shells out to
+`tar`, and Git Bash's GNU tar reads a `C:\` path as host `C` and fails
+(`Cannot connect to C: resolve failed`). Run it with the Windows bsdtar ahead
+on `PATH` (`PATH="/c/Windows/System32:$PATH" node setup/sign-release.mjs …`).

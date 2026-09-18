@@ -58,11 +58,19 @@ Rotation is the add/deploy/remove dance, and the deploy step is
 redirected and holds its usable-key check against `readTrustedKeys`, so the
 two cannot drift. What is still true from §2: none of it has run on a real box.
 
-### 2. Bench the whole path on the laptop NVR
-Not done, and nothing here has run against a real box.
-Generate a throwaway keypair, place the anchor, build, sign, upgrade. Then prove
-the refusals on real hardware: tamper one file, add an unlisted file, sign with
-an untrusted key, replay an older release. Record what happened in `FIELD-NOTES.md`.
+### 2. Bench the whole path on the laptop NVR — DONE 2026-09-17
+Run against the ROG laptop NVR (Tailscale `100.104.228.7`), which ran the
+pre-signing release `1c075c1a` — the honest first-install case, since that
+release has no verifier of its own and `upgrade.sh` used the documented
+fallback to the incoming release's verifier. Throwaway keypair generated
+outside the repo; two releases built from the same tree ~30 s apart so a
+replay of the older one is a real downgrade. Anchor placed from the signed
+tarball's `trust-anchor.sh`; two signed upgrades landed (the restart also
+revived a manually-stopped `camplat-api`); all five refusals — downgrade
+replay, untrusted key, tampered file, extra file, unsigned old release —
+refused with their plain-word reasons and left the box untouched. Full record
+with verbatim outputs in `FIELD-NOTES.md` "Bench log — 2026-09-17". The keys
+were throwaway bench keys, retired with the session.
 
 ### 3. Document it — DONE 2026-09-17
 `DEPLOY-SIGN-IN.md` now signs the tarball in step 1 (with the key-location
