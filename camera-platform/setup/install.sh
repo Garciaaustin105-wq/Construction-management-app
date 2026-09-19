@@ -168,7 +168,10 @@ Type=simple
 User=$RUN_USER
 WorkingDirectory=$APP_DIR
 Environment=CAMPLAT_STATE_DIR=$STATE_DIR
-Environment=CAMPLAT_API_HOST=127.0.0.1
+# CAMPLAT_API_LISTEN specifies which network cards to listen on (loopback,default-route,tailscale).
+# CAMPLAT_CAMERA_INTERFACES is empty by default; on a two-card box, set it to the camera-side card (e.g. enp2s0).
+Environment=CAMPLAT_API_LISTEN=loopback,default-route,tailscale
+Environment=CAMPLAT_CAMERA_INTERFACES=
 Environment=CAMPLAT_API_PORT=8080
 ExecStart=$NODE_BIN $APP_DIR/agent/api-server.mjs
 Restart=always

@@ -36,6 +36,7 @@ import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary } from './clip-library.mjs';
+import { createListeners } from './listeners.mjs';
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -745,11 +746,36 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
   const server = createApiServer({ stateDir, config, index, auth });
 
   const port = Number(process.env.CAMPLAT_API_PORT ?? 8080);
-  const host = process.env.CAMPLAT_API_HOST ?? '127.0.0.1';
 
-  server.listen(port, host, () => {
-    log('info', 'api server listening', { host, port, siteId: config.siteId });
+  // Determine listen spec: CAMPLAT_API_LISTEN (comma-separated), or fall back to CAMPLAT_API_HOST
+  let listenSpec = null;
+  if (process.env.CAMPLAT_API_LISTEN) {
+    listenSpec = process.env.CAMPLAT_API_LISTEN.split(',').map(s => s.trim()).filter(s => s);
+  } else if (process.env.CAMPLAT_API_HOST) {
+    listenSpec = [process.env.CAMPLAT_API_HOST];
+  }
+
+  // Parse camera interfaces from env
+  const cameraInterfaces = process.env.CAMPLAT_CAMERA_INTERFACES
+    ? process.env.CAMPLAT_CAMERA_INTERFACES.split(',').map(s => s.trim()).filter(s => s)
+    : [];
+
+  const listeners = createListeners({
+    server,
+    port,
+    spec: listenSpec,
+    cameraInterfaces,
+    log: (level, msg, extra) => log(level, msg, extra),
   });
+
+  try {
+    await listeners.start();
+    const addresses = listeners.addresses();
+    log('info', 'api server listening', { addresses, port, siteId: config.siteId });
+  } catch (err) {
+    log('error', 'api server failed to start', { error: err.message });
+    process.exit(1);
+  }
 
   const shutdown = () => {
     // Live streams first: an ffmpeg child orphaned by shutdown keeps pulling
@@ -757,9 +783,11 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
     // and destroys every socket; the registry is module state, so this also
     // covers streams attached before this handler existed.
     closeAll();
-    server.close(() => {
-      index.close();
-      process.exit(0);
+    listeners.stop().then(() => {
+      server.close(() => {
+        index.close();
+        process.exit(0);
+      });
     });
   };
   process.on('SIGTERM', shutdown);
