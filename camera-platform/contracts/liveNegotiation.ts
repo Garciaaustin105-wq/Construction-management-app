@@ -158,6 +158,13 @@ export function liveFfmpegArgs(url: string): string[] {
   return [
     "-rtsp_transport",
     "tcp",
+    // Socket I/O timeout, microseconds: the recorder's value (agent/recorder.mjs
+    // RTSP_TIMEOUT_US; the harness keeps them equal). Without it an ffmpeg
+    // reading a camera that has gone away blocks for good, and ffmpeg honours
+    // SIGTERM only between reads: bench 2026-09-19 left 4 such orphans, each
+    // holding a camera session, after one unplug.
+    "-timeout",
+    "10000000",
     "-probesize",
     "500000",
     "-analyzeduration",

@@ -9,6 +9,7 @@ import {
   negotiateLive, liveFfmpegArgs,
 } from "../dist/liveNegotiation.js";
 import { check, same, report } from "./_assert.mjs";
+import { RTSP_TIMEOUT_US } from "../agent/recorder.mjs";
 
 console.log("liveNegotiation");
 
@@ -134,7 +135,13 @@ check("liveFfmpegArgs: video copied, audio re-encoded, ends pipe:1, url once aft
   same(args.includes("0:v:0"), true, "explicit video map");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1") >= 0, true, "url present");
   same(args.indexOf("rtsp://u:p@10.0.0.5:554/ch1"), args.indexOf("-i") + 1, "url right after -i");
-  same(args.length, 27, "exact shape");
+  same(args.length, 29, "exact shape");
+  // Bench 2026-09-19: live ffmpegs blocked on a camera that had been unplugged
+  // ignored SIGTERM and held camera sessions for good (4 orphans after one
+  // outage). The same socket timeout as the recorder makes a dead camera end
+  // the read, and the process, by itself.
+  same(args.indexOf("-timeout") >= 0 && args.indexOf("-timeout") < args.indexOf("-i"), true, "THE FEARED ONE: a socket timeout on the input");
+  same(args[args.indexOf("-timeout") + 1], String(RTSP_TIMEOUT_US), "the recorder's value, not a second number to drift");
   same(args.includes("frag_keyframe+empty_moov+default_base_moof"), true, "fragmented mp4, MSE-safe addressing");
   // `default_base_moof` is load-bearing: MSE forbids tfhd's absolute
   // base_data_offset ("TFHD base-data-offset not allowed by MSE"), and a

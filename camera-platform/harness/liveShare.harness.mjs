@@ -59,13 +59,23 @@ const INIT = Buffer.concat([box("ftyp", 20, 1), box("moov", 700, 2)]);
 const fragment = (n, mdatLen = 3000) => Buffer.concat([box("moof", 90, 100 + n), box("mdat", mdatLen, 200 + n)]);
 
 let deferExit = false;
+let ignoreSigterm = false;
 function fakeChild() {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.killed = false;
   // deferExit: a real ffmpeg takes a moment to exit after SIGTERM.
-  child.kill = () => { child.killed = true; if (!deferExit) queueMicrotask(() => child.emit("exit")); };
+  child.signals = [];
+  child.kill = (sig = "SIGTERM") => {
+    child.signals.push(sig);
+    child.killed = true;
+    // ignoreSigterm: an ffmpeg blocked reading a camera that has gone away
+    // honours SIGTERM only between reads, so it does not exit.
+    if (sig === "SIGTERM" && ignoreSigterm) return true;
+    if (!deferExit) queueMicrotask(() => child.emit("exit"));
+    return true;
+  };
   return child;
 }
 const spawns = [];
@@ -101,7 +111,7 @@ await once(server, "listening");
 const port = server.address().port;
 attachLive(server, {
   config, spawnFn, authorize: () => ({ kind: "allow" }),
-  maxSourcesPerCamera: 2, maxSources: 2, maxViewers: 5,
+  maxSourcesPerCamera: 2, maxSources: 2, maxViewers: 5, killAfterMs: 150,
 });
 
 const inbox = new WeakMap();
@@ -268,6 +278,22 @@ await check("THE FEARED ONE: reopening a camera while its old ffmpeg is still ex
   emitSplit(fresh, Buffer.concat([INIT, fragment(1)]));
   same((await next(b)).equals(INIT), true, "which still streams");
   await shutAll(b);
+});
+
+await check("THE FEARED ONE: an ffmpeg that ignores SIGTERM is killed, never left holding a camera session", async () => {
+  ignoreSigterm = true;
+  try {
+    const a = await wsOpen("/live/cam-2");
+    await until(() => liveSources().size === 1, "source");
+    const child = spawns[spawns.length - 1];
+    a.close(); await closed(a); await settle(30);
+    same(child.signals, ["SIGTERM"], "asked to stop first");
+    await until(() => child.signals.includes("SIGKILL"), "SIGKILL once killAfterMs has passed", 1500);
+  } finally {
+    ignoreSigterm = false;
+  }
+  await settle();
+  same(liveSources().size, 0, "no source left");
 });
 
 await check("closeAll stops every source and drops every viewer", async () => {

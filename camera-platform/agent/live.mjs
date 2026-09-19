@@ -193,15 +193,27 @@ const closeFrame = () => encodeServerFrame(8, Buffer.alloc(0));
  *  exit after SIGTERM; a viewer reopening the camera in that moment (a wall
  *  redraw does exactly this) must get a fresh source, not the dying one, and
  *  the old exit must never remove the new source from the map. */
+let killAfterMs = 5000;
 function retireSource(source) {
   if (sources.get(source.key) === source) sources.delete(source.key);
-  if (source.child && !source.child.killed) source.child.kill("SIGTERM");
+  const child = source.child;
+  if (!child || source.exited) return;
+  try { child.kill("SIGTERM"); } catch { /* already gone */ }
+  // ffmpeg honours SIGTERM only between reads; one blocked on a camera that
+  // went away never exits, and holds a camera session (bench 2026-09-19).
+  const t = setTimeout(() => {
+    if (source.exited) return;
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    log("warn", "live source killed", { cameraId: source.cameraId, quality: source.quality, waitedMs: killAfterMs });
+  }, killAfterMs);
+  t.unref?.();
 }
 
 export function attachLive(server, deps) {
   const {
     config, spawnFn, authorize, now = () => new Date(),
     maxSourcesPerCamera = 2, maxSources = 32, maxViewers = 128,
+    killAfterMs: killAfter = 5000,
     maxPerCamera = maxSourcesPerCamera, // backward compat
     maxTotal = maxSources, // backward compat
     highWater = 6 * 1024 * 1024,
@@ -210,6 +222,7 @@ export function attachLive(server, deps) {
   // Required, not defaulted: a live edge with no gate streams every camera to
   // anyone on the LAN, and a forgotten argument must not be how that happens.
   if (typeof authorize !== "function") throw new TypeError("attachLive needs an authorize(request) function");
+  killAfterMs = killAfter;
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
@@ -390,6 +403,7 @@ export function attachLive(server, deps) {
       });
 
       child.on("exit", () => {
+        source.exited = true;
         const envelope = source.bytesSent
           ? { ok: false, code: "live_ended", message: VIEWER_WORDS.live_ended }
           : { ok: false, code: "live_source_failed", message: VIEWER_WORDS.live_source_failed };
@@ -412,6 +426,7 @@ export function attachLive(server, deps) {
       });
 
       child.on("error", () => {
+        source.exited = true; // a spawn failure: there is no process to wait for
         const envelope = { ok: false, code: "live_source_failed", message: "could not start the source" };
         for (const viewer of source.viewers) {
           if (!viewer.socket.destroyed) {
@@ -571,7 +586,8 @@ export function liveSources() {
 /** Server shutdown and the harness both end here. */
 export function closeAll() {
   for (const source of sources.values()) {
-    if (source.child && !source.child.killed) source.child.kill("SIGTERM");
+    // Shutdown: nothing in a live pipe is worth waiting for.
+    if (source.child && !source.exited) { try { source.child.kill("SIGKILL"); } catch { /* already gone */ } }
     for (const viewer of source.viewers) {
       if (!viewer.socket.destroyed) viewer.socket.destroy();
     }
