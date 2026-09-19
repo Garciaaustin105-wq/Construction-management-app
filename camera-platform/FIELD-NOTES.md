@@ -620,3 +620,15 @@ audio_dropped. The gap starts about 10 s after the unplug, when the socket
 timeout declares the stream dead, so the timeline has an unmarked ~10 s
 between the last video and the gap. Starting the gap at the end of the last
 recorded segment would close that.
+
+**Security fix the same afternoon (90ec738, installed signed).** Austin saw
+the camera's password on a live tile while it reconnected through the
+unplug. ffmpeg prints its input URL with credentials; live.mjs forwarded the
+last stderr lines to the viewer and the API log. Tiles now show only fixed
+plain sentences (liveTileText), the server never sends ffmpeg's words, and
+the log keeps them scrubbed. On the laptop, 2 older camplat-api journal
+entries (2026-09-15 and 2026-09-18) still hold a visible camera password;
+the recorder's journal holds none. Clearing them is Austin's call (journalctl
+--rotate, then --vacuum-time=1s), and the bench camera's password should be
+changed since it was shown on screen. Every box that ran a build before
+90ec738 has the same exposure in its API journal.
