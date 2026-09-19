@@ -21,8 +21,9 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const SHIPPED_DIRS = ["agent", "dist", "setup", "harness"];
-export const TEXT_EXTENSIONS = [".mjs", ".js", ".ts", ".sh", ".json", ".md", ".html", ".css", ".txt"];
+// detector/: the AI worker (Python), run by agent/detect-service.mjs.
+export const SHIPPED_DIRS = ["agent", "dist", "setup", "harness", "detector"];
+export const TEXT_EXTENSIONS = [".mjs", ".js", ".ts", ".sh", ".json", ".md", ".html", ".css", ".txt", ".py"];
 
 /**
  * The commit HEAD points at, and whether anything under `root` differs from it.
