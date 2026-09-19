@@ -14,7 +14,7 @@ import { parseWorkerLine, emptyFold, advanceFold, MAX_WORKER_LINE_BYTES } from "
 import { MERGE_GAP_MS } from "../dist/detection.js";
 import { planDetectSchedule } from "../dist/detectSchedule.js";
 import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
-import { loadConfig } from "./recorder-service.mjs";
+import { loadConfig, resolveCameraUrl } from "./recorder-service.mjs";
 import { openEventsDb } from "./events-db.mjs";
 import { DEFAULT_PATHS } from "./config.mjs";
 
@@ -143,7 +143,10 @@ export async function startDetect(opts = {}) {
     // Determine substream URL
     let substreamUrl = null;
     if (typeof configCam.substreamUrl === "string" && configCam.substreamUrl !== "") {
-      substreamUrl = configCam.substreamUrl;
+      // The site login is added when the address has none, as the recorder
+      // does (resolveCameraUrl); without it the camera answers 401.
+      const resolved = resolveCameraUrl({ url: configCam.substreamUrl }, config.credentials);
+      if (resolved.kind === "ok") substreamUrl = resolved.url;
     } else if (typeof configCam.host === "string" && configCam.host !== "") {
       const vendor = configCam.vendor ?? "generic";
       const channel = configCam.channel ?? 1;

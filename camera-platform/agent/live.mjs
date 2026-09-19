@@ -284,10 +284,14 @@ export function attachLive(server, deps) {
       ? resolveCameraUrl(cam, config.credentials)
       : { kind: "unresolved", reason: "" }; // never read: unknown_camera wins first
 
-    const substreamUrl =
+    // A configured substream gets the site login when it has none, exactly as
+    // the recording URL does (resolveCameraUrl); saved without one, the
+    // camera refuses it with 401 (bench 2026-09-19).
+    const substreamResolved =
       cam !== null && typeof cam.substreamUrl === "string" && cam.substreamUrl !== ""
-        ? cam.substreamUrl
+        ? resolveCameraUrl({ url: cam.substreamUrl }, config.credentials)
         : null;
+    const substreamUrl = substreamResolved?.kind === "ok" ? substreamResolved.url : null;
 
     // Vendor derivation is the REAL rule from the vendor template contract,
     // tried live — never a guessed table. Hostless cameras cannot derive.

@@ -127,6 +127,8 @@ const config = {
     { cameraId: "cam-2" },                  // hostless: cannot resolve, cannot derive
     { cameraId: "cam-3", host: "10.9.9.9", vendor: "hikvision", channel: 1,
       substreamUrl: SUB_URL },              // manual substream override wins
+    { cameraId: "cam-4", url: "rtsp://10.9.9.8:554/main",
+      substreamUrl: "rtsp://10.9.9.8:554/sub" }, // saved without a login
   ],
 };
 
@@ -312,6 +314,17 @@ await check("manual substreamUrl used VERBATIM in the spawn argv", async () => {
   same(args[args.indexOf("-i") + 1], SUB_URL, "the manual substream URL, verbatim, right after -i");
   const entry = [...liveRegistry().values()].find((e) => e.cameraId === "cam-3");
   same(entry?.quality, "substream", "negotiated as the substream");
+  ws.close();
+  await nextClose(ws);
+  await new Promise((r) => setTimeout(r, 100));
+});
+
+await check("THE FEARED ONE: a substream address saved without a login gets the site login, as the recorder does", async () => {
+  const before = spawnCalls.length;
+  const ws = await wsOpen("/live/cam-4?quality=substream");
+  same(spawnCalls.length, before + 1, "spawned");
+  const args = spawnCalls[spawnCalls.length - 1].args;
+  same(args[args.indexOf("-i") + 1], "rtsp://admin:s3cret-pw@10.9.9.8:554/sub", "the substream, with the site login");
   ws.close();
   await nextClose(ws);
   await new Promise((r) => setTimeout(r, 100));

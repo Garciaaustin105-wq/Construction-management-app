@@ -102,6 +102,23 @@ await check("THE FEARED ONE: each worker gets its camera's SUBSTREAM; a camera w
   }
 });
 
+// Bench 2026-09-19: a camera address saved without a login is refused by the
+// camera (401). The recorder adds the site login (resolveCameraUrl); a
+// configured substream address must get the same, or detection never starts.
+await check("THE FEARED ONE: a substream address saved without a login gets the site login, as the recorder does", async () => {
+  const { workers, svc } = await run({
+    detect: { capacityFps: 10, cameras: [{ cameraId: "cam-4" }] },
+    cameras: [{ cameraId: "cam-4", url: "rtsp://10.0.0.4:554/main", substreamUrl: "rtsp://10.0.0.4:554/sub" }],
+  });
+  try {
+    eq(workers.length, 1, "watched");
+    eq(urlOf(workers[0]).includes(`admin:${SECRET}@10.0.0.4`), true, "the site login added");
+    eq(urlOf(workers[0]).endsWith("/sub"), true, "still the substream");
+  } finally {
+    await svc.stop();
+  }
+});
+
 await check("THE FEARED ONE: one person across many frames is ONE event row in events.db, finished after the gap", async () => {
   const { stateDir, workers, svc, setClock } = await run();
   try {
