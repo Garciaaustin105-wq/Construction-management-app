@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # measure.sh <phase> <seconds> <out-dir>
-# Samples every 5 s: whole-machine CPU, per-process CPU by group, disk.
+# Samples every 5 s: whole-machine CPU and memory, per-process CPU and
+# memory by group, disk. Memory decides whether a box needs 8 or 16 GB, which
+# at 2026 memory prices is worth over $100 a box, so it is measured, not guessed.
 # Columns are found by HEADER NAME, never by position: sysstat moves columns
 # between versions, and a positional parse reads a plausible wrong number.
 set -euo pipefail
@@ -20,7 +22,13 @@ date +%s > "$dir/start.txt"
 # chrom = the browsers; mediamtx|srcpub = the synthetic cameras (NOT appliance
 # cost, reported so it can be subtracted); detdec = detector-style decode.
 mpstat -P ALL 5 "$n" > "$dir/mpstat.txt" &
-pidstat -u -h 5 "$n" -C 'node|ffmpeg|chrom|mediamtx|srcpub|detdec' > "$dir/pidstat.txt" &
+pidstat -u -r -h 5 "$n" -C 'node|ffmpeg|chrom|mediamtx|srcpub|detdec' > "$dir/pidstat.txt" &
+# Machine memory in use = MemTotal - MemAvailable (page cache the kernel can
+# drop is not "in use"). One line per sample: epoch seconds, MiB in use.
+for _ in $(seq "$n"); do
+  echo "$(date +%s) $(awk '/^MemTotal:/ {t = $2} /^MemAvailable:/ {a = $2} END {printf "%.0f", (t - a) / 1024}' /proc/meminfo)"
+  sleep 5
+done > "$dir/meminfo.txt" &
 iostat -x -y -d 5 "$n" > "$dir/iostat.txt" &
 wait
 date +%s > "$dir/end.txt"
@@ -34,18 +42,33 @@ date +%s > "$dir/end.txt"
   awk '$2=="all" && $1!="Average:" { s+=$NF; k++ }
        END { printf "cpu_all_busy_pct: %.1f\n", k ? 100 - s/k : 0 }' "$dir/mpstat.txt"
 
+  # Machine memory in use: median and peak over the samples. Size from the
+  # peak; the median says what is typical.
+  sort -n -k2 "$dir/meminfo.txt" | awk '
+    { v[++k] = $2 }
+    END {
+      if (k == 0) { print "mem_used_mib: not measured"; exit }
+      med = (k % 2) ? v[(k + 1) / 2] : (v[k / 2] + v[k / 2 + 1]) / 2
+      printf "mem_used_mib_median: %.0f\nmem_used_mib_peak: %.0f\n", med, v[k]
+    }'
+  awk '/^MemTotal:/ { printf "mem_total_mib: %.0f\n", $2 / 1024 }' /proc/meminfo
+
   # Per group: sum %CPU across a group's processes within one sample, then
   # average those sums over samples. %CPU here is of ONE core (100 = one core).
+  # Memory: sum RSS (kB) across a group within one sample; report the peak.
   awk '
     /^#/ { for (i = 2; i <= NF; i++) col[$i] = i - 1; next }
     NF == 0 || !("%CPU" in col) { next }
     {
       ts = $1; cmd = $(col["Command"]); cpu = $(col["%CPU"]); seen[ts] = 1
-      if (cmd ~ /^node/)                 g["node", ts]   += cpu
-      else if (cmd ~ /^ffmpeg/)          g["ffmpeg", ts] += cpu
-      else if (cmd ~ /chrom/)            g["chrom", ts]  += cpu
-      else if (cmd ~ /mediamtx|srcpub/)  g["source", ts] += cpu
-      else if (cmd ~ /^detdec/)          g["detdec", ts] += cpu
+      rss = ("RSS" in col) ? $(col["RSS"]) : 0
+      if (cmd ~ /^node/)                 grp = "node"
+      else if (cmd ~ /^ffmpeg/)          grp = "ffmpeg"
+      else if (cmd ~ /chrom/)            grp = "chrom"
+      else if (cmd ~ /mediamtx|srcpub/)  grp = "source"
+      else if (cmd ~ /^detdec/)          grp = "detdec"
+      else next
+      g[grp, ts] += cpu; m[grp, ts] += rss
     }
     END {
       k = 0; for (ts in seen) k++
@@ -53,6 +76,10 @@ date +%s > "$dir/end.txt"
       for (j = 1; j <= 5; j++) {
         s = 0; for (ts in seen) s += g[names[j], ts]
         printf "cpu_%s_pct_of_one_core: %.1f\n", names[j], k ? s/k : 0
+      }
+      for (j = 1; j <= 5; j++) {
+        p = 0; for (ts in seen) if (m[names[j], ts] > p) p = m[names[j], ts]
+        printf "rss_%s_mib_peak: %.0f\n", names[j], p / 1024
       }
     }' "$dir/pidstat.txt"
 
