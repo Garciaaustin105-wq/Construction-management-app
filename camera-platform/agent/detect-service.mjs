@@ -373,8 +373,10 @@ export async function startDetect(opts = {}) {
 // Run as a daemon if invoked directly
 if (process.argv[1]?.endsWith("detect-service.mjs")) {
   const stateDir = process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  // The AI libraries live in their own environment, not the system Python.
+  const pythonBin = process.env.CAMPLAT_DETECT_PYTHON ?? "python3";
 
-  startDetect({ stateDir }).catch((err) => {
+  startDetect({ stateDir, python: pythonBin }).catch((err) => {
     defaultLog("error", err.message);
     process.exit(1);
   }).then((svc) => {

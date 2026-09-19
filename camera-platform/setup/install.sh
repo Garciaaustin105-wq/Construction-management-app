@@ -181,6 +181,36 @@ TimeoutStopSec=30s
 [Install]
 WantedBy=multi-user.target
 UNIT
+# The detector. Installed but NOT enabled: it needs its Python environment
+# (/opt/camplat-detect/venv with numpy and onnxruntime), a model, and a
+# detect.json whose capacityFps was MEASURED on this box. Until then it would
+# refuse to start anyway, which is the point: a camera must never look watched
+# when nothing is watching it. Enable with:
+#   systemctl enable --now camplat-detect
+cat > /etc/systemd/system/camplat-detect.service <<UNIT
+[Unit]
+Description=camplat detector (AI: person and vehicle events)
+After=camplat-recorder.service
+ConditionPathExists=$STATE_DIR/detect.json
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$APP_DIR
+Environment=CAMPLAT_STATE_DIR=$STATE_DIR
+Environment=CAMPLAT_DETECT_PYTHON=/opt/camplat-detect/venv/bin/python
+ExecStart=$NODE_BIN $APP_DIR/agent/detect-service.mjs
+Restart=always
+RestartSec=10
+TimeoutStopSec=20s
+# Recording always wins the CPU: the recorder never waits on the AI.
+Nice=10
+CPUWeight=30
+IOWeight=30
+
+[Install]
+WantedBy=multi-user.target
+UNIT
 cat > /etc/systemd/system/camplat-alerts.service <<UNIT
 [Unit]
 Description=camplat alerts check (reads health.json, writes alerts.json)

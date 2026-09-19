@@ -13,6 +13,7 @@
  * one person becoming a row per frame.
  */
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -249,6 +250,20 @@ await check("stop() ends every worker (SIGKILL if SIGTERM is ignored) and finish
   const db = openEventsDb(path.join(stateDir, "events.db"));
   eq(db.all().map((r) => r.finished), [true], "the open event was finished, ending at its last sighting");
   db.close();
+});
+
+check("THE FEARED ONE: the installed detector never outranks recording, and is off until it is set up", () => {
+  const install = readFileSync(path.join(import.meta.dirname, "..", "setup", "install.sh"), "utf8").replaceAll("\r\n", "\n");
+  const i = install.indexOf("/etc/systemd/system/camplat-detect.service");
+  if (i < 0) throw new Error("install.sh does not install the detector unit");
+  const body = install.indexOf("<<UNIT", i) + "<<UNIT".length;   // the unit itself starts after the heredoc marker
+  const unit = install.slice(body, install.indexOf(String.fromCharCode(10) + "UNIT", body));
+  for (const [line, why] of [["Nice=10", "runs below the recorder"], ["CPUWeight=30", "gets less CPU than the recorder"],
+    ["User=$RUN_USER", "runs as the service user"], ["ConditionPathExists=$STATE_DIR/detect.json", "does nothing until detection is configured"]]) {
+    if (!unit.includes(line)) throw new Error(`the detector unit is missing ${line} (${why})`);
+  }
+  const enables = install.split("\n").filter((l) => /^\s*systemctl enable/.test(l))   // a comment saying how to enable it is not enabling it.join(" ");
+  eq(/camplat-detect/.test(enables), false, "and install.sh never enables it: it needs a measured capacity, a model and its Python first");
 });
 
 report("detect service");
