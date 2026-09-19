@@ -286,7 +286,7 @@ check("the layout choices come from the contract, plus the rotation", () => {
   eq(choices.filter((b) => b.classList.contains("layout-button-on")).map((b) => b.value),
     ["2x2"], "exactly one marked, the current one");
   eq(choices.map((b) => b.getAttribute("aria-pressed")),
-    ["false", "true", "false", "false", "false"], "and it says so out loud");
+    ["false", "true", "false", "false", "false", "false", "false"], "and it says so out loud");
 });
 
 check("THE FEARED ONE: an icon draws the layout it actually picks", () => {
@@ -319,7 +319,7 @@ check("the words are not lost with the pictures: every choice still says what it
   const { controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
   const choices = layoutChoices(controlsRoot);
   const labels = choices.map((b) => b.getAttribute("aria-label"));
-  eq(labels, ["1 camera", "4 cameras (2x2)", "9 cameras (3x3)", "16 cameras (4x4)",
+  eq(labels, ["1 camera", "4 cameras (2x2)", "9 cameras (3x3)", "16 cameras (4x4)", "25 cameras (5x5)", "36 cameras (6x6)",
     "Rotate cameras, one at a time"], "every layout names itself for anyone who cannot see the icon");
   eq(choices.map((b) => b.title), labels, "and on hover");
   eq(layoutTrigger(controlsRoot).getAttribute("aria-label"), "4 cameras (2x2)", "the closed control too");
@@ -353,6 +353,23 @@ check("sixteen cameras on 4x4 are all on screen at once", () => {
   eq(withClass(gridRoot, "cell-empty").length, 0, "no empty cells");
   eq(wall.state().pageCount, 1, "one page");
   eq(opened(calls).length + calls.filter((c) => c.op === "move").length, 16, "sixteen live");
+});
+
+check("THE FEARED ONE: a 6x6 wall asks for all 36 cameras; the limit is the server's, never a guess in the page", () => {
+  // The live-stream cap is appliance-wide (live.mjs maxTotal, counted across
+  // every TV and browser), so only the server knows when it is reached. A cap
+  // guessed in the page would hide cameras the server would have served.
+  const { gridRoot, calls } = makeWall({ layout: "6x6", devices: devices(36) });
+  eq(withClass(gridRoot, "cell").length, 36, "thirty-six cells");
+  eq(withClass(gridRoot, "cell-label").length, 36, "every cell names its camera");
+  eq(opened(calls).length + calls.filter((c) => c.op === "move").length, 36, "all thirty-six asked for");
+});
+
+check("THE FEARED ONE: a tile the server refuses (stream_limit and the rest) shows the server's reason, never a blank", () => {
+  const html = readFileSync(join(process.cwd(), "agent/ui/index.html"), "utf-8");
+  if (!/if \(env\.ok === false\) \{\s*setStatus\(t, env\.code \+ \(env\.message \? ' — ' \+ env\.message : ''\), 'problem'\);/.test(html)) {
+    throw new Error("index.html no longer shows a refusal's code and message in its tile");
+  }
 });
 
 function fakeTimers() {

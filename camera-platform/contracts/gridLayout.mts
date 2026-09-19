@@ -8,7 +8,7 @@
  * cell, with an index, that says "empty", and the UI has something to label.
  */
 
-export type GridLayoutId = "1x1" | "2x2" | "3x3" | "4x4";
+export type GridLayoutId = "1x1" | "2x2" | "3x3" | "4x4" | "5x5" | "6x6";
 
 export interface GridShape {
   id: GridLayoutId;
@@ -28,6 +28,8 @@ export const GRID_SHAPES: readonly GridShape[] = Object.freeze([
   Object.freeze({ id: "2x2", columns: 2, rows: 2, cells: 4 }),
   Object.freeze({ id: "3x3", columns: 3, rows: 3, cells: 9 }),
   Object.freeze({ id: "4x4", columns: 4, rows: 4, cells: 16 }),
+  Object.freeze({ id: "5x5", columns: 5, rows: 5, cells: 25 }),
+  Object.freeze({ id: "6x6", columns: 6, rows: 6, cells: 36 }),
 ] as const);
 
 /**

@@ -22,11 +22,13 @@ const kinds = (page) => page.cells.map((c) => c.kind);
 const filled = (page) => page.cells.filter((c) => c.kind === "camera").map((c) => c.cameraId);
 
 check("the four shapes are what a wall can be, and their arithmetic holds", () => {
-  eq(GRID_SHAPES.map((s) => s.id), ["1x1", "2x2", "3x3", "4x4"], "ids in order");
+  eq(GRID_SHAPES.map((s) => s.id), ["1x1", "2x2", "3x3", "4x4", "5x5", "6x6"], "ids in order");
   for (const s of GRID_SHAPES) {
     eq(s.cells, s.columns * s.rows, `${s.id}: cells === columns * rows`);
   }
   eq(gridShape("4x4").cells, 16, "4x4");
+  eq(gridShape("5x5").cells, 25, "5x5");
+  eq(gridShape("6x6").cells, 36, "6x6");
   eq(gridShape("1x1").cells, 1, "1x1");
 });
 
@@ -212,6 +214,8 @@ check("one camera or four-up opens full quality; nine and sixteen up open the su
   eq(liveQuality(gridShape("2x2")), "mainstream", "2x2");
   eq(liveQuality(gridShape("3x3")), "substream", "3x3");
   eq(liveQuality(gridShape("4x4")), "substream", "4x4");
+  eq(liveQuality(gridShape("5x5")), "substream", "5x5");
+  eq(liveQuality(gridShape("6x6")), "substream", "6x6");
 });
 
 check("High and Low override the grid; Auto is the grid", () => {
