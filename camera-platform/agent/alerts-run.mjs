@@ -10,6 +10,7 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { evaluateAlerts } from "../dist/alerts.js";
+import { isCameraId } from "../dist/apiQuery.js";
 
 const STATES = ["raised", "clear", "unknown"];
 
@@ -150,6 +151,47 @@ export function shouldRestartRecorder(transitions) {
     }
   }
   return false;
+}
+
+/**
+ * Written by the alerts check, one per camera, and acted on by the recorder
+ * service itself (no root needed: it restarts its own ffmpeg). The camera id
+ * is checked against the API's id rule both ways, so a subject can never name
+ * a path.
+ */
+const CAMERA_RESTART_PREFIX = "restart-camera.";
+const CAMERA_RESTART_SUFFIX = ".request";
+
+export function cameraRestartFile(cameraId) {
+  return isCameraId(cameraId) ? `${CAMERA_RESTART_PREFIX}${cameraId}${CAMERA_RESTART_SUFFIX}` : null;
+}
+
+export function cameraFromRestartFile(name) {
+  if (typeof name !== "string" || !name.startsWith(CAMERA_RESTART_PREFIX) || !name.endsWith(CAMERA_RESTART_SUFFIX)) return null;
+  const id = name.slice(CAMERA_RESTART_PREFIX.length, name.length - CAMERA_RESTART_SUFFIX.length);
+  return isCameraId(id) ? id : null;
+}
+
+/** Cameras that just went into camera_not_recording: the transition only, never every minute it stays raised. */
+export function camerasToRestart(transitions) {
+  if (!Array.isArray(transitions)) return [];
+  const ids = [];
+  for (const t of transitions) {
+    if (typeof t !== "object" || t === null) continue;
+    if (t.id !== "camera_not_recording" || t.to !== "raised") continue;
+    if (!isCameraId(t.subject) || ids.includes(t.subject)) continue;
+    ids.push(t.subject);
+  }
+  return ids;
+}
+
+/** Writes one request file per camera into stateDir; returns the camera ids asked for. */
+export async function requestCameraRestarts(stateDir, transitions, atUtc) {
+  const ids = camerasToRestart(transitions);
+  for (const id of ids) {
+    await writeFile(path.join(stateDir, cameraRestartFile(id)), `${atUtc}\n`);
+  }
+  return ids;
 }
 
 /**

@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, readFile, mkdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readHealth, isAlertRecord, readPreviousAlerts, runAlertsCheck, shouldRestartRecorder, transitionLogLine, alertsResponse }
+import { readHealth, isAlertRecord, readPreviousAlerts, runAlertsCheck, shouldRestartRecorder, transitionLogLine, alertsResponse, camerasToRestart, cameraRestartFile, cameraFromRestartFile, requestCameraRestarts }
   from "../agent/alerts-run.mjs";
 import { defaultThresholds } from "../dist/alerts.js";
 import { check, eq, report } from "./_assert.mjs";
@@ -133,5 +133,38 @@ try {
 } finally {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
 }
+
+check("THE FEARED ONE: only a camera newly not recording is restarted, and a hostile subject never names a file", () => {
+  const t = (id, subject, to, from = "clear") => ({ key: `${id}:${subject}`, id, subject, from, to, atUtc: "2026-09-19T00:00:00.000Z", value: "" });
+  eq(camerasToRestart([
+    t("camera_not_recording", "cam-1", "raised"),
+    t("camera_not_recording", "cam-1", "raised"),
+    t("camera_not_recording", "cam-2", "clear", "raised"),
+    t("camera_not_recording", "cam-3", "unknown"),
+    t("recorder_stale", "recorder", "raised"),
+    t("camera_not_recording", "../../etc/cron.d/x", "raised"),
+    t("camera_not_recording", "cam 4", "raised"),
+    null, "cam-5", 7,
+  ]), ["cam-1"], "cam-1 once; nothing else");
+  eq(camerasToRestart("nope"), [], "not a list");
+  eq(cameraRestartFile("cam-1"), "restart-camera.cam-1.request", "file name");
+  eq(cameraRestartFile("../x"), null, "a path is refused");
+  eq(cameraRestartFile(""), null, "empty is refused");
+  eq(cameraFromRestartFile("restart-camera.cam-1.request"), "cam-1", "read back");
+  eq(cameraFromRestartFile("restart-camera.a.b.request"), null, "a dot in the id is refused");
+  eq(cameraFromRestartFile("restart-recorder.request"), null, "the whole-recorder request is not a camera's");
+  eq(cameraFromRestartFile("restart-camera.cam-1.request.tmp"), null, "a half-written name is not a request");
+});
+
+await check("requestCameraRestarts writes one file per camera, in the state directory only", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "camplat-restart-"));
+  const t = (subject) => ({ key: `camera_not_recording:${subject}`, id: "camera_not_recording", subject, from: "clear", to: "raised", atUtc: "2026-09-19T00:00:00.000Z", value: "" });
+  const written = await requestCameraRestarts(dir, [t("cam-1"), t("cam-2"), t("../escape")], "2026-09-19T00:00:00.000Z");
+  eq(written, ["cam-1", "cam-2"], "two cameras asked for");
+  eq(existsSync(path.join(dir, "restart-camera.cam-1.request")), true, "cam-1 file");
+  eq(existsSync(path.join(dir, "restart-camera.cam-2.request")), true, "cam-2 file");
+  eq(existsSync(path.join(dir, "..", "escape")), false, "nothing written outside");
+  await rm(dir, { recursive: true, force: true });
+});
 
 report("alerts run");

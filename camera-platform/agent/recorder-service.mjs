@@ -6,7 +6,7 @@
  * deciding what the old ones were, and the partial from the last power cut would
  * be indistinguishable from the segment being written right now.
  */
-import { readFile, writeFile, rename, statfs, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, statfs, mkdir, stat, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { openIndex } from "./segindex.mjs";
 import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, INPROGRESS } from "./segstore.mjs";
@@ -20,9 +20,11 @@ import { buildRtspUrl, redactRtspUrl, urlForPath } from "../dist/rtsp.js";
 import { parseRtspUrl } from "../dist/cameraSource.js";
 import { parseCameraFile } from "../dist/cameraEdit.js";
 import { RECORDING_FILE, readRecordingFile, ageCutoffMs } from "../dist/recordingSettings.js";
+import { cameraFromRestartFile } from "./alerts-run.mjs";
 
 const EVICTION_INTERVAL_MS = 5 * 60_000;
 const HEALTH_INTERVAL_MS = 30_000;
+const RESTART_POLL_MS = 5000;
 const RING_FILL = 0.85;
 
 const log = (level, msg, extra) =>
@@ -334,7 +336,7 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
         if (e.kind === "sealed") lastSealed.set(e.cameraId, now().toISOString());
         if (e.kind === "stderr") return;
         const level = e.kind === "spawn_failed" || e.kind === "seal_failed" ? "error"
-          : e.kind === "exited" || e.kind === "stop_killed" || e.kind === "audio_dropped" ? "warn" : "info";
+          : e.kind === "exited" || e.kind === "stop_killed" || e.kind === "audio_dropped" || e.kind === "restarted_stuck" ? "warn" : "info";
         log(level, e.kind, { cameraId: e.cameraId, count: e.count, code: e.code, file: e.file, error: e.error });
       },
     });
@@ -385,15 +387,47 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
   };
   const healthTimer = setInterval(writeHealth, HEALTH_INTERVAL_MS);
 
+  // The alerts check asks for a camera restart by writing a request file when
+  // camera_not_recording is raised (agent/alerts-run.mjs). Each file is deleted
+  // before acting, so a restart is asked for once; a request naming no camera
+  // this service runs is deleted and logged, never acted on.
+  const checkRestartRequests = async () => {
+    const restarted = [];
+    const ignored = [];
+    let names;
+    try {
+      names = await readdir(stateDir);
+    } catch (err) {
+      log("error", "restart requests unreadable", { err: err.message });
+      return { restarted, ignored };
+    }
+    for (const name of names) {
+      if (!name.startsWith("restart-camera.") || !name.endsWith(".request")) continue;
+      await unlink(path.join(stateDir, name)).catch(() => {});
+      const cameraId = cameraFromRestartFile(name);
+      const entry = cameraId === null ? undefined : recorders.find((r) => r.cameraId === cameraId);
+      if (!entry) {
+        ignored.push(name);
+        log("warn", "restart request ignored", { file: name });
+        continue;
+      }
+      log("warn", "restarting a camera that stopped recording", { cameraId });
+      if (await entry.recorder.restartStuck({ sinceUtc: lastSealed.get(cameraId) ?? null })) restarted.push(cameraId);
+    }
+    return { restarted, ignored };
+  };
+  const restartTimer = setInterval(() => { checkRestartRequests().catch((err) => log("error", "restart requests failed", { err: err.message })); }, RESTART_POLL_MS);
+
   const stop = async () => {
     clearInterval(evictionTimer);
     clearInterval(healthTimer);
+    clearInterval(restartTimer);
     await Promise.all(recorders.map((r) => r.recorder.stop()));
     index.close();
     log("info", "stopped", {});
   };
 
-  return { stop, recorders, index, config, unresolved, recovered, refusedRoots, writeHealth };
+  return { stop, recorders, index, config, unresolved, recovered, refusedRoots, writeHealth, checkRestartRequests };
 }
 
 // Only run when executed directly, so tests can import the pieces.

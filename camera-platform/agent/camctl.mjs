@@ -10,7 +10,7 @@
 import { preflight } from "./preflight.mjs";
 import { runLoad, formatLoadReport } from "./loadtest.mjs";
 import { audit, loadConfig } from "./recorder-service.mjs";
-import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUEST } from "./alerts-run.mjs";
+import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUEST, requestCameraRestarts } from "./alerts-run.mjs";
 import { defaultThresholds } from "../dist/alerts.js";
 import { DEFAULT_PATHS } from "./config.mjs";
 import { writeFile } from "node:fs/promises";
@@ -381,6 +381,8 @@ async function cmdAudit() {
 // alerts.json and logs only changes. With --restart-stale it asks for a
 // recorder restart by writing a request file; camplat-recorder-restart.path
 // (root) acts on it, so this unprivileged process needs no polkit or sudo.
+// It also writes one request per camera newly not recording; the recorder
+// service reads those itself and restarts only that camera's ffmpeg.
 async function cmdAlerts() {
   const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
   const config = await loadConfig(stateDir);
@@ -391,6 +393,11 @@ async function cmdAlerts() {
     await writeFile(path.join(stateDir, RESTART_REQUEST), `${result.checkedUtc}
 `);
     console.log(JSON.stringify({ level: "warn", msg: "recorder restart requested", reason: "recorder_stale raised" }));
+  }
+  if (args.includes("--restart-stale")) {
+    for (const id of await requestCameraRestarts(stateDir, result.transitions, result.checkedUtc)) {
+      console.log(JSON.stringify({ level: "warn", msg: "camera restart requested", cameraId: id, reason: "camera_not_recording raised" }));
+    }
   }
   if (process.stdout.isTTY) {
     for (const a of result.alerts) if (a.state !== "clear") console.log(`  ${a.state.padEnd(8)}${a.key}: ${a.value}`);
@@ -406,7 +413,7 @@ if (!handler) {
   preflight                     check ffmpeg/ffprobe and permissions
   audit [--state-dir D]         what recovery would do now; read-only (or CAMPLAT_STATE_DIR)
   alerts [--state-dir D]        check health.json, write alerts.json, log what changed
-         [--restart-stale]      ask for a recorder restart when recorder_stale is raised
+         [--restart-stale]      ask for a recorder restart when recorder_stale is raised, and restart cameras that stopped recording
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
                   [--iface NAME|ADDR]  the card facing the cameras; default: the card on <cidr>
   probe <ip> [options]          codec, resolution, MEASURED bitrate, retention

@@ -593,4 +593,125 @@ await check("a single drop, or drops between long runs, never turns audio off", 
   }
 });
 
+// Like audioScriptSpawn, but each run chooses its own exit code: the recorder
+// must tell "the camera is unreachable" (a network errno) from anything else.
+// plan(child, n) -> null to stay up, or { afterMs, code }.
+function codedSpawn(plan, { ignoreSigterm = false } = {}) {
+  const children = [];
+  const spawnFn = (cmd, args) => {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 6000 + children.length;
+    child.audio = !args.includes("-an");
+    child.signals = [];
+    child.kill = (signal) => {
+      child.signals.push(signal);
+      if (ignoreSigterm && signal === "SIGTERM") return true;
+      setImmediate(() => child.emit("exit", null));
+      return true;
+    };
+    const step = plan(child, children.length);
+    children.push(child);
+    if (step !== null) setTimeout(() => child.emit("exit", step.code), step.afterMs);
+    return child;
+  };
+  return { spawnFn, children };
+}
+
+await check("THE FEARED ONE: a camera that is unreachable never costs its audio", async () => {
+  // The 2026-09-18 unplug test, in exit codes: 146 (connect timed out), then
+  // 143 (no route to host) while the camera boots, then it records.
+  const codes = [146, 143, 143, 145, 143];
+  const { spawnFn, children } = codedSpawn((child, n) => (n < codes.length ? { afterMs: 10, code: codes[n] } : null));
+  const { rec, events, idx } = await audioRecorder("unreachable", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 900));
+    eq(children.length, codes.length + 1, "retried through the outage");
+    eq(children.map((c) => c.audio).every(Boolean), true, `every run kept audio: ${JSON.stringify(children.map((c) => c.audio))}`);
+    eq(events.some((e) => e.kind === "audio_dropped"), false, "no audio_dropped for a camera that was unreachable");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("THE FEARED ONE: dropped audio is tried again on the next reconnect, and says when it is back", async () => {
+  // Two quick audio failures, a video-only trial that records (so audio is
+  // dropped), then the camera drops; the reconnect tries audio and it holds.
+  const plan = [{ afterMs: 10, code: 1 }, { afterMs: 10, code: 1 }, { afterMs: 500, code: 1 }];
+  const { spawnFn, children } = codedSpawn((child, n) => plan[n] ?? null);
+  const { rec, events, idx } = await audioRecorder("comeback", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 1200));
+    eq(children.map((c) => c.audio), [true, true, false, true], "audio tried again after the video-only run ended");
+    const kinds = events.filter((e) => e.kind === "audio_dropped" || e.kind === "audio_restored").map((e) => e.kind);
+    eq(kinds, ["audio_dropped", "audio_restored"], "dropped, then restored");
+    const dropped = events.find((e) => e.kind === "audio_dropped");
+    if (/until the service restarts/.test(dropped?.reason ?? "")) throw new Error(`the drop still claims to be permanent: ${dropped.reason}`);
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("THE FEARED ONE: restartStuck restarts a hung ffmpeg and records an honest gap", async () => {
+  // The run never exits by itself: a stream stuck with no data.
+  const { spawnFn, children } = codedSpawn(() => null);
+  const { rec, events, idx } = await audioRecorder("stuck", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 50));
+    const beforeKill = Date.now();
+    // Last sealed well before this run started: the gap starts at the run, not before.
+    const ok = await rec.restartStuck({ sinceUtc: new Date(beforeKill - 3_600_000).toISOString() });
+    eq(ok, true, "restartStuck reports it acted");
+    await new Promise((r) => setTimeout(r, 150));
+    eq(children.length, 2, "the stuck run was replaced");
+    eq(children[0].signals[0], "SIGTERM", "asked politely first");
+    eq(children[1].audio, true, "the restart kept audio");
+    const gaps = idx.gapsFor("cam-stuck");
+    eq(gaps.length, 1, "one gap recorded");
+    eq(gaps[0].reason, "unknown", "reason is unknown, not camera_offline: nobody knows the camera was off");
+    const startMs = Date.parse(gaps[0].startUtc);
+    eq(startMs >= beforeKill - 1000 && startMs <= beforeKill, true, `gap starts when this run started, not an hour back (${gaps[0].startUtc})`);
+    eq(events.some((e) => e.kind === "restarted_stuck" && e.cameraId === "cam-stuck"), true, "restarted_stuck reported");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("THE FEARED ONE: repeated stuck restarts never count as audio failures", async () => {
+  const { spawnFn, children } = codedSpawn(() => null);
+  const { rec, events, idx } = await audioRecorder("stuck2", spawnFn);
+  try {
+    for (let i = 0; i < 3; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      await rec.restartStuck({ sinceUtc: null });
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    eq(children.length, 4, "three restarts, four runs");
+    eq(children.map((c) => c.audio).every(Boolean), true, `audio on every run: ${JSON.stringify(children.map((c) => c.audio))}`);
+    eq(events.some((e) => e.kind === "audio_dropped"), false, "nothing dropped");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("an ffmpeg that ignores SIGTERM on a stuck restart is killed, and a stopped recorder refuses", async () => {
+  const { spawnFn, children } = codedSpawn(() => null, { ignoreSigterm: true });
+  const { rec, idx } = await audioRecorder("deaf", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 40));
+    await rec.restartStuck({ sinceUtc: null });
+    await new Promise((r) => setTimeout(r, 100));
+    eq(children[0].signals, ["SIGTERM", "SIGKILL"], "escalated to SIGKILL");
+    eq(children.length, 2, "and replaced");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+  eq(await rec.restartStuck({ sinceUtc: null }), false, "a stopped recorder does not restart");
+});
+
 report("recorder integration");

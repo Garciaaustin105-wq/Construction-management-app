@@ -45,6 +45,14 @@ import { redactRtspUrl } from "../dist/rtsp.js";
 export const RTSP_TIMEOUT_US = 10_000_000;
 
 /**
+ * ffmpeg exit codes that mean the camera could not be reached: 256 minus the
+ * errno. 143 EHOSTUNREACH, 145 ECONNREFUSED, 146 ETIMEDOUT (measured on the
+ * bench laptop, FIELD-NOTES 2026-09-18); 144 EHOSTDOWN, 152 ECONNRESET,
+ * 155 ENETUNREACH (from the errno table). The camera is down, not its audio.
+ */
+export const NETWORK_EXIT_CODES = new Set([143, 144, 145, 146, 152, 155]);
+
+/**
  * Args for the DETECTION substream — decoded, unlike the recording path.
  *
  * `-hwaccel vaapi` matters specifically on the N100. Decoding 8–12 substreams in
@@ -139,6 +147,9 @@ export function createCameraRecorder({
   let stopped = false;
   let lastSeenOpen = null;
   let downSince = null;
+  let audioDropped = false;  // audio was dropped and the next audio run is a retry
+  let stuckRestart = false;  // the current run is being killed on purpose by restartStuck
+  let downReason = "camera_offline";
 
   async function sealCompleted() {
     const wipDir = path.join(root, cameraId, INPROGRESS);
@@ -224,10 +235,22 @@ export function createCameraRecorder({
       const probe = setTimeout(() => {
         if (!stopped && child === spawned && !childGone && audioTrial) {
           audioTrial = false;
-          onEvent({ kind: "audio_dropped", cameraId, reason: "ffmpeg failed twice with audio on and records without it; recording video only until the service restarts" });
+          audioDropped = true;
+          onEvent({ kind: "audio_dropped", cameraId, reason: "ffmpeg failed twice with audio on and records without it; recording video only, and trying audio again when the camera next reconnects" });
         }
       }, audioProbeMs);
       probe?.unref?.();
+    }
+    // Audio was dropped and this run is trying it again: still up after the
+    // probe means audio works again, so say so.
+    if (audioActive && audioDropped) {
+      const restoreProbe = setTimeout(() => {
+        if (!stopped && child === spawned && !childGone && audioActive && audioDropped) {
+          audioDropped = false;
+          onEvent({ kind: "audio_restored", cameraId });
+        }
+      }, audioProbeMs);
+      restoreProbe?.unref?.();
     }
     childGone = false;
     childDone = new Promise((resolve) => {
@@ -249,10 +272,11 @@ export function createCameraRecorder({
         cameraId,
         startUtc: new Date(downSince).toISOString(),
         endUtc: new Date().toISOString(),
-        reason: "camera_offline",
+        reason: downReason,
       });
       onEvent({ kind: "gap_recorded", cameraId, fromUtc: new Date(downSince).toISOString() });
       downSince = null;
+      downReason = "camera_offline";
     }
 
     child?.stderr?.on("data", (d) => onEvent({ kind: "stderr", cameraId, text: redactRtspUrl(String(d)) }));
@@ -261,25 +285,39 @@ export function createCameraRecorder({
     const wentDown = (event) => {
       if (stopped || handled) return;
       handled = true;
-      downSince = Date.now();
       onEvent(event);
-      const ranMs = Date.now() - launchedAt;
-      if (audioTrial) {
-        // The video-only trial died fast too: the camera is down, not its
-        // audio. Put audio back on and start counting afresh.
-        audioTrial = false;
-        audioActive = true;
-        audioFailures = 0;
-      } else if (audioActive) {
-        if (ranMs < audioProbeMs) {
-          audioFailures += 1;
-          if (audioFailures >= 2) {
-            audioActive = false;
-            audioTrial = true;
+      if (stuckRestart) {
+        // Killed on purpose: says nothing about the camera or its audio. downSince
+        // and downReason were set by restartStuck.
+        stuckRestart = false;
+      } else {
+        downSince = Date.now();
+        downReason = "camera_offline";
+        const ranMs = Date.now() - launchedAt;
+        const unreachable = event.kind === "exited" && NETWORK_EXIT_CODES.has(event.code);
+        if (audioTrial) {
+          // The video-only trial died fast too: the camera is down, not its
+          // audio. Put audio back on and start counting afresh.
+          audioTrial = false;
+          audioActive = true;
+          audioFailures = 0;
+        } else if (!audioActive && audio) {
+          // Audio was dropped and this video-only run has ended: the camera is
+          // reconnecting, so try audio again. A camera whose audio still breaks
+          // ffmpeg fails twice and drops it again.
+          audioActive = true;
+          audioFailures = 0;
+        } else if (audioActive && !unreachable) {
+          if (ranMs < audioProbeMs) {
+            audioFailures += 1;
+            if (audioFailures >= 2) {
+              audioActive = false;
+              audioTrial = true;
+              audioFailures = 0;
+            }
+          } else {
             audioFailures = 0;
           }
-        } else {
-          audioFailures = 0;
         }
       }
       // A camera that drops comes back. Restart, and the gap is recorded above
@@ -318,6 +356,33 @@ export function createCameraRecorder({
         }
       }
       await sealCompleted().catch(() => {});
+    },
+    // A run that is up but writing nothing (the alert says the camera is not
+    // recording). Kill it and let the normal restart relaunch it. The gap runs
+    // from the later of the last sealed segment and this run's start: before
+    // that, the timeline already says what happened. Reason "unknown": nothing
+    // here knows why the stream stalled.
+    async restartStuck({ sinceUtc = null } = {}) {
+      if (stopped || !child || childGone) return false;
+      const sinceMs = typeof sinceUtc === "string" ? Date.parse(sinceUtc) : NaN;
+      const fromMs = Number.isFinite(sinceMs) ? Math.max(sinceMs, launchedAt) : launchedAt;
+      stuckRestart = true;
+      downSince = fromMs;
+      downReason = "unknown";
+      onEvent({ kind: "restarted_stuck", cameraId, sinceUtc: new Date(fromMs).toISOString() });
+      const running = child;
+      try { running.kill?.("SIGTERM"); } catch { /* already gone */ }
+      let killTimer;
+      const timedOut = await Promise.race([
+        childDone.then(() => false),
+        new Promise((resolve) => { killTimer = setTimeout(() => resolve(true), stopTimeoutMs); }),
+      ]);
+      clearTimeout(killTimer);
+      if (timedOut && child === running) {
+        try { running.kill?.("SIGKILL"); } catch { /* already gone */ }
+        onEvent({ kind: "stop_killed", cameraId, waitedMs: stopTimeoutMs });
+      }
+      return true;
     },
   };
 }

@@ -448,7 +448,43 @@ await check("THE FEARED ONE: health names every configured camera and drive, and
   }
 });
 
+await check("THE FEARED ONE: a camera restart request restarts that camera only, and junk requests are deleted", async () => {
+  const children = [];
+  const spawnFn = (cmd, args) => {
+    const c = new EventEmitter();
+    c.stderr = new EventEmitter();
+    c.args = args.join(" ");
+    c.killed = false;
+    c.kill = () => { c.killed = true; setImmediate(() => c.emit("exit", null)); return true; };
+    children.push(c);
+    return c;
+  };
+  const handle = await start({ stateDir, spawnFn, storeCheck: mounted });
+  try {
+    const ids = handle.recorders.map((r) => r.cameraId);
+    const target = ids[0];
+    const other = ids[1];
+    const runsOf = (id) => children.filter((c) => c.args.includes(`${path.sep}${id}${path.sep}`) || c.args.includes(`/${id}/`));
+    eq(runsOf(target).length, 1, "one run for the target before");
+    for (const name of [`restart-camera.${target}.request`, "restart-camera.not-configured.request", "restart-camera.a.b.request"]) {
+      await writeFile(path.join(stateDir, name), "x\n");
+    }
+    const result = await handle.checkRestartRequests();
+    eq(result.restarted, [target], "only the configured camera restarted");
+    eq(result.ignored.length, 2, "two requests ignored");
+    const left = fs.readdirSync(stateDir).filter((f) => f.startsWith("restart-camera."));
+    eq(left, [], "every request file consumed, junk included");
+    eq(runsOf(target)[0].killed, true, "the target's ffmpeg was stopped");
+    eq(runsOf(other)[0].killed, false, "the other camera was left alone");
+    await new Promise((r) => setTimeout(r, 2500));
+    eq(runsOf(target).length, 2, "and started again");
+  } finally {
+    await handle.stop();
+  }
+});
+
 await rm(stateDir, { recursive: true, force: true });
 await rm(disk0, { recursive: true, force: true });
 await rm(disk1, { recursive: true, force: true });
+
 report("recorder service");

@@ -494,16 +494,44 @@ switch, so power and link go together):
 | 23:44:38 | recorder restarted it and recorded the gap |
 | 23:45:12 | camera confirmed dark (no ping); live file not growing |
 | 23:45:18 | a retry exited 146 (camera unreachable) -- failing cleanly |
-| 23:45:20-35 | camera booting: retries every ~5 s, each killed after ~3 s with no output (exit 143, the recorder's own start-up rule), each with a gap recorded |
+| 23:45:20-35 | camera booting: retries every ~5 s, each exiting after ~3 s with 143 (no route to host: the camera not yet answering ARP), each with a gap recorded |
 | 23:45:38 | video flowing again: live file 28 B -> 3.1 MB in 6 s |
 | 23:46:01 | first full segment sealed after recovery |
 
 No restart, no human, no hang. Two things to know from it:
-- **The recorder already had a start-up no-output rule** (the 143s): a stream
-  that connects but sends nothing is killed after a few seconds and retried.
-  It watches only a stream that is STARTING, which is why it never caught the
-  13-minute hang of a stream that was already running. The new socket timeout
-  covers that case.
+- **Correction (2026-09-19):** an earlier version of this entry said the 143s
+  were the recorder's own start-up kill rule. There is no such rule: the
+  recorder signals ffmpeg only when stopping. ffmpeg exits with 256 minus the
+  errno, and 143 is EHOSTUNREACH, measured on the laptop against an absent
+  address. The other codes measured: 145 connection refused, 146 connect timed
+  out, 183 a peer that accepts and says nothing, 0 when the timeout fires
+  mid-stream. The new socket timeout is what covers a stream that was already
+  running.
 - **`audio_dropped` on cam1-main at 23:46:05**, right after the camera
   rebooted: the recorder fell back to video-only. Video is fine; check that
   audio comes back rather than staying dropped until the next restart.
+
+## Bench log — 2026-09-19, audio survives a camera outage; a stuck camera is restarted
+
+**Audio.** In the unplug test, cam1-main came back video-only: two quick
+failures with audio on switched it to a video-only trial, the camera recovered
+during that trial, and audio stayed off "until the service restarts". The two
+failures were network exits (146, 143), not audio. Fixed:
+- exits 143/144/145/146/152/155 (the camera unreachable) never count against
+  audio (`NETWORK_EXIT_CODES` in agent/recorder.mjs);
+- a drop is not permanent: when the video-only run ends, the reconnect tries
+  audio again, and `audio_restored` is logged once an audio run holds.
+Both were reproduced as failing checks first (harness/recorder.harness.mjs).
+
+**The per-camera alert now acts.** `camera_not_recording` raised at 23:09 on
+the 18th and nothing happened for 12 minutes. Now, on the transition into
+raised, `camctl alerts --restart-stale` writes
+`restart-camera.<cameraId>.request` in the state directory; the recorder
+service polls every 5 s, deletes the file, and restarts only that camera's
+ffmpeg (SIGTERM, then SIGKILL). No root is needed. A gap is recorded from the
+later of the last sealed segment and that run's start, with reason `unknown`:
+nothing on the box knows why the stream stalled. Camera ids are checked
+against the API's id rule when the file is written and again when it is read,
+and a request naming no configured camera is deleted and ignored.
+
+Not yet installed on the laptop NVR.
