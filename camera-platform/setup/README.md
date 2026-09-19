@@ -7,12 +7,10 @@ for Debian to install.
 
 Per `../APPLIANCE-BOM.md` (the full list, with prices, is there):
 
-- Intel i3-N305 6-bay mini-ITX NAS board (Topton / CWWK / HKUXZR); every box, so the AI chip can be added later
-- 16 GB DDR5 SODIMM
-- 128–256 GB NVMe — **OS only**
+- Refurbished HP EliteDesk 800 G5 SFF (i5-9500, 16 GB) for the first sites, plus a low-profile Intel NIC for the camera side; the purpose-built N305 or industrial-board box is the later upgrade
+- 16 GB memory and the OS NVMe come in the EliteDesk; the NVMe is **OS only**
 - 2× Seagate SkyHawk 8 TB
-- Mini-ITX NAS case + SFX PSU
-- ~350 VA UPS with USB
+- A UPS with USB: the rack's own, or a ~600 VA unit
 
 ## 2. BIOS — before anything else
 

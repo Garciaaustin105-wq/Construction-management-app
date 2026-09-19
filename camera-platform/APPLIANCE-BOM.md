@@ -1,8 +1,9 @@
 # The NVR appliance — what to buy
 
 For 16 AVYCON 5MP @ 30 fps cameras and dual 8 TB, running Debian + ffmpeg +
-Node + SQLite. Roughly **$870 a store**, or **$1,070 with AI** (case and
-board chosen by Austin 2026-09-19; see "The case" and "Two models").
+Node + SQLite. **Start with a refurbished HP EliteDesk 800 G5 SFF: ~$535 a
+store, ~$735 with AI** (Austin, 2026-09-19). The purpose-built box further
+down is the upgrade path.
 
 ## You are not buying an NVR
 
@@ -12,7 +13,69 @@ would mean paying for their recording software and then not using it.
 
 So the order is a short parts list, and the assembly is about 20 minutes a unit.
 
-## Two models, one box (Austin, 2026-09-16; board unified 2026-09-19)
+## Start here: a refurbished HP EliteDesk 800 G5 SFF (Austin, 2026-09-19)
+
+Austin: "start out with the elite desk then upgrade after." The first sites get
+a refurbished business desktop with the drives added; the purpose-built box
+("Later: the purpose-built box", below) is the upgrade path.
+
+**Why a business PC.** Three forwarded reviews of the cheap N305 NAS boards
+reported dropped drives, dead ports and random shutdowns after a year, with
+about a year's warranty and no support. The industrial boards fix that but add
+~$300 a box, and 2026 memory prices (16 GB DDR4 seen at $229) add more. A
+refurbished HP EliteDesk is a business-grade board that ran in an office for
+years, **with 16 GB of memory already in it**, for about the price of a NAS
+board alone. It is also what many Blue Iris and Frigate installers use.
+
+| What we need | HP EliteDesk 800 G5 SFF |
+|---|---|
+| Processor + video decoding | Intel Core i5-9500, 6 cores, QuickSync |
+| Memory | **16 GB DDR4 included** |
+| Recording drives | **2× 3.5" bays**: 2 drives |
+| System drive + AI chip | **2× M.2 2280, PCIe x4**: one OS NVMe, one kept free for the Hailo-8 at full speed |
+| Second network port | built-in Intel I219-LM for the store LAN, plus a **low-profile Intel NIC** in a PCIe slot for the camera side |
+| TV output | DisplayPort; a DP-to-HDMI cable for the TV |
+| After a power cut | HP BIOS "After Power Loss: Power On" (set it; see BIOS settings) |
+| Warranty | typically 1 year from the refurbisher |
+
+### What to order — one store (Standard NVR)
+
+| # | Item | Notes | ~Cost |
+|---|---|---|---|
+| 1 | **HP EliteDesk 800 G5 SFF**, i5-9500, 16 GB, 256–512 GB NVMe, refurbished | 1-year warranty listing. An 800 G6 SFF (10th gen) is also fine | $215 |
+| 2 | **2× Seagate SkyHawk 8 TB** (ST8000VX010) | Surveillance drives; 79 TB/yr each against a 180 TB/yr rating. WD Purple 8 TB (+$60) if you want more margin | $280 |
+| 3 | Low-profile Intel single-port NIC (i210 or i226) | The camera-side network | $30 |
+| 4 | DisplayPort-to-HDMI cable | For the site's TV | $10 |
+| 5 | UPS | Share the rack's existing UPS; if there is none, a ~600 VA unit with USB, +$70 | $0–70 |
+| | | **Total** | **~$535** (~$605 with a UPS) |
+
+**AI NVR:** add the Hailo-8 M.2 2280 in the free M.2 slot, **~$735** total.
+
+**Check on the first unit** (none verified yet):
+- **Drive caddies and cables.** Refurbished SFF units often ship with only the
+  NVMe. Confirm both 3.5" bays have their brackets and SATA data and power
+  cables, or buy HP's.
+- **Watchdog.** `wdctl` should show the Intel iTCO watchdog on the Q370
+  chipset. The build relies on it (BIOS settings, below).
+- **Decoding.** Whether the i5-9500 decodes 16 detection substreams plus the
+  nine-tile wall. Run `bench/measure.sh`, which now records memory too.
+- **Drive temperature.** Two 3.5" drives in a small case: watch `smartctl`
+  temperatures during the 7-day run.
+
+**More cameras means bigger drives, not more drives.** The EliteDesk has two
+bays, so a tier grows by capacity: 24 cameras on 2× 12 TB, 32 on 2× 16 TB,
+each about 28 days (see "The drives" for the workload per drive at each size).
+Past that, or for two AI chips, move to the purpose-built box.
+
+## Later: the purpose-built box (the upgrade path)
+
+Kept for when a site outgrows the EliteDesk (more drives, two AI chips, an
+NVR-shaped case). **The board is still open:** the N305 NAS boards below need
+the 7-day burn-in (see "Board reliability"); ASRock Industrial boards
+(IMB-1230, quote requested; IMB-X1314, $393 in stock) are the reliable
+alternative at ~+$300 a box. Memory prices here are pre-2026 and now stale.
+
+### Two models, one box (Austin, 2026-09-16; board unified 2026-09-19)
 
 | | **Standard NVR** (no AI) | **AI NVR** |
 |---|---|---|
@@ -33,7 +96,7 @@ Both run the same software and handle at least 16 cameras. The chip slot must
 be PCIe NVMe, not SATA M.2; the Hailo-8L (13 TOPS) is short at 16 cameras.
 Prices are estimates; recheck before ordering.
 
-## What to order — one store (Standard NVR)
+### What to order (purpose-built box)
 
 | # | Item | Notes | ~Cost |
 |---|---|---|---|
@@ -105,7 +168,7 @@ reliability: **cut the case, not the drives.** A desktop drive saves $120 a stor
 and runs at 143% of its rating; it fails inside 6–18 months and the callout costs
 more than the saving, twice over.
 
-### The prebuilt alternative, and why not
+### The Aoostar barebone, and why not
 
 **Aoostar N150 4-bay NAS barebone**, about $500–590, is the closest thing to a
 ready-made box: same N150, 4 SATA bays, 2× 2.5GbE, add RAM and drives.
@@ -124,9 +187,9 @@ run the bench session — `camctl probe` for the real bitrate, then the recorder
 against a live AVYCON camera — and confirm the numbers before ordering the rest.
 One unit is well under $1,000 to de-risk a decision you will repeat many times.
 
-## The build in detail
+## The build in detail (purpose-built box)
 
-Measured power on this platform: **9.3 W idle with no drives, 14.3 W with two,
+Measured power on the NAS-board platform: **9.3 W idle with no drives, 14.3 W with two,
 18.7 W with four.** That is what makes a small UPS give a long runtime, and it is
 why fan noise in a store office is not an issue.
 
@@ -189,9 +252,9 @@ those is stream-copy, so it stays cheap. An N150 would be enough for
 recording alone; every box gets the 8-core i3-N305 anyway, so that any box
 can take the AI chip later without a board swap.
 
-**It has to be a NAS board, not a mini PC.** Most N100 mini PCs have one M.2 and
-no SATA bays. We need two 3.5" drives, two NICs, and a spare M.2. The 6-bay
-boards have all of it on one 17 × 17 cm board.
+**Not a mini PC.** Most N100 mini PCs have one M.2 and no SATA bays. We need
+two 3.5" drives, two NICs, and a spare M.2. A business SFF desktop (the
+EliteDesk) or a 6-bay NAS board has all of it.
 
 **Two NICs are not optional.** One to the store LAN, one to a camera-only
 segment. That makes the appliance the isolation boundary around cameras that
@@ -219,6 +282,18 @@ fails with bad sectors inside 6–18 months. **WD Purple 8 TB has double SkyHawk
 standard workload rating at the same capacity**, which is why it is the pick —
 not because SkyHawk is inadequate, but because headroom on the one part that
 wears out is cheap.
+
+**On a two-bay box, more cameras land on the same two drives.** Per drive, at
+2.5 Mbps a camera:
+
+| Cameras | Drives | Per drive | SkyHawk (180 TB/yr) | WD Purple (360 TB/yr) |
+|---|---|---|---|---|
+| 16 | 2× 8 TB | 79 TB/yr | 44% | 22% |
+| 24 | 2× 12 TB | 118 TB/yr | 66% | 33% |
+| 32 | 2× 16 TB | 158 TB/yr | **88%, too close** | 44% |
+
+So SkyHawk is fine to 24 cameras; **at 32 on two drives, use WD Purple.** These
+workload ratings are the 8 TB models'; check the rating of the size you buy.
 
 Assign whole cameras to drives; do not stripe or RAID. Striped, one failure
 loses every camera's history. Assigned, it loses eight cameras and leaves eight

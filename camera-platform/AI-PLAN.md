@@ -60,8 +60,12 @@ camera substream ──> camplat-detect ──> events table (SQLite, own file)
 - **Sizing floor: 16 cameras per NVR** (Austin, 2026-09-16). At 5 frames a
   second that is about 80 detector frames a second, before plates and search.
 - **Two models (decided 2026-09-16):** a Standard NVR (no chip) and an AI NVR
-  (plus Hailo-8), both on the i3-N305 board since 2026-09-19 (Austin), so an
-  upgrade is plugging the chip into the free NVMe slot, not a board swap. Same software; `camplat-detect` is installed
+  (plus Hailo-8). The first sites use a refurbished **HP EliteDesk 800 G5 SFF**
+  (i5-9500, Austin 2026-09-19): its second M.2 is PCIe x4, so the Hailo-8 gets
+  its full link and the upgrade is plugging the chip in. The purpose-built box
+  (i3-N305 or industrial board, APPLIANCE-BOM.md) is the later upgrade path.
+  **To verify on the first EliteDesk:** QuickSync on the i5-9500 decoding 16
+  substreams plus the wall. Same software; `camplat-detect` is installed
   and enabled only on the AI NVR, and every AI page and permission is hidden
   when it is absent. The Standard NVR never runs detection on its CPU.
 - **Chip:** Hailo-8 M.2 2280 M-key (26 TOPS, about $199 standalone in
