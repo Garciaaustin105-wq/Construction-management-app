@@ -1,8 +1,8 @@
 # The NVR appliance — what to buy
 
 For 16 AVYCON 5MP @ 30 fps cameras and dual 8 TB, running Debian + ffmpeg +
-Node + SQLite. **Start with a refurbished HP EliteDesk 800 G5 SFF: ~$535 a
-store, ~$735 with AI** (Austin, 2026-09-19). The purpose-built box further
+Node + SQLite. **Start with a refurbished HP EliteDesk 800 G5 SFF: ~$525 a
+store, ~$725 with AI** (Austin, 2026-09-19). The purpose-built box further
 down is the upgrade path.
 
 ## You are not buying an NVR
@@ -44,17 +44,19 @@ board alone. It is also what many Blue Iris and Frigate installers use.
 |---|---|---|---|
 | 1 | **HP EliteDesk 800 G5 SFF**, i5-9500, 16 GB, 256–512 GB NVMe, refurbished | 1-year warranty listing. An 800 G6 SFF (10th gen) is also fine | $215 |
 | 2 | **2× Seagate SkyHawk 8 TB** (ST8000VX010) | Surveillance drives; 79 TB/yr each against a 180 TB/yr rating. WD Purple 8 TB (+$60) if you want more margin | $280 |
-| 3 | Low-profile Intel single-port NIC (i210 or i226) | The camera-side network | $30 |
+| 3 | **Later:** Intel I210-T1 (I210T1BLK), with its low-profile bracket | The camera-side network. Austin, 2026-09-19: "we can build that later"; the recorder runs on one port meanwhile. HP lists this card for the 800 G5 SFF; buy from a known seller, as fakes are common | $30 later |
 | 4 | DisplayPort-to-HDMI cable | For the site's TV | $10 |
 | 5 | UPS | Share the rack's existing UPS; if there is none, a ~600 VA unit with USB, +$70 | $0–70 |
-| | | **Total** | **~$535** (~$605 with a UPS) |
+| 6 | Drive mounting: 8× HP 6-32 blue/silver isolation screws (450712-001), 2× SATA data cables; SATA power cable 908714-001 only if the unit lacks one | The 3.5" bays are a built-in cage; no brackets needed (HP service guide) | ~$16–30 |
+| | | **Total now** | **~$525** (~$595 with a UPS; +$30 for the camera-side NIC later) |
 
-**AI NVR:** add the Hailo-8 M.2 2280 in the free M.2 slot, **~$735** total.
+**AI NVR:** add the Hailo-8 M.2 2280 in the free M.2 slot, **~$725** total.
 
 **Check on the first unit** (none verified yet):
-- **Drive caddies and cables.** Refurbished SFF units often ship with only the
-  NVMe. Confirm both 3.5" bays have their brackets and SATA data and power
-  cables, or buy HP's.
+- **Drive screws and cables.** Refurbished SFF units often ship with only the
+  NVMe. The 3.5" bays need no brackets, but each drive needs four HP 6-32
+  isolation screws and a SATA data cable; check whether the power cable
+  inside has plugs for two drives.
 - **Watchdog.** `wdctl` should show the Intel iTCO watchdog on the Q370
   chipset. The build relies on it (BIOS settings, below).
 - **Decoding.** Whether the i5-9500 decodes 16 detection substreams plus the
@@ -256,8 +258,9 @@ can take the AI chip later without a board swap.
 two 3.5" drives, two NICs, and a spare M.2. A business SFF desktop (the
 EliteDesk) or a 6-bay NAS board has all of it.
 
-**Two NICs are not optional.** One to the store LAN, one to a camera-only
-segment. That makes the appliance the isolation boundary around cameras that
+**Two NICs are the target.** One to the store LAN, one to a camera-only
+segment (the EliteDesk's second comes from the I210-T1, added later; until
+then, a VLAN on a managed PoE switch or a shared LAN). That makes the appliance the isolation boundary around cameras that
 should never see the internet.
 
 **No PoE on the appliance.** A separate managed PoE switch is independently
