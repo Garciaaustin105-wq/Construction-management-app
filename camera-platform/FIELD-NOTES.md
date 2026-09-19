@@ -632,3 +632,15 @@ the recorder's journal holds none. Clearing them is Austin's call (journalctl
 --rotate, then --vacuum-time=1s), and the bench camera's password should be
 changed since it was shown on screen. Every box that ran a build before
 90ec738 has the same exposure in its API journal.
+
+**Orphaned live ffmpegs (fixed in af9aa6a, installed signed).** After the
+15:39 unplug the laptop had 6 live ffmpegs, each with an ESTAB session to the
+camera's port 554, for 2 viewers. The 4 orphans had been sent SIGTERM while
+blocked reading the dead camera; ffmpeg honours SIGTERM only between reads,
+and the live arguments lacked the socket timeout the recorder got in
+17afa0a. Now the live ffmpeg has `-timeout` (the recorder's value) and a
+retired source gets SIGKILL 5 s after SIGTERM if it has not exited. Re-tested
+16:07 with 2 viewers: 2 live + 2 recorder sessions before; during the outage
+the log shows 2 "live source killed"; after the replug, again 2 live + 2
+recorder sessions and no orphans. The restart that installed af9aa6a cleared
+the earlier 4.
