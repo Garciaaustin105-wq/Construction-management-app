@@ -1,0 +1,10 @@
+phase: B-wall
+duration_s: 300
+cores: 16
+cpu_all_busy_pct: 5.1
+cpu_node_pct_of_one_core: 0.0
+cpu_ffmpeg_pct_of_one_core: 11.0
+cpu_chrom_pct_of_one_core: 26.2
+cpu_detdec_pct_of_one_core: 0.0
+cpu_source_pct_of_one_core: 25.1
+disk_nvme0n1: read 39 kB/s, write 3437 kB/s, util 0.5%

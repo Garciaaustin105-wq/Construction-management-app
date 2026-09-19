@@ -1,0 +1,152 @@
+{
+  "start": 1789781399,
+  "end": 1789781699,
+  "windowS": 300,
+  "rows": [
+    {
+      "camera": "cam1-main",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 0.999,
+      "gap_events": 0,
+      "unreadable": 1
+    },
+    {
+      "camera": "cam2-sub",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 0.999,
+      "gap_events": 0,
+      "unreadable": 1
+    },
+    {
+      "camera": "cam3",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 1
+    },
+    {
+      "camera": "cam4",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam5",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam6",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam7",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam8",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam9",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam10",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam11",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam12",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam13",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam14",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam15",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    },
+    {
+      "camera": "cam16",
+      "segments": 6,
+      "coverage_pct": 100,
+      "largest_gap_s": 0,
+      "frame_ratio": 1,
+      "gap_events": 0,
+      "unreadable": 0
+    }
+  ],
+  "journalNote": ""
+}

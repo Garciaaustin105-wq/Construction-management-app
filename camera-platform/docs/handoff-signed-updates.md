@@ -97,11 +97,14 @@ storage (16 cameras = 158 TB/yr, so 24 ≈ 237 TB and the 6-bay board may run ou
 bays), the AI chip (Hailo-8 was sized at 16), and `GRID_SHAPES`, which stops at
 4x4. Adding a 5x5 is now cheap: the layout icons draw themselves from the shape.
 
-### 6. Measure one appliance under its real load
-Never measured. Put the HDMI wall, a manager's browser and the detector on one box
-at once and record CPU, iGPU, disk read, and **whether recording drops a frame** —
-that last one is the only pass/fail. Numbers go in `FIELD-NOTES.md` beside the
-measured bitrate, not into a doc as an assumption.
+### 6. Measure one appliance under its real load — DONE 2026-09-18 (on the laptop)
+`FIELD-NOTES.md` "Bench log — 2026-09-18". 16 cameras + 9-tile wall + 16
+detector-style decodes: **recording PASSED, 100% of every window, no gaps.**
+Drawing the wall is the dominant cost, more than recording all 16 cameras.
+Run on a Ryzen laptop, so the pass/fail stands but no number is an N150 number:
+rerun `bench/measure.sh` and `bench/integrity.mjs` on an N150 board, wall first.
+Five defects it surfaced are listed there; the IP-grouping one (a DVR-migrated
+site shows one tile for sixteen cameras) and the kiosk bind are the urgent two.
 
 ### 7. D1 is blocked on clips, not on code
 `AI-PLAN.md`: the answer key has machinery and no answers. Real footage with

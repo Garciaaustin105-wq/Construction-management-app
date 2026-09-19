@@ -1,0 +1,10 @@
+phase: A-baseline
+duration_s: 300
+cores: 16
+cpu_all_busy_pct: 3.0
+cpu_node_pct_of_one_core: 0.0
+cpu_ffmpeg_pct_of_one_core: 8.2
+cpu_chrom_pct_of_one_core: 0.0
+cpu_detdec_pct_of_one_core: 0.0
+cpu_source_pct_of_one_core: 27.3
+disk_nvme0n1: read 1 kB/s, write 3506 kB/s, util 0.5%

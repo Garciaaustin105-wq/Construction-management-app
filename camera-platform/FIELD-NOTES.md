@@ -366,3 +366,100 @@ A Windows bench gotcha for the next person: `sign-release.mjs` shells out to
 `tar`, and Git Bash's GNU tar reads a `C:\` path as host `C` and fails
 (`Cannot connect to C: resolve failed`). Run it with the Windows bsdtar ahead
 on `PATH` (`PATH="/c/Windows/System32:$PATH" node setup/sign-release.mjs …`).
+
+## Bench log — 2026-09-18, one appliance under a site's real load (handoff item 6)
+
+**What this machine is, before any number is read.** The laptop NVR is a ROG
+Zephyrus G14: Ryzen 9 7940HS, 16 threads, plus an RTX 4060. The appliance is an
+N150, several times slower per core. **None of these numbers is an N150 number.**
+What this run can say honestly: whether recording is isolated from display and
+decode load (a software property, pass/fail), what each load costs *relative to
+the others*, and that the method works — the scripts in `bench/` run unchanged
+on an N150 board the day one arrives.
+
+**Setup.** 16 cameras recorded: the real ECI-T24F2 (`cam1-main` + `cam2-sub`)
+and 14 synthetic cameras served on the box itself by mediamtx v1.21.0 (checksum
+verified, bound to `127.0.0.1`, removed afterwards). The synthetic main streams
+loop one pre-encoded clip at the REAL camera's measured profile — 2560x1440,
+20 fps, H.264 Main, 1.77 Mbps (measured 1.797 in log #1) — with stream-copy, so
+the source costs almost nothing. Substreams: 640x360, 20 fps, ~400 kbps. Each
+synthetic camera has its own host name (`camN.localhost`), because of finding 1.
+Each phase is 5 minutes, sampled every 5 s. Raw data: `bench/results-2026-09-18/`.
+
+| Phase | Machine busy | Recorder + live ffmpeg | Wall (Chromium) | Detector-style decode | Disk write |
+|---|---|---|---|---|---|
+| A — 16 cameras recording | 3.0% | 8.2% of a core | — | — | 3.5 MB/s |
+| B — + 9-tile wall on the box | 5.1% | 11.0% | 26.2% of a core | — | 3.4 MB/s |
+| C — + 16 substreams decoded at 5 fps | 5.4% | 9.0% | 19.1% | 21.5% of a core | 3.6 MB/s |
+
+CPU is per-process as a percentage of ONE core (100 = one core busy). The
+synthetic source cost 20–27% of a core and is excluded from every figure above.
+
+**Recording integrity — the only pass/fail: PASS in all three phases.** Every one
+of the 16 cameras recorded 100% of every window: largest gap 0 s, no
+`gap_recorded` events, 99.9% of expected frames present (`bench/integrity.mjs`,
+counting packets against duration x frame rate). Recording did not notice the
+wall or the decoding.
+
+**What the numbers say, relative to each other:**
+- **Recording is the cheap part.** 16 cameras stream-copied cost ~8% of one core.
+- **Serving live tiles is cheap.** ~0.3% of a core per tile (B minus A, 9 tiles).
+- **Drawing the wall is the expensive part** — 19–26% of a core for nine 360p
+  tiles, more than recording all 16 cameras. The same wall measured 26.2% and
+  19.1% in two runs, so read it as ±25%. **On an N150 this is the number to
+  measure first**, and whether Chromium decodes in hardware there (VA-API on
+  QuickSync) decides it. Not checked on this box.
+- **Detector-style decoding** is ~1.3% of a core per 640x360 substream, and
+  that is the decode half only. Inference cannot be measured until D1 exists.
+- **A manager's browser does not run on the NVR.** Its decode lands on the
+  manager's own laptop or phone; the NVR pays only the serving cost above. It
+  was counted from that, not measured with a second browser here.
+
+**Findings the test flushed out — each is a real defect or trap, not load:**
+
+1. **`groupCamerasByDevice` merges cameras that share an IP.** It groups by host
+   so a camera's main and substream show as one tile. Any site where many
+   cameras come through ONE address — an old DVR or analog encoder
+   (`dvr-ip/Channels/101`, `/201`, `/301`…), exactly what a migration off an
+   existing system looks like — would show one tile instead of sixteen. The
+   first wall attempt showed one tile for 14 cameras on `127.0.0.1`.
+2. **Every live tile opens its own RTSP session to the camera** (`agent/live.mjs`
+   spawns an ffmpeg per viewer, separate from the recorder's). A camera shown on
+   two TVs plus a manager holds four sessions. Real cameras cap concurrent RTSP
+   sessions, and a three-TV site can reach that cap.
+3. **The web server binds only the Tailscale address** (`100.104.228.7:8080`),
+   while `LINUX-BUILD-PLAN.md` D7 points the kiosk browser at `127.0.0.1`. As
+   configured, a kiosk wall would show a blank screen. The bind and the kiosk
+   plan must agree before a box ships with a wall.
+4. **A restart during recording leaves a 28-byte stub per camera** — an MP4
+   `ftyp` header with no video — in the camera's directory, named like a real
+   segment. Recovery counted them (`partials: 16`) and left them in place.
+   Anything that lists segments will list an unplayable one.
+5. **`substreamUrl` is a second address.** The previous session's config had it
+   set on all 14 fake cameras; repointing `url` alone left the live wall pulling
+   from the old place while recording used the new one. Two fields for one
+   camera is two places to forget.
+
+**Process notes for the next bench run:**
+- The previous attempt at this item (2026-09-18 afternoon) was abandoned
+  mid-test: config changed, never restored, no results written, 276 gaps logged
+  by the 14 dead cameras it left configured. Its backup
+  `config.json.bench-backup-20260918` is what this run restored.
+- It also served the 14 streams **from the Windows PC across Tailscale**, and
+  left that server running afterwards, listening on `0.0.0.0:8554`. A network
+  path in the middle of a load test turns a Wi-Fi hiccup into a "gap" the
+  appliance did not cause. Serve synthetic cameras on the box under test.
+- `bench/measure.sh` finds sysstat columns by header name. The first draft read
+  them by position and would have reported ~0% CPU for every process: `pidstat
+  -h` ends each row with the command name, not a number.
+- `bench/integrity.mjs` matches `gap_recorded` on the raw log line. The first
+  draft read a `message` field that the recorder never writes, so it would have
+  called a dead camera healthy. It was proven on a window with known gaps (18.7%
+  coverage, 8 gap events, flagged) before being trusted.
+- The only signing key this box trusts is `bench-throwaway-2026-09-17`, whose
+  private half was retired. **Nothing can be deployed here until a new bench key
+  is anchored** with `CAMPLAT_TRUSTED_KEYS_FORCE=1`. That is the signing working.
+- Restored afterwards: `config.json` back to `cam1-main` + `cam2-sub`, mediamtx
+  and the test directory removed, real camera recording. Chromium (snap, 153)
+  stays installed for the wall. The 14 synthetic cameras' footage stays on disk
+  until retention evicts it; no configured camera points at it.
