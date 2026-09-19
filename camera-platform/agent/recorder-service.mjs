@@ -9,7 +9,7 @@
 import { readFile, writeFile, rename, statfs, mkdir, stat, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { openIndex } from "./segindex.mjs";
-import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, INPROGRESS } from "./segstore.mjs";
+import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, hasVideoBoxes, quarantineFile, INPROGRESS } from "./segstore.mjs";
 import { createCameraRecorder } from "./recorder.mjs";
 import { planEvictionScalable } from "./evict.mjs";
 import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives, checkStoreRoot } from "./config.mjs";
@@ -253,6 +253,55 @@ function currentRetention(index, cameras) {
  * and with a refused store root any count is a lie, because the missing drive
  * hides its files and its footage would be written off as lost.
  */
+/**
+ * Indexed segments that hold no video: stubs indexed before 5052852 taught
+ * the recorder and recovery to set them aside. Lists them; with `apply`,
+ * moves each to its drive's quarantine and removes its row, one at a time,
+ * so a failure leaves file and row together. The segment being written
+ * (state open) is never touched, and a row whose file is missing is counted
+ * as missing, never as empty. Rows indexed before rows carried their drive
+ * are looked for on each store root in order.
+ */
+export async function cleanEmptySegments(index, storeRoots, { apply = false } = {}) {
+  const empty = [];
+  const failed = [];
+  let checked = 0;
+  let missing = 0;
+  let moved = 0;
+  for (const seg of index.all()) {
+    if (seg.state === "open") continue;
+    const roots = seg.root ? [seg.root] : storeRoots;
+    let root = null;
+    for (const r of roots) {
+      if (await stat(path.join(r, seg.path)).then((s) => s.isFile(), () => false)) { root = r; break; }
+    }
+    if (root === null) { missing += 1; continue; }
+    checked += 1;
+    if (await hasVideoBoxes(path.join(root, seg.path))) continue;
+    empty.push({ cameraId: seg.cameraId, startUtc: seg.startUtc, path: seg.path, bytes: seg.bytes, root });
+    if (!apply) continue;
+    try {
+      await quarantineFile(root, seg.path);
+      index.removeMany([seg.path]);
+      moved += 1;
+    } catch (err) {
+      failed.push({ path: seg.path, error: String(err?.message ?? err) });
+    }
+  }
+  return { checked, missing, empty, moved, failed };
+}
+
+/** `camctl clean-empty`: cleanEmptySegments against this box's own index. */
+export async function cleanEmpty({ stateDir = DEFAULT_PATHS.stateDir, apply = false } = {}) {
+  const config = await loadConfig(stateDir);
+  const index = openIndex(indexPathFor(stateDir));
+  try {
+    return await cleanEmptySegments(index, config.storeRoots, { apply });
+  } finally {
+    index.close();
+  }
+}
+
 export async function audit({ stateDir = DEFAULT_PATHS.stateDir, storeCheck } = {}) {
   const config = await loadConfig(stateDir);
   const indexFile = indexPathFor(stateDir);

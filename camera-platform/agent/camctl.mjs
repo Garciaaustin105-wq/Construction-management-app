@@ -9,7 +9,7 @@
  */
 import { preflight } from "./preflight.mjs";
 import { runLoad, formatLoadReport } from "./loadtest.mjs";
-import { audit, loadConfig } from "./recorder-service.mjs";
+import { audit, loadConfig, cleanEmpty } from "./recorder-service.mjs";
 import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUEST, requestCameraRestarts } from "./alerts-run.mjs";
 import { defaultThresholds } from "../dist/alerts.js";
 import { DEFAULT_PATHS } from "./config.mjs";
@@ -405,13 +405,32 @@ async function cmdAlerts() {
   }
 }
 
-const commands = { alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+// Segments indexed before 5052852 that hold no video (a restart's stub).
+// Lists by default; --apply moves them to quarantine and drops their rows.
+async function cmdCleanEmpty() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? undefined;
+  const apply = args.includes("--apply");
+  const r = await cleanEmpty({ stateDir, apply });
+  for (const e of r.empty) console.log(`  ${e.cameraId.padEnd(14)}${e.startUtc}  ${String(e.bytes ?? "?").padStart(6)} bytes  ${e.path}`);
+  console.log(`\nchecked ${r.checked} recording(s); ${r.empty.length} hold no video; ${r.missing} indexed but not on disk (left alone)`);
+  if (apply) {
+    console.log(`moved ${r.moved} to quarantine and removed their rows${r.failed.length ? `; ${r.failed.length} FAILED` : ""}`);
+    for (const f of r.failed) console.log(`  failed: ${f.path}: ${f.error}`);
+    if (r.failed.length > 0) process.exit(1);
+  } else if (r.empty.length > 0) {
+    console.log("nothing moved: run again with --apply to move these to quarantine");
+  }
+}
+
+const commands = { "clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
 
   preflight                     check ffmpeg/ffprobe and permissions
   audit [--state-dir D]         what recovery would do now; read-only (or CAMPLAT_STATE_DIR)
+  clean-empty [--state-dir D]   list recordings that hold no video (a restart's stub)
+              [--apply]         move them to quarantine and remove their rows
   alerts [--state-dir D]        check health.json, write alerts.json, log what changed
          [--restart-stale]      ask for a recorder restart when recorder_stale is raised, and restart cameras that stopped recording
   discover <cidr> [--raw-dir D] sweep + SADP + ONVIF; D captures raw SADP replies
