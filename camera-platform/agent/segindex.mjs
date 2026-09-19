@@ -114,6 +114,7 @@ export function openIndex(file) {
     countAll: db.prepare("SELECT COUNT(*) AS n FROM segments"),
     addGap: db.prepare("INSERT INTO gaps (camera_id,start_ms,end_ms,reason) VALUES (?,?,?,?)"),
     extendGap: db.prepare("UPDATE gaps SET end_ms = MAX(end_ms, ?) WHERE id = ?"),
+    pullGapStart: db.prepare("UPDATE gaps SET start_ms = MIN(start_ms, ?) WHERE id = ?"),
     gapsFor: db.prepare("SELECT * FROM gaps WHERE camera_id = ? ORDER BY start_ms"),
   };
 
@@ -198,6 +199,8 @@ export function openIndex(file) {
     addGap: (gap) => Number(stmts.addGap.run(gap.cameraId, fromIso(gap.startUtc), fromIso(gap.endUtc), gap.reason).lastInsertRowid),
     /** Moves a gap's end later; never earlier. */
     extendGap: (id, endUtc) => { stmts.extendGap.run(fromIso(endUtc), id); },
+    /** Moves a gap's start earlier; never later. */
+    pullGapStart: (id, startUtc) => { stmts.pullGapStart.run(fromIso(startUtc), id); },
     gapsFor: (cameraId) => stmts.gapsFor.all(cameraId).map((r) => ({
       cameraId: r.camera_id, startUtc: toIso(r.start_ms), endUtc: toIso(r.end_ms), reason: r.reason,
     })),

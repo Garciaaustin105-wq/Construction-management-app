@@ -134,6 +134,7 @@ export function createCameraRecorder({
   audio = false,
   restartDelayMs = 2000,
   audioProbeMs = 30_000,
+  measureFn = measureSealedSegment, // injectable: the harness has no real video
 }) {
   let child = null;
   let audioActive = audio;   // whether the next ffmpeg records audio
@@ -155,6 +156,10 @@ export function createCameraRecorder({
   // stops. Bench 2026-09-19: one row per retry made a one-minute unplug a
   // dozen gaps, with the seconds of each failed try covered by none of them.
   let outageGapId = null;
+  // The file being written when the outage began. Its measured end, once it
+  // is sealed, is where video really stopped: the outage is noticed only
+  // when the socket times out, ~10 s later (bench 2026-09-19).
+  let openAtDrop = null;
 
   function recordOutage(endMs) {
     const endUtc = new Date(Math.max(endMs, downSince)).toISOString();
@@ -173,6 +178,7 @@ export function createCameraRecorder({
     downSince = null;
     downReason = "camera_offline";
     outageGapId = null;
+    openAtDrop = null;
   }
 
   async function sealCompleted() {
@@ -209,7 +215,7 @@ export function createCameraRecorder({
 
       try {
         const result = await sealSegment(root, cameraId, file);
-        const measured = await measureSealedSegment(path.join(root, result.path), result.bytes);
+        const measured = await measureFn(path.join(root, result.path), result.bytes);
         let endUtc = null;
         let measuredBitrateKbps = bitrateKbps;
         if (measured.seconds !== null) {
@@ -217,6 +223,11 @@ export function createCameraRecorder({
           measuredBitrateKbps = measured.bitrateKbps;
         } else {
           onEvent({ kind: "duration_unmeasured", cameraId, path: result.path });
+        }
+        // The dropped file's measured end is where the outage really began.
+        // No measurement, no move: the gap keeps the time the drop was noticed.
+        if (endUtc !== null && file === openAtDrop && outageGapId !== null) {
+          index.pullGapStart(outageGapId, endUtc);
         }
         sealed.push({
           cameraId,
@@ -325,6 +336,7 @@ export function createCameraRecorder({
         if (downSince === null) {
           downSince = Date.now();
           downReason = "camera_offline";
+          openAtDrop = lastSeenOpen;
         }
         const ranMs = Date.now() - launchedAt;
         const unreachable = event.kind === "exited" && NETWORK_EXIT_CODES.has(event.code);

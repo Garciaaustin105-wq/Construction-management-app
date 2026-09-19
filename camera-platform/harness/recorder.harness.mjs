@@ -687,6 +687,60 @@ await check("THE FEARED ONE: a camera down across many retries is ONE gap, from 
   }
 });
 
+// Bench 2026-09-19: the gap started ~10 s after the unplug, when the socket
+// timeout declared the stream dead, leaving an unmarked stretch between the
+// last video and the gap. The file being written at the drop holds the true
+// end; once it is sealed and measured, the gap starts there.
+async function dropRecorder(name, measuredSeconds) {
+  const t0Sec = Math.floor(Date.now() / 1000) - 60; // the file open at the drop began a minute ago
+  let first = null;
+  const { spawnFn, children } = codedSpawn((child, n) => (n === 0 ? null : n < 3 ? { afterMs: 10, code: 143 } : null));
+  const events = [];
+  const idx = openIndex(path.join(await mkdtemp(path.join(tmpdir(), `camplat-${name}-`)), "index.db"));
+  const rec = createCameraRecorder({
+    root, cameraId: `cam-${name}`, url: "rtsp://u:p@10.0.0.8:554/x", index: idx, segmentSeconds: SEG, pollMs: 100_000,
+    spawnFn, onEvent: (e) => events.push(e), audio: true, restartDelayMs: 20, audioProbeMs: 300, stopTimeoutMs: 500,
+    measureFn: async () => ({ seconds: measuredSeconds, bitrateKbps: 1000 }),
+  });
+  await rec.start();
+  await writeFile(path.join(root, `cam-${name}`, INPROGRESS, `${t0Sec}.mp4`), Buffer.alloc(100, 5));
+  await rec.poll(); // the recorder sees the file being written
+  const detectedAt = Date.now();
+  children[0].emit("exit", 143); // the camera drops
+  await new Promise((r) => setTimeout(r, 150));
+  first = idx.gapsFor(`cam-${name}`)[0];
+  const resumedSec = Math.ceil(Date.now() / 1000);
+  await writeFile(path.join(root, `cam-${name}`, INPROGRESS, `${resumedSec}.mp4`), Buffer.alloc(100, 6));
+  await rec.poll(); // video flows again: the dropped file is sealed and measured
+  return { rec, idx, t0Sec, detectedAt, first, resumedSec };
+}
+
+await check("THE FEARED ONE: an outage's gap starts where the last video ends, not when the drop was noticed", async () => {
+  const { rec, idx, t0Sec, detectedAt, first, resumedSec } = await dropRecorder("dropend", 30);
+  try {
+    eq(Date.parse(first.startUtc) >= detectedAt, true, "while the camera is down, the gap starts when the drop was noticed");
+    const gaps = idx.gapsFor("cam-dropend");
+    eq(gaps.length, 1, "one gap");
+    eq(gaps[0].startUtc, new Date(t0Sec * 1000 + 30_000).toISOString(), "then starts where the dropped file's video ends");
+    eq(Date.parse(gaps[0].endUtc), resumedSec * 1000, "and still ends where video resumed");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("THE FEARED ONE: an unmeasurable file leaves the gap where the drop was noticed, never a guess", async () => {
+  const { rec, idx, detectedAt } = await dropRecorder("dropnull", null);
+  try {
+    const gaps = idx.gapsFor("cam-dropnull");
+    eq(gaps.length, 1, "one gap");
+    eq(Date.parse(gaps[0].startUtc) >= detectedAt, true, "start not moved without a measurement");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
 await check("THE FEARED ONE: a camera still down when the service stops keeps its gap up to the stop", async () => {
   const { spawnFn } = codedSpawn(() => ({ afterMs: 10, code: 146 }));
   const { rec, idx } = await audioRecorder("downatstop", spawnFn);
