@@ -199,9 +199,14 @@
   html.wall-mode .controls:hover, html.wall-mode .controls:focus-within { opacity: 1; }
   html.wall-mode .grid { width: 100vw; height: 100vh; box-sizing: border-box; padding: 0 !important; gap: 0 !important; grid-auto-rows: 1fr; background: #000; }
   html.wall-mode .cell { aspect-ratio: auto !important; border: 0; border-radius: 0; box-shadow: none; min-height: 0; min-width: 0; }
-  /* object-fit: contain ensures no camera picture is ever cropped — on a security wall,
-     the person at the edge of the frame is the one that matters. never cover. */
-  html.wall-mode .cell video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  /* A wall fills every tile with the WHOLE picture: stretch (fill), never crop
+     (cover). Cropping cuts off the edges of a camera's view, and on a security
+     wall the person at the edge of the frame is the one that matters. Fit
+     (contain) keeps the shape but leaves black bands wherever the screen is not
+     16:9 -- on a 16:10 monitor, a ~53 px band between every row of cameras.
+     Stretch shows every pixel and fills the tile; on a 16:10 screen the picture
+     is ~11% taller than true, and on a 16:9 TV all three look identical. */
+  html.wall-mode .cell video { width: 100%; height: 100%; object-fit: fill; background: #000; }
 
 </style>
 </head>

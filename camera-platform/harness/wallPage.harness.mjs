@@ -619,13 +619,19 @@ check("a camera named like a JavaScript internal is still just a camera", () => 
 });
 
 // Verify the index.html TV wall CSS and fullscreen handling
-check("index.html implements TV wall with contain (never cover) and dual fullscreen detection", () => {
+check("index.html: a TV wall stretches every picture to fill its tile, never crops, on both ways of going fullscreen", () => {
   const indexPath = join(process.cwd(), "agent/ui/index.html");
   let htmlContent = readFileSync(indexPath, "utf-8");
   // Normalize CRLF to LF for consistent matching
   htmlContent = htmlContent.replace(/\r\n/g, "\n");
 
-  if (!htmlContent.includes("object-fit: contain")) throw new Error("object-fit: contain is missing from wall-mode rules");
+  // Read the wall's OWN video rule: the normal view uses contain, so a check
+  // for "contain" or "fill" anywhere in the file would pass by accident.
+  const wallVideo = htmlContent.match(/html\.wall-mode \.cell video \{([^}]*)\}/);
+  if (!wallVideo) throw new Error("the wall-mode video rule is missing");
+  if (!/object-fit:\s*fill/.test(wallVideo[1])) {
+    throw new Error("the wall stretches each picture to fill its tile (object-fit: fill), got: " + wallVideo[1].trim());
+  }
   if (htmlContent.includes("object-fit: cover")) throw new Error("THE FEARED ONE: a wall never crops a camera's picture");
   if (!htmlContent.includes("display-mode: fullscreen")) throw new Error("display-mode: fullscreen detection is missing");
   if (!htmlContent.includes("fullscreenchange")) throw new Error("fullscreenchange listener is missing");
