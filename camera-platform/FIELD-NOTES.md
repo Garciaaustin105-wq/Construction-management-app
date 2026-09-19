@@ -606,3 +606,11 @@ Earlier the same phone could not play the 2560x1440 main stream (video error
 **Noticed:** a camera that is down records a gap row on every retry (~5 s),
 so a one-minute outage is a dozen adjacent gaps. Harmless, but noisy on a
 timeline; worth merging adjacent camera_offline gaps.
+
+**Later the same afternoon (36492ba, installed signed).** `camctl clean-empty`
+listed 10 of 1216 recordings holding no video, all 28-byte stubs from restarts
+on 2026-09-16..19; one sat in `disk0/cam2-sub/.inprogress/`, left from when
+cam2-sub recorded to disk0 during the load test, where the current recorder
+(on disk1) never looks. `--apply` moved all 10 to quarantine (1 on disk0, 9 on
+disk1) and removed their rows; a second run found none. The one-gap-per-outage
+change (db35151) is installed but not yet seen through a real unplug.
