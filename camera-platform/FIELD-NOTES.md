@@ -463,3 +463,47 @@ wall or the decoding.
   and the test directory removed, real camera recording. Chromium (snap, 153)
   stays installed for the wall. The 14 synthetic cameras' footage stays on disk
   until retention evicts it; no configured camera points at it.
+
+## Bench log — 2026-09-18 late, a camera connection that dies now fails in seconds
+
+**What happened first.** At 22:34:38 the laptop NVR suspended (logind: "The
+system will suspend now!"; no lid, power-key or idle event logged). It resumed
+at 23:07:55 and the USB NIC came back ("carrier on") -- and for the next 13
+minutes the recorder logged NOTHING: no sealed segments and no ffmpeg exits.
+The RTSP connection had died across the suspend without a reset, and ffmpeg,
+running with no socket timeout, sat blocked on it. `camera_not_recording`
+raised at ~23:09 (correct: 5-min threshold, two checks, after wake) but nothing
+acts on a per-camera alert, and the recorder process itself was alive so
+`recorder_stale` never raised. An unrelated restart at 23:21 broke it loose.
+
+**Proof before the fix.** Against a peer that accepts the TCP connection and
+then says nothing: without `-timeout` ffmpeg was still waiting at 30 s; with
+`-timeout 5000000` it gave up by itself at 5 s -- on ffmpeg 6.1.1 (the laptop)
+and 9.0.1. Fixed in `17afa0a`: 10 s on the recording and detection ffmpeg.
+The same commit masks sleep/suspend/hibernate in install.sh; on the laptop it
+was masked by hand (`systemctl start suspend.target` -> "Unit suspend.target
+is masked").
+
+**The unplug test, on 17afa0a, cam1-main** (camera cable pulled at the PoE
+switch, so power and link go together):
+
+| Time | Event |
+|---|---|
+| 23:44:02 | last normal segment sealed |
+| 23:44:36 | ffmpeg exited by itself -- it did not hang |
+| 23:44:38 | recorder restarted it and recorded the gap |
+| 23:45:12 | camera confirmed dark (no ping); live file not growing |
+| 23:45:18 | a retry exited 146 (camera unreachable) -- failing cleanly |
+| 23:45:20-35 | camera booting: retries every ~5 s, each killed after ~3 s with no output (exit 143, the recorder's own start-up rule), each with a gap recorded |
+| 23:45:38 | video flowing again: live file 28 B -> 3.1 MB in 6 s |
+| 23:46:01 | first full segment sealed after recovery |
+
+No restart, no human, no hang. Two things to know from it:
+- **The recorder already had a start-up no-output rule** (the 143s): a stream
+  that connects but sends nothing is killed after a few seconds and retried.
+  It watches only a stream that is STARTING, which is why it never caught the
+  13-minute hang of a stream that was already running. The new socket timeout
+  covers that case.
+- **`audio_dropped` on cam1-main at 23:46:05**, right after the camera
+  rebooted: the recorder fell back to video-only. Video is fine; check that
+  audio comes back rather than staying dropped until the next restart.
