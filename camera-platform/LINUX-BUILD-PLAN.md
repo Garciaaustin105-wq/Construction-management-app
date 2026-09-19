@@ -95,9 +95,9 @@ Each has a recommendation, and nothing below waits on the last two.
     not a given. Test it first. If it fails, the screen uses a native player
     (mpv or GStreamer with VA-API) instead of the browser page.
   - **Decode load.** Grid tiles use substreams, and a tapped tile gets the main
-    stream. Measure how many tiles the N150 decodes smoothly, at one and at two
+    stream. Measure how many tiles the N305 (every box since 2026-09-19) decodes smoothly, at one and at two
     or more monitors, while the recorder runs.
-  - **Video outputs.** The N150 drives up to three displays, but the NAS board
+  - **Video outputs.** The N305 drives up to three displays, but the NAS board
     may expose only one or two ports. Check the board before buying; more
     monitors than ports means different hardware.
   - **Days, not minutes.** Run the screen for the whole 7-day soak and watch

@@ -59,8 +59,9 @@ camera substream ──> camplat-detect ──> events table (SQLite, own file)
 
 - **Sizing floor: 16 cameras per NVR** (Austin, 2026-09-16). At 5 frames a
   second that is about 80 detector frames a second, before plates and search.
-- **Two models (decided 2026-09-16):** a Standard NVR (N150, no chip) and an
-  AI NVR (i3-N305 plus Hailo-8). Same software; `camplat-detect` is installed
+- **Two models (decided 2026-09-16):** a Standard NVR (no chip) and an AI NVR
+  (plus Hailo-8), both on the i3-N305 board since 2026-09-19 (Austin), so an
+  upgrade is plugging the chip into the free NVMe slot, not a board swap. Same software; `camplat-detect` is installed
   and enabled only on the AI NVR, and every AI page and permission is hidden
   when it is absent. The Standard NVR never runs detection on its CPU.
 - **Chip:** Hailo-8 M.2 2280 M-key (26 TOPS, about $199 standalone in
@@ -73,7 +74,7 @@ camera substream ──> camplat-detect ──> events table (SQLite, own file)
 - **Slot:** the second M.2 must be PCIe NVMe. A SATA-only M.2 (common on mini
   PCs' second slot) will not take the card. The 6-bay N305 board in the BOM
   has two NVMe slots: one OS drive, one chip.
-- **Decoding** the substreams uses the N305's QuickSync (chosen over the N150 for 16 substreams), not the Hailo chip.
+- **Decoding** the substreams uses the N305's QuickSync (chosen over the N150 for 16 substreams), not the Hailo chip. Every box has the N305.
 - **Development** happens on the laptop NVR (G14) with the same models on
   ONNX Runtime, so D0–D2 do not wait for the Hailo chip.
 

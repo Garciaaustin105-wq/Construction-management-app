@@ -5,9 +5,9 @@ for Debian to install.
 
 ## 1. Parts
 
-Per `../APPLIANCE-BOM.md` — the ~$633 value build:
+Per `../APPLIANCE-BOM.md` (the full list, with prices, is there):
 
-- Intel N100/N150 6-bay mini-ITX NAS board (Topton / CWWK / HKUXZR)
+- Intel i3-N305 6-bay mini-ITX NAS board (Topton / CWWK / HKUXZR); every box, so the AI chip can be added later
 - 16 GB DDR5 SODIMM
 - 128–256 GB NVMe — **OS only**
 - 2× Seagate SkyHawk 8 TB

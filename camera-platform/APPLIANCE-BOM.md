@@ -1,8 +1,8 @@
 # The NVR appliance — what to buy
 
 For 16 AVYCON 5MP @ 30 fps cameras and dual 8 TB, running Debian + ffmpeg +
-Node + SQLite. Roughly **$820 a store** (case chosen by Austin 2026-09-19;
-see "The case").
+Node + SQLite. Roughly **$870 a store**, or **$1,070 with AI** (case and
+board chosen by Austin 2026-09-19; see "The case" and "Two models").
 
 ## You are not buying an NVR
 
@@ -12,35 +12,40 @@ would mean paying for their recording software and then not using it.
 
 So the order is a short parts list, and the assembly is about 20 minutes a unit.
 
-## Two models (Austin, 2026-09-16)
+## Two models, one box (Austin, 2026-09-16; board unified 2026-09-19)
 
 | | **Standard NVR** (no AI) | **AI NVR** |
 |---|---|---|
-| Board | N150 6-bay NAS board | **i3-N305** 6-bay NAS board, same design |
-| AI chip | none | **Hailo-8 M.2 2280** (26 TOPS) in the second NVMe slot |
+| Board | **i3-N305** 6-bay NAS board | the same board |
+| AI chip | none; the second NVMe slot is left empty | **Hailo-8 M.2 2280** (26 TOPS) in the second NVMe slot |
 | Everything else | the list below | the same list |
-| ~Cost | **~$820** | **~$1,070** (+~$50 board, +$199 chip) |
+| ~Cost | **~$870** | **~$1,070** (+$199 chip) |
 
-Both run the same software and handle at least 16 cameras. The AI NVR adds
-the detector service (AI-PLAN.md); the N305 has 8 cores for decoding 16
-detection substreams, and the Hailo-8L (13 TOPS) is short at 16. The chip
-slot must be PCIe NVMe, not SATA M.2. Upgrading a Standard NVR to AI later
-means swapping the board and adding the chip. Prices are estimates; recheck
-before ordering.
+**Every NVR gets the N305 (Austin, 2026-09-19).** The N150 was ~$50 cheaper,
+but it cannot decode 16 detection substreams, so a Standard NVR built on it
+could only become an AI NVR by swapping the whole board on site: about an hour
+of lost recording. With the N305 in every box, the **upgrade is plugging the
+Hailo-8 into the empty slot and turning the detector on** (AI-PLAN.md): about
+five minutes, no footage lost. That also lets AI be sold later as an add-on
+(chip plus licence) to any installed box.
+
+Both run the same software and handle at least 16 cameras. The chip slot must
+be PCIe NVMe, not SATA M.2; the Hailo-8L (13 TOPS) is short at 16 cameras.
+Prices are estimates; recheck before ordering.
 
 ## What to order — one store (Standard NVR)
 
 | # | Item | Notes | ~Cost |
 |---|---|---|---|
-| 1 | **Topton / CWWK / HKUXZR N150 6-bay NAS motherboard**, mini-ITX | Board + CPU in one. 6× SATA, 2× M.2 NVMe, 2–4× Intel i226-V 2.5GbE, 1× DDR5 SODIMM. Sold on Amazon (HKUXZR listing), toptonpc.com and AliExpress. All three are the same reference design | $200 |
+| 1 | **Topton / CWWK / HKUXZR i3-N305 6-bay NAS motherboard**, mini-ITX | Board + CPU in one. 6× SATA, 2× M.2 NVMe (one for the OS, one kept free for the AI chip), 2–4× Intel i226-V 2.5GbE, 1× DDR5 SODIMM. Sold on Amazon (HKUXZR listing), toptonpc.com and AliExpress. All three are the same reference design, also sold with an N150 (~$50 less), which we do not use | $250 |
 | 2 | 16 GB DDR5 SODIMM, 4800 MHz | One slot, so one stick | $45 |
 | 3 | 256 GB NVMe M.2 2280 | OS only | $25 |
 | 4 | **RackChoice 2U "Compact Rackmount" chassis** (Amazon B0BN1XBL2R: 4× 3.5" internal + 2× 5.25") + a standard ATX PSU | Flat NVR-style box that sits on a rack shelf. 2 drives at 16 cameras, 3 at 24, 4 at 32. See "The case" | **$99** case (Austin, from the listing) + ~$40 PSU (estimate) |
 | 5 | **2× WD Purple 8 TB** | Not desktop drives — see below | $340 |
 | 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
-| | | **Total** | **~$820** |
+| | | **Total** | **~$870** |
 
-AI NVR: swap item 1 for the i3-N305 board and add the Hailo-8 (table above).
+AI NVR: add the Hailo-8 in the free NVMe slot (table above).
 
 ### Best bang for the buck
 
@@ -60,10 +65,12 @@ setting is free and takes a minute per camera. Do this first, every time.
 | Swap | From | To | Saves |
 |---|---|---|---|
 | Drives | 2× WD Purple 8 TB | **2× Seagate SkyHawk 8 TB** | **$60** |
-| Board | N150 | N100, same 6-bay board | $30 |
 | OS drive | 256 GB NVMe | 128 GB | $7 |
 | UPS | 600 VA | 350 VA (draw is only 14 W) | $20 |
-| | | **Value build total** | **~$700** |
+| | | **Value build total** | **~$780** |
+
+The board is not on this list. The N100 and N150 versions are cheaper, but
+they give up the five-minute AI upgrade (see "Two models, one box").
 
 **SkyHawk is the standout.** It is rated 180 TB/year against our 79 — 44%
 utilisation, comfortable headroom. WD Purple's 360 TB/year is 4.5× our load;
@@ -103,7 +110,8 @@ more than the saving, twice over.
 **Aoostar N150 4-bay NAS barebone**, about $500–590, is the closest thing to a
 ready-made box: same N150, 4 SATA bays, 2× 2.5GbE, add RAM and drives.
 
-Not recommended, for three reasons: it is **$200–300 more** for the same compute;
+Not recommended, for three reasons: it is **$200–300 more** for an N150, which
+is weaker than the N305 we now use;
 it has **one M.2 slot**, so the OS drive and a future Hailo cannot coexist; and
 it is currently **marketplace-only with the vendor's own product page 404ing**,
 which is a poor foundation for a rollout that needs identical spares for years.
@@ -142,7 +150,7 @@ it has to fit, and it should look like an NVR: a flat metal box.
 
 **Check before the first order.** Two things the listing does not give: the
 **CPU cooler height limit**
-(2U is short inside; the N150/N305 boards ship with a low heatsink that should
+(2U is short inside; the N305 board ships with a low heatsink that should
 fit, but compare the two numbers; the listing gives none); and whether the two
 80 mm intakes have a **dust filter** (add one if not; see Thermals).
 
@@ -162,9 +170,9 @@ stream-copies is about half a core — we never transcode. Decoding is the
 substream for detection, plus the nine-tile wall a site's own TV shows on the
 NVR's HDMI output — Intel QuickSync does both in the iGPU. The site's other
 TVs are driven by Mac Minis pulling their tiles over the LAN, and serving
-those is stream-copy, so it stays cheap. An N150
-is comfortably enough; an i3-N305/N355 buys 8 cores for ~$50 more if on-box
-analytics ever grow.
+those is stream-copy, so it stays cheap. An N150 would be enough for
+recording alone; every box gets the 8-core i3-N305 anyway, so that any box
+can take the AI chip later without a board swap.
 
 **It has to be a NAS board, not a mini PC.** Most N100 mini PCs have one M.2 and
 no SATA bays. We need two 3.5" drives, two NICs, and a spare M.2. The 6-bay

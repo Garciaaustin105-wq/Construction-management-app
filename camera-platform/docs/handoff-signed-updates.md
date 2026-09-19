@@ -102,7 +102,7 @@ bays), the AI chip (Hailo-8 was sized at 16), and `GRID_SHAPES`, which stops at
 detector-style decodes: **recording PASSED, 100% of every window, no gaps.**
 Drawing the wall is the dominant cost, more than recording all 16 cameras.
 Run on a Ryzen laptop, so the pass/fail stands but no number is an N150 number:
-rerun `bench/measure.sh` and `bench/integrity.mjs` on an N150 board, wall first.
+rerun `bench/measure.sh` and `bench/integrity.mjs` on an N305 board (every box since 2026-09-19), wall first.
 Five defects it surfaced are listed there; the IP-grouping one (a DVR-migrated
 site shows one tile for sixteen cameras) and the kiosk bind are the urgent two.
 
