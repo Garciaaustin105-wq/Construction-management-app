@@ -154,6 +154,21 @@ it has to fit, and it should look like an NVR: a flat metal box.
 fit, but compare the two numbers; the listing gives none); and whether the two
 80 mm intakes have a **dust filter** (add one if not; see Thermals).
 
+**Board reliability: burn in before the fleet order.** Only SATA1 on the N305
+NAS board is native. SATA2–6 come from a JMB585 bridge chip, so our second
+recording drive sits behind it. Two Amazon reviews of the HKUXZR N305 board
+disagree (Austin forwarded both, 2026-09-19). One owner is happy. The other
+had two bad boards: the first saw only SATA1 and had a dead 10 GbE port; the
+second **dropped the SATA2 drive every few hours**, and swapping drives and
+cables did not fix it. That is one review each way, not a verdict. But a
+dropped drive stops half the cameras until a reboot, so before any fleet order:
+buy **2–3 boards from different sellers** (HKUXZR, CWWK, Topton), run each
+**7 days** with drives on SATA2–4, and read `dmesg` for link resets. A board
+that drops a drive once is out. The `disk_missing` alert would catch a drop in
+minutes, but nothing brings the drive back without a reboot. If every
+candidate fails, look for a board whose extra SATA ports use a different
+controller, or a server-class board.
+
 **If a site's shelf is shallower than 16":** use the **Jonsbo N2** instead. It
 is 222.5 × 222.5 × 224 mm (an 8.8" cube, per jonsbo.com), has 5 hot-swap bays
 and takes an SFX PSU. It is just over 5U tall, so leave **6U** of clear height.
