@@ -613,4 +613,10 @@ on 2026-09-16..19; one sat in `disk0/cam2-sub/.inprogress/`, left from when
 cam2-sub recorded to disk0 during the load test, where the current recorder
 (on disk1) never looks. `--apply` moved all 10 to quarantine (1 on disk0, 9 on
 disk1) and removed their rows; a second run found none. The one-gap-per-outage
-change (db35151) is installed but not yet seen through a real unplug.
+change (db35151) was then proven with a second unplug (15:25:18 to about
+15:26:25 local): six retries per camera, **one gap each** (19:25:29 to
+19:26:31/32 UTC, camera_offline), closed at the first new segment; no
+audio_dropped. The gap starts about 10 s after the unplug, when the socket
+timeout declares the stream dead, so the timeline has an unmarked ~10 s
+between the last video and the gap. Starting the gap at the end of the last
+recorded segment would close that.
