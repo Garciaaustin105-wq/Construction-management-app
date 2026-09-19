@@ -297,8 +297,12 @@ export function createApiServer({
   // harness runs the real WS edge against a fake ffmpeg; the caps are the
   // appliance's stream budget (per camera / total).
   spawnFn = spawn,
-  maxPerCamera = 2,
-  maxTotal = 16,
+  // Live caps (live.mjs): camera sessions per camera, camera sessions on the
+  // box, and viewers. Viewers share a camera's session, so a 3-TV x 9-tile
+  // site is 27 viewers on at most one session per camera and quality.
+  maxSourcesPerCamera = 2,
+  maxSources = 32,
+  maxViewers = 128,
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -718,7 +722,7 @@ export function createApiServer({
   // runs on the wall clock, and a stale-harness timestamp would make every
   // fresh stream look already-stalled to the watchdog.
   attachLive(server, {
-    config, spawnFn, maxPerCamera, maxTotal,
+    config, spawnFn, maxSourcesPerCamera, maxSources, maxViewers,
     authorize: (request) => {
       let pathname;
       try {

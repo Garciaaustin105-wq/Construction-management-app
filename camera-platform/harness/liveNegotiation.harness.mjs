@@ -21,10 +21,13 @@ const base = {
   resolution: OK,
   substreamUrl: null,
   vendorDerivesSubstream: false,
-  activeForCamera: 0,
-  activeTotal: 0,
-  maxPerCamera: 2,
-  maxTotal: 16,
+  sourceRunning: false,
+  sourcesForCamera: 0,
+  sourcesTotal: 0,
+  viewersTotal: 0,
+  maxSourcesPerCamera: 2,
+  maxSources: 32,
+  maxViewers: 128,
   streamId: "s-123",
 };
 const live = (over) => negotiateLive({ ...base, ...over });
@@ -33,7 +36,7 @@ const refused = (r, reason, what) =>
 
 check("happy path: ok with mode ws-fmp4, cameraId and streamId echoed verbatim", () => {
   const r = live({});
-  same(r, { kind: "ok", cameraId: "cam-1", quality: "mainstream", mode: "ws-fmp4", streamId: "s-123" },
+  same(r, { kind: "ok", cameraId: "cam-1", quality: "mainstream", mode: "ws-fmp4", streamId: "s-123", shared: false },
     "full shape");
 });
 
@@ -41,7 +44,7 @@ check("THE FEARED ONE: unknown camera wins over everything — even all caps sat
   const r = live({
     cameraExists: false, resolution: UNRESOLVED,
     quality: "substream", substreamUrl: null,
-    activeForCamera: 99, activeTotal: 99,
+    sourcesForCamera: 99, sourcesTotal: 99, viewersTotal: 999,
   });
   refused(r, "unknown_camera", "unknown beats busy and unresolved");
   same(r.detail.includes("cam-1") === false, true, "detail is static, not an echo");
@@ -50,7 +53,7 @@ check("THE FEARED ONE: unknown camera wins over everything — even all caps sat
 check("unresolved refused before substream/busy/limit", () => {
   const r = live({
     resolution: UNRESOLVED, quality: "substream",
-    activeForCamera: 99, activeTotal: 99,
+    sourcesForCamera: 99, sourcesTotal: 99, viewersTotal: 999,
   });
   refused(r, "unresolved_camera", "unresolved beats caps");
 });
@@ -59,10 +62,12 @@ check("substream_unavailable: no manual url AND vendor cannot derive", () => {
   refused(live({ quality: "substream", substreamUrl: null, vendorDerivesSubstream: false }),
     "substream_unavailable", "neither source");
   // before the caps: saturated caps + unavailable substream is still substream_unavailable
-  refused(live({ quality: "substream", activeForCamera: 2, activeTotal: 16 }),
+  refused(live({ quality: "substream", sourcesForCamera: 2, sourcesTotal: 32 }),
     "substream_unavailable", "beats camera_busy");
-  refused(live({ quality: "substream", activeTotal: 16, activeForCamera: 0 }),
+  refused(live({ quality: "substream", sourcesTotal: 32, sourcesForCamera: 0 }),
     "substream_unavailable", "beats stream_limit");
+  refused(live({ quality: "substream", viewersTotal: 128 }),
+    "substream_unavailable", "beats viewer_limit");
   // mainstream with identical inputs is fine — the refusal is about the substream only
   same(live({ quality: "substream", vendorDerivesSubstream: true }).kind, "ok", "vendor derives");
   same(live({ quality: "substream", substreamUrl: "rtsp://u:p@10.0.0.5:554/ch0" }).kind, "ok",
@@ -77,14 +82,32 @@ check("manual substreamUrl wins verbatim even when the vendor cannot derive", ()
   same(r.quality, "substream", "quality kept");
 });
 
-check("camera_busy at the per-camera cap, appliance cap far from held", () => {
-  refused(live({ activeForCamera: 2, maxPerCamera: 2, activeTotal: 3 }), "camera_busy", "at cap");
-  same(live({ activeForCamera: 1, maxPerCamera: 2 }).kind, "ok", "one under the cap is ok");
+check("THE FEARED ONE: joining a running source opens no camera session, so the source caps never refuse it", () => {
+  // A 3-TV x 9-tile site: 27 tiles of 16 cameras. Every source cap is held,
+  // and a viewer of a camera already streaming must still get in.
+  const r = live({ sourceRunning: true, sourcesForCamera: 2, sourcesTotal: 32, viewersTotal: 27 });
+  same(r.kind, "ok", "joins");
+  same(r.shared, true, "and says it shares the running source");
 });
 
-check("stream_limit at the appliance cap with per-camera under its cap", () => {
-  refused(live({ activeTotal: 16, maxTotal: 16, activeForCamera: 1 }), "stream_limit", "at cap");
-  same(live({ activeTotal: 15, maxTotal: 16 }).kind, "ok", "one under the cap is ok");
+check("camera_busy counts SOURCES on this camera, only when a new source is needed", () => {
+  refused(live({ sourcesForCamera: 2, maxSourcesPerCamera: 2, sourcesTotal: 3 }), "camera_busy", "at cap");
+  same(live({ sourcesForCamera: 1, maxSourcesPerCamera: 2 }).kind, "ok", "one under the cap is ok");
+});
+
+check("stream_limit counts SOURCES appliance-wide, not viewers", () => {
+  refused(live({ sourcesTotal: 32, maxSources: 32, sourcesForCamera: 1 }), "stream_limit", "at cap");
+  same(live({ sourcesTotal: 31, maxSources: 32, viewersTotal: 100 }).kind, "ok", "one under the cap is ok, whatever the viewers");
+});
+
+check("THE FEARED ONE: viewer_limit protects the box, and applies to a shared join too", () => {
+  refused(live({ viewersTotal: 128, maxViewers: 128 }), "viewer_limit", "new source");
+  refused(live({ viewersTotal: 128, maxViewers: 128, sourceRunning: true }), "viewer_limit", "shared join");
+  same(live({ viewersTotal: 127, maxViewers: 128, sourceRunning: true }).kind, "ok", "one under is ok");
+  // Order: a new source at every cap names the camera first (the per-camera
+  // answer is the most specific), then the appliance, then viewers.
+  refused(live({ sourcesForCamera: 2, sourcesTotal: 32, viewersTotal: 128 }), "camera_busy", "busy first");
+  refused(live({ sourcesForCamera: 0, sourcesTotal: 32, viewersTotal: 128 }), "stream_limit", "then stream_limit");
 });
 
 check("refusal details never echo a credential-bearing url", () => {

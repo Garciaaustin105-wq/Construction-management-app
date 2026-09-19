@@ -454,7 +454,7 @@ const fakeSpawn = (cmd, args, opts) => {
   return child;
 };
 
-const liveServer = createApiServer({ stateDir, config, index, spawnFn: fakeSpawn, maxPerCamera: 1, auth: installerAuth });
+const liveServer = createApiServer({ stateDir, config, index, spawnFn: fakeSpawn, maxViewers: 1, auth: installerAuth });
 await new Promise((resolve) => liveServer.listen(0, "127.0.0.1", resolve));
 const liveBase = `http://127.0.0.1:${liveServer.address().port}`;
 
@@ -492,10 +492,18 @@ await check("the live edge rides the api server's own port — bytes flow throug
   const i = call.args.indexOf("-i");
   eq(i !== -1, true, "argv has -i");
   eq(call.args[i + 1], "rtsp://admin:hunter2@10.0.0.5:8554/live", "the negotiated url rides the argv");
-  const chunk = fill(91, 3000);
+  // Whole MP4 boxes: live.mjs shares one source among viewers by box, so it
+  // forwards the init segment and fragments, never arbitrary bytes.
+  const mp4 = (type, payload) => {
+    const b = Buffer.concat([Buffer.alloc(8), payload]);
+    b.writeUInt32BE(b.length, 0);
+    b.write(type, 4, "latin1");
+    return b;
+  };
+  const chunk = Buffer.concat([mp4("ftyp", fill(91, 20)), mp4("moov", fill(92, 3000))]);
   call.child.stdout.emit("data", chunk);
   const msg = await nextMessage(ws);
-  eq(msg.equals(chunk), true, "byte-exact through the real server");
+  eq(msg.equals(chunk), true, "the init segment, byte-exact through the real server");
   const entry = [...liveRegistry().values()].find((e) => e.cameraId === "cam-1");
   eq(entry !== undefined, true, "the negotiated stream is in the registry");
   ws.close();
@@ -517,12 +525,12 @@ await check("unknown camera: the refusal envelope, then the close", async () => 
   await nextClose(ws);
 });
 
-await check("the per-camera cap is enforced through the real server", async () => {
+await check("the live caps reach live.mjs through the real server (maxViewers 1)", async () => {
   const w1 = await wsOpen("/live/cam-1");
-  eq(liveRegistry().size, 1, "first stream held (maxPerCamera 1)");
+  eq(liveRegistry().size, 1, "first viewer held");
   const w2 = await wsOpen("/live/cam-1");
   const env = JSON.parse((await nextMessage(w2)).toString());
-  eq([env.ok, env.code], [false, "camera_busy"], "second refused");
+  eq([env.ok, env.code], [false, "viewer_limit"], "second refused: the cap was passed through");
   await nextClose(w2);
   w1.close();
   await nextClose(w1);

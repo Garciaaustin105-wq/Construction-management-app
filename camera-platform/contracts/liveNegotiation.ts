@@ -13,13 +13,14 @@ export type LiveRefusalReason =
   | "unresolved_camera" // resolveCameraUrl returned {kind:"unresolved"}
   | "substream_unavailable" // no manual substreamUrl, and the vendor has no derivation
   | "camera_busy" // per-camera concurrent-live cap already held
-  | "stream_limit"; // appliance-wide concurrent-live cap held
+  | "stream_limit" // appliance-wide concurrent-live cap held
+  | "viewer_limit"; // appliance-wide viewer concurrency cap held
 
 /**
  * Result of a live negotiation.
  */
 export type LiveNegotiation =
-  | { kind: "ok"; cameraId: string; quality: LiveQuality; mode: "ws-fmp4"; streamId: string }
+  | { kind: "ok"; cameraId: string; quality: LiveQuality; mode: "ws-fmp4"; streamId: string; shared: boolean }
   | { kind: "refused"; reason: LiveRefusalReason; detail: string };
 
 /**
@@ -40,10 +41,13 @@ export function negotiateLive(input: {
   resolution: CameraResolution; // from resolveCameraUrl — unresolved -> refused
   substreamUrl: string | null; // manual override from config, verbatim when present
   vendorDerivesSubstream: boolean; // true only for vendors with a known substream path rule
-  activeForCamera: number; // live streams already running for this camera
-  activeTotal: number; // live streams already running appliance-wide
-  maxPerCamera: number; // default 2
-  maxTotal: number; // default 16
+  sourceRunning: boolean; // a source for this camera+quality already runs
+  sourcesForCamera: number; // sources already running for this camera
+  sourcesTotal: number; // sources already running appliance-wide
+  viewersTotal: number; // live viewers already connected appliance-wide
+  maxSourcesPerCamera: number; // default 2
+  maxSources: number; // default 32
+  maxViewers: number; // default 128
   streamId: string; // caller-generated (crypto.randomUUID), echoed when ok
 }): LiveNegotiation {
   const {
@@ -53,10 +57,13 @@ export function negotiateLive(input: {
     resolution,
     substreamUrl,
     vendorDerivesSubstream,
-    activeForCamera,
-    activeTotal,
-    maxPerCamera,
-    maxTotal,
+    sourceRunning,
+    sourcesForCamera,
+    sourcesTotal,
+    viewersTotal,
+    maxSourcesPerCamera,
+    maxSources,
+    maxViewers,
     streamId,
   } = input;
 
@@ -87,8 +94,8 @@ export function negotiateLive(input: {
     };
   }
 
-  // 4. Camera busy
-  if (activeForCamera >= maxPerCamera) {
+  // 4. Camera busy — only when a new source is needed (sourceRunning is false)
+  if (!sourceRunning && sourcesForCamera >= maxSourcesPerCamera) {
     return {
       kind: "refused",
       reason: "camera_busy",
@@ -96,8 +103,8 @@ export function negotiateLive(input: {
     };
   }
 
-  // 5. Stream limit reached
-  if (activeTotal >= maxTotal) {
+  // 5. Stream limit reached — only when a new source is needed
+  if (!sourceRunning && sourcesTotal >= maxSources) {
     return {
       kind: "refused",
       reason: "stream_limit",
@@ -105,13 +112,23 @@ export function negotiateLive(input: {
     };
   }
 
-  // 6. All checks passed
+  // 6. Viewer limit — applies to both new and shared sources
+  if (viewersTotal >= maxViewers) {
+    return {
+      kind: "refused",
+      reason: "viewer_limit",
+      detail: "maximum live viewers reached",
+    };
+  }
+
+  // 7. All checks passed
   return {
     kind: "ok",
     cameraId,
     quality,
     mode: "ws-fmp4",
     streamId,
+    shared: sourceRunning,
   };
 }
 

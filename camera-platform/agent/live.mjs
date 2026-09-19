@@ -7,19 +7,30 @@
 //
 // The refusal path always SENDS the reason before closing. A bare socket
 // close is how bugs hide — the client must see why it was refused.
+//
+// One ffmpeg (one camera session) per (cameraId, quality), fanned out to
+// every viewer WebSocket. A source is created on demand and torn down when
+// its last viewer leaves.
 
 import { createHash, randomUUID } from "node:crypto";
 import { negotiateLive, liveFfmpegArgs } from "../dist/liveNegotiation.js";
 import { resolveCameraUrl } from "./recorder-service.mjs";
 import { buildRtspUrl } from "../dist/rtsp.js";
+import { createBoxAccumulator } from "./ui/live-client.mjs";
 
-/** Registry entry shape:
- *  { cameraId, quality, streamId, child, startedAt, lastBytesAt, stderrLines,
- *    socket, bytesSent, lastPongAt, pingSentAt }
- *  startedAt/lastBytesAt/lastPongAt/pingSentAt are ms numbers (Date.now() or
- *  deps.now().getTime()) so the pure helpers below need no timer to check.
+/** Registry of live viewers, keyed by streamId:
+ *  { streamId, cameraId, quality, sourceKey, socket, state, startedAt,
+ *    lastPongAt, pingSentAt, bytesSent }
+ *  state: "awaiting_init" | "awaiting_keyframe" | "live" | "lagging"
  */
 const registry = new Map();
+
+/** Sources keyed by `${cameraId}|${quality}`:
+ *  { key, cameraId, quality, child, startedAt, lastBytesAt, stderrLines,
+ *    bytesSent, init, accumulator, viewers }
+ *  viewers is a Set of viewer objects from registry
+ */
+const sources = new Map();
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -90,18 +101,75 @@ export function encodeServerFrame(opcode, payload) {
  *  the one worth flagging, and null lastBytesAt must not exempt it. */
 export function deadStreams(reg, nowMs, stallMs) {
   const dead = [];
-  for (const [streamId, entry] of reg) {
+  for (const [key, entry] of reg) {
     const lastAt = entry.lastBytesAt ?? entry.startedAt;
-    if (typeof lastAt === "number" && nowMs - lastAt > stallMs) dead.push(streamId);
+    if (typeof lastAt === "number" && nowMs - lastAt > stallMs) dead.push(key);
   }
   return dead;
+}
+
+/** Per-viewer delivery rule — determines whether to send a frame and the new
+ *  viewer state. Returns { send: boolean, next: state }.
+ *
+ *  States: "awaiting_init" | "awaiting_keyframe" | "live" | "lagging"
+ *  Kinds: "init" | "fragment" | "other"
+ *
+ *  Rules:
+ *  - init: awaiting_init -> send, awaiting_keyframe; any other -> no send, same
+ *  - fragment: awaiting_init -> no send, same; awaiting_keyframe -> send, live;
+ *             live -> over highWater: no send, lagging; else send, live;
+ *             lagging -> at or under lowWater: send, live; else no send, lagging
+ *  - other: live -> if writableLength > highWater no send lagging, else send live;
+ *           every other -> no send, same
+ */
+export function nextDelivery(state, kind, writableLength, { highWater, lowWater }) {
+  if (kind === "init") {
+    if (state === "awaiting_init") return { send: true, next: "awaiting_keyframe" };
+    return { send: false, next: state };
+  }
+  if (kind === "fragment") {
+    if (state === "awaiting_init") return { send: false, next: state };
+    if (state === "awaiting_keyframe") return { send: true, next: "live" };
+    if (state === "live") {
+      if (writableLength > highWater) return { send: false, next: "lagging" };
+      return { send: true, next: "live" };
+    }
+    if (state === "lagging") {
+      if (writableLength <= lowWater) return { send: true, next: "live" };
+      return { send: false, next: "lagging" };
+    }
+  }
+  if (kind === "other") {
+    if (state === "live") {
+      if (writableLength > highWater) return { send: false, next: "lagging" };
+      return { send: true, next: "live" };
+    }
+    return { send: false, next: state };
+  }
+  return { send: false, next: state };
 }
 
 const textFrame = (obj) => encodeServerFrame(1, Buffer.from(JSON.stringify(obj)));
 const closeFrame = () => encodeServerFrame(8, Buffer.alloc(0));
 
+/** Stop a source and make it unjoinable at once. Its ffmpeg takes a moment to
+ *  exit after SIGTERM; a viewer reopening the camera in that moment (a wall
+ *  redraw does exactly this) must get a fresh source, not the dying one, and
+ *  the old exit must never remove the new source from the map. */
+function retireSource(source) {
+  if (sources.get(source.key) === source) sources.delete(source.key);
+  if (source.child && !source.child.killed) source.child.kill("SIGTERM");
+}
+
 export function attachLive(server, deps) {
-  const { config, spawnFn, authorize, now = () => new Date(), maxPerCamera = 2, maxTotal = 16 } = deps;
+  const {
+    config, spawnFn, authorize, now = () => new Date(),
+    maxSourcesPerCamera = 2, maxSources = 32, maxViewers = 128,
+    maxPerCamera = maxSourcesPerCamera, // backward compat
+    maxTotal = maxSources, // backward compat
+    highWater = 6 * 1024 * 1024,
+    lowWater = 2 * 1024 * 1024,
+  } = deps;
   // Required, not defaulted: a live edge with no gate streams every camera to
   // anyone on the LAN, and a forgotten argument must not be how that happens.
   if (typeof authorize !== "function") throw new TypeError("attachLive needs an authorize(request) function");
@@ -186,6 +254,10 @@ export function attachLive(server, deps) {
       }
     }
 
+    const sourceKey = `${cameraId}|${quality}`;
+    const sourceRunning = sources.has(sourceKey);
+    const sourcesForCamera = [...sources.keys()].filter((k) => k.startsWith(`${cameraId}|`)).length;
+
     const liveResult = negotiateLive({
       cameraId,
       cameraExists,
@@ -193,10 +265,13 @@ export function attachLive(server, deps) {
       resolution,
       substreamUrl,
       vendorDerivesSubstream,
-      activeForCamera: [...registry.values()].filter((e) => e.cameraId === cameraId).length,
-      activeTotal: registry.size,
-      maxPerCamera,
-      maxTotal,
+      sourceRunning,
+      sourcesForCamera,
+      sourcesTotal: sources.size,
+      viewersTotal: registry.size,
+      maxSourcesPerCamera,
+      maxSources,
+      maxViewers,
       streamId: randomUUID(),
     });
     if (liveResult.kind === "refused") {
@@ -210,91 +285,136 @@ export function attachLive(server, deps) {
         ? resolution.url
         : substreamUrl ?? vendorSubstreamUrl;
 
-    // Register BEFORE spawning so the slot is counted the moment it is held.
-    const entry = {
+    // Create or retrieve the source
+    let source = sources.get(sourceKey);
+
+    if (!source) {
+      source = {
+        key: sourceKey,
+        cameraId,
+        quality,
+        child: null,
+        startedAt: now().getTime(),
+        lastBytesAt: null,
+        stderrLines: [],
+        bytesSent: false,
+        init: null,
+        accumulator: createBoxAccumulator(),
+        viewers: new Set(),
+      };
+      sources.set(sourceKey, source);
+
+      // Spawn ffmpeg only once per source
+      const child = spawnFn("ffmpeg", liveFfmpegArgs(chosenUrl), {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      source.child = child;
+
+      // Wire up source stdout/stderr/exit/error handlers
+      child.stdout?.on("data", (chunk) => {
+        source.bytesSent = true;
+        source.lastBytesAt = now().getTime();
+        // Update bytesSent on all viewers of this source
+        for (const v of source.viewers) v.bytesSent = true;
+
+        const emissions = source.accumulator.push(chunk);
+        for (const emission of emissions) {
+          // The accumulator's first emission is always the init segment
+          // (ftyp..moov); it is kept for viewers who join later.
+          let kind;
+          if (source.init === null) {
+            source.init = Buffer.from(emission);
+            kind = "init";
+          } else {
+            // "moof" at bytes 4..7. frag_keyframe: every fragment starts on a
+            // keyframe, so a fragment is a place a viewer can start.
+            kind = emission.length >= 8 && emission[4] === 0x6d && emission[5] === 0x6f && emission[6] === 0x6f && emission[7] === 0x66
+              ? "fragment" : "other";
+          }
+          // One frame, written to every viewer that should get it.
+          const frame = encodeServerFrame(2, Buffer.from(emission.buffer, emission.byteOffset, emission.byteLength));
+          for (const viewer of source.viewers) {
+            const { send, next } = nextDelivery(viewer.state, kind, viewer.socket.writableLength, { highWater, lowWater });
+            if (send) {
+              try {
+                viewer.socket.write(frame);
+              } catch {}
+            }
+            viewer.state = next;
+          }
+        }
+      });
+
+      child.stderr?.on("data", (chunk) => {
+        const lines = chunk.toString().split("\n").map((l) => l.trim()).filter(Boolean);
+        source.stderrLines.push(...lines);
+        if (source.stderrLines.length > 10) source.stderrLines.splice(0, source.stderrLines.length - 10);
+      });
+
+      child.on("exit", () => {
+        const envelope = source.bytesSent
+          ? { ok: false, code: "live_ended", message: source.stderrLines[source.stderrLines.length - 1] ?? "source closed" }
+          : { ok: false, code: "live_source_failed", message: source.stderrLines.slice(-3).join("; ") || "source failed" };
+        for (const viewer of source.viewers) {
+          if (!viewer.socket.destroyed) {
+            try {
+              viewer.socket.write(textFrame(envelope));
+              viewer.socket.write(closeFrame());
+              viewer.socket.end();
+              viewer.socket.once("finish", () => viewer.socket.destroy());
+            } catch {}
+          }
+          registry.delete(viewer.streamId);
+        }
+        source.viewers.clear();
+        log("info", "live source stopped", { cameraId, quality, bytesSent: source.bytesSent });
+        if (sources.get(sourceKey) === source) sources.delete(sourceKey);
+      });
+
+      child.on("error", () => {
+        const envelope = { ok: false, code: "live_source_failed", message: "could not start the source" };
+        for (const viewer of source.viewers) {
+          if (!viewer.socket.destroyed) {
+            try {
+              viewer.socket.write(textFrame(envelope));
+              viewer.socket.write(closeFrame());
+              viewer.socket.end();
+              viewer.socket.once("finish", () => viewer.socket.destroy());
+            } catch {}
+          }
+          registry.delete(viewer.streamId);
+        }
+        source.viewers.clear();
+        log("info", "live source stopped", { cameraId, quality, bytesSent: false });
+        if (sources.get(sourceKey) === source) sources.delete(sourceKey);
+      });
+    }
+
+    // Create viewer and register it BEFORE delivering init
+    const viewer = {
+      streamId,
       cameraId,
       quality,
-      streamId,
-      child: null,
-      startedAt: now().getTime(),
-      lastBytesAt: null,
-      stderrLines: [],
+      sourceKey,
       socket,
-      bytesSent: false,
+      state: "awaiting_init",
+      startedAt: now().getTime(),
       lastPongAt: null,
       pingSentAt: null,
+      bytesSent: source.bytesSent, // Track source's byte status
     };
-    registry.set(streamId, entry);
+    registry.set(streamId, viewer);
+    source.viewers.add(viewer);
 
-    const child = spawnFn("ffmpeg", liveFfmpegArgs(chosenUrl), {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    entry.child = child;
+    // If source already has init segment, deliver it and start on keyframe
+    if (source.init) {
+      try {
+        socket.write(encodeServerFrame(2, source.init));
+        viewer.state = "awaiting_keyframe";
+      } catch {}
+    }
 
-    const release = () => {
-      registry.delete(streamId);
-    };
-    const teardown = (envelope) => {
-      // Every teardown is logged with its envelope: without this the log
-      // cannot answer "why did that stream end?" after the fact. A client
-      // close frame and the socket's 'close' both land here: log the first.
-      if (registry.has(streamId)) log("info", "live stream ended", {
-        cameraId, quality, streamId,
-        reason: envelope ? envelope.code : "client_disconnected",
-        bytesSent: entry.bytesSent,
-        stderrTail: envelope?.message ?? null,
-      });
-      if (child && !child.killed) child.kill("SIGTERM");
-      if (!socket.destroyed) {
-        if (envelope) {
-          socket.write(textFrame(envelope));
-          socket.write(closeFrame());
-        }
-        socket.end();
-        socket.once("finish", () => socket.destroy()); // flush first, then drop
-      }
-      release();
-    };
-
-    child.stdout?.on("data", (chunk) => {
-      entry.bytesSent = true;
-      entry.lastBytesAt = now().getTime();
-      if (!socket.destroyed) socket.write(encodeServerFrame(2, chunk));
-    });
-
-    // Keep the LAST 10 lines for failure messages; never the URL — messages
-    // are built from these lines only, so the url cannot ride along.
-    child.stderr?.on("data", (chunk) => {
-      const lines = chunk.toString().split("\n").map((l) => l.trim()).filter(Boolean);
-      entry.stderrLines.push(...lines);
-      if (entry.stderrLines.length > 10) entry.stderrLines.splice(0, entry.stderrLines.length - 10);
-    });
-
-    child.on("exit", () => {
-      if (socket.destroyed) {
-        release();
-        return;
-      }
-      if (entry.bytesSent) {
-        teardown({
-          ok: false,
-          code: "live_ended",
-          message: entry.stderrLines[entry.stderrLines.length - 1] ?? "source closed",
-        });
-      } else {
-        teardown({
-          ok: false,
-          code: "live_source_failed",
-          message: entry.stderrLines.slice(-3).join("; ") || "source failed",
-        });
-      }
-    });
-
-    child.on("error", () => {
-      // Spawn failure (ENOENT etc.) — no bytes were sent by definition.
-      teardown({ ok: false, code: "live_source_failed", message: "could not start the source" });
-    });
-
+    // WebSocket frame parsing and handling
     let frameBuf = Buffer.alloc(0);
     socket.on("data", (data) => {
       frameBuf = Buffer.concat([frameBuf, data]);
@@ -303,78 +423,122 @@ export function attachLive(server, deps) {
         if (frame === null) break; // partial frame: wait for the rest
         frameBuf = frameBuf.subarray(frame.frameLength);
         if (frame.opcode === 10) {
-          entry.lastPongAt = now().getTime();
+          // pong
+          viewer.lastPongAt = now().getTime();
         } else if (frame.opcode === 8) {
-          socket.write(closeFrame());
-          teardown(null);
+          // close
+          removeViewer(viewer, null);
           return;
         } else if (frame.opcode === 9) {
-          socket.write(encodeServerFrame(10, Buffer.alloc(0)));
+          // ping
+          try {
+            socket.write(encodeServerFrame(10, Buffer.alloc(0)));
+          } catch {}
         }
         // other opcodes ignored — the client sends nothing else by contract
       }
     });
-    socket.on("error", () => teardown(null));
-    socket.on("close", () => teardown(null));
+    socket.on("error", () => removeViewer(viewer, null));
+    socket.on("close", () => removeViewer(viewer, null));
+
+    function removeViewer(viewer, envelope) {
+      if (!registry.has(streamId)) return; // already removed
+
+      log("info", "live stream ended", {
+        cameraId, quality, streamId,
+        reason: envelope ? envelope.code : "client_disconnected",
+        bytesSent: viewer.bytesSent,
+        stderrTail: envelope?.message ?? null,
+      });
+
+      registry.delete(streamId);
+      source.viewers.delete(viewer);
+
+      if (!socket.destroyed) {
+        if (envelope) {
+          socket.write(textFrame(envelope));
+          socket.write(closeFrame());
+        }
+        socket.end();
+        socket.once("finish", () => socket.destroy());
+      }
+
+      // The last viewer out retires the source at once.
+      if (source.viewers.size === 0) retireSource(source);
+    }
   });
 
   // One watchdog. The 15s stall is the load-bearing path; ping maintenance
   // re-arms after every pong so a client that dies later is still caught.
   attachLive.watchdog ??= setInterval(() => {
     const nowMs = Date.now();
-    for (const streamId of deadStreams(registry, nowMs, 15000)) {
-      const entry = registry.get(streamId);
-      if (!entry) continue;
-      teardownOf(entry, { ok: false, code: "live_stalled", message: "no bytes from the source for 15s" });
-    }
-    for (const entry of registry.values()) {
-      const lastWord = Math.max(entry.lastPongAt ?? 0, entry.pingSentAt ?? 0);
-      if (nowMs - Math.max(entry.startedAt, lastWord) > 20000 && !entry.child?.killed) {
-        try {
-          entry.socket.write(encodeServerFrame(9, Buffer.alloc(0)));
-        } catch {} // a dead socket reports itself via its own close
-        entry.pingSentAt = nowMs;
+
+    // Check sources for stalls
+    for (const sourceKey of deadStreams(sources, nowMs, 15000)) {
+      const source = sources.get(sourceKey);
+      if (!source) continue;
+      const envelope = { ok: false, code: "live_stalled", message: "no bytes from the source for 15s" };
+      for (const viewer of source.viewers) {
+        if (!viewer.socket.destroyed) {
+          viewer.socket.write(textFrame(envelope));
+          viewer.socket.write(closeFrame());
+          viewer.socket.end();
+          viewer.socket.once("finish", () => viewer.socket.destroy());
+        }
+        registry.delete(viewer.streamId);
       }
-      if (entry.pingSentAt !== null && nowMs - entry.pingSentAt > 30000 && (entry.lastPongAt ?? 0) < entry.pingSentAt) {
-        teardownOf(entry, { ok: false, code: "live_client_dead", message: "no pong received" });
+      source.viewers.clear();
+      retireSource(source);
+    }
+
+    // Check viewers for ping/pong and dead clients
+    for (const viewer of registry.values()) {
+      const lastWord = Math.max(viewer.lastPongAt ?? 0, viewer.pingSentAt ?? 0);
+      if (nowMs - Math.max(viewer.startedAt, lastWord) > 20000) {
+        try {
+          viewer.socket.write(encodeServerFrame(9, Buffer.alloc(0)));
+        } catch {} // a dead socket reports itself via its own close
+        viewer.pingSentAt = nowMs;
+      }
+      if (viewer.pingSentAt !== null && nowMs - viewer.pingSentAt > 30000 && (viewer.lastPongAt ?? 0) < viewer.pingSentAt) {
+        // No pong received
+        const source = sources.get(viewer.sourceKey);
+        if (source) source.viewers.delete(viewer);
+        registry.delete(viewer.streamId);
+        if (!viewer.socket.destroyed) {
+          viewer.socket.write(textFrame({ ok: false, code: "live_client_dead", message: "no pong received" }));
+          viewer.socket.write(closeFrame());
+          viewer.socket.end();
+          viewer.socket.once("finish", () => viewer.socket.destroy());
+        }
+        if (source && source.viewers.size === 0) retireSource(source);
       }
     }
   }, 5000);
   attachLive.watchdog.unref?.();
-
-  function teardownOf(entry, envelope) {
-    // Watchdog-driven teardowns log too — the stall and no-pong paths are the
-    // ones most likely to be a bug and the least visible without a line here.
-    log("info", "live stream ended", {
-      cameraId: entry.cameraId, quality: entry.quality, streamId: entry.streamId,
-      reason: envelope ? envelope.code : "client_disconnected",
-      bytesSent: entry.bytesSent,
-      stderrTail: envelope?.message ?? null,
-      watched: true,
-    });
-    if (entry.child && !entry.child.killed) entry.child.kill("SIGTERM");
-    if (!entry.socket.destroyed) {
-      if (envelope) {
-        entry.socket.write(textFrame(envelope));
-        entry.socket.write(closeFrame());
-      }
-      entry.socket.end();
-      entry.socket.once("finish", () => entry.socket.destroy());
-    }
-    registry.delete(entry.streamId);
-  }
 }
 
-/** Read-only view for the harness and the health strip. */
+/** Read-only view of viewers for the harness and the health strip. */
 export function liveRegistry() {
   return registry;
 }
 
+/** Read-only view of sources for the harness. */
+export function liveSources() {
+  return sources;
+}
+
 /** Server shutdown and the harness both end here. */
 export function closeAll() {
-  for (const entry of registry.values()) {
-    if (entry.child && !entry.child.killed) entry.child.kill("SIGTERM");
-    if (!entry.socket.destroyed) entry.socket.destroy();
+  for (const source of sources.values()) {
+    if (source.child && !source.child.killed) source.child.kill("SIGTERM");
+    for (const viewer of source.viewers) {
+      if (!viewer.socket.destroyed) viewer.socket.destroy();
+    }
+  }
+  sources.clear();
+  for (const viewer of registry.values()) {
+    if (!viewer.socket.destroyed) viewer.socket.destroy();
   }
   registry.clear();
   if (attachLive.watchdog) {

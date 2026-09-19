@@ -112,8 +112,9 @@ function fakeChild() {
 
 const spawnCalls = [];
 let pendingChild = null;
-const spawnFn = () => {
+const spawnFn = (cmd, args) => {
   const child = fakeChild();
+  child.args = args;
   spawnCalls.push(child);
   return child;
 };
@@ -133,7 +134,17 @@ const server = createServer(() => {});
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
 const port = server.address().port;
-attachLive(server, { config, spawnFn, maxPerCamera: 2, maxTotal: 16, authorize: () => ({ kind: "allow" }) });
+// One source per camera here, so camera_busy is reachable (main + sub of one
+// camera); sharing itself is pinned in liveShare.harness.mjs.
+attachLive(server, { config, spawnFn, maxSourcesPerCamera: 1, maxSources: 16, maxViewers: 64, authorize: () => ({ kind: "allow" }) });
+
+/** A top-level MP4 box with a never-zero pseudo-random payload. */
+const mp4Box = (type, len, seed) => {
+  const b = Buffer.concat([Buffer.alloc(8), pseudoRandomBytes(len, seed)]);
+  b.writeUInt32BE(8 + len, 0);
+  b.write(type, 4, "latin1");
+  return b;
+};
 
 const wsOpen = (path) =>
   new Promise((resolve, reject) => {
@@ -160,15 +171,17 @@ const nextClose = (ws, ms = 3000) =>
 await check("happy path: binary frames arrive byte-exact; the negotiated stream is in the registry", async () => {
   const ws = await wsOpen("/live/cam-1");
   const child = spawnCalls[spawnCalls.length - 1];
-  const chunkA = pseudoRandomBytes(500, 42);
-  const chunkB = pseudoRandomBytes(70000, 77); // > 65535: forces the 64-bit path
-  child.stdout.emit("data", chunkA);
-  child.stdout.emit("data", chunkB);
+  // The source is split into whole boxes (init, then moof+mdat fragments) so
+  // it can be shared; the bytes of each must still arrive exact.
+  const init = Buffer.concat([mp4Box("ftyp", 20, 41), mp4Box("moov", 480, 42)]);
+  const frag = Buffer.concat([mp4Box("moof", 90, 76), mp4Box("mdat", 70000, 77)]); // > 65535: the 64-bit path
+  const all = Buffer.concat([init, frag]);
+  child.stdout.emit("data", all.subarray(0, 300));
+  child.stdout.emit("data", all.subarray(300));
   const mA = await nextMessage(ws);
-  same(mA.length, 500, "small chunk size");
-  same(mA.equals(chunkA), true, "small chunk byte-exact");
+  same(mA.equals(init), true, "init segment byte-exact");
   const mB = await nextMessage(ws);
-  same(mB.equals(chunkB), true, "large chunk byte-exact (64-bit length path)");
+  same(mB.equals(frag), true, "fragment byte-exact (64-bit length path)");
   const reg = liveRegistry();
   same(reg.size, 1, "one live stream");
   const entry = [...reg.values()][0];
@@ -232,8 +245,9 @@ await check("child exit with no bytes -> live_source_failed carrying stderr tail
 await check("child exit after bytes -> live_ended with the last stderr line", async () => {
   const ws = await wsOpen("/live/cam-1");
   const child = spawnCalls[spawnCalls.length - 1];
-  child.stdout.emit("data", pseudoRandomBytes(64, 5));
-  await nextMessage(ws); // drain the binary frame
+  // Bytes flowed: a whole init segment (the source forwards whole boxes only).
+  child.stdout.emit("data", Buffer.concat([mp4Box("ftyp", 20, 5), mp4Box("moov", 200, 6)]));
+  await nextMessage(ws); // drain the init frame
   child.stderr.emit("data", Buffer.from("warning: something\nfatal: source closed on us\n"));
   child.emit("exit");
   const env = JSON.parse((await nextMessage(ws)).toString());
@@ -243,35 +257,31 @@ await check("child exit after bytes -> live_ended with the last stderr line", as
   await nextClose(ws);
 });
 
-await check("camera_busy at the per-camera cap; stream_limit at the appliance cap", async () => {
+await check("camera_busy when a camera would need a session past its cap; a second viewer never does", async () => {
+  const before = spawnCalls.length;
   const w1 = await wsOpen("/live/cam-1");
   const w2 = await wsOpen("/live/cam-1");
-  same(liveRegistry().size, 2, "both held (maxPerCamera 2)");
-  const w3 = await wsOpen("/live/cam-1");
-  const env = JSON.parse((await nextMessage(w3)).toString());
-  same([env.ok, env.code], [false, "camera_busy"], "third per-camera stream refused");
-  await nextClose(w3);
-  // appliance cap: two held here; a third camera on a fresh config would need maxTotal —
-  // the contract harness covers stream_limit; here we pin the refusal still names the right code.
-  for (const w of [w1, w2]) { w.close(); await nextClose(w); }
+  same(liveRegistry().size, 2, "two viewers held");
+  same(spawnCalls.length - before, 1, "sharing one source");
+  const m = await wsOpen("/live/cam-3?quality=mainstream");
+  const s = await wsOpen("/live/cam-3?quality=substream");
+  const env = JSON.parse((await nextMessage(s)).toString());
+  same([env.ok, env.code], [false, "camera_busy"], "cam-3's second session refused (maxSourcesPerCamera 1)");
+  await nextClose(s);
+  for (const w of [w1, w2, m]) { w.close(); await nextClose(w); }
   await new Promise((r) => setTimeout(r, 100));
 });
 
 await check("manual substreamUrl used VERBATIM in the spawn argv", async () => {
   const before = spawnCalls.length;
   const ws = await wsOpen("/live/cam-3?quality=substream");
-  const child = spawnCalls[spawnCalls.length - 1];
   same(spawnCalls.length, before + 1, "spawned once");
-  // liveFfmpegArgs puts the url right after -i; argv came through the contract
-  const ws2 = await wsOpen("/live/cam-3?quality=mainstream"); // hold nothing: free the sub first
-  // assert via registry: the entry exists, then tear both down
-  const entries = [...liveRegistry().values()].filter((e) => e.cameraId === "cam-3");
-  same(entries.length, 2, "sub + main both held");
-  // The url itself is only visible to ffmpeg; what we CAN pin is that negotiation
-  // allowed the manual substream (cam-3 has no host-derivable conflict) and the
-  // contract's argv shape — the exact url check lives in liveNegotiation harness.
-  same(entries.some((e) => e.quality === "substream"), true, "substream negotiated with manual url present");
-  for (const w of [ws, ws2]) { w.close(); await nextClose(w); }
+  const args = spawnCalls[spawnCalls.length - 1].args;
+  same(args[args.indexOf("-i") + 1], SUB_URL, "the manual substream URL, verbatim, right after -i");
+  const entry = [...liveRegistry().values()].find((e) => e.cameraId === "cam-3");
+  same(entry?.quality, "substream", "negotiated as the substream");
+  ws.close();
+  await nextClose(ws);
   await new Promise((r) => setTimeout(r, 100));
 });
 

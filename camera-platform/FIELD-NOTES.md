@@ -567,3 +567,14 @@ something was adopted. Now the scan reads the start time from the name
 quarantines it when the time cannot be read.
 
 Not yet installed on the laptop NVR.
+
+**Finding 2 (every live tile opened its own camera session): fixed the same
+day.** One source (one ffmpeg, one RTSP session) per camera and quality,
+shared by every viewer; a late joiner gets the stored init segment and starts
+on the next fragment (frag_keyframe: each starts on a keyframe); a viewer more
+than 6 MB behind skips whole fragments and resumes on one, so a slow screen
+never holds up the others. The caps now count what they protect: 2 sessions
+per camera, 32 on the box, 128 viewers. A 3-TV x 9-tile site is 27 viewers on
+at most one session per camera. Also fixed in review: a source whose last
+viewer left stayed joinable until its ffmpeg exited, and its exit could delete
+a fresh source for the same camera from the map.
