@@ -113,4 +113,32 @@ check("estimateEndUtc is arithmetic, not a guess, and refuses without a bitrate"
   eq(estimateEndUtc("2026-09-10T00:00:00.000Z", 0, 2000), null, "no bytes, no estimate");
 });
 
+check("THE FEARED ONE: an unindexed in-progress file keeps its own camera and start time, never '.inprogress' in 1970", () => {
+  // A power cut between ffmpeg opening a new file and the recorder indexing it.
+  const wip = { path: "cam-1/.inprogress/1757500120.mp4", bytes: 5000, cameraId: "cam-1", wipStartMs: 1757500120000 };
+  const plan = planRecovery([], [wip], BOUNDARY);
+  eq(plan.summary.adopted, 1, "adopted, not lost");
+  const a = plan.actions.find((x) => x.kind === "adopt_orphan");
+  eq(a?.cameraId, "cam-1", "its camera, not the .inprogress directory");
+  eq(a?.startUtc, "2025-09-10T10:28:40.000Z", "its start time, read in seconds by the agent, not milliseconds");
+  eq(a?.inProgress, true, "marked in-progress, so it is indexed as a partial");
+});
+
+check("THE FEARED ONE: an in-progress file whose start time cannot be read is quarantined, never guessed", () => {
+  for (const wipStartMs of [NaN, undefined, 0, -5]) {
+    const wip = { path: "cam-1/.inprogress/odd-name.mp4", bytes: 5000, cameraId: "cam-1", wipStartMs };
+    const plan = planRecovery([], [wip], BOUNDARY);
+    eq(plan.summary.adopted, 0, `not adopted (${wipStartMs})`);
+    eq(plan.actions.map((x) => x.kind), ["quarantine"], `quarantined (${wipStartMs})`);
+  }
+});
+
+check("a sealed orphan is still adopted from its path, and not marked in-progress", () => {
+  const plan = planRecovery([], [file("cam-2/1757500000000.mp4", 900)], BOUNDARY);
+  const a = plan.actions.find((x) => x.kind === "adopt_orphan");
+  eq(a?.cameraId, "cam-2", "camera");
+  eq(a?.inProgress, false, "sealed");
+});
+
 report("recovery");
+

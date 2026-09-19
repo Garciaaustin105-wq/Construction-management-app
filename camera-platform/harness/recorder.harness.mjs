@@ -714,4 +714,143 @@ await check("an ffmpeg that ignores SIGTERM on a stuck restart is killed, and a 
   eq(await rec.restartStuck({ sinceUtc: null }), false, "a stopped recorder does not restart");
 });
 
+// Build a 28-byte ftyp box: 4 (size) + 4 (type) + 4 (major) + 4 (minor) + 4 (brand) + 4 (brand)
+function makeEmptyFtypBox() {
+  const buf = Buffer.alloc(28);
+  buf.writeUInt32BE(28, 0);              // size
+  buf.write("ftyp", 4);                  // type
+  buf.write("isom", 8);                  // major_brand
+  buf.writeUInt32BE(0x00000200, 12);     // minor_version
+  buf.write("isom", 16);                 // compatible_brand_1
+  buf.write("iso2", 20);                 // compatible_brand_2
+  return buf;
+}
+
+await check("THE FEARED ONE: a 28-byte ftyp stub is quarantined, not sealed as a real segment", async () => {
+  const emptyRoot = await mkdtemp(path.join(tmpdir(), "camplat-empty-"));
+  const emptyIndex = openIndex(path.join(await mkdtemp(path.join(tmpdir(), "camplat-empty-state-")), "index.db"));
+  const emptyEvents = [];
+  const emptyCam = "cam-empty";
+  const emptyRec = createCameraRecorder({
+    root: emptyRoot, cameraId: emptyCam, url: "rtsp://u:p@10.0.0.6:554/x",
+    index: emptyIndex, segmentSeconds: SEG, pollMs: 100_000, bitrateKbps: 2000,
+    spawnFn: fakeSpawn, onEvent: (e) => emptyEvents.push(e),
+  });
+  await emptyRec.start();
+  try {
+    // Create files so that the empty ftyp stub is NOT the newest (so it gets sealed/processed)
+    await mkdir(path.join(emptyRoot, emptyCam, INPROGRESS), { recursive: true });
+    const T_empty = 1_757_500_000;
+    const T_normal = 1_757_500_060;
+    const T_open = 1_757_500_120;  // This will be the open (newest) file
+    await writeFile(path.join(emptyRoot, emptyCam, INPROGRESS, `${T_empty}.mp4`), makeEmptyFtypBox());
+    await writeFile(path.join(emptyRoot, emptyCam, INPROGRESS, `${T_normal}.mp4`), Buffer.alloc(SIZE));
+    await writeFile(path.join(emptyRoot, emptyCam, INPROGRESS, `${T_open}.mp4`), Buffer.alloc(SIZE));
+
+    await emptyRec.poll();
+
+    // Both the normal and empty files should have been processed
+    // The normal one should be sealed, the empty one should be quarantined
+    const sealed = emptyIndex.withState("sealed");
+    eq(sealed.length, 1, "one sealed segment (the normal one)");
+    eq(sealed[0].path, `${emptyCam}/${T_normal * 1000}.mp4`, "the normal segment is sealed");
+
+    // The empty and open files: empty should be quarantined, open should be in index
+    const open = emptyIndex.withState("open");
+    eq(open.length, 1, "one open (the newest)");
+    eq(open[0].path, `${emptyCam}/${INPROGRESS}/${T_open}.mp4`, "the open file is the newest");
+
+    // Check quarantine: the empty stub should be quarantined
+    const quarantined = await readdir(path.join(emptyRoot, QUARANTINE)).catch(() => []);
+    eq(quarantined.length, 1, "one file quarantined (the empty ftyp)");
+
+    // Check the event: should have empty_segment event
+    const emptyEvents_found = emptyEvents.filter((e) => e.kind === "empty_segment");
+    eq(emptyEvents_found.length > 0, true, "empty_segment event emitted");
+    if (emptyEvents_found.length > 0) {
+      eq(emptyEvents_found[0].cameraId, emptyCam, "event names the camera");
+    }
+  } finally {
+    await emptyRec.stop();
+    emptyIndex.close();
+    await removeStore(emptyRoot);
+  }
+});
+
+await check("a file 0–7 bytes is also treated as empty and quarantined", async () => {
+  const tinyRoot = await mkdtemp(path.join(tmpdir(), "camplat-tiny-"));
+  const tinyIndex = openIndex(path.join(await mkdtemp(path.join(tmpdir(), "camplat-tiny-state-")), "index.db"));
+  const tinyCam = "cam-tiny";
+  const tinyRec = createCameraRecorder({
+    root: tinyRoot, cameraId: tinyCam, url: "rtsp://u:p@10.0.0.6:554/x",
+    index: tinyIndex, segmentSeconds: SEG, pollMs: 100_000, bitrateKbps: 2000,
+    spawnFn: fakeSpawn,
+  });
+  await tinyRec.start();
+  try {
+    await mkdir(path.join(tinyRoot, tinyCam, INPROGRESS), { recursive: true });
+    const T_small = 1_757_500_000;
+    const T_normal = 1_757_500_060;
+    const T_open = 1_757_500_120;
+    await writeFile(path.join(tinyRoot, tinyCam, INPROGRESS, `${T_small}.mp4`), Buffer.alloc(5)); // 5 bytes, too small
+    await writeFile(path.join(tinyRoot, tinyCam, INPROGRESS, `${T_normal}.mp4`), Buffer.alloc(SIZE));
+    await writeFile(path.join(tinyRoot, tinyCam, INPROGRESS, `${T_open}.mp4`), Buffer.alloc(SIZE));
+
+    await tinyRec.poll();
+
+    // The normal segment should be sealed
+    const sealed = tinyIndex.withState("sealed");
+    eq(sealed.length, 1, "one sealed segment");
+
+    // The tiny segment should be quarantined
+    const quarantined = await readdir(path.join(tinyRoot, QUARANTINE)).catch(() => []);
+    eq(quarantined.length, 1, "tiny file quarantined");
+  } finally {
+    await tinyRec.stop();
+    tinyIndex.close();
+    await removeStore(tinyRoot);
+  }
+});
+
+await check("a small file WITH video boxes (mdat, moof, moov) is sealed normally", async () => {
+  const smallRoot = await mkdtemp(path.join(tmpdir(), "camplat-small-video-"));
+  const smallIndex = openIndex(path.join(await mkdtemp(path.join(tmpdir(), "camplat-small-state-")), "index.db"));
+  const smallCam = "cam-small";
+  const smallRec = createCameraRecorder({
+    root: smallRoot, cameraId: smallCam, url: "rtsp://u:p@10.0.0.6:554/x",
+    index: smallIndex, segmentSeconds: SEG, pollMs: 100_000, bitrateKbps: 2000,
+    spawnFn: fakeSpawn,
+  });
+  await smallRec.start();
+  try {
+    await mkdir(path.join(smallRoot, smallCam, INPROGRESS), { recursive: true });
+    const T_small = 1_757_500_000;
+    const T_normal = 1_757_500_060;
+    const T_open = 1_757_500_120;
+
+    // Create a minimal mdat box (no video content, just the box header + minimal data)
+    const mdatBuf = Buffer.alloc(200);
+    mdatBuf.writeUInt32BE(200, 0);        // size = 200
+    mdatBuf.write("mdat", 4);             // type
+    // fill with some dummy data
+    await writeFile(path.join(smallRoot, smallCam, INPROGRESS, `${T_small}.mp4`), mdatBuf);
+
+    await writeFile(path.join(smallRoot, smallCam, INPROGRESS, `${T_normal}.mp4`), Buffer.alloc(SIZE));
+    await writeFile(path.join(smallRoot, smallCam, INPROGRESS, `${T_open}.mp4`), Buffer.alloc(SIZE));
+
+    await smallRec.poll();
+
+    // Both the normal and the small mdat segments should be sealed, not quarantined
+    const sealed = smallIndex.withState("sealed");
+    eq(sealed.length, 2, "two sealed segments (normal and small with mdat)");
+
+    const quarantined = await readdir(path.join(smallRoot, QUARANTINE)).catch(() => []);
+    eq(quarantined.length, 0, "nothing quarantined");
+  } finally {
+    await smallRec.stop();
+    smallIndex.close();
+    await removeStore(smallRoot);
+  }
+});
+
 report("recorder integration");

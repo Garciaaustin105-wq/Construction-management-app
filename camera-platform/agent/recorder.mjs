@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { ensureCameraDirs, sealSegment, INPROGRESS } from "./segstore.mjs";
+import { ensureCameraDirs, sealSegment, hasVideoBoxes, quarantineFile, INPROGRESS } from "./segstore.mjs";
 import { wipPattern, wipCompare, wipStartMs } from "./wipNames.mjs";
 import { measureSealedSegment } from "./media.mjs";
 import { redactRtspUrl } from "../dist/rtsp.js";
@@ -171,6 +171,18 @@ export function createCameraRecorder({
 
     const sealed = [];
     for (const file of complete) {
+      // A restart's stub holds no video (FIELD-NOTES 2026-09-18, finding 4):
+      // set it aside rather than index a clip that will not play.
+      if (!(await hasVideoBoxes(path.join(wipDir, file)))) {
+        try {
+          await quarantineFile(root, `${cameraId}/${INPROGRESS}/${file}`);
+          onEvent({ kind: "empty_segment", cameraId, file });
+        } catch (err) {
+          onEvent({ kind: "seal_failed", cameraId, file, error: `quarantine failed: ${err.message}` });
+        }
+        continue;
+      }
+
       try {
         const result = await sealSegment(root, cameraId, file);
         const measured = await measureSealedSegment(path.join(root, result.path), result.bytes);

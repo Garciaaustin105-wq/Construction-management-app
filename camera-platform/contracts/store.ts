@@ -46,6 +46,14 @@ export interface StoredSegment {
 export interface DiskFile {
   path: string;
   bytes: number;
+  /**
+   * In-progress files only (`<cameraId>/.inprogress/<name>`): the start time
+   * the agent read from the name, in ms. The name's format is the agent's
+   * (epoch seconds on Linux, a bench format on Windows: wipNames.mjs), so it
+   * is parsed there, not here. NaN or absent when the name could not be read.
+   */
+  wipStartMs?: number;
+  cameraId?: string;
 }
 
 export function isEvictable(segment: StoredSegment): boolean {

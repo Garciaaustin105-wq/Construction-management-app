@@ -111,7 +111,7 @@ async function diskUsage(root) {
 }
 
 export async function runRecovery(index, storeRoots, { dryRun = false } = {}) {
-  const summary = { confirmed: 0, corrected: 0, partials: 0, adopted: 0, dropped: 0, quarantined: 0, quarantineFailed: 0, lost: 0 };
+  const summary = { confirmed: 0, corrected: 0, partials: 0, adopted: 0, dropped: 0, quarantined: 0, quarantineFailed: 0, lost: 0, empty: 0 };
   const boundary = new Date().toISOString();
 
   const scans = [];
@@ -135,10 +135,12 @@ export async function runRecovery(index, storeRoots, { dryRun = false } = {}) {
     // before segments recorded it, and corrects any that were wrong.
     index.assignRoot(root, onDisk.map((f) => f.path));
 
+    // Stubs with no video were moved to quarantine: no row may point at them.
+    const emptied = new Set(applied.empty.map((e) => e.path));
     const writes = [];
     for (const action of plan.actions) {
       if (action.kind === "correct_size") writes.push({ ...action.segment, bytes: action.actualBytes, root });
-      if (action.kind === "seal_partial") {
+      if (action.kind === "seal_partial" && !emptied.has(action.segment.path)) {
         writes.push({
           ...action.segment,
           state: "partial",
@@ -151,16 +153,25 @@ export async function runRecovery(index, storeRoots, { dryRun = false } = {}) {
     for (const orphan of applied.adopted) {
       writes.push({
         cameraId: orphan.cameraId, startUtc: orphan.startUtc, endUtc: null, path: orphan.path,
-        bytes: orphan.bytes, state: "sealed", hold: false, pendingUpload: false, bitrateKbps: null, root,
+        // An in-progress orphan was cut off mid-write: a partial, not sealed.
+        bytes: orphan.bytes, state: orphan.inProgress ? "partial" : "sealed", hold: false, pendingUpload: false, bitrateKbps: null, root,
       });
     }
     if (writes.length > 0) index.putMany(writes);
 
-    const removals = plan.actions.filter((a) => a.kind === "lost").map((a) => a.segment.path);
+    const removals = [
+      ...plan.actions.filter((a) => a.kind === "lost").map((a) => a.segment.path),
+      ...applied.empty.filter((e) => e.kind === "seal_partial").map((e) => e.path),
+    ];
     if (removals.length > 0) index.removeMany(removals);
     for (const gap of plan.gaps) index.addGap(gap);
 
     for (const key of Object.keys(plan.summary)) summary[key] += plan.summary[key];
+    for (const e of applied.empty) {
+      summary.empty += 1;
+      if (e.kind === "seal_partial") summary.partials -= 1;
+      else summary.adopted -= 1;
+    }
     summary.quarantined -= applied.failed.length;
     summary.quarantineFailed += applied.failed.length;
   }

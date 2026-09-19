@@ -535,3 +535,35 @@ against the API's id rule when the file is written and again when it is read,
 and a request naming no configured camera is deleted and ignored.
 
 Not yet installed on the laptop NVR.
+
+## 2026-09-19: load-test findings 3 and 4 fixed, and a recovery bug they exposed
+
+**Finding 3 (web server bound only the Tailscale address).** The API server
+now listens on a plan, not one address (contracts/listenPlan.ts,
+agent/listeners.mjs): loopback always (the TV on the box's own HDMI), the
+card with the default route (the store LAN, for managers and the Mac Minis),
+and Tailscale. The camera network has no default route, so it is never picked;
+naming it (`if:<card>` or its address), or any wildcard, is refused. Cards that
+come up later (Tailscale, DHCP) are picked up within 10 s. Set with
+`CAMPLAT_API_LISTEN` and `CAMPLAT_CAMERA_INTERFACES` in the unit (install.sh).
+The laptop NVR still has `CAMPLAT_API_HOST=<tailscale ip>`, which now means
+that address plus loopback; `upgrade.sh` does not rewrite the unit, so it keeps
+working unchanged.
+
+**Finding 4 (a restart leaves a 28-byte stub).** A segment is empty when it
+starts with an MP4 `ftyp` box and holds no `moov`, `moof` or `mdat` box,
+decided by structure, never size (an ffmpeg with another brand list writes a
+32-byte stub). The running recorder and recovery both move stubs to
+quarantine; recovery counts them as `empty` and indexes none of them.
+
+**Found on the way: an unindexed in-progress file was filed under camera
+".inprogress" at a start time in 1970.** A power cut between ffmpeg opening a
+new file and the recorder indexing it left a file recovery "adopted" by
+reading `<cam>/.inprogress/<name>` as a sealed path: the directory became the
+camera, and the name's epoch seconds were read as milliseconds. The footage
+was on disk and on no timeline. The existing check only asserted that
+something was adopted. Now the scan reads the start time from the name
+(wipNames.mjs) and recovery adopts it under its own camera as a partial, or
+quarantines it when the time cannot be read.
+
+Not yet installed on the laptop NVR.

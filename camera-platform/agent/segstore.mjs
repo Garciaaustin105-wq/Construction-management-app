@@ -12,7 +12,7 @@
  * filesystem states it structurally — anything under `.inprogress/` was being
  * written when the process stopped, whatever the index believes.
  */
-import { readdir, stat, rename, unlink, mkdir, rm } from "node:fs/promises";
+import { readdir, stat, rename, unlink, mkdir, rm, open } from "node:fs/promises";
 import path from "node:path";
 import { wipStartMs } from "./wipNames.mjs";
 
@@ -58,7 +58,10 @@ export async function scanDisk(root) {
           const full = path.join(wipPath, wip);
           const info = await stat(full).catch(() => null);
           if (info?.isFile()) {
-            inProgress.push({ path: `${cameraId}/${INPROGRESS}/${wip}`, bytes: info.size, cameraId });
+            // The start time is read from the name here, where its format is
+            // known (wipNames.mjs); NaN when it cannot be, and recovery then
+            // quarantines the file rather than guessing a time.
+            inProgress.push({ path: `${cameraId}/${INPROGRESS}/${wip}`, bytes: info.size, cameraId, wipStartMs: wipStartMs(wip) });
           }
         }
         continue;
@@ -133,6 +136,7 @@ export async function applyRecovery(root, plan) {
   const adopted = [];
   const dropped = [];
   const quarantined = [];
+  const empty = [];
   const sealedPartials = [];
   const failed = [];
 
@@ -143,16 +147,8 @@ export async function applyRecovery(root, plan) {
         dropped.push(action.file.path);
         break;
       case "quarantine": {
-        // Never reuse a name: the same path can be quarantined again on a
-        // later boot, and rename would replace what was set aside before.
-        const flat = action.file.path.replace(/\//g, "_");
-        let target = path.join(root, QUARANTINE, `${Date.now()}_${flat}`);
-        for (let n = 1; await stat(target).then(() => true, () => false); n++) {
-          target = path.join(root, QUARANTINE, `${Date.now()}_${n}_${flat}`);
-        }
         try {
-          await mkdir(path.dirname(target), { recursive: true });
-          await rename(path.join(root, action.file.path), target);
+          const target = await quarantineFile(root, action.file.path);
           quarantined.push({ path: action.file.path, reason: action.reason, movedTo: target });
         } catch (err) {
           failed.push({ path: action.file.path, reason: action.reason, error: String(err?.message ?? err) });
@@ -160,17 +156,32 @@ export async function applyRecovery(root, plan) {
         break;
       }
       case "adopt_orphan":
-        adopted.push({ path: action.file.path, cameraId: action.cameraId, startUtc: action.startUtc, bytes: action.file.bytes });
+      case "seal_partial": {
+        // A restart's stub holds no video: set it aside instead of indexing a
+        // clip that will not play. It never becomes a partial or an orphan.
+        const rel = action.kind === "adopt_orphan" ? action.file.path : action.segment.path;
+        if (!(await hasVideoBoxes(path.join(root, rel)))) {
+          try {
+            const target = await quarantineFile(root, rel);
+            empty.push({ path: rel, kind: action.kind, reason: "holds no video (a restart's stub)", movedTo: target });
+          } catch (err) {
+            failed.push({ path: rel, reason: "holds no video", error: String(err?.message ?? err) });
+          }
+          break;
+        }
+        if (action.kind === "adopt_orphan") {
+          adopted.push({ path: action.file.path, cameraId: action.cameraId, startUtc: action.startUtc, bytes: action.file.bytes, inProgress: action.inProgress });
+        } else {
+          sealedPartials.push({ segment: action.segment, actualBytes: action.actualBytes, estimatedEndUtc: action.estimatedEndUtc });
+        }
         break;
-      case "seal_partial":
-        sealedPartials.push({ segment: action.segment, actualBytes: action.actualBytes, estimatedEndUtc: action.estimatedEndUtc });
-        break;
+      }
       default:
         break;   // confirm / correct_size / lost are index-only
     }
   }
 
-  return { adopted, dropped, quarantined, sealedPartials, failed };
+  return { adopted, dropped, quarantined, sealedPartials, empty, failed };
 }
 
 export async function ensureCameraDirs(root, cameraId) {
@@ -197,6 +208,70 @@ export async function quarantineUsage(root) {
     }
   }
   return { files, bytes };
+}
+
+/**
+ * Whether a segment file holds any media, decided by its box structure and
+ * never by its size (FIELD-NOTES 2026-09-18, finding 4: a restart leaves a
+ * 28-byte `ftyp` stub per camera, and another ffmpeg writes other sizes).
+ *
+ * Empty (false): shorter than one box header, or an MP4 that starts with
+ * `ftyp` and has no `moov`, `moof` or `mdat` box. Anything else is kept
+ * (true): a file that does not start with `ftyp` is not ours to call empty,
+ * a malformed box size is not evidence of emptiness, and an unreadable file
+ * is left for someone to look at.
+ */
+export async function hasVideoBoxes(absolutePath) {
+  let fd;
+  try {
+    fd = await open(absolutePath, "r");
+    const { size } = await fd.stat();
+    if (size < 8) return false;
+    const head = Buffer.alloc(16);
+    let offset = 0;
+    let first = true;
+    while (offset + 8 <= size) {
+      const { bytesRead } = await fd.read(head, 0, 16, offset);
+      if (bytesRead < 8) break;
+      const size32 = head.readUInt32BE(0);
+      const type = head.toString("latin1", 4, 8);
+      if (first && type !== "ftyp") return true;
+      first = false;
+      if (type === "moov" || type === "moof" || type === "mdat") return true;
+      let boxSize;
+      if (size32 === 1) {
+        if (bytesRead < 16) break;
+        boxSize = Number(head.readBigUInt64BE(8));
+      } else if (size32 === 0) {
+        boxSize = size - offset;
+      } else {
+        boxSize = size32;
+      }
+      if (boxSize < 8) return true;
+      offset += boxSize;
+    }
+    return false;
+  } catch {
+    return true;
+  } finally {
+    await fd?.close().catch(() => {});
+  }
+}
+
+/**
+ * Move `relPath` (relative to `root`) into the root's quarantine, never
+ * reusing a name: the same path can be quarantined again later, and rename
+ * would replace what was set aside before. Returns where it went.
+ */
+export async function quarantineFile(root, relPath) {
+  const flat = relPath.replace(/[\\/]/g, "_");
+  let target = path.join(root, QUARANTINE, `${Date.now()}_${flat}`);
+  for (let n = 1; await stat(target).then(() => true, () => false); n++) {
+    target = path.join(root, QUARANTINE, `${Date.now()}_${n}_${flat}`);
+  }
+  await mkdir(path.dirname(target), { recursive: true });
+  await rename(path.join(root, relPath), target);
+  return target;
 }
 
 export async function removeStore(root) {

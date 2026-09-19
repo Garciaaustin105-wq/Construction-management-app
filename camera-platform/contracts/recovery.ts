@@ -19,6 +19,9 @@ import { parseUtc, toUtc } from "./time.js";
 import type { GapReason } from "./segment.js";
 import type { DiskFile, StoredSegment } from "./store.js";
 
+/** The in-progress directory's name; agent/segstore.mjs INPROGRESS. */
+const INPROGRESS_DIR = ".inprogress";
+
 export type RecoveryAction =
   /** Index and disk agree. Nothing to do. */
   | { kind: "confirm"; segment: StoredSegment }
@@ -37,8 +40,12 @@ export type RecoveryAction =
       estimatedEndUtc: string | null;
       needsMediaValidation: true;
     }
-  /** On disk, not in the index. Written before the index commit. Keep it. */
-  | { kind: "adopt_orphan"; file: DiskFile; cameraId: string; startUtc: string }
+  /**
+   * On disk, not in the index. Written before the index commit. Keep it.
+   * `inProgress`: it was still being written (a power cut before the recorder
+   * indexed it), so it is a partial, not a sealed segment.
+   */
+  | { kind: "adopt_orphan"; file: DiskFile; cameraId: string; startUtc: string; inProgress: boolean }
   /** Created, never written to. Not footage. */
   | { kind: "drop_empty"; file: DiskFile }
   /** Unrecognised. Not deleted — set aside for a human. */
@@ -191,6 +198,20 @@ export function planRecovery(
       continue;
     }
 
+    // An in-progress file is `<cameraId>/.inprogress/<name>`. Read as a sealed
+    // path it became camera ".inprogress" at a start time in 1970 (seconds
+    // read as ms), and its footage fell off every timeline.
+    const parts = file.path.split("/").filter((p) => p.length > 0);
+    if (parts.length === 3 && parts[1] === INPROGRESS_DIR) {
+      const ms = file.wipStartMs;
+      if (typeof ms !== "number" || !Number.isSafeInteger(ms) || ms <= 0) {
+        actions.push({ kind: "quarantine", file, reason: `in-progress file whose start time could not be read: ${JSON.stringify(parts[2])}` });
+        continue;
+      }
+      actions.push({ kind: "adopt_orphan", file, cameraId: parts[0] as string, startUtc: toUtc(ms), inProgress: true });
+      continue;
+    }
+
     const parsed = parseSegmentPath(file.path);
     if (parsed.kind === "unparseable") {
       actions.push({ kind: "quarantine", file, reason: parsed.reason });
@@ -202,6 +223,7 @@ export function planRecovery(
       file,
       cameraId: parsed.cameraId,
       startUtc: parsed.startUtc,
+      inProgress: false,
     });
   }
 
