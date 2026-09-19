@@ -58,6 +58,9 @@ export function openIndex(file) {
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL");   // survives a power cut mid-write
   db.exec("PRAGMA synchronous = NORMAL");
+  // The recorder, the API and camctl each open this file. A second writer
+  // waits for the first instead of failing at once with "database is locked".
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA);
   // Indexes made before segments recorded their drive gain the column; the
   // rows stay null until recovery sees their files (assignRoot).
@@ -110,6 +113,7 @@ export function openIndex(file) {
     totalBytes: db.prepare("SELECT COALESCE(SUM(bytes),0) AS total FROM segments"),
     countAll: db.prepare("SELECT COUNT(*) AS n FROM segments"),
     addGap: db.prepare("INSERT INTO gaps (camera_id,start_ms,end_ms,reason) VALUES (?,?,?,?)"),
+    extendGap: db.prepare("UPDATE gaps SET end_ms = MAX(end_ms, ?) WHERE id = ?"),
     gapsFor: db.prepare("SELECT * FROM gaps WHERE camera_id = ? ORDER BY start_ms"),
   };
 
@@ -190,7 +194,10 @@ export function openIndex(file) {
     },
     totalBytes: () => stmts.totalBytes.get().total,
     count: () => stmts.countAll.get().n,
-    addGap: (gap) => stmts.addGap.run(gap.cameraId, fromIso(gap.startUtc), fromIso(gap.endUtc), gap.reason),
+    /** Returns the new gap's id, so an outage still going on can be extended. */
+    addGap: (gap) => Number(stmts.addGap.run(gap.cameraId, fromIso(gap.startUtc), fromIso(gap.endUtc), gap.reason).lastInsertRowid),
+    /** Moves a gap's end later; never earlier. */
+    extendGap: (id, endUtc) => { stmts.extendGap.run(fromIso(endUtc), id); },
     gapsFor: (cameraId) => stmts.gapsFor.all(cameraId).map((r) => ({
       cameraId: r.camera_id, startUtc: toIso(r.start_ms), endUtc: toIso(r.end_ms), reason: r.reason,
     })),

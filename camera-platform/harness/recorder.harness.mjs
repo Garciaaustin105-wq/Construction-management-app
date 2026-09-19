@@ -654,6 +654,55 @@ await check("THE FEARED ONE: dropped audio is tried again on the next reconnect,
   }
 });
 
+// Bench 2026-09-19: a one-minute unplug left a dozen gap rows, one per retry,
+// each covering only the 2 s between tries, with the seconds of each failed
+// try covered by nothing. One outage is one gap: open from the first failure,
+// stretched on every retry, closed when video flows again.
+await check("THE FEARED ONE: a camera down across many retries is ONE gap, from the drop to when video resumes", async () => {
+  const t0 = Date.now();
+  const plan = [0, 1, 2, 3].map(() => ({ afterMs: 10, code: 143 }));
+  const { spawnFn, children } = codedSpawn((child, n) => plan[n] ?? null);
+  const { rec, events, idx } = await audioRecorder("outage", spawnFn);
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    eq(children.length, 5, "four failed tries, then a run that stays up");
+    const during = idx.gapsFor("cam-outage");
+    eq(during.length, 1, "one gap while the camera is still down, not one per retry");
+    eq(during[0].reason, "camera_offline", "reason");
+    const start = Date.parse(during[0].startUtc);
+    eq(start >= t0 && start - t0 < 200, true, `it starts at the first drop (${start - t0} ms after start)`);
+    eq(Date.parse(during[0].endUtc) > start + 50, true, "and has been stretched by the retries");
+    // Video flows again: the run writes its first segment file.
+    const resumedSec = Math.ceil(Date.now() / 1000);
+    await writeFile(path.join(root, "cam-outage", INPROGRESS, `${resumedSec}.mp4`), Buffer.alloc(100, 7));
+    await rec.poll();
+    const after = idx.gapsFor("cam-outage");
+    eq(after.length, 1, "still one gap");
+    eq(Date.parse(after[0].endUtc), resumedSec * 1000, "closed where the new video starts");
+    eq(Date.parse(after[0].startUtc), start, "and still starts at the drop");
+    eq(events.filter((e) => e.kind === "gap_recorded").length, 1, "one gap_recorded event for the outage");
+  } finally {
+    await rec.stop();
+    idx.close();
+  }
+});
+
+await check("THE FEARED ONE: a camera still down when the service stops keeps its gap up to the stop", async () => {
+  const { spawnFn } = codedSpawn(() => ({ afterMs: 10, code: 146 }));
+  const { rec, idx } = await audioRecorder("downatstop", spawnFn);
+  let stoppedAt;
+  try {
+    await new Promise((r) => setTimeout(r, 200));
+  } finally {
+    stoppedAt = Date.now();
+    await rec.stop();
+  }
+  const gaps = idx.gapsFor("cam-downatstop");
+  eq(gaps.length, 1, "one gap");
+  eq(Date.parse(gaps[0].endUtc) >= stoppedAt - 50, true, "running up to the stop, not to the last retry");
+  idx.close();
+});
+
 await check("THE FEARED ONE: restartStuck restarts a hung ffmpeg and records an honest gap", async () => {
   // The run never exits by itself: a stream stuck with no data.
   const { spawnFn, children } = codedSpawn(() => null);

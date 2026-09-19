@@ -150,6 +150,30 @@ export function createCameraRecorder({
   let audioDropped = false;  // audio was dropped and the next audio run is a retry
   let stuckRestart = false;  // the current run is being killed on purpose by restartStuck
   let downReason = "camera_offline";
+  // One outage is one gap row: added on the first relaunch, stretched on each
+  // retry, closed when video flows again (a new segment file) or the recorder
+  // stops. Bench 2026-09-19: one row per retry made a one-minute unplug a
+  // dozen gaps, with the seconds of each failed try covered by none of them.
+  let outageGapId = null;
+
+  function recordOutage(endMs) {
+    const endUtc = new Date(Math.max(endMs, downSince)).toISOString();
+    if (outageGapId === null) {
+      outageGapId = index.addGap({ cameraId, startUtc: new Date(downSince).toISOString(), endUtc, reason: downReason });
+      onEvent({ kind: "gap_recorded", cameraId, fromUtc: new Date(downSince).toISOString() });
+    } else {
+      index.extendGap(outageGapId, endUtc);
+    }
+  }
+
+  function endOutage(endMs) {
+    if (downSince === null) return;
+    recordOutage(endMs);
+    onEvent({ kind: "gap_closed", cameraId, fromUtc: new Date(downSince).toISOString(), toUtc: new Date(Math.max(endMs, downSince)).toISOString() });
+    downSince = null;
+    downReason = "camera_offline";
+    outageGapId = null;
+  }
 
   async function sealCompleted() {
     const wipDir = path.join(root, cameraId, INPROGRESS);
@@ -232,6 +256,8 @@ export function createCameraRecorder({
       });
       lastSeenOpen = open;
       onEvent({ kind: "opened", cameraId, path: open });
+      // A new file means video flows again: the outage ends where it starts.
+      endOutage(startMs);
     }
   }
 
@@ -279,17 +305,9 @@ export function createCameraRecorder({
     });
     onEvent({ kind: "started", cameraId, url: redactRtspUrl(url) });
 
-    if (downSince !== null) {
-      index.addGap({
-        cameraId,
-        startUtc: new Date(downSince).toISOString(),
-        endUtc: new Date().toISOString(),
-        reason: downReason,
-      });
-      onEvent({ kind: "gap_recorded", cameraId, fromUtc: new Date(downSince).toISOString() });
-      downSince = null;
-      downReason = "camera_offline";
-    }
+    // Still down: the outage's gap runs at least to this try. It is closed
+    // only when this run actually writes video (sealCompleted).
+    if (downSince !== null) recordOutage(Date.now());
 
     child?.stderr?.on("data", (d) => onEvent({ kind: "stderr", cameraId, text: redactRtspUrl(String(d)) }));
 
@@ -303,8 +321,11 @@ export function createCameraRecorder({
         // and downReason were set by restartStuck.
         stuckRestart = false;
       } else {
-        downSince = Date.now();
-        downReason = "camera_offline";
+        // The first failure starts the outage; later retries continue it.
+        if (downSince === null) {
+          downSince = Date.now();
+          downReason = "camera_offline";
+        }
         const ranMs = Date.now() - launchedAt;
         const unreachable = event.kind === "exited" && NETWORK_EXIT_CODES.has(event.code);
         if (audioTrial) {
@@ -368,6 +389,9 @@ export function createCameraRecorder({
         }
       }
       await sealCompleted().catch(() => {});
+      // Still down at stop: the gap runs to now. Recovery covers the time
+      // the service itself is off.
+      endOutage(Date.now());
     },
     // A run that is up but writing nothing (the alert says the camera is not
     // recording). Kill it and let the normal restart relaunch it. The gap runs
@@ -379,8 +403,12 @@ export function createCameraRecorder({
       const sinceMs = typeof sinceUtc === "string" ? Date.parse(sinceUtc) : NaN;
       const fromMs = Number.isFinite(sinceMs) ? Math.max(sinceMs, launchedAt) : launchedAt;
       stuckRestart = true;
-      downSince = fromMs;
-      downReason = "unknown";
+      // An outage already open (the alert fired while the camera was down)
+      // keeps its own start and reason.
+      if (downSince === null) {
+        downSince = fromMs;
+        downReason = "unknown";
+      }
       onEvent({ kind: "restarted_stuck", cameraId, sinceUtc: new Date(fromMs).toISOString() });
       const running = child;
       try { running.kill?.("SIGTERM"); } catch { /* already gone */ }
