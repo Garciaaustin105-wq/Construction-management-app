@@ -365,6 +365,13 @@ check("THE FEARED ONE: a 6x6 wall asks for all 36 cameras; the limit is the serv
   eq(opened(calls).length + calls.filter((c) => c.op === "move").length, 36, "all thirty-six asked for");
 });
 
+check("THE FEARED ONE: index.html sends both playback-failure paths through mainstreamFallback", () => {
+  const html = readFileSync(join(process.cwd(), "agent/ui/index.html"), "utf-8");
+  const calls = html.match(/mainstreamFallback\(\{/g) ?? [];
+  eq(calls.length, 2, "the video element's error and the SourceBuffer's error both ask");
+  if (!/import \{[^}]*mainstreamFallback[^}]*\} from '\/ui\/live-client\.js'/.test(html)) throw new Error("index.html does not import mainstreamFallback");
+});
+
 check("THE FEARED ONE: a tile the server refuses (stream_limit and the rest) shows the server's reason, never a blank", () => {
   const html = readFileSync(join(process.cwd(), "agent/ui/index.html"), "utf-8");
   if (!/if \(env\.ok === false\) \{\s*setStatus\(t, env\.code \+ \(env\.message \? ' — ' \+ env\.message : ''\), 'problem'\);/.test(html)) {

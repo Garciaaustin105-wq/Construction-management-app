@@ -218,7 +218,7 @@
 <div class="grid" id="grid"></div>
 
 <script type="module">
-import { createBoxAccumulator, extractMimeCodec, planLiveBuffer, reconnectDelayMs } from '/ui/live-client.js';
+import { createBoxAccumulator, extractMimeCodec, planLiveBuffer, reconnectDelayMs, mainstreamFallback } from '/ui/live-client.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 import { createWall } from '/ui/wall-client.js';
 import * as gridMaths from '/ui/grid-layout.js';
@@ -573,6 +573,15 @@ function handleInit(t, initSegment) {
   }, { once: true });
   video.addEventListener('error', () => {
     const code = video.error ? video.error.code : 0;
+    // Said it could play full quality, then could not (a phone and a 1440p
+    // stream): fall back to the substream once, and the tile says why.
+    const why = mainstreamFallback({ quality: t.quality, mainUnplayable: t.mainUnplayable, kind: 'video', errorCode: code, codecMime: t.codecMime });
+    if (why !== null) {
+      t.mainUnplayable = why;
+      t.fatal = true;
+      connect(t, 'substream');
+      return;
+    }
     setStatus(t, 'video element error ' + code + ' (1 aborted, 2 network, 3 decode, 4 src not supported)', 'problem');
   }, { once: true });
 
@@ -584,6 +593,13 @@ function handleInit(t, initSegment) {
     sb.addEventListener('error', () => {
       // appendBuffer failures are usually ASYNC: MSE fires this event and
       // readyState drops to 'ended' rather than throwing synchronously.
+      const why = mainstreamFallback({ quality: t.quality, mainUnplayable: t.mainUnplayable, kind: 'append', errorCode: 0, codecMime: t.codecMime });
+      if (why !== null) {
+        t.mainUnplayable = why;
+        t.fatal = true;
+        connect(t, 'substream');
+        return;
+      }
       setStatus(t, 'MSE rejected a segment (decode error)', 'problem');
     });
     sb.addEventListener('updateend', () => {

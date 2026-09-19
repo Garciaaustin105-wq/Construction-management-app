@@ -344,6 +344,29 @@ export function planLiveBuffer(ranges, currentTime) {
 // a tight loop and floods the recorder, and a tile that retries something that
 // can never work (this browser cannot decode the codec) forever.
 
+/**
+ * Whether a main-stream tile that failed to PLAY should fall back to the
+ * substream, and the reason the tile then shows (or null to leave it).
+ *
+ * The upfront check (MediaSource.isTypeSupported) is not enough: a phone
+ * browser can say it plays H.264 and then refuse a 2560x1440 main stream
+ * when it decodes it (bench 2026-09-19: video error 4 on a phone, the same
+ * stream fine on a PC, the substream fine on both).
+ *
+ * kind "video": the <video> error; only 3 (decode) and 4 (source not
+ * supported) are about the stream. 1 (aborted) and 2 (network) are not.
+ * kind "append": the SourceBuffer rejected a segment.
+ * Never from the substream (nothing to fall to), never twice.
+ */
+export function mainstreamFallback({ quality, mainUnplayable, kind, errorCode, codecMime }) {
+  if (quality !== "mainstream" || mainUnplayable) return null;
+  if (kind === "video" && errorCode !== 3 && errorCode !== 4) return null;
+  if (kind !== "video" && kind !== "append") return null;
+  const m = typeof codecMime === "string" ? /codecs="([^"]+)"/.exec(codecMime) : null;
+  const codec = m ? m[1] : "full quality";
+  return kind === "video" ? `${codec} (video error ${errorCode})` : `${codec} (rejected by the player)`;
+}
+
 export const RECONNECT_FIRST_MS = 2000;
 export const RECONNECT_MAX_MS = 30000;
 
