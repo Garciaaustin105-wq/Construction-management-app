@@ -10,7 +10,7 @@ console.log("cameraView");
 
 const OK = { kind: "ok", origin: "manual_url", url: "rtsp://unused" };
 const KEYS = ["bitrateKbps", "cameraId", "channel", "host", "measuredKbps", "name", "origin", "port",
-  "resolved", "unresolvedReason", "vendor"];
+  "resolved", "sourceChannel", "unresolvedReason", "vendor"];
 
 function clean(view, secrets, what) {
   same(Object.keys(view).sort(), KEYS, `${what}: exactly the named fields, nothing else`);
@@ -26,7 +26,7 @@ check("a url with credentials gives its host and port, and nothing else of itsel
     bitrateKbps: 4000 }, OK);
   same(v, {
     cameraId: "cam-1", name: "Front door", vendor: "hikvision", host: "10.0.0.5", port: 8554, channel: 1,
-    origin: "manual_url", resolved: true, unresolvedReason: null, bitrateKbps: 4000,
+    sourceChannel: 1, origin: "manual_url", resolved: true, unresolvedReason: null, bitrateKbps: 4000,
     measuredKbps: null,
   }, "view");
   clean(v, ["hunter2", "admin", "Streaming", "rtsp:", url], "userinfo");
@@ -104,6 +104,7 @@ check("unresolved: origin null, resolved false, the reason kept when it holds no
   const v = cameraView({ cameraId: "cam-8", host: "10.0.0.10", vendor: "axis" },
     { kind: "unresolved", reason: "no template for this vendor" });
   same([v.origin, v.resolved, v.unresolvedReason], [null, false, "no template for this vendor"], "unresolved");
+  same(v.sourceChannel, 1, "host-configured camera is channel 1");
 });
 
 check("THE FEARED ONE: the resolved url, which carries the real credentials, is never read", () => {
@@ -128,6 +129,54 @@ check("THE FEARED ONE: blanks stay blank — no channel 1, no bitrate 0, no vend
     bitrateKbps: null }, OK);
   same([n.name, n.vendor, n.channel, n.bitrateKbps], [null, null, null, null], "explicit nulls");
   same(cameraView({ cameraId: "cam-10", host: "h", channel: 0 }, OK).channel, 0, "a real 0 is kept");
+});
+
+// === sourceChannel: which channel of the device at `host` a stream carries ===
+// Grouping streams into cameras needs it: a DVR's sixteen cameras share one
+// address, and only the channel tells them apart.
+
+check("a stream's channel is read from the vendor paths the recorder itself uses", () => {
+  const ch = (path) => cameraView({ cameraId: "c", url: "rtsp://admin:pw12345@10.0.0.9:554" + path }, OK).sourceChannel;
+  same(ch("/Streaming/Channels/101"), 1, "hikvision 101: channel 1, main");
+  same(ch("/Streaming/Channels/102"), 1, "hikvision 102: channel 1, sub");
+  same(ch("/Streaming/Channels/201"), 2, "hikvision 201: channel 2");
+  same(ch("/Streaming/Channels/1601"), 16, "hikvision 1601: channel 16");
+  same(ch("/ISAPI/Streaming/channels/301"), 3, "the ISAPI form, any case");
+  same(ch("/h264/ch3/main/av_stream"), 3, "older hikvision firmware");
+  same(ch("/cam/realmonitor?channel=5&subtype=1"), 5, "dahua-style");
+  same(ch("/axis-media/media.amp?camera=2"), 2, "axis");
+  same(ch("/media/video4?stream=secondary"), 4, "avigilon");
+  clean(cameraView({ cameraId: "c", url: "rtsp://admin:pw12345@10.0.0.9:554/Streaming/Channels/201" }, OK),
+    ["pw12345", "Streaming", "Channels", "201"], "reading a channel from the path leaves no path behind");
+});
+
+check("THE FEARED ONE: a path it does not recognise has no channel, never channel 1", () => {
+  // Guessing 1 here would fold every unrecognised stream on a shared address
+  // into one tile -- the bug this field exists to end.
+  const ch = (path) => cameraView({ cameraId: "c", url: "rtsp://10.0.0.9:554" + path }, OK).sourceChannel;
+  for (const p of ["/cam3", "/stream1", "/live/ch0", "/profile1", "/11", "/", ""]) same(ch(p), null, JSON.stringify(p));
+  same(ch("/Streaming/Channels/001"), null, "channel 0 does not exist");
+  same(ch("/Streaming/Channels/10001"), null, "channel 100 is past what the recorder accepts (1..99)");
+  same(ch("/cam/realmonitor?channel=0&subtype=0"), null, "dahua channel 0 does not exist");
+});
+
+check("a configured channel wins; a camera configured by address is channel 1, as the recorder says", () => {
+  same(cameraView({ cameraId: "c", url: "rtsp://10.0.0.9/Streaming/Channels/101", channel: 7 }, OK).sourceChannel,
+    7, "config beats the path");
+  const byHost = cameraView({ cameraId: "c", host: "10.0.0.9", vendor: "hikvision" }, OK);
+  same(byHost.sourceChannel, 1, "rtsp.ts: standalone cameras are channel 1, and that is what the recorder opens");
+  same(byHost.channel, null, "the CONFIGURED channel is still never invented");
+  same(cameraView({ cameraId: "c", host: "10.0.0.9", vendor: "hikvision", channel: 3 }, OK).sourceChannel, 3,
+    "an address with a configured channel");
+  same(cameraView({ cameraId: "c" }, OK).sourceChannel, null, "no url and no address: nothing to be a channel of");
+  same(cameraView({ cameraId: "c", url: "not a url" }, OK).sourceChannel, null, "an unparseable url");
+});
+
+check("an invalid configured channel is a config error to show, not a gap for the path to fill", () => {
+  same(cameraView({ cameraId: "c", url: "rtsp://10.0.0.9/Streaming/Channels/101", channel: 0 }, OK).sourceChannel,
+    null, "channel 0 configured: not rescued by reading the path");
+  same(cameraView({ cameraId: "c", host: "10.0.0.9", vendor: "hikvision", channel: 100 }, OK).sourceChannel,
+    null, "channel 100 configured: past what the recorder accepts, and not defaulted to 1");
 });
 
 check("a measurement never comes from config, and never replaces it", () => {

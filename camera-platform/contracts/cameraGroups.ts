@@ -6,16 +6,18 @@
  * camera, so the streams have to be folded back into the devices they
  * belong to before they reach the grid.
  *
- * `host` is the only field two entries of the same physical camera are
- * guaranteed to share, so it is the grouping key, compared as an exact
- * string. Everything else is per-stream: vendor and name describe one
- * stream's configuration, not the device. The cameraId in particular must
- * never become a grouping key -- names like "cam1-main" are a site naming
- * convention, not a contract, and grouping on a substring of them would
- * look plausible while silently merging unrelated cameras.
+ * Streams of one camera share address, port, and channel. A DVR's cameras
+ * share only the address; each has its own channel. When a stream's channel
+ * cannot be told, it stands alone — an extra tile is obviously wrong and gets
+ * noticed, while a hidden camera looks fine and gets missed. The cameraId
+ * must never be a grouping key — names like "cam1-main" are a site naming
+ * convention, not a contract, and grouping on a substring would look
+ * plausible while silently merging unrelated cameras.
  *
  * A null host is unknown, not "the same unknown": two entries without a
- * host cannot be proven to be one device, so each stands alone.
+ * host cannot be proven to be one device, so each stands alone. A null
+ * sourceChannel means the channel could not be determined, so it also
+ * stands alone.
  *
  * Where streams disagree, the device reports the disagreement instead of
  * resolving it: conflicting vendors collapse to null rather than to
@@ -30,6 +32,7 @@ import type { Vendor } from "./camera.js";
 export interface CameraDevice {
   deviceId: string;
   host: string | null;
+  channel: number | null;
   vendor: Vendor | null;
   label: string;
   streams: CameraView[];
@@ -43,28 +46,40 @@ export interface CameraDevice {
  * modified, and the returned streams are the caller's own objects.
  */
 export function groupCamerasByDevice(cameras: readonly CameraView[]): CameraDevice[] {
-  const byHost = new Map<string, CameraView[]>();
-  const hostless: CameraView[] = [];
-
+  // One bucket per device. The address and channel travel with the bucket, so
+  // nothing is ever recovered by taking a key string back apart.
+  const buckets = new Map<string, { host: string | null; channel: number | null; streams: CameraView[] }>();
   for (const camera of cameras) {
-    if (camera.host === null) {
-      hostless.push(camera);
-      continue;
-    }
-    const bucket = byHost.get(camera.host);
+    const keyed = camera.host !== null && camera.sourceChannel !== null;
+    // A missing port is the RTSP default: a camera configured by address has
+    // no port of its own, and the recorder opens 554.
+    const deviceId = keyed
+      ? `device:${camera.host}:${camera.port ?? 554}:${camera.sourceChannel}`
+      : `camera:${camera.cameraId}`;
+    const bucket = buckets.get(deviceId);
     if (bucket === undefined) {
-      byHost.set(camera.host, [camera]);
+      // A stream that stands alone still reports the address and channel it
+      // has: standing alone means not merged, not anonymous.
+      buckets.set(deviceId, { host: camera.host, channel: camera.sourceChannel, streams: [camera] });
     } else {
-      bucket.push(camera);
+      bucket.streams.push(camera);
     }
   }
 
   const devices: CameraDevice[] = [];
-  for (const [host, streams] of byHost) {
-    devices.push(buildDevice("host:" + host, host, streams));
+  for (const [deviceId, bucket] of buckets) {
+    devices.push(buildDevice(deviceId, bucket.host, bucket.channel, bucket.streams));
   }
-  for (const camera of hostless) {
-    devices.push(buildDevice("camera:" + camera.cameraId, null, [camera]));
+
+  // Labels need the whole list: an address shared by two or more devices has
+  // to say which camera behind it each one is.
+  const perHost = new Map<string, number>();
+  for (const device of devices) {
+    if (device.host !== null) perHost.set(device.host, (perHost.get(device.host) ?? 0) + 1);
+  }
+  for (const device of devices) {
+    const shared = device.host !== null && (perHost.get(device.host) ?? 0) >= 2;
+    device.label = deviceLabel(device, shared);
   }
 
   devices.sort(byLabelThenDeviceId);
@@ -74,6 +89,7 @@ export function groupCamerasByDevice(cameras: readonly CameraView[]): CameraDevi
 function buildDevice(
   deviceId: string,
   host: string | null,
+  channel: number | null,
   streams: readonly CameraView[],
 ): CameraDevice {
   const sorted = [...streams].sort(byCameraId);
@@ -88,8 +104,9 @@ function buildDevice(
   return {
     deviceId,
     host,
+    channel,
     vendor: deviceVendor(sorted),
-    label: deviceLabel(sorted, host, deviceId),
+    label: "", // set by groupCamerasByDevice, which alone can see every device on an address
     streams: sorted,
     resolved: unresolvedCount === 0,
     unresolvedCount,
@@ -111,17 +128,19 @@ function deviceVendor(streams: readonly CameraView[]): Vendor | null {
   return vendor;
 }
 
-function deviceLabel(
-  streams: readonly CameraView[],
-  host: string | null,
-  deviceId: string,
-): string {
-  for (const stream of streams) {
+function deviceLabel(device: CameraDevice, hostShared: boolean): string {
+  for (const stream of device.streams) {
     if (stream.name !== null && stream.name.trim() !== "") {
       return stream.name;
     }
   }
-  return host !== null ? host : deviceId;
+  if (device.host === null) return device.deviceId;
+  if (!hostShared) return device.host;
+  // Several cameras behind one address: the channel says which, and when the
+  // channel is unknown the stream's own id is the only honest name left.
+  return device.channel !== null
+    ? `${device.host} ch ${device.channel}`
+    : `${device.host} ${device.streams[0]?.cameraId ?? device.deviceId}`;
 }
 
 function byCameraId(a: CameraView, b: CameraView): number {
@@ -131,8 +150,9 @@ function byCameraId(a: CameraView, b: CameraView): number {
 }
 
 function byLabelThenDeviceId(a: CameraDevice, b: CameraDevice): number {
-  if (a.label < b.label) return -1;
-  if (a.label > b.label) return 1;
+  const labelCmp = a.label.localeCompare(b.label, "en", { numeric: true });
+  if (labelCmp !== 0) return labelCmp;
+  // Fallback to deviceId comparison.
   if (a.deviceId < b.deviceId) return -1;
   if (a.deviceId > b.deviceId) return 1;
   return 0;
