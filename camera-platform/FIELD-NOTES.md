@@ -644,3 +644,9 @@ retired source gets SIGKILL 5 s after SIGTERM if it has not exited. Re-tested
 the log shows 2 "live source killed"; after the replug, again 2 live + 2
 recorder sessions and no orphans. The restart that installed af9aa6a cleared
 the earlier 4.
+
+**Gap start (dd9515d, installed signed).** Unplug at about 20:20:20 UTC: both
+cameras' last segment ends 20:20:18; the drop was noticed at 20:20:40
+(gap_recorded); after the replug the dropped file was sealed and measured and
+each gap was pulled back to start 20:20:18.9, ending 20:21:58 where video
+resumed. Video, gap, video, with no unmarked stretch.
