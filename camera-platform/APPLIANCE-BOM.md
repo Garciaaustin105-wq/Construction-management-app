@@ -1,8 +1,8 @@
 # The NVR appliance — what to buy
 
 For 16 AVYCON 5MP @ 30 fps cameras and dual 8 TB, running Debian + ffmpeg +
-Node + SQLite. Roughly **$680 a store plus the case and power supply**, whose
-price is not yet checked (Austin chose the case 2026-09-19; see "The case").
+Node + SQLite. Roughly **$820 a store** (case chosen by Austin 2026-09-19;
+see "The case").
 
 ## You are not buying an NVR
 
@@ -19,7 +19,7 @@ So the order is a short parts list, and the assembly is about 20 minutes a unit.
 | Board | N150 6-bay NAS board | **i3-N305** 6-bay NAS board, same design |
 | AI chip | none | **Hailo-8 M.2 2280** (26 TOPS) in the second NVMe slot |
 | Everything else | the list below | the same list |
-| ~Cost | **~$680 + case** | **~$930 + case** (+~$50 board, +$199 chip) |
+| ~Cost | **~$820** | **~$1,070** (+~$50 board, +$199 chip) |
 
 Both run the same software and handle at least 16 cameras. The AI NVR adds
 the detector service (AI-PLAN.md); the N305 has 8 cores for decoding 16
@@ -35,10 +35,10 @@ before ordering.
 | 1 | **Topton / CWWK / HKUXZR N150 6-bay NAS motherboard**, mini-ITX | Board + CPU in one. 6× SATA, 2× M.2 NVMe, 2–4× Intel i226-V 2.5GbE, 1× DDR5 SODIMM. Sold on Amazon (HKUXZR listing), toptonpc.com and AliExpress. All three are the same reference design | $200 |
 | 2 | 16 GB DDR5 SODIMM, 4800 MHz | One slot, so one stick | $45 |
 | 3 | 256 GB NVMe M.2 2280 | OS only | $25 |
-| 4 | **RackChoice 2U "Compact Rackmount" chassis** (Amazon B0BN1XBL2R: 4× 3.5" internal + 2× 5.25") + a standard ATX PSU | Flat NVR-style box that sits on a rack shelf. 2 drives at 16 cameras, 3 at 24, 4 at 32. See "The case" | **not yet checked** |
+| 4 | **RackChoice 2U "Compact Rackmount" chassis** (Amazon B0BN1XBL2R: 4× 3.5" internal + 2× 5.25") + a standard ATX PSU | Flat NVR-style box that sits on a rack shelf. 2 drives at 16 cameras, 3 at 24, 4 at 32. See "The case" | **$99** case (Austin, from the listing) + ~$40 PSU (estimate) |
 | 5 | **2× WD Purple 8 TB** | Not desktop drives — see below | $340 |
 | 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
-| | | **Total** | **~$680 + case and PSU** |
+| | | **Total** | **~$820** |
 
 AI NVR: swap item 1 for the i3-N305 board and add the Hailo-8 (table above).
 
@@ -63,7 +63,7 @@ setting is free and takes a minute per camera. Do this first, every time.
 | Board | N150 | N100, same 6-bay board | $30 |
 | OS drive | 256 GB NVMe | 128 GB | $7 |
 | UPS | 600 VA | 350 VA (draw is only 14 W) | $20 |
-| | | **Value build total** | **~$563 + case and PSU** |
+| | | **Value build total** | **~$700** |
 
 **SkyHawk is the standout.** It is rated 180 TB/year against our 79 — 44%
 utilisation, comfortable headroom. WD Purple's 360 TB/year is 4.5× our load;
@@ -140,8 +140,8 @@ it has to fit, and it should look like an NVR: a flat metal box.
 | Build | zinc-coated steel, aluminium handles; front USB 3.0 ×2 |
 | One case for every tier | 2 drives at 16 cameras, 3 at 24, 4 at 32. The two 5.25" bays can take a 5th and 6th drive with brackets, matching the board's 6 SATA ports |
 
-**Check before the first order.** None of these are verified yet: the price
-(Amazon hides it from an automated read); the **CPU cooler height limit**
+**Check before the first order.** Two things the listing does not give: the
+**CPU cooler height limit**
 (2U is short inside; the N150/N305 boards ship with a low heatsink that should
 fit, but compare the two numbers; the listing gives none); and whether the two
 80 mm intakes have a **dust filter** (add one if not; see Thermals).
