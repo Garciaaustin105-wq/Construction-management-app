@@ -27,6 +27,24 @@ import { measureSealedSegment } from "./media.mjs";
 import { redactRtspUrl } from "../dist/rtsp.js";
 
 /**
+ * How long ffmpeg waits on a camera's socket before giving up, in
+ * MICROSECONDS -- ffmpeg's unit for the RTSP `-timeout` option.
+ *
+ * Without it, a connection that dies without a reset (the box sleeping and
+ * waking, a camera rebooting, a cable pulled and replugged) leaves ffmpeg
+ * blocked on a read forever: it never exits, so nothing restarts it and no gap
+ * is recorded -- recording stops and the log says nothing. With it, the read
+ * fails, ffmpeg exits, and the recorder logs the gap and reconnects.
+ * 10 s is far longer than any live camera goes quiet, and far shorter than a
+ * 60 s segment. Proven on ffmpeg 6.1.1 and 9.0.1 (FIELD-NOTES, 2026-09-18).
+ *
+ * Needs ffmpeg 5.0 or later. Before 5.0, `-timeout` on an RTSP input was the
+ * LISTEN timeout for acting as a server -- a different thing -- and the socket
+ * timeout was `-stimeout`. Debian 12 ships 5.1 and Ubuntu 24.04 ships 6.1.
+ */
+export const RTSP_TIMEOUT_US = 10_000_000;
+
+/**
  * Args for the DETECTION substream — decoded, unlike the recording path.
  *
  * `-hwaccel vaapi` matters specifically on the N100. Decoding 8–12 substreams in
@@ -48,6 +66,7 @@ export function detectionArgs(url, { fps = 5, width = 640, height = 360, hwaccel
     "-nostdin", "-hide_banner", "-loglevel", "warning",
     ...accel,
     "-rtsp_transport", "tcp",
+    "-timeout", String(RTSP_TIMEOUT_US),
     "-i", url,
     "-an",
     ...scale,
@@ -60,6 +79,7 @@ export function ffmpegArgs(url, outputPattern, segmentSeconds = 60, { audio = fa
   return [
     "-nostdin", "-hide_banner", "-loglevel", "warning",
     "-rtsp_transport", "tcp",          // UDP drops packets on a loaded network
+    "-timeout", String(RTSP_TIMEOUT_US), // a silent camera fails in 10 s, never hangs forever
     "-i", url,
     // Video is never transcoded in either branch.
     ...(audio

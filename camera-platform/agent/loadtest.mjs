@@ -18,11 +18,18 @@ import { createCameraRecorder } from "./recorder.mjs";
 /** A camera that wrote less than this share of the source's bytes fell behind. */
 export const BEHIND_FRACTION = 0.9;
 
+/**
+ * Input options that only mean something for an RTSP camera, each taking one
+ * value. A file has no transport and no socket to time out, and newer ffmpeg
+ * refuses them on a file input, so they go when a file stands in for a camera.
+ */
+const RTSP_ONLY_OPTIONS = new Set(["-rtsp_transport", "-timeout"]);
+
 /** it turns the recorder's camera arguments into a looped file read in real time. */
 export function fileSourceArgs(args, sourceFile) {
   const filtered = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-rtsp_transport") {
+    if (RTSP_ONLY_OPTIONS.has(args[i])) {
       i++;
       continue;
     }

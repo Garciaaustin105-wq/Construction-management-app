@@ -4,8 +4,11 @@
  *  ffprobe cannot read, packets lost at a segment boundary, and filenames whose
  *  start time cannot be read back (Linux `%s` vs Windows, see wipNames.mjs).
  *
- *  Only the input changes: `-rtsp_transport` is RTSP-only, and a local file
- *  read at native rate (`-re`) stands in for the camera. Skips, loudly, when
+ *  Only the input changes: `-rtsp_transport` and `-timeout` are RTSP-only (a
+ *  file has no socket to time out, and newer ffmpeg refuses the option on one),
+ *  and a local file read at native rate (`-re`) stands in for the camera. That
+ *  the timeout itself works is proven against a silent RTSP peer in
+ *  FIELD-NOTES, 2026-09-18, on ffmpeg 6.1.1 and 9.0.1. Skips, loudly, when
  *  ffmpeg or ffprobe is missing. */
 import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
@@ -52,6 +55,7 @@ try {
   const args = ffmpegArgs("rtsp://unused.invalid/stream", path.join(wipDir, wipPattern()), 2);
   const transport = args.indexOf("-rtsp_transport");
   args.splice(transport, 2);
+  args.splice(args.indexOf("-timeout"), 2);
   const input = args.indexOf("-i");
   args.splice(input, 2, "-re", "-i", src);
 
@@ -101,6 +105,7 @@ try {
     await mkdir(dir, { recursive: true });
     const a = ffmpegArgs("rtsp://unused.invalid/stream", path.join(dir, wipPattern()), 2, { audio: true });
     a.splice(a.indexOf("-rtsp_transport"), 2);
+    a.splice(a.indexOf("-timeout"), 2);
     a.splice(a.indexOf("-i"), 2, "-i", input);
     const r = spawnSync("ffmpeg", a, { encoding: "utf8", timeout: 60_000 });
     return { r, dir, files: (await readdir(dir)).sort() };

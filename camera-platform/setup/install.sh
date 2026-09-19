@@ -244,6 +244,16 @@ JOURNAL
 systemctl restart systemd-journald
 echo "  journald: persistent, capped at 1G, keeps 4G free on the OS drive"
 
+say "Never sleep"
+# A recorder that sleeps is not recording, and while it sleeps nothing on the
+# box can say so -- the alerts timer sleeps with it. Masked rather than
+# disabled: a masked target cannot be started by a lid, a power key, an idle
+# timer or a stray `systemctl suspend`. The BIOS checklist below turns off
+# suspend in firmware; this turns it off in the OS, which is where the bench
+# laptop's came from (FIELD-NOTES, 2026-09-18). `systemctl unmask` undoes it.
+systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+echo "  sleep, suspend and hibernate masked: this box does not sleep"
+
 say "Drive health"
 # smartd watches every drive, runs a short self-test daily at 02:00 and a long
 # one Saturdays at 03:00, and logs temperature changes. It only logs, to the

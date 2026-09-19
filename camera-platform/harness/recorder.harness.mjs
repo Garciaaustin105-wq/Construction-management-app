@@ -6,13 +6,15 @@
  */
 import { EventEmitter } from "node:events";
 import { mkdtemp, writeFile, readdir, stat, mkdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openIndex } from "../agent/segindex.mjs";
 import { assignCamerasToDrives, indexPathFor, XFS_MOUNT_OPTIONS } from "../agent/config.mjs";
 import { scanDisk, applyEviction, applyRecovery, ensureCameraDirs, removeStore, quarantineUsage, INPROGRESS, QUARANTINE }
   from "../agent/segstore.mjs";
-import { createCameraRecorder, ffmpegArgs } from "../agent/recorder.mjs";
+import { createCameraRecorder, ffmpegArgs, detectionArgs, RTSP_TIMEOUT_US } from "../agent/recorder.mjs";
 import { planRecovery } from "../dist/recovery.js";
 import { planEviction } from "../dist/eviction.js";
 import { check, eq, close, report } from "./_assert.mjs";
@@ -58,6 +60,41 @@ check("ffmpeg is invoked with stream-copy and fragmented mp4", () => {
   if (!args.includes("frag_keyframe")) throw new Error("a truncated plain mp4 is unplayable in full");
   if (!args.includes("-rtsp_transport tcp")) throw new Error("UDP RTSP under-reports on a loaded network");
   if (!args.includes("-an")) throw new Error("audio must be off by default — all-party consent states");
+});
+
+// A connection that dies without a reset -- the box sleeping and waking, a
+// camera rebooting, a cable replugged -- leaves ffmpeg waiting on it forever
+// unless its socket has a timeout: no exit, so no restart and no gap recorded.
+// Proven on the bench laptop (ffmpeg 6.1.1) against a peer that accepts and
+// then says nothing: 30 s and still waiting without one, gone in 5 s with one.
+// Found after a suspend left recording silent for 13 minutes (FIELD-NOTES).
+check("THE FEARED ONE: a camera connection that goes silent fails in seconds instead of hanging forever", () => {
+  eq(RTSP_TIMEOUT_US, 10_000_000, "10 s, in microseconds: ffmpeg's unit for this option");
+  for (const [what, args] of [
+    ["recording", ffmpegArgs("rtsp://x", "/out/%s.mp4", 60)],
+    ["recording with audio", ffmpegArgs("rtsp://x", "/out/%s.mp4", 60, { audio: true })],
+    ["detection", detectionArgs("rtsp://x")],
+    ["detection, software decode", detectionArgs("rtsp://x", { hwaccel: false })],
+  ]) {
+    const t = args.indexOf("-timeout");
+    eq(t >= 0, true, what + ": has a socket timeout");
+    eq(t < args.indexOf("-i"), true, what + ": set before the input it applies to, or ffmpeg ignores it");
+    eq(args[t + 1], String(RTSP_TIMEOUT_US), what + ": the agreed value");
+  }
+});
+
+// A box that sleeps records nothing, and while it sleeps nothing on it can say
+// so. install.sh is a root-on-a-bare-box script and cannot be run here, so this
+// holds its text: the targets must be MASKED, which no lid, power key, idle
+// timer or stray "systemctl suspend" can start. Found when the bench laptop
+// suspended mid-recording (FIELD-NOTES, 2026-09-18).
+check("THE FEARED ONE: an installed box can never sleep", () => {
+  const install = readFileSync(join(import.meta.dirname, "..", "setup", "install.sh"), "utf8").replaceAll("\r\n", "\n");
+  const mask = install.split("\n").find((l) => /^\s*systemctl mask\b/.test(l)) ?? "";
+  for (const target of ["sleep.target", "suspend.target", "hibernate.target", "hybrid-sleep.target",
+    "suspend-then-hibernate.target"]) {
+    eq(mask.split(/\s+/).includes(target), true, target + " is masked by install.sh");
+  }
 });
 
 // D6: stores run audio on, and cameras send G.711, G.726, G.722, MP2, L16, AAC
