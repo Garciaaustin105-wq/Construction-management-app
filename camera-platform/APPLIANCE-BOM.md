@@ -1,7 +1,8 @@
 # The NVR appliance — what to buy
 
 For 16 AVYCON 5MP @ 30 fps cameras and dual 8 TB, running Debian + ffmpeg +
-Node + SQLite. Roughly **$800 a store**.
+Node + SQLite. Roughly **$680 a store plus the case and power supply**, whose
+price is not yet checked (Austin chose the case 2026-09-19; see "The case").
 
 ## You are not buying an NVR
 
@@ -18,7 +19,7 @@ So the order is a short parts list, and the assembly is about 20 minutes a unit.
 | Board | N150 6-bay NAS board | **i3-N305** 6-bay NAS board, same design |
 | AI chip | none | **Hailo-8 M.2 2280** (26 TOPS) in the second NVMe slot |
 | Everything else | the list below | the same list |
-| ~Cost | **~$800** | **~$1,050** (+~$50 board, +$199 chip) |
+| ~Cost | **~$680 + case** | **~$930 + case** (+~$50 board, +$199 chip) |
 
 Both run the same software and handle at least 16 cameras. The AI NVR adds
 the detector service (AI-PLAN.md); the N305 has 8 cores for decoding 16
@@ -34,10 +35,10 @@ before ordering.
 | 1 | **Topton / CWWK / HKUXZR N150 6-bay NAS motherboard**, mini-ITX | Board + CPU in one. 6× SATA, 2× M.2 NVMe, 2–4× Intel i226-V 2.5GbE, 1× DDR5 SODIMM. Sold on Amazon (HKUXZR listing), toptonpc.com and AliExpress. All three are the same reference design | $200 |
 | 2 | 16 GB DDR5 SODIMM, 4800 MHz | One slot, so one stick | $45 |
 | 3 | 256 GB NVMe M.2 2280 | OS only | $25 |
-| 4 | **Jonsbo N2** (5-bay) or **N3** (8-bay) mini-ITX NAS case + SFX PSU | Hot-swap trays, filtered intake. N2 is the right size for two drives with room to grow | $120–150 |
+| 4 | **RackChoice 2U short-depth chassis, the 4× 3.5" bay version** + a standard ATX PSU | Flat NVR-style box that sits on a rack shelf. 4 internal 3.5" bays: 2 used at 16 cameras, all 4 at 32. Some listings show 3 bays; order the 4-bay one. See "The case" | **not yet checked** |
 | 5 | **2× WD Purple 8 TB** | Not desktop drives — see below | $340 |
 | 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
-| | | **Total** | **~$800** |
+| | | **Total** | **~$680 + case and PSU** |
 
 AI NVR: swap item 1 for the i3-N305 board and add the Hailo-8 (table above).
 
@@ -58,20 +59,19 @@ setting is free and takes a minute per camera. Do this first, every time.
 
 | Swap | From | To | Saves |
 |---|---|---|---|
-| Case | Jonsbo N2 | generic mini-ITX NAS case + SFX PSU | **$60** |
 | Drives | 2× WD Purple 8 TB | **2× Seagate SkyHawk 8 TB** | **$60** |
 | Board | N150 | N100, same 6-bay board | $30 |
 | OS drive | 256 GB NVMe | 128 GB | $7 |
 | UPS | 600 VA | 350 VA (draw is only 14 W) | $20 |
-| | | **Value build total** | **~$633** |
+| | | **Value build total** | **~$563 + case and PSU** |
 
 **SkyHawk is the standout.** It is rated 180 TB/year against our 79 — 44%
 utilisation, comfortable headroom. WD Purple's 360 TB/year is 4.5× our load;
 that is headroom we will never use, bought at $30 a drive. Purple stays the
 recommendation only if you want the extra margin for its own sake.
 
-Hot-swap trays are the only thing lost with the cheaper case, and drive swaps are
-a site visit regardless.
+The chosen case has no hot-swap trays, and that costs nothing here: a drive
+swap is a site visit either way.
 
 #### Tier 3 — recertified enterprise drives, with eyes open
 
@@ -114,13 +114,43 @@ The board route costs less, expands further, and you control the spec.
 Nothing here has been measured against a real camera yet. **Order a single unit**,
 run the bench session — `camctl probe` for the real bitrate, then the recorder
 against a live AVYCON camera — and confirm the numbers before ordering the rest.
-One unit is $800 to de-risk a decision you will repeat many times.
+One unit is well under $1,000 to de-risk a decision you will repeat many times.
 
 ## The build in detail
 
 Measured power on this platform: **9.3 W idle with no drives, 14.3 W with two,
 18.7 W with four.** That is what makes a small UPS give a long runtime, and it is
 why fan noise in a store office is not an issue.
+
+## The case
+
+**Chosen 2026-09-19 (Austin): RackChoice 2U short-depth chassis.** The NVR sits
+on a shelf in a small rack at each site. It does not need to be bolted in, but
+it has to fit, and it should look like an NVR: a flat metal box.
+
+| | |
+|---|---|
+| Size | 19" wide × 2U (3.5") tall × 15.75" deep (482 × 88.9 × 400 mm), from the listing |
+| Needs | a full-width rack shelf **at least 16" deep**. Can be bolted into the rack later |
+| Drives | 4× 3.5" internal, plus 1× 5.25". **Order the 4× 3.5" version**: some listings show 3 |
+| Board | micro-ATX / mini-ITX, so the 17 × 17 cm NAS board fits |
+| Power supply | a standard ATX PSU, not SFX. The box draws ~15–30 W, so any decent low-wattage unit will do |
+| One case for every tier | 2 drives at 16 cameras, 3 at 24, 4 at 32 |
+
+**Check before the first order.** None of these are verified yet: the price
+(the eBay listing refused an automated read); the **CPU cooler height limit**
+(2U is short inside; the N150/N305 boards ship with a low heatsink that should
+fit, but compare the two numbers); and whether the intake has a **dust filter**
+(add one if not; see Thermals).
+
+**If a site's shelf is shallower than 16":** use the **Jonsbo N2** instead. It
+is 222.5 × 222.5 × 224 mm (an 8.8" cube, per jonsbo.com), has 5 hot-swap bays
+and takes an SFX PSU. It is just over 5U tall, so leave **6U** of clear height.
+
+**At fleet scale:** NVR brands do not design their boxes. A chassis maker builds
+a standard enclosure with the brand's front panel. At 180+ sites, a quote for a
+branded NVR-style case sized for this board is worth getting once this parts
+list settles.
 
 ## Why this shape
 
@@ -187,8 +217,9 @@ because fragmented mp4 survives truncation anyway.
 
 ## Thermals
 
-Storage offices are dusty and often not air-conditioned. Filtered intake,
-positive pressure, and keep the drives under ~45 °C. Check `smartctl` temperature
+Storage offices are dusty and often not air-conditioned, and a rack shelf
+next to a PoE switch and a UPS runs warmer than an open desk. Filtered intake,
+front-to-back airflow, positive pressure, and keep the drives under ~45 °C. Check `smartctl` temperature
 in the fleet telemetry — a drive running hot is a drive about to fail, and
 knowing a week early turns an emergency into a scheduled visit.
 
