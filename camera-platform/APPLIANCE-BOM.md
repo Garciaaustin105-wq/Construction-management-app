@@ -35,7 +35,7 @@ before ordering.
 | 1 | **Topton / CWWK / HKUXZR N150 6-bay NAS motherboard**, mini-ITX | Board + CPU in one. 6× SATA, 2× M.2 NVMe, 2–4× Intel i226-V 2.5GbE, 1× DDR5 SODIMM. Sold on Amazon (HKUXZR listing), toptonpc.com and AliExpress. All three are the same reference design | $200 |
 | 2 | 16 GB DDR5 SODIMM, 4800 MHz | One slot, so one stick | $45 |
 | 3 | 256 GB NVMe M.2 2280 | OS only | $25 |
-| 4 | **RackChoice 2U short-depth chassis** (3× 3.5" + 1× 5.25" bays) + a standard ATX PSU | Flat NVR-style box that sits on a rack shelf. 3 internal 3.5" bays: 2 used at 16 cameras, 3 at 24; a 4th drive goes in the 5.25" bay at 32. See "The case" | **not yet checked** |
+| 4 | **RackChoice 2U "Compact Rackmount" chassis** (Amazon B0BN1XBL2R: 4× 3.5" internal + 2× 5.25") + a standard ATX PSU | Flat NVR-style box that sits on a rack shelf. 2 drives at 16 cameras, 3 at 24, 4 at 32. See "The case" | **not yet checked** |
 | 5 | **2× WD Purple 8 TB** | Not desktop drives — see below | $340 |
 | 6 | CyberPower or APC ~600 VA UPS with USB | Draw is 14 W with two drives, so runtime is generous | $70 |
 | | | **Total** | **~$680 + case and PSU** |
@@ -124,24 +124,27 @@ why fan noise in a store office is not an issue.
 
 ## The case
 
-**Chosen 2026-09-19 (Austin): RackChoice 2U short-depth chassis.** The NVR sits
+**Chosen 2026-09-19 (Austin): RackChoice 2U "Compact Rackmount" chassis,
+Amazon B0BN1XBL2R.** Specs below are from the listing, as Austin read them out. The NVR sits
 on a shelf in a small rack at each site. It does not need to be bolted in, but
 it has to fit, and it should look like an NVR: a flat metal box.
 
 | | |
 |---|---|
-| Size | 19" wide × 2U (3.5") tall × 15.75" deep (482 × 88.9 × 400 mm), from the listing |
-| Needs | a full-width rack shelf **at least 16" deep**. Can be bolted into the rack later |
-| Drives | 3× 3.5" internal, plus 1× 5.25" (the listing Austin checked has 3; a 4-bay version was seen only on an unverified eBay listing) |
-| Board | micro-ATX / mini-ITX, so the 17 × 17 cm NAS board fits |
-| Power supply | a standard ATX PSU, not SFX. The box draws ~15–30 W, so any decent low-wattage unit will do |
-| One case for every tier | 2 drives at 16 cameras, 3 at 24. At 32, a **5.25"-to-3.5" adapter bracket** (~$10) puts the 4th drive in the 5.25" bay; check its airflow, since that bay sits outside the drive cage |
+| Size | 19" wide × 2U (3.5") tall × **400 mm (15.75") deep, not counting the front handles** |
+| Needs | a full-width rack shelf **at least 16" deep**, plus room for the handles in front. Can be bolted into the rack later |
+| Drives | **4× 3.5" internal + 2× 5.25"**; a 3.5"-to-2.5" adapter is included. Not hot-swap |
+| Board | up to 9.6 × 9.6" (micro-ATX, mini-ITX), so the 17 × 17 cm NAS board fits |
+| Power supply | a standard ATX (PS2) PSU, not SFX. The box draws ~15–30 W, so any decent low-wattage unit will do |
+| Cooling | 2× 80 mm intake fans, plus the PSU's 120 mm fan on top |
+| Build | zinc-coated steel, aluminium handles; front USB 3.0 ×2 |
+| One case for every tier | 2 drives at 16 cameras, 3 at 24, 4 at 32. The two 5.25" bays can take a 5th and 6th drive with brackets, matching the board's 6 SATA ports |
 
 **Check before the first order.** None of these are verified yet: the price
-(the eBay listing refused an automated read); the **CPU cooler height limit**
+(Amazon hides it from an automated read); the **CPU cooler height limit**
 (2U is short inside; the N150/N305 boards ship with a low heatsink that should
-fit, but compare the two numbers); and whether the intake has a **dust filter**
-(add one if not; see Thermals).
+fit, but compare the two numbers; the listing gives none); and whether the two
+80 mm intakes have a **dust filter** (add one if not; see Thermals).
 
 **If a site's shelf is shallower than 16":** use the **Jonsbo N2** instead. It
 is 222.5 × 222.5 × 224 mm (an 8.8" cube, per jonsbo.com), has 5 hot-swap bays
