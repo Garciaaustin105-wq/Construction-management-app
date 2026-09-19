@@ -578,3 +578,31 @@ per camera, 32 on the box, 128 viewers. A 3-TV x 9-tile site is 27 viewers on
 at most one session per camera. Also fixed in review: a source whose last
 viewer left stayed joinable until its ffmpeg exited, and its exit could delete
 a fresh source for the same camera from the map.
+
+## Bench log — 2026-09-19 afternoon, today's fixes on the laptop NVR (d39b58d)
+
+Installed signed (bench-2026-09-18, 196 files verified) over 17afa0a, then
+d39b58d on top. Recovery on start: 1140 confirmed, 2 partials, 0 empty, 0
+lost. The load-test drop-in (`CAMPLAT_API_HOST=<tailscale ip>`) was replaced,
+with Austin's go-ahead, by `listen.conf`: `CAMPLAT_API_LISTEN=loopback,
+default-route,tailscale` and `CAMPLAT_CAMERA_INTERFACES=enx00e04c6840ac`.
+
+| Check | Result |
+|---|---|
+| Listening | 127.0.0.1, 192.168.4.45 (house Wi-Fi), its two ULA IPv6, Tailscale v4+v6; **not** 192.168.1.50 (camera USB adapter) |
+| Manager access from the LAN | Austin's PC on the house Wi-Fi (192.168.4.42): 200 |
+| Stream sharing, real camera | 2 tabs on the laptop (127.0.0.1) + 1 on the PC (Tailscale): **1** live ffmpeg |
+| Unplug at the PoE switch, ~1 min | ffmpeg exited 143 every ~5 s (no route), gap recorded each try, recording back at 14:49:43 unaided |
+| Audio after the unplug | **no audio_dropped**; the first sealed segment after is h264 + aac. Last night the same test dropped audio until a restart |
+| Live tiles after the unplug | sources failed cleanly while the camera was dark (`live_source_failed`, no bytes), tiles reconnected by themselves: 6 viewers on 3 sessions |
+
+**Open: Austin's Samsung phone cannot reach http://192.168.4.45:8080 on the
+same Wi-Fi.** A tcpdump on wlp2s0 saw no SYN at all while it retried, so the
+packets never reach the laptop; the PC on the same Wi-Fi works. Ruled out:
+guest network, mobile data, the phone's Tailscale (offline). Parked by Austin.
+Earlier the same phone could not play the 2560x1440 main stream (video error
+4); d39b58d falls back to the substream, not yet seen on the phone.
+
+**Noticed:** a camera that is down records a gap row on every retry (~5 s),
+so a one-minute outage is a dozen adjacent gaps. Harmless, but noisy on a
+timeline; worth merging adjacent camera_offline gaps.
