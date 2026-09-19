@@ -225,24 +225,56 @@ await check("bad_quality refused before negotiation", async () => {
   await nextClose(ws);
 });
 
-await check("child exit with no bytes -> live_source_failed carrying stderr tail, NEVER the url", async () => {
+// Bench 2026-09-19: a tile reconnecting through a camera outage showed the
+// camera's password. ffmpeg prints its input URL, credentials and all, and the
+// last stderr lines went to the viewer verbatim. The check that was meant to
+// catch it fed stderr that never held the URL, so it passed testing nothing.
+const LEAKY_STDERR =
+  "[tcp @ 0x5581] Connection to tcp://10.9.9.9:554?timeout=0 failed: No route to host\n" +
+  "rtsp://admin:s3cret-pw@10.9.9.9:554/ch1: No route to host\n" +
+  "auth for admin/s3cret-pw rejected; retry with s3cret%2Dpw\n";
+const captureLogs = async (fn) => {
+  const lines = [];
+  const orig = console.log;
+  console.log = (...a) => { lines.push(a.join(" ")); };
+  try { await fn(); } finally { console.log = orig; }
+  return lines.join("\n");
+};
+
+await check("THE FEARED ONE: a camera that fails to connect never shows its password, address or ffmpeg's words to the viewer", async () => {
   const ws = await wsOpen("/live/cam-1");
   const child = spawnCalls[spawnCalls.length - 1];
-  child.stderr.emit("data", Buffer.from("rtsp demuxer: connection refused\nlast line here\n"));
-  child.emit("exit");
-  const env = JSON.parse((await nextMessage(ws)).toString());
+  let env;
+  const logged = await captureLogs(async () => {
+    child.stderr.emit("data", Buffer.from(LEAKY_STDERR));
+    child.emit("exit");
+    env = JSON.parse((await nextMessage(ws)).toString());
+    await nextClose(ws);
+  });
   same([env.ok, env.code], [false, "live_source_failed"], "no-bytes exit code");
-  same(env.message.includes("last line here"), true, "stderr tail carried");
-  same(
-    [env.message.includes("s3cret-pw"), env.message.includes("10.9.9.9"), env.message.includes("rtsp://")],
-    [false, false, false],
-    "THE FEARED ONE: no credential, host, or scheme in the message",
-  );
-  await nextClose(ws);
+  for (const bad of ["s3cret", "rtsp://", "10.9.9.9", "tcp://", "0x5581", "No route"]) {
+    same(env.message.includes(bad), false, `the viewer never sees "${bad}"`);
+  }
+  same(env.message, "the camera did not answer", "a plain sentence instead");
+  same(logged.includes("s3cret"), false, "and the log never holds the password either, in any form");
+  same(logged.includes("No route to host"), true, "while the log keeps what ffmpeg said, for whoever troubleshoots");
   same(liveRegistry().size, 0, "entry released");
 });
 
-await check("child exit after bytes -> live_ended with the last stderr line", async () => {
+await check("THE FEARED ONE: a stream that ends mid-way never passes ffmpeg's words to the viewer", async () => {
+  const ws = await wsOpen("/live/cam-1");
+  const child = spawnCalls[spawnCalls.length - 1];
+  child.stdout.emit("data", Buffer.concat([mp4Box("ftyp", 20, 7), mp4Box("moov", 200, 8)]));
+  await nextMessage(ws);
+  child.stderr.emit("data", Buffer.from(LEAKY_STDERR));
+  child.emit("exit");
+  const env = JSON.parse((await nextMessage(ws)).toString());
+  same([env.code, env.message], ["live_ended", "the camera stopped sending video"], "a plain sentence");
+  same(env.message.includes("s3cret"), false, "no password");
+  await nextClose(ws);
+});
+
+await check("child exit after bytes -> live_ended, in plain words", async () => {
   const ws = await wsOpen("/live/cam-1");
   const child = spawnCalls[spawnCalls.length - 1];
   // Bytes flowed: a whole init segment (the source forwards whole boxes only).
@@ -252,7 +284,7 @@ await check("child exit after bytes -> live_ended with the last stderr line", as
   child.emit("exit");
   const env = JSON.parse((await nextMessage(ws)).toString());
   same([env.ok, env.code], [false, "live_ended"], "after-bytes exit code");
-  same(env.message, "fatal: source closed on us", "last stderr line");
+  same(env.message, "the camera stopped sending video", "a fixed sentence, not ffmpeg's last line");
   same(env.message.includes("s3cret-pw"), false, "no credential");
   await nextClose(ws);
 });

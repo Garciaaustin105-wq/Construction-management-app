@@ -2,7 +2,7 @@
  *  THE FEARED FAILURES: a tight retry loop that floods the recorder, and
  *  retrying forever something that can never work. */
 import {
-  reconnectDelayMs, RECONNECT_FIRST_MS, RECONNECT_MAX_MS, RECONNECT_REASONS, mainstreamFallback,
+  reconnectDelayMs, RECONNECT_FIRST_MS, RECONNECT_MAX_MS, RECONNECT_REASONS, mainstreamFallback, liveTileText,
 } from "../agent/ui/live-client.mjs";
 import { check, eq, report } from "./_assert.mjs";
 
@@ -55,8 +55,37 @@ check("THE FEARED ONE: never a fallback that could ping-pong or hide a real faul
   eq(mainstreamFallback({ quality: "mainstream", mainUnplayable: "hvc1 (x)", kind: "video", errorCode: 4, codecMime }), null, "already fell back once");
   eq(mainstreamFallback({ quality: "mainstream", mainUnplayable: null, kind: "video", errorCode: 1, codecMime }), null, "aborted is not a codec problem");
   eq(mainstreamFallback({ quality: "mainstream", mainUnplayable: null, kind: "video", errorCode: 2, codecMime }), null, "network is the reconnect's job");
+  // Bench 2026-09-19: switching a PC tile to High reset the <video> with
+  // src = '', Chrome reported that as error 4 before the new stream had even
+  // started, and the tile fell back for good ("full quality is full quality
+  // (video error 4)"). No codec yet means no stream of ours was playing.
   eq(mainstreamFallback({ quality: "mainstream", mainUnplayable: null, kind: "video", errorCode: 4, codecMime: null }),
-    "full quality (video error 4)", "no codec known yet: still a reason, never 'null'");
+    null, "THE FEARED ONE: an error before any stream started is not this stream failing");
+});
+
+check("THE FEARED ONE: a tile's words are plain and fixed, never a code, never anything the server or ffmpeg said", () => {
+  const plain = {
+    closed: "Connection lost — reconnecting",
+    source_failed: "Camera offline — reconnecting",
+    live_source_failed: "Camera offline — reconnecting",
+    stalled: "Camera stopped sending video — reconnecting",
+    live_stalled: "Camera stopped sending video — reconnecting",
+    ended: "Camera stopped sending video — reconnecting",
+    live_ended: "Camera stopped sending video — reconnecting",
+    mainstream_failed: "Camera not available — reconnecting",
+    camera_busy: "Too many live streams — try fewer cameras",
+    stream_limit: "Too many live streams — try fewer cameras",
+    viewer_limit: "Too many people watching — try again later",
+    unknown_camera: "This camera is not set up on this recorder",
+    unresolved_camera: "This camera's address is not set up",
+    substream_unavailable: "This camera has no low-quality stream",
+    unsupported: "This browser can't show this camera's video",
+    connecting: "Connecting…",
+  };
+  for (const [code, words] of Object.entries(plain)) eq(liveTileText(code), words, code);
+  for (const junk of ["rtsp://admin:pw@10.0.0.1/x", "weird_new_code", "", undefined, 42]) {
+    eq(liveTileText(junk), "Camera not available", `unknown input -> generic, never echoed (${String(junk)})`);
+  }
 });
 
 report("live reconnect");

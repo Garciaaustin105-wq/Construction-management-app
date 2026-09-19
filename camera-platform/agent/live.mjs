@@ -15,7 +15,44 @@
 import { createHash, randomUUID } from "node:crypto";
 import { negotiateLive, liveFfmpegArgs } from "../dist/liveNegotiation.js";
 import { resolveCameraUrl } from "./recorder-service.mjs";
-import { buildRtspUrl } from "../dist/rtsp.js";
+import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
+
+/** What a viewer is told. Fixed sentences: ffmpeg's own words carry the
+ *  camera's URL, password included (bench 2026-09-19: a reconnecting tile
+ *  showed it), so they never leave this box. They go to the log, scrubbed. */
+const VIEWER_WORDS = Object.freeze({
+  live_source_failed: "the camera did not answer",
+  live_ended: "the camera stopped sending video",
+});
+
+/** Passwords that could appear in this source's ffmpeg output: the site's
+ *  and the one inside the URL, as written and percent-encoded. */
+function secretsFor(config, url) {
+  const out = new Set();
+  const add = (p) => {
+    if (typeof p !== "string" || p.length < 3) return;
+    out.add(p);
+    out.add(encodeURIComponent(p));
+  };
+  add(config?.credentials?.password);
+  try {
+    const u = new URL(url);
+    add(u.password);
+    add(decodeURIComponent(u.password));
+  } catch { /* not a URL: nothing inside it to hide */ }
+  return [...out];
+}
+
+/** One ffmpeg line, safe to log: URLs lose their userinfo, and a password
+ *  anywhere in the line, even percent-encoded, becomes ***. */
+function scrubLine(line, secrets) {
+  let text = redactRtspUrl(line);
+  let decoded = text;
+  try { decoded = decodeURIComponent(text); } catch { /* a lone % is not an escape */ }
+  if (secrets.some((s) => decoded.includes(s))) text = redactRtspUrl(decoded);
+  for (const s of secrets) text = text.split(s).join("***");
+  return text;
+}
 import { createBoxAccumulator } from "./ui/live-client.mjs";
 
 /** Registry of live viewers, keyed by streamId:
@@ -301,6 +338,7 @@ export function attachLive(server, deps) {
         init: null,
         accumulator: createBoxAccumulator(),
         viewers: new Set(),
+        secrets: secretsFor(config, chosenUrl),
       };
       sources.set(sourceKey, source);
 
@@ -346,15 +384,17 @@ export function attachLive(server, deps) {
       });
 
       child.stderr?.on("data", (chunk) => {
-        const lines = chunk.toString().split("\n").map((l) => l.trim()).filter(Boolean);
+        const lines = chunk.toString().split("\n").map((l) => l.trim()).filter(Boolean).map((l) => scrubLine(l, source.secrets));
         source.stderrLines.push(...lines);
         if (source.stderrLines.length > 10) source.stderrLines.splice(0, source.stderrLines.length - 10);
       });
 
       child.on("exit", () => {
         const envelope = source.bytesSent
-          ? { ok: false, code: "live_ended", message: source.stderrLines[source.stderrLines.length - 1] ?? "source closed" }
-          : { ok: false, code: "live_source_failed", message: source.stderrLines.slice(-3).join("; ") || "source failed" };
+          ? { ok: false, code: "live_ended", message: VIEWER_WORDS.live_ended }
+          : { ok: false, code: "live_source_failed", message: VIEWER_WORDS.live_source_failed };
+        // What ffmpeg said stays here, scrubbed, for whoever troubleshoots.
+        log("warn", "live source failed", { cameraId, quality, bytesSent: source.bytesSent, stderrTail: source.stderrLines.slice(-3).join("; ") || null });
         for (const viewer of source.viewers) {
           if (!viewer.socket.destroyed) {
             try {

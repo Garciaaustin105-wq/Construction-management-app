@@ -360,11 +360,48 @@ export function planLiveBuffer(ranges, currentTime) {
  */
 export function mainstreamFallback({ quality, mainUnplayable, kind, errorCode, codecMime }) {
   if (quality !== "mainstream" || mainUnplayable) return null;
+  // No codec yet: no stream of ours was playing. Resetting a <video> between
+  // streams raises error 4 on its own (bench 2026-09-19: a PC fell back from
+  // High that way); that is never this stream failing.
+  if (typeof codecMime !== "string" || codecMime === "") return null;
   if (kind === "video" && errorCode !== 3 && errorCode !== 4) return null;
   if (kind !== "video" && kind !== "append") return null;
   const m = typeof codecMime === "string" ? /codecs="([^"]+)"/.exec(codecMime) : null;
   const codec = m ? m[1] : "full quality";
   return kind === "video" ? `${codec} (video error ${errorCode})` : `${codec} (rejected by the player)`;
+}
+
+/**
+ * The words a live tile shows, for a reason or a server refusal code. Plain
+ * and fixed: never a code, never the server's message, never anything ffmpeg
+ * printed (it prints the camera's URL, password included). Anything unknown,
+ * including anything that is not a string, is the generic sentence and is
+ * never echoed.
+ */
+const TILE_WORDS = Object.freeze({
+  connecting: "Connecting…",
+  closed: "Connection lost — reconnecting",
+  source_failed: "Camera offline — reconnecting",
+  live_source_failed: "Camera offline — reconnecting",
+  stalled: "Camera stopped sending video — reconnecting",
+  live_stalled: "Camera stopped sending video — reconnecting",
+  ended: "Camera stopped sending video — reconnecting",
+  live_ended: "Camera stopped sending video — reconnecting",
+  mainstream_failed: "Camera not available — reconnecting",
+  camera_busy: "Too many live streams — try fewer cameras",
+  stream_limit: "Too many live streams — try fewer cameras",
+  viewer_limit: "Too many people watching — try again later",
+  unknown_camera: "This camera is not set up on this recorder",
+  unresolved_camera: "This camera's address is not set up",
+  substream_unavailable: "This camera has no low-quality stream",
+  unsupported: "This browser can't show this camera's video",
+  lower_quality: "Showing lower quality — full quality can't play in this browser",
+});
+
+export function liveTileText(code) {
+  return typeof code === "string" && Object.prototype.hasOwnProperty.call(TILE_WORDS, code)
+    ? TILE_WORDS[code]
+    : "Camera not available";
 }
 
 export const RECONNECT_FIRST_MS = 2000;

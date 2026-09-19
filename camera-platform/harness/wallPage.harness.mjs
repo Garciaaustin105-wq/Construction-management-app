@@ -372,11 +372,33 @@ check("THE FEARED ONE: index.html sends both playback-failure paths through main
   if (!/import \{[^}]*mainstreamFallback[^}]*\} from '\/ui\/live-client\.js'/.test(html)) throw new Error("index.html does not import mainstreamFallback");
 });
 
-check("THE FEARED ONE: a tile the server refuses (stream_limit and the rest) shows the server's reason, never a blank", () => {
+check("THE FEARED ONE: a refused tile says why in plain words, never a blank and never the server's text", () => {
   const html = readFileSync(join(process.cwd(), "agent/ui/index.html"), "utf-8");
-  if (!/if \(env\.ok === false\) \{\s*setStatus\(t, env\.code \+ \(env\.message \? ' — ' \+ env\.message : ''\), 'problem'\);/.test(html)) {
-    throw new Error("index.html no longer shows a refusal's code and message in its tile");
+  if (!/if \(env\.ok === false\) \{\s*setStatus\(t, liveTileText\(env\.code\), 'problem'\);/.test(html)) {
+    throw new Error("index.html does not show a refusal as liveTileText(env.code)");
   }
+});
+
+check("THE FEARED ONE: no tile text is built from a server message, ffmpeg output, a codec string or an error code", () => {
+  const html = readFileSync(join(process.cwd(), "agent/ui/index.html"), "utf-8");
+  eq(/env\.message/.test(html), false, "env.message is never read: the server's words never reach a tile");
+  for (const technical of ["init ok (", "video element error", "MSE rejected", "player rejected a stream segment",
+    "connection closed (code", "retrying in", "cannot read this camera", "full quality is ' +", "video.src = ''"]) {
+    eq(html.includes(technical), false, `no technical text or empty-src reset: ${technical}`);
+  }
+});
+
+// Bench 2026-09-19: switching a PC tile to High reset the <video> with
+// src = '', which Chrome reports as error 4; the previous stream's listener
+// took it for the new stream failing and fell back to the substream for good.
+check("THE FEARED ONE: a player error only counts for the player it came from", () => {
+  const html = readFileSync(join(process.cwd(), "agent/ui/index.html"), "utf-8");
+  const v = html.indexOf("video.addEventListener('error'");
+  if (v < 0) throw new Error("no video error listener found");
+  if (!/if \(t\.mediaSource !== ms\) return;/.test(html.slice(v, v + 300))) throw new Error("the video error listener does not ignore a replaced player");
+  const b = html.indexOf("sb.addEventListener('error'");
+  if (b < 0) throw new Error("no SourceBuffer error listener found");
+  if (!/if \(t\.sourceBuffer !== sb\) return;/.test(html.slice(b, b + 400))) throw new Error("the SourceBuffer error listener does not ignore a replaced buffer");
 });
 
 function fakeTimers() {

@@ -218,7 +218,7 @@
 <div class="grid" id="grid"></div>
 
 <script type="module">
-import { createBoxAccumulator, extractMimeCodec, planLiveBuffer, reconnectDelayMs, mainstreamFallback } from '/ui/live-client.js';
+import { createBoxAccumulator, extractMimeCodec, planLiveBuffer, reconnectDelayMs, mainstreamFallback, liveTileText } from '/ui/live-client.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 import { createWall } from '/ui/wall-client.js';
 import * as gridMaths from '/ui/grid-layout.js';
@@ -289,15 +289,15 @@ function cancelRetry(t) {
 
 // A TV has nobody to press Reconnect, and the stale-tile guard stops a timer
 // reviving a tile the wall already closed.
-function scheduleReconnect(t, reason, label) {
+function scheduleReconnect(t, reason) {
   cancelRetry(t);
   const delay = reconnectDelayMs(reason, t.attempt);
   if (delay === null) {
-    addReconnect(t, label);
+    addReconnect(t, liveTileText(reason));
     t.statusEl.className = 'status problem';
     return;
   }
-  addReconnect(t, label + ' — retrying in ' + Math.round(delay / 1000) + ' s');
+  addReconnect(t, liveTileText(reason));
   t.statusEl.className = 'status problem';
   t.retryTimer = setTimeout(() => {
     t.retryTimer = null;
@@ -347,8 +347,10 @@ function moveStream(cameraId, body, shape, preference) {
 }
 
 function playingLabel(t) {
+  // Only the plain sentence reaches the tile; the codec detail stays in
+  // t.mainUnplayable for whoever debugs this in the console.
   return t.quality === 'substream' && t.mainUnplayable
-    ? 'live (substream) — full quality is ' + t.mainUnplayable + ', which this browser cannot play'
+    ? liveTileText('lower_quality')
     : 'live (' + t.quality + ')';
 }
 
@@ -453,8 +455,11 @@ function connect(t, quality) {
   t.appendQueued = false;
   t.accumulator = createBoxAccumulator();
 
-  setStatus(t, 'connecting…');
-  video.src = '';
+  setStatus(t, liveTileText('connecting'));
+  // Not src = '': Chrome reports an empty src as error 4, which the previous
+  // stream's listener took for this one failing (bench 2026-09-19).
+  video.removeAttribute('src');
+  video.load();
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   // The id is encoded: it comes from config an installer wrote, and an
@@ -464,7 +469,7 @@ function connect(t, quality) {
   socket.binaryType = 'arraybuffer'; // media arrives as binary; text frames are control envelopes
   t.socket = socket;
 
-  socket.onopen = () => setStatus(t, 'waiting for the first frame… (' + quality + ')');
+  socket.onopen = () => setStatus(t, liveTileText('connecting'));
 
   socket.onmessage = (event) => {
     if (typeof event.data === 'string') {
@@ -484,7 +489,7 @@ function connect(t, quality) {
     if (t.socket !== socket) return; // superseded by a newer connection
     t.socket = null;
     if (t.fatal) return; // the tile already says why, and retrying cannot help
-    scheduleReconnect(t, 'closed', event.code === 1000 ? 'disconnected' : 'connection closed (code ' + event.code + ')');
+    scheduleReconnect(t, 'closed');
   };
 
   socket.onerror = () => { /* onclose always follows; it owns the message */ };
@@ -501,28 +506,28 @@ function handleControl(t, env) {
       // The server closes after the envelope. Closing quietly first stops
       // onclose scheduling a second retry and overwriting the reason.
       closeQuietly(t);
-      scheduleReconnect(t, 'mainstream_failed', 'substream unavailable, mainstream retry failed');
+      scheduleReconnect(t, 'mainstream_failed');
     }
     return;
   }
   if (env.ok === false && env.code === 'live_source_failed') {
     teardownMedia(t);
     closeQuietly(t);
-    scheduleReconnect(t, 'source_failed', 'camera source failed: ' + (env.message ?? env.code));
+    scheduleReconnect(t, 'source_failed');
     return;
   }
   if (env.ok === false && env.code === 'live_stalled') {
     closeQuietly(t);
-    scheduleReconnect(t, 'stalled', 'stream stalled: ' + (env.message ?? env.code));
+    scheduleReconnect(t, 'stalled');
     return;
   }
   if (env.ok === false && env.code === 'live_ended') {
     closeQuietly(t);
-    scheduleReconnect(t, 'ended', 'stream ended: ' + (env.message ?? env.code));
+    scheduleReconnect(t, 'ended');
     return;
   }
   if (env.ok === false) {
-    setStatus(t, env.code + (env.message ? ' — ' + env.message : ''), 'problem');
+    setStatus(t, liveTileText(env.code), 'problem');
   }
 }
 
@@ -530,7 +535,7 @@ function handleInit(t, initSegment) {
   const { video } = t;
   const codec = extractMimeCodec(initSegment);
   if (codec.error) {
-    setStatus(t, 'cannot read this camera’s codec from its stream', 'problem');
+    setStatus(t, liveTileText('unsupported'), 'problem');
     t.fatal = true;
     t.socket.close();
     return;
@@ -548,8 +553,7 @@ function handleInit(t, initSegment) {
     }
     // Say it out loud in the tile — HEVC needs hardware decode; never silently
     // black-frame.
-    setStatus(t, 'this browser cannot decode this camera’s codec (' +
-      codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + ')', 'problem');
+    setStatus(t, liveTileText('unsupported'), 'problem');
     t.fatal = true;
     t.socket.close();
     return;
@@ -559,7 +563,7 @@ function handleInit(t, initSegment) {
   // Stage reporting: 'waiting for the first frame' is what the tile says at
   // socket open, so init reaching this far must be visible in the status line
   // too — otherwise a stuck player and a live one are indistinguishable.
-  setStatus(t, 'init ok (' + codec.mime.replace('video/mp4; codecs="', '').replace('"', '') + '), opening player…');
+  setStatus(t, liveTileText('connecting'));
 
   const ms = new MediaSource();
   t.mediaSource = ms;
@@ -568,10 +572,12 @@ function handleInit(t, initSegment) {
   // Once the picture is up the tile is just the picture -- unless full quality
   // could not play, which the viewer should be told.
   video.addEventListener('playing', () => {
+    if (t.mediaSource !== ms) return; // a replaced player
     t.attempt = 0;
     setStatus(t, playingLabel(t), t.quality === 'substream' && t.mainUnplayable ? undefined : 'quiet');
   }, { once: true });
   video.addEventListener('error', () => {
+    if (t.mediaSource !== ms) return; // a replaced player's error is not this stream's
     const code = video.error ? video.error.code : 0;
     // Said it could play full quality, then could not (a phone and a 1440p
     // stream): fall back to the substream once, and the tile says why.
@@ -582,7 +588,7 @@ function handleInit(t, initSegment) {
       connect(t, 'substream');
       return;
     }
-    setStatus(t, 'video element error ' + code + ' (1 aborted, 2 network, 3 decode, 4 src not supported)', 'problem');
+    setStatus(t, liveTileText('unsupported'), 'problem');
   }, { once: true });
 
   ms.addEventListener('sourceopen', () => {
@@ -591,6 +597,7 @@ function handleInit(t, initSegment) {
     sb.mode = 'sequence'; // live stream: append order IS time, no seek math
     t.sourceBuffer = sb;
     sb.addEventListener('error', () => {
+      if (t.sourceBuffer !== sb) return; // a replaced buffer
       // appendBuffer failures are usually ASYNC: MSE fires this event and
       // readyState drops to 'ended' rather than throwing synchronously.
       const why = mainstreamFallback({ quality: t.quality, mainUnplayable: t.mainUnplayable, kind: 'append', errorCode: 0, codecMime: t.codecMime });
@@ -600,7 +607,7 @@ function handleInit(t, initSegment) {
         connect(t, 'substream');
         return;
       }
-      setStatus(t, 'MSE rejected a segment (decode error)', 'problem');
+      setStatus(t, liveTileText('unsupported'), 'problem');
     });
     sb.addEventListener('updateend', () => {
       if (t.sourceBuffer !== sb) return;
@@ -608,7 +615,7 @@ function handleInit(t, initSegment) {
       // the video element's business — distinguishable from 'playing' below.
       if (!t.appendSeen) {
         t.appendSeen = true;
-        setStatus(t, 'buffering…');
+        setStatus(t, liveTileText('connecting'));
       }
       // A viewer of a live grid never rewinds, and unbounded buffering grows
       // forever: trim behind the playhead and keep it at the live edge. A
@@ -678,7 +685,7 @@ function pumpAppend(t) {
     // (server side or watchdog) surfaces through onclose. Say so in the tile:
     // a silently poisoned buffer would look exactly like a stalled stream.
     t.appendQueued = false;
-    setStatus(t, 'player rejected a stream segment (' + (e && e.name ? e.name + ': ' + e.message : 'unknown') + ')', 'problem');
+    setStatus(t, liveTileText('unsupported'), 'problem');
   }
 }
 
