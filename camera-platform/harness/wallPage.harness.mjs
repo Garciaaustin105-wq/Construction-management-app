@@ -22,6 +22,7 @@
  */
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import * as grid from "../dist/gridLayout.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
@@ -615,6 +616,20 @@ check("a camera named like a JavaScript internal is still just a camera", () => 
   eq(calls.filter((c) => c.op === "open").map((c) => c.cameraId), ["constructor", "lot-1"],
     "and both opened, by the id the installer actually gave");
   eq(wall.state().streaming, ["constructor", "lot-1"], "");
+});
+
+// Verify the index.html TV wall CSS and fullscreen handling
+check("index.html implements TV wall with contain (never cover) and dual fullscreen detection", () => {
+  const indexPath = join(process.cwd(), "agent/ui/index.html");
+  let htmlContent = readFileSync(indexPath, "utf-8");
+  // Normalize CRLF to LF for consistent matching
+  htmlContent = htmlContent.replace(/\r\n/g, "\n");
+
+  if (!htmlContent.includes("object-fit: contain")) throw new Error("object-fit: contain is missing from wall-mode rules");
+  if (htmlContent.includes("object-fit: cover")) throw new Error("THE FEARED ONE: a wall never crops a camera's picture");
+  if (!htmlContent.includes("display-mode: fullscreen")) throw new Error("display-mode: fullscreen detection is missing");
+  if (!htmlContent.includes("fullscreenchange")) throw new Error("fullscreenchange listener is missing");
+  if (htmlContent.includes('.grid:fullscreen { background: #000; padding: 6px; }')) throw new Error("old .grid:fullscreen padding rule should be removed");
 });
 
 report("wallPage");

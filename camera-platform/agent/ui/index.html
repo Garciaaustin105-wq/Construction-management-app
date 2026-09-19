@@ -190,9 +190,18 @@
   }
   .cell-empty-label { color: #6d737b; font-size: 13px; text-align: center; padding: 0 8px; }
 
-  /* Full screen is the TV wall: the cells fill the screen, nothing else shows. */
-  .grid:fullscreen { background: #000; padding: 6px; }
-  .grid:fullscreen .cell { border-radius: 0; }
+  /* TV wall: fills the whole screen with no gaps. Both ways of going fullscreen:
+     (a) the grid itself is fullscreened (document.fullscreenElement !== null),
+     or (b) the whole browser is fullscreen (display-mode: fullscreen). */
+  html.wall-mode, html.wall-mode body { margin: 0; padding: 0; background: #000; height: 100%; overflow: hidden; }
+  html.wall-mode nav { display: none; }
+  html.wall-mode .controls { position: fixed; top: 0; left: 0; right: 0; z-index: 20; margin: 0; padding: 6px 10px; background: rgba(20,22,26,0.85); opacity: 0; transition: opacity 0.2s; }
+  html.wall-mode .controls:hover, html.wall-mode .controls:focus-within { opacity: 1; }
+  html.wall-mode .grid { width: 100vw; height: 100vh; box-sizing: border-box; padding: 0 !important; gap: 0 !important; grid-auto-rows: 1fr; background: #000; }
+  html.wall-mode .cell { aspect-ratio: auto !important; border: 0; border-radius: 0; box-shadow: none; min-height: 0; min-width: 0; }
+  /* object-fit: contain ensures no camera picture is ever cropped — on a security wall,
+     the person at the edge of the frame is the one that matters. never cover. */
+  html.wall-mode .cell video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 
 </style>
 </head>
@@ -212,6 +221,28 @@ import * as gridMaths from '/ui/grid-layout.js';
 const gridRoot = document.getElementById('grid');
 const controlsRoot = document.getElementById('controls');
 const pageError = document.getElementById('pageError');
+
+// Set or remove the "wall-mode" class based on fullscreen state.
+// Present when either the grid is fullscreened OR the browser is in fullscreen mode.
+function updateWallMode() {
+  const isFullscreen = (document.fullscreenElement ?? null) !== null;
+  const isDisplayFullscreen = typeof window.matchMedia === 'function' ? window.matchMedia('(display-mode: fullscreen)').matches : false;
+  const shouldBeWallMode = isFullscreen || isDisplayFullscreen;
+  if (shouldBeWallMode) {
+    document.documentElement.classList.add('wall-mode');
+  } else {
+    document.documentElement.classList.remove('wall-mode');
+  }
+}
+
+// Call on startup
+updateWallMode();
+// Listen for grid fullscreen changes
+document.addEventListener('fullscreenchange', updateWallMode);
+// Listen for browser fullscreen mode changes
+if (typeof window.matchMedia === 'function') {
+  window.matchMedia('(display-mode: fullscreen)').addEventListener('change', updateWallMode);
+}
 
 // Per-STREAM connection state, keyed by cameraId. One WS per camera at a time:
 // a toggle closes the old socket BEFORE opening the new one (spec: never two
