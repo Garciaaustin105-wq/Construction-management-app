@@ -64,9 +64,9 @@ camera substream ──> camplat-detect ──> events table (SQLite, own file)
   and enabled only on the AI NVR, and every AI page and permission is hidden
   when it is absent. The Standard NVR never runs detection on its CPU.
 - **Chip:** Hailo-8 M.2 2280 M-key (26 TOPS, about $199 standalone in
-  September 2026). The Hailo-8L (13 TOPS) in APPLIANCE-BOM.md is sized for a
-  handful of cameras and is likely short at 16; it stays the fallback if D1
-  measures it keeping up. Both vendors' model zoos ship detectors, a plate
+  September 2026). **Confirmed by Austin 2026-09-19** after weighing the
+  Hailo-8L (13 TOPS, ~$70, in the first BOM), knowing the 8L would save ~$130
+  a box but is likely short at 16 cameras. The 8L is no longer the fallback. Both vendors' model zoos ship detectors, a plate
   reader and CLIP pre-compiled. **To verify:** each model's license; measured
   frames a second on the N305 board's second NVMe slot (likely fewer PCIe lanes
   than the card can use); QuickSync decoding 16 substreams at once.
