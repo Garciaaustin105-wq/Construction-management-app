@@ -40,10 +40,37 @@ import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary } from './clip-library.mjs';
 import { createListeners } from './listeners.mjs';
 
+// event-crop.mjs cuts the JPEG /event-crop serves (see contracts/cropPlan.ts
+// for where the rectangle comes from). It is a sibling file another agent
+// writes in parallel with this one, so the import is dynamic and tolerant: a
+// static `import ... from './event-crop.mjs'` would throw at module load and
+// take every route in this file down with it the moment that file does not
+// exist yet. Missing, the route below degrades to "not installed" instead.
+let defaultCreateEventCrops = null;
+try {
+  ({ createEventCrops: defaultCreateEventCrops } = await import('./event-crop.mjs'));
+} catch (e) {
+  if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
+}
+
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
 
 const isRefusal = (r) => r !== null && typeof r === 'object' && r.ok === false;
+
+/**
+ * The id detectStream.ts mints for a detection event: `<cameraId>:<atMs>:<seq>`.
+ * This id reaches a file path in the crop cache (event-crop.mjs), so it is the
+ * only shape /event-crop accepts — checked here, before the id is looked up
+ * anywhere, never after. A camera id outside CAMERA_ID_PATTERN, a non-digit or
+ * signed `atMs`, a zero or non-digit `seq`, an extra `:`-separated field or
+ * trailing text are all refused rather than passed through and hoped about.
+ */
+const EVENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}:(?:0|[1-9][0-9]*):[1-9][0-9]*$/;
+
+function isEventId(raw) {
+  return typeof raw === 'string' && EVENT_ID_PATTERN.test(raw);
+}
 
 // The UI routes → files under agent/ui. A map, not string handling of the
 // pathname: only these exact paths ever reach the filesystem.
@@ -305,6 +332,10 @@ export function createApiServer({
   maxSourcesPerCamera = 2,
   maxSources = 32,
   maxViewers = 128,
+  // Injectable so a harness can prove /event-crop's own wiring (id checks,
+  // header shape, refusal mapping) with a fake cutter, the same way spawnFn
+  // above lets it prove live.mjs without a real ffmpeg.
+  createEventCrops = defaultCreateEventCrops,
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -352,6 +383,23 @@ export function createApiServer({
     },
     rootFor: (file, cameraId) => rootOf(index.get(file.path), cameraId, { config, driveAssignment }),
   });
+
+  // /event-crop reads the SAME events handle /events reads — openEvents()
+  // opens events.db lazily and at most once, and calling it here rather than
+  // opening a second handle is the whole point. Not present (no detector was
+  // ever installed here, or event-crop.mjs has not landed yet) is not an
+  // error: the cutter itself is expected to answer every get() with a plain
+  // 404 no_such_event rather than throw, so this route never needs to know
+  // which reason it was.
+  const eventCrops = createEventCrops
+    ? createEventCrops({ stateDir, eventsDb: openEvents(), index, config, driveAssignment, now })
+    : {
+        get: async () => ({
+          ok: false, status: 404, code: 'no_such_event',
+          message: 'event crops are not installed on this box',
+        }),
+        close() {},
+      };
 
   const server = createServer(async (req, res) => {
     try {
@@ -574,6 +622,44 @@ export function createApiServer({
           ok: true, cameraId: camera, effective, available: true,
           events: found.events, truncated: found.truncated, limit,
         }));
+        return;
+      }
+
+      // ---------- /event-crop ----------
+      // A JPEG cut from the recording at one event's bestUtc/bestBox (see
+      // contracts/cropPlan.ts): what fired, on the tile, without playing the
+      // clip. THE MORNING THIS EXISTS FOR: a spray bottle on a shelf reported
+      // as a person 77 times in 13 hours — finding that out cost an ffmpeg
+      // cut, a file copy and someone looking at the picture; with the crop on
+      // the tile it is a glance.
+      if (pathname === '/event-crop') {
+        const id = parsedUrl.searchParams.get('id');
+        // Checked before anything else: this id reaches a file path in the
+        // crop cache, so an unrecognised shape is hostile input, not a typo
+        // to forgive. 400, never a lookup that answers "not found" for a
+        // string that could never have named anything.
+        if (!isEventId(id)) {
+          sendError(res, 400, 'bad_event_id', 'Invalid event id');
+          return;
+        }
+        const result = await eventCrops.get(id);
+        if (!result.ok) {
+          sendError(res, result.status, result.code, result.message);
+          return;
+        }
+        const fileStat = await stat(result.file);
+        res.writeHead(200, {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': fileStat.size,
+          // A crop of a past moment never changes: nothing re-cuts the same
+          // event, so a browser or proxy may keep this for a day.
+          'Cache-Control': 'private, max-age=86400',
+        });
+        const stream = createReadStream(result.file);
+        stream.on('error', () => {
+          res.destroy();
+        });
+        stream.pipe(res);
         return;
       }
 
@@ -819,6 +905,13 @@ export function createApiServer({
     }
   };
 
+  // Same reasoning as closeEvents: the cutter is this server's to close, and
+  // shutdown must let go of whatever it holds (a cache directory, temp files)
+  // rather than leave it for the next process to inherit.
+  server.closeEventCrops = () => {
+    eventCrops.close();
+  };
+
   return server;
 }
 
@@ -872,6 +965,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
       server.close(() => {
         index.close();
         server.closeEvents();
+        server.closeEventCrops();
         process.exit(0);
       });
     });

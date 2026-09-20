@@ -1058,6 +1058,116 @@ await check("THE FEARED ONE: a recorder with no detector shows no row at all", a
   }
 });
 
+/* ── D3: a thumbnail per tile, lazy, and never a broken tile ─────────────── */
+
+// The strip's img elements never fetch for real in this fake DOM (browsers
+// load <img src> through their own resource fetcher, not through
+// globalThis.fetch), so these checks watch what the page decides to ask for
+// via the element itself: whether .src ever got set, not the network log.
+function findDescendant(el, pred) {
+  for (const c of el.children) {
+    if (pred(c)) return c;
+    const found = findDescendant(c, pred);
+    if (found) return found;
+  }
+  return undefined;
+}
+const imgOf = (tile) => findDescendant(tile, (c) => c.tagName === "IMG");
+
+await check("thumbnails: with no IntersectionObserver at all, nothing is ever requested, not everything", async () => {
+  eq(typeof globalThis.IntersectionObserver, "undefined", "this check runs before the page has ever seen one");
+  await loadDayWithEvents("2026-09-11");
+  const tiles = tilesOf();
+  eq(tiles.length, 3, "the tiles themselves still draw");
+  for (const tile of tiles) {
+    const img = imgOf(tile);
+    eq(img !== undefined, true, "still a usable tile: an <img> is there");
+    eq(img.hidden, true, "and hidden, so no broken-image icon shows for it");
+    eq(Boolean(img.src), false,
+      "THE FEARED ONE: a fallback that requested every crop would spawn hundreds of ffmpeg jobs on a busy day");
+  }
+  eq(dom.eventNote.textContent, "3 of 3 shown.", "the rest of the row is unaffected");
+});
+
+// A stub good enough to test the page's own IntersectionObserver usage: it
+// remembers what got observed and lets a check say "this tile is now on
+// screen" without a real layout engine under the fake DOM.
+class FakeIntersectionObserver {
+  constructor(cb) { this.cb = cb; this.watching = new Set(); FakeIntersectionObserver.instances.push(this); }
+  observe(el) { this.watching.add(el); }
+  unobserve(el) { this.watching.delete(el); }
+  disconnect() { this.watching.clear(); }
+  appear(el) {
+    if (!this.watching.has(el)) throw new Error("appear() on an element the page never observed");
+    this.cb([{ target: el, isIntersecting: true }]);
+  }
+}
+FakeIntersectionObserver.instances = [];
+globalThis.IntersectionObserver = FakeIntersectionObserver;
+
+await check("thumbnails: a tile's image targets its own event, and only once the tile is actually visible", async () => {
+  await loadDayWithEvents("2026-09-11");
+  const tiles = tilesOf();
+  const markers = page.view.markers;
+  eq(tiles.length, markers.length, "one tile per shown event");
+  const obs = FakeIntersectionObserver.instances.at(-1);
+  eq(Boolean(obs), true, "the page built an observer now that one exists");
+  eq(obs.watching.size, tiles.length, "every tile is registered, even the ones off screen");
+  for (const tile of tiles) {
+    eq(Boolean(imgOf(tile).src), false, "THE FEARED ONE: nothing requested for a tile nobody has scrolled to");
+  }
+
+  const target = tiles[0];
+  const img = imgOf(target);
+  obs.appear(img);
+  eq(img.src, "/event-crop?id=" + encodeURIComponent(markers[0].id), `points at its own event: ${img.src}`);
+  eq(obs.watching.has(img), false, "stops being watched the moment it is asked for");
+  eq(Boolean(imgOf(tiles[1]).src), false, "a sibling tile that never appeared still makes no request");
+  eq(Boolean(imgOf(tiles[2]).src), false, "neither does the other one");
+});
+
+await check("thumbnails: a crop that fails hides the image, keeps the words, and is never retried", async () => {
+  await loadDayWithEvents("2026-09-11");
+  const tile = tilesOf()[1];
+  const img = imgOf(tile);
+  const wordsBefore = tile.textContent;
+  const obs = FakeIntersectionObserver.instances.at(-1);
+  obs.appear(img);
+  const requested = img.src;
+  eq(Boolean(requested), true, "it was asked for once it appeared");
+  img.fire("error");
+  eq(img.hidden, true, "no broken-image icon");
+  eq(tile.textContent, wordsBefore, "THE FEARED ONE: the plain words a usable tile depends on are untouched");
+  img.fire("error");
+  eq(img.src, requested, "and it is never retried");
+  eq(obs.watching.has(img), false, "not re-queued after failing either");
+});
+
+await check("THE FEARED ONE: the timeline, filters and Next/Previous still work when every crop 404s", async () => {
+  await loadDayWithEvents("2026-09-11");
+  const obs = FakeIntersectionObserver.instances.at(-1);
+  for (const tile of tilesOf()) {
+    const img = imgOf(tile);
+    obs.appear(img);
+    img.fire("error");
+  }
+  // Exactly the behaviour already proven above, now with every crop failed.
+  dom.filterVehicle.fire("click");
+  eq(marksOf().map((m) => m.className), ["mark person", "mark person"], "the car is off the bar, thumbnails or not");
+  dom.filterVehicle.fire("click");
+  eq(marksOf().length, 3, "and back on");
+  page.stopVideo();
+  const seen = [];
+  for (let i = 0; i < 4; i++) {
+    dom.nextEvent.fire("click");
+    await settle();
+    if (page.view.here === null) break;
+    if (seen.at(-1) !== page.view.here) seen.push(page.view.here);
+  }
+  eq(seen, ["e-car-1", "e-person-1", "e-person-2"], "Next still walks every event, in order, none skipped");
+  eq(dom.nextEvent.disabled, true, "and still knows when it has run out");
+});
+
 globalThis.fetch = realFetch;
 closeAll();
 server.close();

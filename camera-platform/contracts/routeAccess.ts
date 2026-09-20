@@ -68,6 +68,9 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/clip-library": { kind: "api", permission: "playback.view" },
   // What the detector thinks it saw. Not playback.view: see access.ts.
   "/events": { kind: "api", permission: "events.view" },
+  // A crop of the frame at an event's most confident moment — the same reach
+  // as /events, because a crop IS an event's content, not recorded footage.
+  "/event-crop": { kind: "api", permission: "events.view" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({

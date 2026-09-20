@@ -78,6 +78,7 @@ export function openEventsDb(file) {
         finished=MAX(finished, excluded.finished)
     `),
     all: db.prepare("SELECT * FROM events ORDER BY first_ms, id"),
+    byId: db.prepare("SELECT * FROM events WHERE id = ?"),
   };
 
   /**
@@ -133,6 +134,13 @@ export function openEventsDb(file) {
 
     all() {
       return stmts.all.all().map(rowToEvent);
+    },
+
+    /** One event by id, or null. For turning an id a client sent (a thumbnail
+     *  request, a "jump to this event") into the row, without scanning. */
+    getById(id) {
+      const row = stmts.byId.get(id);
+      return row ? rowToEvent(row) : null;
     },
 
     /**

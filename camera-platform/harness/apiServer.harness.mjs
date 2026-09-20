@@ -1009,6 +1009,98 @@ await check("a request /events cannot answer is refused, never answered with an 
   }
 });
 
+// ---------- /event-crop ----------
+// event-crop.mjs (the cutter) is another agent's file, written alongside this
+// one — see agent/api-server.mjs's tolerant dynamic import. What belongs to
+// THIS suite is the ROUTE's own contract, not the cutter's: an id checked
+// before it reaches anything, the cutter's refusal passed through unchanged,
+// and a success streamed with the right headers. A fake cutter, injected
+// through createApiServer exactly the way spawnFn above stands in for a real
+// ffmpeg, proves all three without needing a real crop, a real detector, or
+// the real event-crop.mjs to exist yet.
+const cropEventId = `cam-1:${ms(T.A)}:1`;
+const missingEventId = `cam-1:${ms(T.A)}:2`;
+const cropFile = join(stateDir, "fake-crop.jpg");
+const cropBytes = fill(909, 777);
+await writeFile(cropFile, cropBytes);
+
+let lastCropCall = null;
+const fakeEventCrops = () => ({
+  get: async (eventId) => {
+    lastCropCall = eventId;
+    if (eventId === cropEventId) return { ok: true, file: cropFile };
+    if (eventId === missingEventId) {
+      return { ok: false, status: 404, code: "no_such_event", message: "no crop for that event" };
+    }
+    // Reaching here means id validation let something through it should not
+    // have — exactly the failure these checks exist to catch (build rule 19).
+    throw new Error(`the cutter should never see ${JSON.stringify(eventId)} — validation must stop it first`);
+  },
+  close() {},
+});
+const cropServer = createApiServer({
+  stateDir, config, index, now, auth: installerAuth, createEventCrops: fakeEventCrops,
+});
+await new Promise((resolve) => cropServer.listen(0, "127.0.0.1", resolve));
+const cropBase = `http://127.0.0.1:${cropServer.address().port}`;
+
+await check("THE FEARED ONE: a hostile id is refused before the cutter is ever asked", async () => {
+  const bad = [
+    "", "cam 1:" + ms(T.A) + ":1", "cam/1:" + ms(T.A) + ":1", "../../etc/passwd",
+    cropEventId + ":extra", "cam-1:-1:1", "cam-1:01:1", "cam-1:" + ms(T.A) + ":0",
+    "cam-1:" + ms(T.A) + ":01", "cam-1:" + ms(T.A), "cam-1::1", ":" + ms(T.A) + ":1",
+    "cam-1:abc:1", "a".repeat(65) + ":" + ms(T.A) + ":1",
+  ];
+  for (const id of bad) {
+    lastCropCall = null;
+    const { res, json } = await fetchJson(`${cropBase}/event-crop?id=${encodeURIComponent(id)}`);
+    eq(res.status, 400, `id=${JSON.stringify(id)}`);
+    eq(json.ok, false, `id=${JSON.stringify(id)}`);
+    eq(json.code, "bad_event_id", `id=${JSON.stringify(id)}`);
+    eq(lastCropCall, null, `the cutter was never reached for id=${JSON.stringify(id)}`);
+  }
+  lastCropCall = null;
+  const missing = await fetchJson(`${cropBase}/event-crop`);
+  eq(missing.res.status, 400, "no id at all");
+  eq(missing.json.code, "bad_event_id", "no id at all");
+  eq(lastCropCall, null, "the cutter was never reached with no id");
+});
+
+await check("an unknown event id is refused with the cutter's own status and code", async () => {
+  const { res, json } = await fetchJson(`${cropBase}/event-crop?id=${missingEventId}`);
+  eq(res.status, 404, "status");
+  eq(json.ok, false, "ok");
+  eq(json.code, "no_such_event", "code");
+  eq(json.message, "no crop for that event", "message");
+});
+
+await check("THE ROUTE ITSELF: a found crop streams the exact bytes with the headers a crop needs", async () => {
+  const res = await fetch(`${cropBase}/event-crop?id=${cropEventId}`);
+  eq(res.status, 200, "status");
+  eq(res.headers.get("content-type"), "image/jpeg", "content type");
+  eq(res.headers.get("content-length"), String(cropBytes.length), "length from stat, not asserted by the cutter");
+  eq(res.headers.get("cache-control"), "private, max-age=86400", "a crop of a past moment never changes");
+  const body = Buffer.from(await res.arrayBuffer());
+  eq(body.equals(cropBytes), true, "the exact bytes on disk");
+  eq(lastCropCall, cropEventId, "the id reached the cutter unmodified");
+});
+
+cropServer.closeEventCrops();
+// createApiServer opens the SAME events.db this suite already wrote to, to
+// hand its handle to createEventCrops (real or, here, the fake) — a second
+// server means a second handle, and leaving it open held the WAL file locked
+// against the rm() below (EBUSY on events.db-wal, Windows).
+cropServer.closeEvents();
+cropServer.close();
+
+try {
+  await import("../agent/event-crop.mjs");
+  console.log("  SKIPPED: agent/event-crop.mjs exists — its own correctness is that file's harness to prove, not this one's; the route wiring above already covers this file's contract with it, via a fake cutter");
+} catch (e) {
+  if (e.code !== "ERR_MODULE_NOT_FOUND") throw e;
+  console.log("  SKIPPED: agent/event-crop.mjs does not exist yet — the route wiring above covers this file's contract with a fake cutter");
+}
+
 closeAll(); // the live registry and its watchdog end here — nothing outlives the harness
 liveServer.close();
 server.close();

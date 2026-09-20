@@ -95,7 +95,7 @@
   .eventTiles { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 6px; }
   .eventTiles button {
     flex: 0 0 auto;
-    min-width: 96px;
+    min-width: 120px;
     padding: 6px 10px;
     border: 1px solid #3a3f48;
     border-left-width: 4px;
@@ -110,6 +110,12 @@
   .eventTiles button.vehicle { border-left-color: #ffb74d; }
   .eventTiles button.plate { border-left-color: #ce93d8; }
   .eventTiles button.here { border-color: #fff; border-left-color: #fff; }
+  /* Reserved at a fixed ratio so a tile is the same height loading, loaded or
+     never requested at all: nothing under a finger about to tap it moves when
+     a crop lands (or a sibling's does). */
+  .eventTiles .thumbBox { display: block; width: 100%; aspect-ratio: 4 / 3; margin: 0 0 6px; border-radius: 4px; overflow: hidden; background: #1b1d22; }
+  .eventTiles .thumb { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .eventTiles .thumb[hidden] { display: none; }
   .eventTiles .when { display: block; font-weight: 600; }
   .eventTiles .what { display: block; color: #b6bcc4; font-size: 12px; }
   .eventNote { color: #9aa0a6; font-size: 12px; min-height: 1.2em; }
@@ -838,23 +844,94 @@ function drawMarks(markers) {
   }
 }
 
-/** A row of tiles, oldest first, one per shown event. */
+/**
+ * The one IntersectionObserver every tile's thumbnail shares, built lazily by
+ * cropObserver() the first time there is one to build. null until then, and
+ * forever after on a browser with no IntersectionObserver at all.
+ */
+let cropWatcher = null;
+
+/**
+ * The shared observer that decides WHEN a tile asks the recorder for its
+ * thumbnail (contracts/cropPlan.ts picks the rectangle; GET /event-crop cuts
+ * it; this only decides the moment to ask).
+ *
+ * 1. A day can hold hundreds of events. Asking for all of their crops at once
+ *    would spawn hundreds of ffmpeg jobs on the recorder for tiles nobody
+ *    scrolled to, so the request waits for the tile to actually be on screen.
+ * 2. No IntersectionObserver at all (an old or embedded browser): return null
+ *    and every tile falls back to words with no picture. Requesting nothing
+ *    is a usable tile; requesting everything is the failure this exists to
+ *    prevent.
+ * 3. Built once and reused: every tile from every day shares one observer.
+ */
+function cropObserver() {
+  if (typeof IntersectionObserver !== 'function') return null;
+  if (cropWatcher === null) {
+    cropWatcher = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        // Asked for once: stop watching before the request goes out, so a
+        // tile that scrolls back into view never asks twice.
+        cropWatcher.unobserve(entry.target);
+        entry.target.src = entry.target.cropSrc;
+      }
+    });
+  }
+  return cropWatcher;
+}
+
+/**
+ * A tile's thumbnail, wired to load once the tile is actually visible.
+ * 1. No observer available: leave the <img> exactly as drawTiles left it
+ *    (hidden, no src) and ask for nothing.
+ * 2. Otherwise remember this event's crop URL on the element and start
+ *    watching it; the observer above fills in `src` the moment it appears.
+ */
+function watchForCrop(img, eventId) {
+  const observer = cropObserver();
+  if (observer === null) return;
+  img.cropSrc = '/event-crop?id=' + encodeURIComponent(eventId);
+  observer.observe(img);
+}
+
+/** A row of tiles, oldest first, one per shown event, each with a lazy thumbnail. */
 function drawTiles(markers) {
   el.eventTiles.textContent = '';
+  // The tiles this redraw is about to discard must stop being watched, or a
+  // day with hundreds of events clicked through repeatedly (Next, a filter, a
+  // fresh day) piles up off-screen observations the observer never fires.
+  if (cropWatcher !== null) cropWatcher.disconnect();
   for (const m of markers) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = m.kind + (m.id === view.here ? ' here' : '');
+    const thumbBox = document.createElement('span');
+    thumbBox.className = 'thumbBox';
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.alt = '';
+    // Hidden until it loads: an <img> with no source shown eagerly is either
+    // blank or, worse, the browser's broken-image icon while nothing has even
+    // been asked for yet.
+    img.hidden = true;
+    img.addEventListener('load', () => { img.hidden = false; });
+    // A 404 (footage evicted), a network hiccup, anything: hide it and leave
+    // it hidden. No retry — a tile that failed once stays a words-only tile.
+    img.addEventListener('error', () => { img.hidden = true; });
+    thumbBox.appendChild(img);
     const when = document.createElement('span');
     when.className = 'when';
     when.textContent = localTime(m.atUtc);
     const what = document.createElement('span');
     what.className = 'what';
     what.textContent = eventWords(m);
+    b.appendChild(thumbBox);
     b.appendChild(when);
     b.appendChild(what);
     b.addEventListener('click', () => { goToEvent(m); });
     el.eventTiles.appendChild(b);
+    watchForCrop(img, m.id);
   }
 }
 

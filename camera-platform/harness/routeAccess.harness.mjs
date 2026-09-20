@@ -141,4 +141,16 @@ check("the detector's events: the store may read them, a wall display may not", 
   eq(d(installer, "GET", "/events/").status, 404, "not a prefix");
 });
 
+check("event crops: the same reach as /events, because a crop IS an event's content", () => {
+  same(ruleFor("GET", "/event-crop"), { kind: "api", permission: "events.view" }, "same permission as /events");
+  eq(d(store, "GET", "/event-crop").kind, "allow", "the person behind the counter, checking what fired");
+  eq(d(installer, "GET", "/event-crop").kind, "allow", "and the installer");
+  same(d(display, "GET", "/event-crop"), { kind: "refuse", status: 403, code: "forbidden",
+    message: "this account cannot do that (needs events.view)" },
+    "THE FEARED ONE: a TV in a back room does not get the picture of who walked past either");
+  eq(d(nobody, "GET", "/event-crop").status, 401, "signed out");
+  eq(d(installer, "POST", "/event-crop").status, 404, "GET only");
+  eq(d(installer, "GET", "/event-crop/").status, 404, "not a prefix — the id is a query param, not a path segment");
+});
+
 report("route access");
