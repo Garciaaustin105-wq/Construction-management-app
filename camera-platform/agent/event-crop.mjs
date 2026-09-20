@@ -141,6 +141,16 @@ async function cutFrame(spawnFn, { absPath, offsetSeconds, rect, tmpPath }) {
     '-frames:v', '1',
     '-vf', `crop=${rect.w}:${rect.h}:${rect.x}:${rect.y},scale=240:-2`,
     '-q:v', '5',
+    // State the format. ffmpeg otherwise guesses it from the output's
+    // extension, and we write to a temp name ending in ".tmp" so a half-cut
+    // thumbnail can never be served — which made it refuse outright:
+    // "Unable to choose an output format ... use a standard extension".
+    // Measured on the laptop NVR 2026-09-20: exit 234, every real crop.
+    // The unit checks passed throughout, because a fake ffmpeg does not care
+    // what the file is called. Never let correctness rest on a filename.
+    '-f', 'image2',
+    // One picture, not a numbered sequence.
+    '-update', '1',
     '-y', tmpPath,
   ];
   let child;

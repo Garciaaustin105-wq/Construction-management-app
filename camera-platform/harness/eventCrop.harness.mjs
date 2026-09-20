@@ -431,4 +431,36 @@ await check("THE FEARED ONE: no detector on this box answers 404, it does not th
   crops.close();
 });
 
+await check("THE FEARED ONE: ffmpeg is told the format, never left to guess from the filename", async () => {
+  // Measured on the laptop NVR 2026-09-20: every real crop refused with exit
+  // 234 -- "Unable to choose an output format ... use a standard extension".
+  // We write to a temp name ending in ".tmp" so a half-cut thumbnail can
+  // never be served, and ffmpeg picks its muxer from the extension. Thirteen
+  // checks passed throughout, because a FAKE ffmpeg does not care what the
+  // file is called. This one asserts the argument list itself.
+  const calls = [];
+  const cutter = createEventCrops({
+    stateDir: await makeStateDir(),
+    eventsDb: makeEventsDb([ev("e1", "cam1", "2026-09-20T09:05:00.000Z")]),
+    index: makeIndex({
+      segments: [sealedSegment("cam1", Date.parse("2026-09-20T09:00:00.000Z"), 600_000, "cam1/seg1.mp4", "/srv/camplat/disk0")],
+    }),
+    config: CONFIG,
+    driveAssignment: driveMap([["cam1", 0]]),
+    now: () => new Date("2026-09-20T12:00:00.000Z"),
+    spawnFn: makeSpawnFn({ calls }),
+  });
+  await cutter.get("e1");
+  const ff = calls.find((c) => c.cmd === "ffmpeg");
+  eq(Boolean(ff), true, `ffmpeg was run: ${JSON.stringify(calls.map((c) => c.cmd))}`);
+  const args = ff.args;
+  const fAt = args.indexOf("-f");
+  eq(fAt >= 0, true, `an explicit -f is passed: ${JSON.stringify(args)}`);
+  eq(args[fAt + 1], "image2", "as a single image");
+  // And the thing that actually bit: the output must not be the only clue.
+  const out = args[args.length - 1];
+  eq(out.endsWith(".jpg"), false, "the output is still a temp name, as intended");
+  eq(fAt < args.length - 1, true, "so the format must come from -f, and it does");
+});
+
 report("event crop");
