@@ -702,7 +702,7 @@ label. With Austin's go-ahead the anchor was force-replaced
 | | |
 |---|---|
 | Trusted now | `bench-2026-09-20` only |
-| Private key | `C:\Users\garci_9e2kg3l\Temp\camplat-bench\bench-2026-09-20.key` — **still a temp dir; third key to live there** |
+| Private key | `C:\Users\garci_9e2kg3l\OneDrive\Documents\camplat-keys\bench-2026-09-20.key` — moved out of Temp the same night at Austin's direction, and verified against the box's anchor after the move. **Documents is OneDrive-redirected, so this key syncs to the cloud:** acceptable for a throwaway bench key, NOT for one that ever signs releases for customer sites. |
 | Signing on Windows | `sign-release.mjs` must run from **PowerShell**: Git Bash's GNU tar reads `C:\...` as a remote host and fails with "Cannot connect to C: resolve failed" |
 
 **Verified against the installed code, on the box:** eventQuery 4, eventsDb 5,
