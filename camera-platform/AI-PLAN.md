@@ -133,6 +133,18 @@ Each stage is contract, then harness, then code, then UI.
   and "previous event" buttons; a strip of crops to click through.
 - **Exit:** finding a known person walk-by in 24 h of footage takes under
   30 seconds without scrubbing.
+- **Status (2026-09-20):** built, not yet installed on the laptop NVR. The
+  marks, the People/Vehicles filters, Next/Previous event and a row of tiles
+  are on the Review page; `GET /events` serves them behind a new `events.view`
+  permission that the store has and a wall display does NOT (access.ts says
+  why). Three answers are kept apart on purpose: no detector on this box, a
+  day the detector watched and saw nothing, and events hidden by a filter —
+  the counts on the filter buttons always describe the day, never the filter.
+  **The strip is tiles, not crops:** D1 stores `bestBox` and `bestUtc` but no
+  image, so a crop would have to be cut from the recording on demand (one
+  ffmpeg seek per event, cached, refused when the segment has been evicted).
+  That is the remaining piece of D2, and the exit bar is unmeasured until the
+  page is in front of someone on the real box.
 
 ### D3. After-hours alerts
 - Rules from D0, edited by the installer on a new page.

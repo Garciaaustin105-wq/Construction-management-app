@@ -60,7 +60,16 @@ export type Permission =
   /** Create and remove accounts, issue display tokens. */
   | "account.manage"
   /** Read the audit log. */
-  | "audit.view";
+  | "audit.view"
+  /**
+   * See what the detector found: markers on the Review timeline, the event
+   * list. Separate from playback.view because it is a different claim — the
+   * timeline shows what WAS recorded, an event says a machine thinks it saw a
+   * person. A wall in a back room gets it in neither sense: it is unattended,
+   * and a list of every time a person walked past, readable by whoever is alone
+   * with that TV, is not the same as the picture already on screen.
+   */
+  | "events.view";
 
 /**
  * Every permission, in one place, so a new one cannot be forgotten below.
@@ -78,6 +87,7 @@ export const ALL_PERMISSIONS: readonly Permission[] = Object.freeze([
   "system.manage",
   "account.manage",
   "audit.view",
+  "events.view",
 ]);
 
 const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([
@@ -86,6 +96,7 @@ const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([
   "export.create",
   "segment.hold",
   "layout.edit",
+  "events.view",
 ]);
 
 /**

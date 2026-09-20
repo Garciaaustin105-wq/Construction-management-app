@@ -38,12 +38,12 @@ const DESTRUCTIVE = ["camera.manage", "storage.manage", "system.manage", "accoun
 
 check("the installer can do everything there is", () => {
   for (const p of ALL_PERMISSIONS) eq(can(installer, p), true, p);
-  eq(ALL_PERMISSIONS.length, 10, "ten permissions; a new one needs a decision below");
+  eq(ALL_PERMISSIONS.length, 11, "eleven permissions; a new one needs a decision below");
 });
 
 check("the store has exactly its daily job: watch, review, export, hold, layout", () => {
   same(ALL_PERMISSIONS.filter((p) => can(store, p)),
-    ["live.view", "playback.view", "export.create", "segment.hold", "layout.edit"], "store permissions");
+    ["live.view", "playback.view", "export.create", "segment.hold", "layout.edit", "events.view"], "store permissions");
 });
 
 check("the store cannot reach anything that destroys footage or reconfigures the box", () => {
@@ -59,6 +59,9 @@ check("a wall display can watch and look back, and take nothing away", () => {
   same(ALL_PERMISSIONS.filter((p) => can(display, p)), ["live.view", "playback.view"], "display permissions");
   eq(can(display, "export.create"), false, "THE FEARED ONE: a token left on a TV cannot walk out with the footage");
   eq(can(display, "segment.hold"), false, "nor decide what retention may not evict");
+  // The AI decision (access.ts): a wall is unattended, and a list of every
+  // time a person walked past is not the picture already on the screen.
+  eq(can(display, "events.view"), false, "THE FEARED ONE: an unattended TV does not list who walked past");
 });
 
 check("nobody signed in can do nothing at all", () => {
@@ -100,7 +103,7 @@ check("a caller cannot edit the policy through an array it was handed", () => {
     threw = true;
   }
   eq(threw, true, "ALL_PERMISSIONS is frozen");
-  eq(ALL_PERMISSIONS.length, 10, "and still ten long");
+  eq(ALL_PERMISSIONS.length, 11, "and still eleven long");
 });
 
 check("there is no way in until an installer exists, and unknown counts as none", () => {

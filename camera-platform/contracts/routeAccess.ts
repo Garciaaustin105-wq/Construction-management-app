@@ -66,6 +66,8 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/recording-settings": { kind: "api", permission: "storage.manage" },
   // The AI answer key: what someone watching the footage says is in it.
   "/clip-library": { kind: "api", permission: "playback.view" },
+  // What the detector thinks it saw. Not playback.view: see access.ts.
+  "/events": { kind: "api", permission: "events.view" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({

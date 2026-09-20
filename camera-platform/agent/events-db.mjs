@@ -80,6 +80,36 @@ export function openEventsDb(file) {
     all: db.prepare("SELECT * FROM events ORDER BY first_ms, id"),
   };
 
+  /**
+   * One prepared statement per set of kinds, made once and kept.
+   *
+   * The kind filter MUST be inside the query. Filtering the rows afterwards
+   * means a day with six hundred cars and one person answers "no person":
+   * the limit is spent on rows that are then thrown away, and the one sighting
+   * that mattered never comes back. There are only eight possible sets, so
+   * they cost nothing to keep.
+   */
+  const inRangeStmts = new Map();
+  function inRangeStmt(kinds) {
+    const key = kinds === null ? "*" : kinds.join(",");
+    let stmt = inRangeStmts.get(key);
+    if (stmt === undefined) {
+      // Overlap, not containment: someone who walked in at 23:59 and left at
+      // 00:01 belongs to both days. Ordered by time so the same question gives
+      // the same answer twice, and asked for one row more than the caller
+      // wants, so "that is all of them" can be told from "there are more".
+      const filter = kinds === null ? "" : ` AND kind IN (${kinds.map(() => "?").join(", ")})`;
+      stmt = db.prepare(`
+        SELECT * FROM events
+        WHERE camera_id = ? AND last_ms >= ? AND first_ms <= ?${filter}
+        ORDER BY first_ms, id
+        LIMIT ?
+      `);
+      inRangeStmts.set(key, stmt);
+    }
+    return stmt;
+  }
+
   return {
     upsert(updateObj, finished) {
       const event = updateObj.event;
@@ -103,6 +133,23 @@ export function openEventsDb(file) {
 
     all() {
       return stmts.all.all().map(rowToEvent);
+    },
+
+    /**
+     * The events of one camera that touch a window, oldest first.
+     *
+     * `kinds` is a list to keep (the caller has already checked them); omit it
+     * for all of them. Returns `{ events, truncated }`: `truncated` is true
+     * when the limit cut the answer short, so the page can say so instead of
+     * showing a quiet half of a busy day as if it were the whole of it.
+     */
+    inRange(cameraId, startUtc, endUtc, kinds, limit) {
+      const wanted = Array.isArray(kinds) ? [...new Set(kinds)].sort() : null;
+      if (wanted !== null && wanted.length === 0) return { events: [], truncated: false };
+      const rows = inRangeStmt(wanted).all(
+        cameraId, fromIso(startUtc), fromIso(endUtc), ...(wanted ?? []), limit + 1,
+      );
+      return { events: rows.slice(0, limit).map(rowToEvent), truncated: rows.length > limit };
     },
 
     close() {

@@ -66,6 +66,53 @@
   .legend .recorded { background: #2e7d32; }
   .legend .gap { background: #c62828; }
   .legend .future { box-sizing: border-box; border: 1px dashed #6b7078; }
+  /* A mark sits ON the coverage bar, tall enough to see at a glance on a
+     24-hour strip and wide enough to hit with a finger. */
+  .mark { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1px; cursor: pointer; }
+  .mark.person { background: #64b5f6; }
+  .mark.vehicle { background: #ffb74d; }
+  .mark.plate { background: #ce93d8; }
+  .mark.here { width: 5px; margin-left: -2px; background: #fff; }
+  .events { margin: 0 0 12px; }
+  .eventBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
+  .eventBar button {
+    padding: 6px 12px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .eventBar button[disabled] { opacity: 0.45; cursor: default; }
+  /* A filter that is OFF is drawn as off, not merely un-highlighted: an
+     operator must never mistake "vehicles hidden" for "no vehicles". */
+  .eventBar .filter[aria-pressed="false"] { background: #1b1d22; color: #868c94; border-style: dashed; }
+  .eventBar .filter i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border-radius: 2px; }
+  .eventBar .filter.person i { background: #64b5f6; }
+  .eventBar .filter.vehicle i { background: #ffb74d; }
+  .eventBar .filter.plate i { background: #ce93d8; }
+  .eventTiles { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 6px; }
+  .eventTiles button {
+    flex: 0 0 auto;
+    min-width: 96px;
+    padding: 6px 10px;
+    border: 1px solid #3a3f48;
+    border-left-width: 4px;
+    border-radius: 5px;
+    background: #22242a;
+    color: #e8eaed;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .eventTiles button.person { border-left-color: #64b5f6; }
+  .eventTiles button.vehicle { border-left-color: #ffb74d; }
+  .eventTiles button.plate { border-left-color: #ce93d8; }
+  .eventTiles button.here { border-color: #fff; border-left-color: #fff; }
+  .eventTiles .when { display: block; font-weight: 600; }
+  .eventTiles .what { display: block; color: #b6bcc4; font-size: 12px; }
+  .eventNote { color: #9aa0a6; font-size: 12px; min-height: 1.2em; }
   video { display: block; width: 100%; max-width: 960px; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; }
   .status { margin: 8px 0 0; min-height: 1.4em; color: #9aa0a6; }
   .status.problem { color: #ffb4b4; }
@@ -296,6 +343,21 @@
   <span><i class="future"></i>Not yet happened</span>
 </div>
 
+<!-- What the detector found on this day. Hidden outright when this recorder
+     has no detector, or when the account may not see events: an empty row
+     here would read as "nothing happened", which is a different claim. -->
+<div class="events" id="events" hidden>
+  <div class="eventBar">
+    <button id="prevEvent" type="button">Previous event</button>
+    <button id="nextEvent" type="button">Next event</button>
+    <button id="filterPerson" class="filter person" type="button" aria-pressed="true"><i></i>People</button>
+    <button id="filterVehicle" class="filter vehicle" type="button" aria-pressed="true"><i></i>Vehicles</button>
+    <button id="filterPlate" class="filter plate" type="button" aria-pressed="true" hidden><i></i>Plates</button>
+  </div>
+  <div class="eventTiles" id="eventTiles"></div>
+  <div class="eventNote" id="eventNote"></div>
+</div>
+
 <video id="video" controls playsinline></video>
 <div class="controls">
   <button id="back10" type="button">-10s</button>
@@ -374,7 +436,8 @@
 
 <script type="module">
 import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer,
-  monthCalendar, timeOptions, recordedDays, rangeAround, friendlyProblem, clipProgress } from '/ui/review-client.js';
+  monthCalendar, timeOptions, recordedDays, rangeAround, friendlyProblem, clipProgress,
+  eventMarkers, stepToEvent, seekInstantFor, markerSummary } from '/ui/review-client.js';
 import { PLAYBACK_RATES, nextRate, rateLabel } from '/ui/playback.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 
@@ -427,6 +490,14 @@ const el = {
   vehiclesPlus: document.getElementById('vehiclesPlus'),
   clipPeople: document.getElementById('clipPeople'),
   clipVehicles: document.getElementById('clipVehicles'),
+  events: document.getElementById('events'),
+  prevEvent: document.getElementById('prevEvent'),
+  nextEvent: document.getElementById('nextEvent'),
+  filterPerson: document.getElementById('filterPerson'),
+  filterVehicle: document.getElementById('filterVehicle'),
+  filterPlate: document.getElementById('filterPlate'),
+  eventTiles: document.getElementById('eventTiles'),
+  eventNote: document.getElementById('eventNote'),
 };
 
 // What is on screen now. `requested` is the /timeline body's requested range
@@ -439,9 +510,16 @@ const el = {
 // `sheetWindow` is the range a length chip chose, or null when the Exact
 // times dropdowns are the answer. `recordedDays` is the days of the month in
 // view that have footage, and monthSeq drops a slow answer for a month left.
+// `events` is the day's detections as the recorder gave them (every kind:
+// the filter is applied here, so the counts on the buttons stay honest while
+// one is switched off). `kinds` is which are shown, `here` is the id of the
+// event the buttons last jumped to, and `eventSeq` drops a slow /events
+// answer for a day already left, exactly as loadSeq does for the timeline.
 const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq: 0,
   calYear: 0, calMonth: 0, recordedDays: [], monthSeq: 0,
-  sheetMode: null, sheetLength: 5, sheetWindow: null };
+  sheetMode: null, sheetLength: 5, sheetWindow: null,
+  events: [], markers: [], kinds: ['person', 'vehicle', 'plate'], here: null,
+  eventSeq: 0, eventsTruncated: false };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
@@ -624,6 +702,9 @@ async function loadDay() {
   movePlayhead(null);
   fillTimeDropdowns(body.runs);
   drawDayButton();
+  // After the coverage bar: drawStrip clears the strip, marks included, so
+  // the marks must be drawn onto a bar that is already there.
+  loadEvents(win);
 }
 
 /**
@@ -632,8 +713,217 @@ async function loadDay() {
  * hide the playhead (el.playhead.hidden = true), and remove every child of
  * el.hours.
  */
+/**
+ * Ask the recorder what the detector found on the day now drawn, and draw it.
+ *
+ * Every kind is fetched, whatever the filter is: the counts on the filter
+ * buttons then describe the day rather than the filter, and switching one on
+ * is instant instead of another round trip.
+ *
+ * Three answers are NOT the same and are never shown the same way:
+ * - 403: this account may not see events (a wall display). The row is hidden.
+ * - available false: no detector on this recorder. The row is hidden.
+ * - available true with an empty list: nothing walked past. The row says so.
+ */
+async function loadEvents(win) {
+  const seq = ++view.eventSeq;
+  // Let go of the last day BEFORE asking about this one. Otherwise yesterday's
+  // marks and counts sit under today's bar for as long as the answer takes,
+  // which is the same lie as a slow timeline drawn over the day you moved to.
+  resetEvents();
+  const q = new URLSearchParams({ camera: el.camera.value, start: win.startUtc, end: win.endUtc });
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/events?' + q.toString());
+    body = await res.json();
+  } catch (e) {
+    reached = false;
+  }
+  if (seq !== view.eventSeq) return;
+  view.events = [];
+  view.eventsTruncated = false;
+  view.here = null;
+  if (!reached || !body || typeof body !== 'object' || body.ok === false || body.available === false) {
+    // Nothing here is a page error: the timeline itself is fine, and the
+    // recorder is still answering. The row simply has nothing to say.
+    drawEvents();
+    el.events.hidden = true;
+    return;
+  }
+  view.events = Array.isArray(body.events) ? body.events : [];
+  view.eventsTruncated = body.truncated === true;
+  el.events.hidden = false;
+  drawEvents();
+}
+
+/** Forget the day's events and take the row off the page. */
+function resetEvents() {
+  view.events = [];
+  view.markers = [];
+  view.here = null;
+  view.eventsTruncated = false;
+  el.events.hidden = true;
+  el.eventTiles.textContent = '';
+  el.eventNote.textContent = '';
+  for (const c of Array.from(el.strip.childNodes)) {
+    if (c !== el.playhead && c.className && String(c.className).startsWith('mark')) el.strip.removeChild(c);
+  }
+}
+
+/**
+ * Draw the marks, the tiles, the filter buttons and the note from
+ * view.events. Called after every load and after every filter change.
+ */
+function drawEvents() {
+  const all = view.requested === null
+    ? { markers: [], dropped: { outsideWindow: 0, unreadable: 0, filteredOut: 0 } }
+    : eventMarkers(view.events, view.requested.startUtc, view.requested.endUtc, null);
+  const shown = view.requested === null
+    ? { markers: [], dropped: { outsideWindow: 0, unreadable: 0, filteredOut: 0 } }
+    : eventMarkers(view.events, view.requested.startUtc, view.requested.endUtc, view.kinds);
+  view.markers = shown.markers;
+  const counts = markerSummary(all.markers);
+
+  for (const [kind, button] of [['person', el.filterPerson], ['vehicle', el.filterVehicle], ['plate', el.filterPlate]]) {
+    const on = view.kinds.includes(kind);
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = kind === 'person' ? 'People' : kind === 'vehicle' ? 'Vehicles' : 'Plates';
+    const i = document.createElement('i');
+    button.textContent = '';
+    button.appendChild(i);
+    button.appendChild(document.createTextNode(label + ' (' + counts[kind] + ')'));
+    // Plates only when this recorder reads them: an always-present "Plates (0)"
+    // says a reader looked and found none, which is not true here.
+    if (kind === 'plate') button.hidden = counts.plate === 0;
+  }
+
+  drawMarks(shown.markers);
+  drawTiles(shown.markers);
+
+  const bits = [];
+  if (counts.total === 0) {
+    bits.push('Nothing detected on this day.');
+  } else {
+    bits.push(shown.markers.length + ' of ' + counts.total + ' shown.');
+  }
+  // Build rule 16: say what could not be used, and why.
+  if (view.eventsTruncated) bits.push('This is as many as the recorder will send at once; narrow the day to see the rest.');
+  if (all.dropped.unreadable > 0) bits.push(all.dropped.unreadable + ' could not be read and are not shown.');
+  el.eventNote.textContent = bits.join(' ');
+  updateStepButtons();
+}
+
+/**
+ * One <div class="mark KIND"> per marker, inserted before the playhead so the
+ * playhead stays last. The title is plain words: an operator hovering a mark
+ * should learn what and when without clicking.
+ */
+function drawMarks(markers) {
+  for (const c of Array.from(el.strip.childNodes)) {
+    if (c !== el.playhead && c.className && String(c.className).startsWith('mark')) el.strip.removeChild(c);
+  }
+  for (const m of markers) {
+    const div = document.createElement('div');
+    div.className = 'mark ' + m.kind + (m.id === view.here ? ' here' : '');
+    div.style.left = (m.fraction * 100) + '%';
+    div.title = eventWords(m);
+    div.addEventListener('click', (event) => {
+      // The strip itself seeks to wherever it was clicked; a mark is more
+      // specific than that, so it must not do both.
+      event.stopPropagation();
+      goToEvent(m);
+    });
+    el.strip.insertBefore(div, el.playhead);
+  }
+}
+
+/** A row of tiles, oldest first, one per shown event. */
+function drawTiles(markers) {
+  el.eventTiles.textContent = '';
+  for (const m of markers) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = m.kind + (m.id === view.here ? ' here' : '');
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = localTime(m.atUtc);
+    const what = document.createElement('span');
+    what.className = 'what';
+    what.textContent = eventWords(m);
+    b.appendChild(when);
+    b.appendChild(what);
+    b.addEventListener('click', () => { goToEvent(m); });
+    el.eventTiles.appendChild(b);
+  }
+}
+
+/**
+ * Plain words for one event: what it was, how long it lasted, and its plate
+ * when there is one. No confidence score — a number an operator cannot act on
+ * invites them to argue with the machine instead of watching the footage.
+ */
+function eventWords(m) {
+  const what = m.kind === 'person' ? 'Person' : m.kind === 'vehicle' ? 'Vehicle' : 'Plate';
+  const seconds = Math.round((Date.parse(m.untilUtc) - Date.parse(m.atUtc)) / 1000);
+  const how = seconds >= 60
+    ? Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' s'
+    : Math.max(seconds, 1) + ' s';
+  return what + (m.plate ? ' ' + m.plate : '') + ', ' + localTime(m.atUtc) + ', ' + how;
+}
+
+/** The instant on screen: where the video is, or the start of the day. */
+function currentMomentUtc() {
+  if (view.playing !== null) {
+    return new Date(Date.parse(view.playing.segmentStartUtc) + el.video.currentTime * 1000).toISOString();
+  }
+  return view.requested === null ? null : view.requested.startUtc;
+}
+
+/** Play from a little before `marker`, and mark it as the one we are on. */
+function goToEvent(marker) {
+  if (view.requested === null) return;
+  const at = seekInstantFor(marker, view.requested.startUtc, view.requested.endUtc);
+  if (at === null) return;
+  view.here = marker.id;
+  drawMarks(view.markers);
+  drawTiles(view.markers);
+  updateStepButtons();
+  setStatus(eventWords(marker), '');
+  playAt(at);
+}
+
+/**
+ * Grey the step buttons when there is nothing that way, so a button that does
+ * nothing looks like a button that cannot do anything.
+ */
+function updateStepButtons() {
+  const from = currentMomentUtc();
+  el.prevEvent.disabled = from === null || stepToEvent(view.markers, from, 'previous', view.here) === null;
+  el.nextEvent.disabled = from === null || stepToEvent(view.markers, from, 'next', view.here) === null;
+}
+
+/** Jump to the next or previous shown event, or say there is not one. */
+function stepEvent(direction) {
+  const from = currentMomentUtc();
+  if (from === null) return;
+  const next = stepToEvent(view.markers, from, direction, view.here);
+  if (next === null) {
+    setStatus(direction === 'next' ? 'No later event on this day' : 'No earlier event on this day', '');
+    return;
+  }
+  goToEvent(next);
+}
+
 function clearStrip() {
   view.requested = null;
+  view.events = [];
+  view.markers = [];
+  view.here = null;
+  view.eventSeq++;
+  el.events.hidden = true;
+  el.eventTiles.textContent = '';
+  el.eventNote.textContent = '';
   for (const c of Array.from(el.strip.childNodes)) {
     if (c !== el.playhead) el.strip.removeChild(c);
   }
@@ -955,6 +1245,19 @@ function wireEvents() {
     }
     playAt(r.utc);
   });
+  el.prevEvent.addEventListener('click', () => { stepEvent('previous'); });
+  el.nextEvent.addEventListener('click', () => { stepEvent('next'); });
+  for (const [kind, button] of [['person', el.filterPerson], ['vehicle', el.filterVehicle], ['plate', el.filterPlate]]) {
+    button.addEventListener('click', () => {
+      view.kinds = view.kinds.includes(kind)
+        ? view.kinds.filter((k) => k !== kind)
+        : [...view.kinds, kind];
+      // The event we were on may have just been hidden; forget it rather than
+      // stepping from something no longer on the bar.
+      if (!view.kinds.includes(kind)) view.here = null;
+      drawEvents();
+    });
+  }
   el.video.addEventListener('ended', () => {
     if (view.playing !== null) {
       playAt(view.playing.segmentEndUtc);
@@ -966,6 +1269,18 @@ function wireEvents() {
       movePlayhead(iso);
       const now = new Date(iso);
       el.clock.textContent = two(now.getHours()) + ':' + two(now.getMinutes()) + ':' + two(now.getSeconds());
+      // Once playback has run past the event we jumped to, we are no longer
+      // "on" it: stepping goes back to the clock, so watching through three
+      // events and pressing Next does not walk back to the second one.
+      if (view.here !== null) {
+        const m = view.markers.find((x) => x.id === view.here);
+        if (m === undefined || Date.parse(iso) > Date.parse(m.untilUtc)) {
+          view.here = null;
+          drawMarks(view.markers);
+          drawTiles(view.markers);
+        }
+      }
+      updateStepButtons();
     }
   });
   el.video.addEventListener('error', () => {

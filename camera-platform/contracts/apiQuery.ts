@@ -42,7 +42,9 @@ export type ApiRefusalCode =
   | "window_in_future"
   | "bad_buckets"
   | "bad_camera_id"
-  | "bad_segment_id";
+  | "bad_segment_id"
+  | "bad_kind"
+  | "bad_limit";
 
 export interface ApiRefusal {
   ok: false;

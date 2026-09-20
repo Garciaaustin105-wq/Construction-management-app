@@ -129,4 +129,16 @@ check("names are lowercased, URL-safe and bounded", () => {
   }
 });
 
+check("the detector's events: the store may read them, a wall display may not", () => {
+  same(ruleFor("GET", "/events"), { kind: "api", permission: "events.view" }, "its own permission, not playback.view");
+  eq(d(store, "GET", "/events").kind, "allow", "the person behind the counter, looking for this morning");
+  eq(d(installer, "GET", "/events").kind, "allow", "and the installer");
+  same(d(display, "GET", "/events"), { kind: "refuse", status: 403, code: "forbidden",
+    message: "this account cannot do that (needs events.view)" },
+    "THE FEARED ONE: a TV in a back room does not hand out a list of everyone who walked past");
+  eq(d(nobody, "GET", "/events").status, 401, "signed out");
+  eq(d(installer, "POST", "/events").status, 404, "GET only");
+  eq(d(installer, "GET", "/events/").status, 404, "not a prefix");
+});
+
 report("route access");

@@ -944,9 +944,75 @@ await check("the server outlives a broken export", async () => {
   eq(json.siteId, "carwash-01", "still answering");
 });
 
+// ---------- /events (D2) ----------
+// These two run in this order on purpose: the first asks a recorder that has
+// never had a detector on it, before the fixture below creates one.
+await check("THE FEARED ONE: no detector says so, instead of answering 'nothing happened'", async () => {
+  const q = new URLSearchParams({ camera: "cam-1", start: "2026-09-11T09:00:00Z", end: "2026-09-11T12:00:00Z" });
+  const { res, json } = await fetchJson(`${base}/events?${q}`);
+  eq(res.status, 200, "status");
+  eq(json.available, false, "nothing was ever watching");
+  eq(json.events, [], "and so there is nothing to show");
+});
+
+await check("events in a window: the ones that touch it, filtered, with the window echoed back", async () => {
+  const { openEventsDb } = await import("../agent/events-db.mjs");
+  const db = openEventsDb(join(stateDir, "events.db"));
+  const mk = (id, kind, at, len = 4000, cameraId = "cam-1") => ({
+    id, cameraId, kind,
+    firstUtc: new Date(ms(at)).toISOString(),
+    lastUtc: new Date(ms(at) + len).toISOString(),
+    count: 8, bestConfidence: 0.77,
+    bestBox: { x: 0.2, y: 0.3, w: 0.1, h: 0.4 },
+    bestUtc: new Date(ms(at)).toISOString(),
+  });
+  for (const e of [
+    mk("p1", "person", "2026-09-11T10:00:30Z"),
+    mk("v1", "vehicle", "2026-09-11T10:04:00Z"),
+    mk("p2", "person", "2026-09-11T11:30:00Z"),
+    mk("old", "person", "2026-09-10T10:00:00Z"),
+    mk("other", "person", "2026-09-11T10:00:30Z", 4000, "cam-2"),
+  ]) db.upsert({ id: e.id, event: e }, true);
+  db.close();
+
+  const ask = (extra = {}) => new URLSearchParams({
+    camera: "cam-1", start: "2026-09-11T10:00:00Z", end: "2026-09-11T12:00:00Z", ...extra,
+  });
+  const { res, json } = await fetchJson(`${base}/events?${ask()}`);
+  eq(res.status, 200, "status");
+  eq(json.available, true, "the detector has run here");
+  eq(json.events.map((e) => e.id), ["p1", "v1", "p2"], "this camera, this window, in time order");
+  eq(json.truncated, false, "all of them");
+  eq(json.effective.startUtc, "2026-09-11T10:00:00.000Z", "the window it actually used");
+  eq(json.events[0].bestBox, { x: 0.2, y: 0.3, w: 0.1, h: 0.4 }, "the box survives the trip");
+
+  const people = await fetchJson(`${base}/events?${ask({ kinds: "person" })}`);
+  eq(people.json.events.map((e) => e.id), ["p1", "p2"], "filtered");
+  const one = await fetchJson(`${base}/events?${ask({ limit: "1" })}`);
+  eq(one.json.events.length, 1, "limited");
+  eq(one.json.truncated, true, "and it admits there are more");
+});
+
+await check("a request /events cannot answer is refused, never answered with an empty list", async () => {
+  const bad = [
+    ["camera=../etc&start=2026-09-11T10:00:00Z&end=2026-09-11T12:00:00Z", 400, "bad_camera_id"],
+    ["camera=cam-1&start=2026-09-11T12:00:00Z&end=2026-09-11T10:00:00Z", 400, "inverted_window"],
+    ["camera=cam-1&start=2026-09-11T10:00:00Z&end=2026-09-11T12:00:00Z&kinds=dog", 400, "bad_kind"],
+    ["camera=cam-1&start=2026-09-11T10:00:00Z&end=2026-09-11T12:00:00Z&limit=0", 400, "bad_limit"],
+    ["camera=cam-1&start=nonsense&end=2026-09-11T12:00:00Z", 400, "bad_instant"],
+  ];
+  for (const [q, status, code] of bad) {
+    const { res, json } = await fetchJson(`${base}/events?${q}`);
+    eq(res.status, status, q);
+    eq(json.code, code, q);
+    eq(json.ok, false, q);
+  }
+});
+
 closeAll(); // the live registry and its watchdog end here — nothing outlives the harness
 liveServer.close();
 server.close();
+server.closeEvents();
 index.close();
 await rm(stateDir, { recursive: true, force: true });
 report("api server");

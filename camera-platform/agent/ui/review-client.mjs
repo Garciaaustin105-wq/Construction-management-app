@@ -933,3 +933,267 @@ export function recordedDays(runs, tz) {
     return { error: "error" };
   }
 }
+
+/**
+ * Milliseconds of lead-time before an event to start playback.
+ * Gives the watcher a few seconds to see the subject arrive.
+ */
+export const MARKER_LEAD_MS = 3000;
+
+/**
+ * Events from the /events route, projected onto a day's timeline for the
+ * review strip. A marker is an event drawn once at its start time, so it
+ * reads where the thing was, to the second.
+ *
+ * events: an array of { id, cameraId, kind, firstUtc, lastUtc, count,
+ *   bestConfidence, bestBox, bestUtc, plate? }, as the route returns it.
+ * startUtc / endUtc: the day's window as ISO strings. kinds: null / undefined
+ *   means every kind; an array keeps only those kinds. Anything unusable — an
+ *   unreadable or missing time, an end before its start, a kind that is not
+ *   person/vehicle/plate, a non-object — is counted in dropped.unreadable and
+ *   never drawn. An event wholly outside the window is dropped.outsideWindow;
+ *   one hidden by the filter is dropped.filteredOut.
+ *
+ * Returns { markers, dropped, badWindow }:
+ * - markers: array of { id, cameraId, kind, atUtc, untilUtc, fraction,
+ *   endFraction, clampedStart, clampedEnd, count, bestConfidence, bestUtc },
+ *   plus plate only when the event had one.
+ *   atUtc/untilUtc are the event's real times, unchanged. fraction/endFraction
+ *   are 0..1 positions in the window, clamped when the event runs past either
+ *   edge, with clampedStart/clampedEnd saying so. Sorted by time, ties broken
+ *   by id.
+ * - dropped: { outsideWindow, unreadable, filteredOut } — counts.
+ * - badWindow: true when the window is not two readable instants with end
+ *   after start; no markers are returned and all events go into dropped.
+ */
+export function eventMarkers(events, startUtc, endUtc, kinds) {
+  const nothing = (why) => ({
+    markers: [],
+    dropped: { outsideWindow: 0, unreadable: 0, filteredOut: 0 },
+    badWindow: why === "window",
+    badFilter: why === "filter",
+  });
+  // Validate window
+  if (typeof startUtc !== "string" || Number.isNaN(Date.parse(startUtc))) return nothing("window");
+  if (typeof endUtc !== "string" || Number.isNaN(Date.parse(endUtc))) return nothing("window");
+  const startMs = Date.parse(startUtc);
+  const endMs = Date.parse(endUtc);
+  if (endMs <= startMs) return nothing("window");
+  // A filter that is not a list is a caller's bug, and both ways of guessing
+  // are wrong: showing everything ignores what was asked for; showing nothing
+  // says "no person here" about footage nobody filtered.
+  if (kinds !== null && kinds !== undefined && !Array.isArray(kinds)) return nothing("filter");
+
+  // Process events
+  const markers = [];
+  let outsideWindow = 0;
+  let unreadable = 0;
+  let filteredOut = 0;
+  const windowDuration = endMs - startMs;
+
+  if (!Array.isArray(events)) return nothing("none");
+
+  for (const event of events) {
+    // Validate event is a non-array object
+    if (!isNonArrayObject(event)) {
+      unreadable += 1;
+      continue;
+    }
+
+    // Without an id there is nothing for a click, a crop or a "next" to point
+    // at: the strip would key on undefined and stepping would sit still.
+    if (typeof event.id !== "string" || event.id === "") {
+      unreadable += 1;
+      continue;
+    }
+
+    // Parse and validate times
+    const firstUtcStr = event.firstUtc;
+    const lastUtcStr = event.lastUtc;
+
+    if (typeof firstUtcStr !== "string" || Number.isNaN(Date.parse(firstUtcStr))) {
+      unreadable += 1;
+      continue;
+    }
+    if (typeof lastUtcStr !== "string" || Number.isNaN(Date.parse(lastUtcStr))) {
+      unreadable += 1;
+      continue;
+    }
+
+    const firstUtcMs = Date.parse(firstUtcStr);
+    const lastUtcMs = Date.parse(lastUtcStr);
+
+    // Check that end is not before start
+    if (lastUtcMs < firstUtcMs) {
+      unreadable += 1;
+      continue;
+    }
+
+    // Validate kind
+    const kind = event.kind;
+    if (kind !== "person" && kind !== "vehicle" && kind !== "plate") {
+      unreadable += 1;
+      continue;
+    }
+
+    // Check if wholly outside window
+    if (lastUtcMs < startMs || firstUtcMs > endMs) {
+      outsideWindow += 1;
+      continue;
+    }
+
+    // Check if filtered out
+    if (kinds !== null && kinds !== undefined && !kinds.includes(kind)) {
+      filteredOut += 1;
+      continue;
+    }
+
+    // Clamp to window and compute fractions
+    let clampedStart = false;
+    let clampedEnd = false;
+
+    if (firstUtcMs < startMs) {
+      clampedStart = true;
+    }
+    if (lastUtcMs > endMs) {
+      clampedEnd = true;
+    }
+
+    let fraction = (firstUtcMs - startMs) / windowDuration;
+    let endFraction = (lastUtcMs - startMs) / windowDuration;
+    fraction = Math.max(0, Math.min(1, fraction));
+    endFraction = Math.max(0, Math.min(1, endFraction));
+
+    const marker = {
+      id: event.id,
+      cameraId: event.cameraId,
+      kind,
+      atUtc: firstUtcStr,
+      untilUtc: lastUtcStr,
+      fraction,
+      endFraction,
+      clampedStart,
+      clampedEnd,
+      count: event.count,
+      bestConfidence: event.bestConfidence,
+      bestUtc: event.bestUtc,
+    };
+
+    if (typeof event.plate === "string") {
+      marker.plate = event.plate;
+    }
+
+    markers.push(marker);
+  }
+
+  // Sort by atUtc, then by id
+  markers.sort((a, b) => {
+    const aMs = Date.parse(a.atUtc);
+    const bMs = Date.parse(b.atUtc);
+    if (aMs !== bMs) return aMs - bMs;
+    if (a.id < b.id) return -1;
+    if (a.id > b.id) return 1;
+    return 0;
+  });
+
+  return {
+    markers,
+    dropped: { outsideWindow, unreadable, filteredOut },
+    badWindow: false,
+    badFilter: false,
+  };
+}
+
+/**
+ * The next or previous marker in time order, or null.
+ *
+ * markers: the markers array from eventMarkers(). fromUtc: the instant you are
+ * watching now, as an ISO string. direction: "next" or "previous"; anything
+ * else, or an unreadable fromUtc, returns null. The optional fromId: when
+ * given and direction is "next", and the first candidate marker has the same
+ * id, steps to the next marker at that same instant (in sorted order) before
+ * moving on.
+ *
+ * "next" returns the earliest marker strictly after fromUtc. "previous" returns
+ * the latest strictly before. Standing exactly on a marker, the step moves past
+ * it — never returns the marker you are on.
+ */
+export function stepToEvent(markers, fromUtc, direction, fromId) {
+  // Validate direction
+  if (direction !== "next" && direction !== "previous") {
+    return null;
+  }
+
+  // Validate fromUtc
+  if (typeof fromUtc !== "string" || Number.isNaN(Date.parse(fromUtc))) {
+    return null;
+  }
+
+  if (!Array.isArray(markers) || markers.length === 0) {
+    return null;
+  }
+
+  const fromMs = Date.parse(fromUtc);
+
+  // When the page says which marker it is sitting on, THAT is the position,
+  // and the step is one place along the sorted list. Stepping by the clock
+  // alone loses everything sharing the current second: the person and the car
+  // that arrive together, one of which is then unreachable by the buttons.
+  // An id that is no longer on the bar (the filter changed under it) is not an
+  // error — fall back to the clock.
+  if (typeof fromId === "string" && fromId !== "") {
+    const here = markers.findIndex((m) => m.id === fromId);
+    if (here >= 0) {
+      const there = direction === "next" ? here + 1 : here - 1;
+      return there >= 0 && there < markers.length ? markers[there] : null;
+    }
+  }
+
+  if (direction === "next") {
+    return markers.find((m) => Date.parse(m.atUtc) > fromMs) ?? null;
+  }
+  const before = markers.filter((m) => Date.parse(m.atUtc) < fromMs);
+  return before.length === 0 ? null : before[before.length - 1];
+}
+
+/**
+ * The instant to start playing at when you jump to this marker.
+ *
+ * Playback begins MARKER_LEAD_MS (3 seconds) before marker.atUtc, never
+ * earlier than startUtc, so the viewer sees the subject arrive.
+ */
+export function seekInstantFor(marker, startUtc, endUtc) {
+  // Null rather than an exception: an unreadable window is a page in a state
+  // it should not be in, and a jump button that throws takes the whole page
+  // down with it instead of simply not jumping.
+  if (!isNonArrayObject(marker)) return null;
+  const markerMs = Date.parse(marker.atUtc);
+  const startMs = Date.parse(startUtc);
+  if (Number.isNaN(markerMs) || Number.isNaN(startMs)) return null;
+  const endMs = Date.parse(endUtc);
+  let seekMs = Math.max(startMs, markerMs - MARKER_LEAD_MS);
+  if (!Number.isNaN(endMs) && seekMs > endMs) seekMs = endMs;
+  return new Date(seekMs).toISOString();
+}
+
+/**
+ * Counts of markers by kind, for the filter buttons.
+ *
+ * markers: the markers array from eventMarkers(). Returns
+ * { person, vehicle, plate, total }, always all four keys, zeroes when empty.
+ */
+export function markerSummary(markers) {
+  let person = 0;
+  let vehicle = 0;
+  let plate = 0;
+
+  if (Array.isArray(markers)) {
+    for (const m of markers) {
+      if (m.kind === "person") person += 1;
+      else if (m.kind === "vehicle") vehicle += 1;
+      else if (m.kind === "plate") plate += 1;
+    }
+  }
+
+  return { person, vehicle, plate, total: Array.isArray(markers) ? markers.length : 0 };
+}

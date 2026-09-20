@@ -65,6 +65,32 @@ for (const [s, e] of [["2026-09-11T10:00:00Z", "2026-09-11T10:01:00Z"],
 index.put(seg("2026-09-11T11:58:00Z", null, "open"));
 index.addGap({ cameraId: "cam-1", startUtc: "2026-09-11T10:02:00Z", endUtc: "2026-09-11T10:05:00Z", reason: "camera_offline" });
 
+// What the detector found that day (D2). Two people and a car inside the
+// recorded stretches, two of them in the same second — the pair a "next"
+// button stepping on the clock alone would silently skip — and one on another
+// day, which must not appear on this one.
+const EVENTS = [
+  ["e-person-1", "person", "2026-09-11T10:00:30Z", 6000],
+  ["e-car-1", "vehicle", "2026-09-11T10:00:30Z", 9000],
+  ["e-person-2", "person", "2026-09-11T10:05:30Z", 4000],
+  ["e-yesterday", "person", "2026-09-10T10:00:00Z", 4000],
+];
+{
+  const { openEventsDb } = await import("../agent/events-db.mjs");
+  const db = openEventsDb(join(stateDir, "events.db"));
+  for (const [id, kind, at, len] of EVENTS) {
+    db.upsert({ id, event: {
+      id, cameraId: "cam-1", kind,
+      firstUtc: new Date(ms(at)).toISOString(),
+      lastUtc: new Date(ms(at) + len).toISOString(),
+      count: 20, bestConfidence: 0.81,
+      bestBox: { x: 0.3, y: 0.2, w: 0.1, h: 0.5 },
+      bestUtc: new Date(ms(at)).toISOString(),
+    } }, true);
+  }
+  db.close();
+}
+
 const server = createApiServer({ stateDir, config, index, now, auth: installerAuth });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const host = `127.0.0.1:${server.address().port}`;
@@ -155,7 +181,10 @@ function freshDom() {
     ["vehiclesMinus", "button"], ["vehiclesN", "span"], ["vehiclesPlus", "button"],
     ["slower", "button"], ["faster", "button"], ["rate", "span"], ["back10", "button"], ["fwd10", "button"],
     ["clock", "span"], ["clipPeople", "select"], ["clipVehicles", "select"], ["clipSaveBtn", "button"],
-    ["clipStatus", "div"]]) {
+    ["clipStatus", "div"],
+    ["events", "div"], ["prevEvent", "button"], ["nextEvent", "button"],
+    ["filterPerson", "button"], ["filterVehicle", "button"], ["filterPlate", "button"],
+    ["eventTiles", "div"], ["eventNote", "div"]]) {
     byId[id] = new FakeEl(tag, id);
     byId[id].disabled = false;
   }
@@ -170,6 +199,8 @@ function freshDom() {
   byId.calendar.hidden = true;
   byId.sheet.hidden = true;
   byId.teachFields.hidden = true;
+  byId.events.hidden = true;
+  byId.filterPlate.hidden = true;
   byId.strip.appendChild(byId.playhead);
   byId.strip.getBoundingClientRect = () => ({ left: 100, width: 1000, top: 0, height: 36 });
   return byId;
@@ -221,7 +252,9 @@ const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", 
   "watchedInstant", "drawCameraTiles", "chooseCamera", "chooseDay", "drawDayButton", "showCalendar",
   "stepMonth", "drawCalendar", "loadMonth", "fillTimeDropdowns", "chosenWindow", "openSheet",
   "closeSheet", "drawLengthChips", "pickLength", "sheetGo", "showCounts", "bumpCount", "tapNobody",
-  "loadTeachProgress", "wireFriendly"];
+  "loadTeachProgress", "wireFriendly",
+  "loadEvents", "drawEvents", "drawMarks", "drawTiles", "eventWords", "currentMomentUtc",
+  "goToEvent", "updateStepButtons", "stepEvent"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireFriendly();\nwireEvents();\nloadCameras();\n";
@@ -923,9 +956,112 @@ await check("the sheet counts what has been taught and states no verdict on it",
   page.closeSheet();
 });
 
+/* ── D2: the detector's events on the timeline ────────────────────────────── */
+
+const marksOf = () => dom.strip.children.filter((c) => String(c.className).startsWith("mark"));
+const tilesOf = () => dom.eventTiles.children;
+const loadDayWithEvents = async (day) => {
+  dom.day.value = day;
+  await page.loadDay();
+  // loadDay does not wait for /events: the bar is drawn first and the marks
+  // land on it. The note is emptied when the ask starts, so a non-empty note
+  // is THIS day's answer rather than the last one still on screen.
+  await until(() => dom.eventNote.textContent !== "", "the events to land");
+};
+
+await check("the day's events arrive as marks on the bar, where they happened", async () => {
+  await loadDayWithEvents("2026-09-11");
+  const marks = marksOf();
+  eq(marks.length, 3, "three events on this day, and not yesterday's");
+  eq(marks.map((m) => m.className).sort(), ["mark person", "mark person", "mark vehicle"], "one per event, by kind");
+  // 10:00:30Z is six hours and thirty seconds into a window starting 04:00Z.
+  const at = marks.find((m) => m.title.startsWith("Person, 06:00"));
+  eq(Boolean(at), true, `plain words on the mark: ${marks.map((m) => m.title).join(" | ")}`);
+  eq(at.title, "Person, 06:00, 6 s", "what it was, when, and how long");
+  eq(Math.abs(parseFloat(at.style.left) - (6 * 3600 + 30) / 864) < 0.01, true, `placed at ${at.style.left}`);
+  eq(dom.strip.lastChild === dom.playhead, true, "the playhead still sits on top of the marks");
+  eq(dom.events.hidden, false, "the row is shown");
+  eq(tilesOf().length, 3, "and one tile per event to click through");
+  eq(tilesOf()[0].textContent.includes("06:00"), true, "oldest first");
+  eq(dom.eventNote.textContent, "3 of 3 shown.", "the note counts them");
+});
+
+await check("THE FEARED ONE: turning a kind off says so, and never reads as 'none found'", async () => {
+  await loadDayWithEvents("2026-09-11");
+  dom.filterVehicle.fire("click");
+  eq(marksOf().map((m) => m.className), ["mark person", "mark person"], "the car is off the bar");
+  eq(dom.filterVehicle.getAttribute("aria-pressed"), "false", "and the button is drawn as off");
+  eq(dom.filterVehicle.textContent, "Vehicles (1)", "THE FEARED ONE: the count still says there IS one");
+  eq(dom.eventNote.textContent, "2 of 3 shown.", "the note says two of three");
+  dom.filterVehicle.fire("click");
+  eq(marksOf().length, 3, "and back on again");
+  eq(dom.filterVehicle.getAttribute("aria-pressed"), "true", "pressed again");
+});
+
+await check("THE FEARED ONE: Next walks every event, including two in the same second", async () => {
+  await loadDayWithEvents("2026-09-11");
+  page.stopVideo();
+  const seen = [];
+  for (let i = 0; i < 4; i++) {
+    dom.nextEvent.fire("click");
+    await settle();
+    if (page.view.here === null) break;
+    if (seen.at(-1) !== page.view.here) seen.push(page.view.here);
+  }
+  eq(seen, ["e-car-1", "e-person-1", "e-person-2"], "every event, in time order, none skipped");
+  eq(dom.status.textContent, "No later event on this day", "and it says when there are no more");
+  eq(dom.nextEvent.disabled, true, "the button that can do nothing looks like it");
+  dom.prevEvent.fire("click");
+  await settle();
+  eq(page.view.here, "e-person-1", "previous comes back the same way");
+});
+
+await check("jumping to an event starts a little before it, not on top of it", async () => {
+  await loadDayWithEvents("2026-09-11");
+  fetchLog = [];
+  tilesOf()[2].fire("click");
+  await until(() => fetchLog.some((u) => u.startsWith("/playback?")), "the jump");
+  const q = new URLSearchParams(fetchLog.find((u) => u.startsWith("/playback?")).split("?")[1]);
+  eq(q.get("at"), "2026-09-11T10:05:27.000Z", "three seconds of run-up, so the person walks in");
+  eq(dom.status.textContent, "Person, 06:05, 4 s", "and the line under the video says which event");
+});
+
+await check("a day the detector watched and saw nothing says so, and says it differently", async () => {
+  await loadDayWithEvents("2026-09-08");
+  eq(dom.events.hidden, false, "the row is there: the detector was running");
+  eq(dom.eventNote.textContent, "Nothing detected on this day.", "nobody walked past");
+  eq(marksOf().length, 0, "no marks");
+  eq([dom.nextEvent.disabled, dom.prevEvent.disabled], [true, true], "and nowhere to step");
+});
+
+await check("THE FEARED ONE: a recorder with no detector shows no row at all", async () => {
+  const pageFetch = globalThis.fetch;
+  let asked = false;
+  globalThis.fetch = (url, opts) => {
+    if (String(url).startsWith("/events?")) {
+      asked = true;
+      return Promise.resolve({ ok: true, json: async () => ({
+        ok: true, cameraId: "cam-1", available: false, events: [], truncated: false }) });
+    }
+    return pageFetch(url, opts);
+  };
+  try {
+    dom.day.value = "2026-09-11";
+    fetchLog = [];
+    await page.loadDay();
+    await until(() => asked, "the events ask");
+    await settle();
+    eq(dom.events.hidden, true, "nothing was ever watching, so nothing is claimed");
+    eq(marksOf().length, 0, "and no marks on the bar");
+  } finally {
+    globalThis.fetch = pageFetch;
+  }
+});
+
 globalThis.fetch = realFetch;
 closeAll();
 server.close();
+server.closeEvents();
 
 index.close();
 await rm(stateDir, { recursive: true, force: true });

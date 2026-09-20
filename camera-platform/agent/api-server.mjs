@@ -9,7 +9,7 @@
 
 import { createServer } from 'node:http';
 import { stat, readFile } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -24,6 +24,8 @@ import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs
 // exceptions — detect them by shape, never by instanceof (they are interfaces,
 // with no runtime identity).
 import { parseWindow, parseInstant, parseSegmentId, isCameraId } from '../dist/apiQuery.js';
+import { parseEventKinds, parseEventLimit } from '../dist/eventQuery.js';
+import { openEventsDb } from './events-db.mjs';
 import { planByteRange, ByteRangeError } from '../dist/httpRange.js';
 import { coverageFromIndex, resolvePlayback, IndexCoverageError } from '../dist/indexCoverage.js';
 import { cameraView } from '../dist/cameraView.js';
@@ -321,6 +323,27 @@ export function createApiServer({
     onChange: () => { driveAssignment = assignDrives(); },
   });
   const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
+
+  /**
+   * The detector's events, opened on first use and kept open.
+   *
+   * The detector is a separate service and may not be installed at all. That
+   * is NOT the same thing as a quiet day, and /events says which it is: an
+   * empty list from a running detector means nobody walked past, an empty list
+   * with `available: false` means nothing was ever watching. A Review page
+   * that cannot tell them apart teaches an operator to trust an empty timeline
+   * on a box where detection was never switched on.
+   */
+  let eventsDb = null;
+  const eventsFile = join(stateDir, 'events.db');
+  const openEvents = () => {
+    if (eventsDb === null) {
+      if (!existsSync(eventsFile)) return null;
+      eventsDb = openEventsDb(eventsFile);
+    }
+    return eventsDb;
+  };
+
   const clipLibrary = createClipLibrary({
     stateDir, audit: auth.audit, log,
     prepare: (camera, start, end) => {
@@ -503,6 +526,54 @@ export function createApiServer({
         };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(envelope));
+        return;
+      }
+
+      // ---------- /events ----------
+      // What the detector found in a window, for the marks on the Review
+      // timeline. Same window rules as /timeline, so the marks and the
+      // coverage bar can never disagree about which day is on screen.
+      if (pathname === '/events') {
+        const camera = parsedUrl.searchParams.get('camera');
+        const start = parsedUrl.searchParams.get('start');
+        const end = parsedUrl.searchParams.get('end');
+
+        if (!isCameraId(camera)) {
+          sendError(res, 400, 'bad_camera_id', 'Invalid camera id');
+          return;
+        }
+        const windowResult = parseWindow({ start, end, buckets: null }, now().toISOString());
+        if (isRefusal(windowResult)) {
+          sendError(res, windowResult.status, windowResult.code, windowResult.message);
+          return;
+        }
+        const kinds = parseEventKinds(parsedUrl.searchParams.get('kinds'));
+        if (isRefusal(kinds)) {
+          sendError(res, kinds.status, kinds.code, kinds.message);
+          return;
+        }
+        const limit = parseEventLimit(parsedUrl.searchParams.get('limit'));
+        if (isRefusal(limit)) {
+          sendError(res, limit.status, limit.code, limit.message);
+          return;
+        }
+
+        const { effective } = windowResult;
+        const db = openEvents();
+        if (db === null) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true, cameraId: camera, effective, available: false,
+            events: [], truncated: false,
+          }));
+          return;
+        }
+        const found = db.inRange(camera, effective.startUtc, effective.endUtc, kinds, limit);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true, cameraId: camera, effective, available: true,
+          events: found.events, truncated: found.truncated, limit,
+        }));
         return;
       }
 
@@ -738,6 +809,16 @@ export function createApiServer({
     },
   });
 
+  // The events database is this server's to close: it opened it. Hung on the
+  // server object so shutdown (and the harness) can let go of the file —
+  // leaving it open holds a WAL handle open for as long as the process lives.
+  server.closeEvents = () => {
+    if (eventsDb !== null) {
+      eventsDb.close();
+      eventsDb = null;
+    }
+  };
+
   return server;
 }
 
@@ -790,6 +871,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
     listeners.stop().then(() => {
       server.close(() => {
         index.close();
+        server.closeEvents();
         process.exit(0);
       });
     });
