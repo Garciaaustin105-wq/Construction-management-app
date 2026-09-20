@@ -650,3 +650,35 @@ cameras' last segment ends 20:20:18; the drop was noticed at 20:20:40
 (gap_recorded); after the replug the dropped file was sealed and measured and
 each gap was pulled back to start 20:20:18.9, ending 20:21:58 where video
 resumed. Video, gap, video, with no unmarked stretch.
+
+## Bench log — 2026-09-19 evening, the D1 detector on the laptop NVR
+
+Python environment `/opt/camplat-detect/venv` (numpy 2.5.3, onnxruntime 1.30.0,
+CPU only; 153 MB), models copied to `/opt/camplat-models/` (hashes as in
+models/LICENSES.md). `detector/test_postprocess.py` 8/8 on the laptop.
+
+**Capacity, measured (YOLOX-s, 640 px, Ryzen laptop):** 9.35 frames/s with 2
+threads, 16.29 with 4. detect.json set to capacityFps 9, cam1-main at 5 fps.
+This is the laptop's number; an appliance gets its own measurement (rule 10).
+
+**Found on the way:** a configured substream address saved without a login was
+refused by the camera (401): the recorder adds the site login, live and
+detection did not (1d6c314). With the camera unplugged, the worker exited and
+the whole daemon exited with it — every timer was unref()'d — and systemd
+restarted it 12 times in 6 minutes (3dd17d8).
+
+**First person seen (Austin walking, 30 s, 5 fps):** 126 of 144 frames, median
+confidence 0.87, best 0.95; the 18 frames of "nobody" are him stepping out.
+The walk became 6 events: the same-thing rule needed overlapping boxes, and a
+person walking toward the camera grows too fast for that (0.29 x 0.72 to
+0.43 x 0.99 of the frame in 200 ms). Weak guesses (a 0.35 "vehicle", a 0.67
+"person" the size of the frame) were all stored.
+
+**After the fixes (matchScore centre fallback, storing floor 0.5; 82fc644),
+the same walk:** 199 sightings, ONE event (01:48:17 to 01:49:03, best 0.94),
+plus one single sighting at the frame edge two seconds before. Recording
+untouched throughout (segments sealed on schedule); detector 0 restarts.
+
+**Still to do for D1's exit:** the clip library — recorded walks, an hour of
+empty scene, headlights — with hand-written expected events, then
+`scoreLibrary`. The 95% / 1-false-per-hour bar has not been measured yet.

@@ -121,6 +121,12 @@ Each stage is contract, then harness, then code, then UI.
 - **Exit:** on the clip library, it finds at least 95% of the people and at
   most 1 false person per hour of empty-scene footage. Killing it with -9 for
   an hour leaves recording byte-for-byte unaffected.
+- **Status (2026-09-20):** built and running on the laptop NVR (FIELD-NOTES,
+  2026-09-19 evening). `agent/detect-service.mjs` + `detector/yolox_worker.py`
+  (ONNX Runtime, CPU), events in `events.db`, `camplat-detect.service` at low
+  CPU priority, off until detect.json has a MEASURED capacityFps. One walk is
+  one event (contracts/detection.ts matchScore). Not yet scored: the clip
+  library has no clips. The -9 soak has not been run.
 
 ### D2. Smart search in Review
 - Markers on the Review timeline; filter by person or vehicle; "next event"
