@@ -265,7 +265,9 @@ export async function startDetect(opts = {}) {
           spawnWorker(assignment);
         }
       }, delay);
-      timer.unref?.();
+      // Not unref()'d: while the only worker is down, this timer may be the one
+      // thing keeping the daemon alive (bench 2026-09-20: the service exited
+      // with its worker, and systemd restarted it every 10 s). stop() clears it.
       restartTimers.set(cameraId, timer);
     });
   }
@@ -285,13 +287,11 @@ export async function startDetect(opts = {}) {
       }
     }
   }, tickMs);
-  tickTimer.unref?.();
 
   // Health timer
   const healthTimer = setInterval(() => {
     writeHealth();
   }, healthMs);
-  healthTimer.unref?.();
 
   function getCameras() {
     return Array.from(cameras.values()).map((cam) => ({
@@ -387,8 +387,10 @@ if (process.argv[1]?.endsWith("detect-service.mjs")) {
   const stateDir = process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
   // The AI libraries live in their own environment, not the system Python.
   const pythonBin = process.env.CAMPLAT_DETECT_PYTHON ?? "python3";
+  // CAMPLAT_DETECT_WORKER: another worker program, for the harness's fakes.
+  const worker = process.env.CAMPLAT_DETECT_WORKER;
 
-  startDetect({ stateDir, python: pythonBin }).catch((err) => {
+  startDetect({ stateDir, python: pythonBin, ...(worker ? { workerPath: worker } : {}) }).catch((err) => {
     defaultLog("error", err.message);
     process.exit(1);
   }).then((svc) => {

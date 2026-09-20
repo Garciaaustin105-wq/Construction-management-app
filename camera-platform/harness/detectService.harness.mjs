@@ -13,6 +13,7 @@
  * one person becoming a row per frame.
  */
 import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -310,6 +311,38 @@ check("THE FEARED ONE: the installed detector never outranks recording, and is o
   }
   const enables = install.split("\n").filter((l) => /^\s*systemctl enable/.test(l))   // a comment saying how to enable it is not enabling it.join(" ");
   eq(/camplat-detect/.test(enables), false, "and install.sh never enables it: it needs a measured capacity, a model and its Python first");
+});
+
+// Bench 2026-09-20: with the camera unplugged the worker exited at once, and
+// the SERVICE exited with it ("Deactivated successfully"), because every
+// timer was unref()'d and nothing else was pending; systemd restarted it every
+// 10 s. The recorder rides out a dead camera; the detector must too.
+await check("THE FEARED ONE: the daemon stays up while its only camera is down, and stops cleanly on SIGTERM", async () => {
+  const stateDir = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }] } });
+  const dying = path.join(stateDir, "dying-worker.mjs");
+  const NL = String.fromCharCode(10);
+  await writeFile(dying, 'process.stdout.write(JSON.stringify({ type: "error", message: "camera unreachable" }) + String.fromCharCode(10)); process.exit(2);' + NL);
+  const daemon = spawn(process.execPath, [path.join(import.meta.dirname, "..", "agent", "detect-service.mjs")], {
+    env: { ...process.env, CAMPLAT_STATE_DIR: stateDir, CAMPLAT_DETECT_PYTHON: process.execPath, CAMPLAT_DETECT_WORKER: dying },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  daemon.stdout.on("data", (d) => { out += d; });
+  daemon.stderr.on("data", (d) => { out += d; });
+  let exited = null;
+  let signal = null;
+  let ended = false;
+  daemon.on("exit", (code, sig) => { exited = code; signal = sig; ended = true; });
+  await settle(3000);
+  eq(ended, false, `still running after 3 s of a worker that dies at once (output: ${out.slice(-300)})`);
+  eq((out.match(/detect worker exited/g) ?? []).length >= 2, true, "and it has been retrying the worker");
+  daemon.kill("SIGTERM");
+  await settle(1500);
+  eq(ended, true, "SIGTERM: gone");
+  // Windows has no signals: kill() ends the process outright, code null. Only
+  // Linux (the appliance) can show the clean exit 0 the shutdown handler gives.
+  if (process.platform !== "win32") eq(exited, 0, "SIGTERM: stopped cleanly");
+  else eq(signal, "SIGTERM", "SIGTERM: terminated (Windows cannot show a clean exit)");
 });
 
 report("detect service");
