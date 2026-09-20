@@ -682,3 +682,75 @@ untouched throughout (segments sealed on schedule); detector 0 restarts.
 **Still to do for D1's exit:** the clip library — recorded walks, an hour of
 empty scene, headlights — with hand-written expected events, then
 `scoreLibrary`. The 95% / 1-false-per-hour bar has not been measured yet.
+
+## Bench log — 2026-09-19 late, D2 markers on the laptop NVR (fb08c9d)
+
+Installed signed over `3dd17d8`: **211 files verified**, recorder, api and
+detector restarted (upgrade.sh restarts the first two; camplat-detect was
+restarted by hand so it runs the new build too). Austin confirms the marks are
+on the Review timeline.
+
+**The signing key had to be rotated, and that is the durable fact here.** The
+box trusted `bench-2026-09-18` and the private half of that key no longer
+exists — not on the PC, not on the box. It was a throwaway generated in a temp
+directory that has since been cleared, exactly as `bench-throwaway-2026-09-17`
+was. Signing with the 09-17 key under the 09-18 id was refused as `unsigned`,
+which is the trust chain working: the verifier checks the signature, not the
+label. With Austin's go-ahead the anchor was force-replaced
+(`CAMPLAT_TRUSTED_KEYS_FORCE=1`) with a new key.
+
+| | |
+|---|---|
+| Trusted now | `bench-2026-09-20` only |
+| Private key | `C:\Users\garci_9e2kg3l\Temp\camplat-bench\bench-2026-09-20.key` — **still a temp dir; third key to live there** |
+| Signing on Windows | `sign-release.mjs` must run from **PowerShell**: Git Bash's GNU tar reads `C:\...` as a remote host and fails with "Cannot connect to C: resolve failed" |
+
+**Verified against the installed code, on the box:** eventQuery 4, eventsDb 5,
+eventMarkers 15, apiServer 60, reviewPage 44 — all passing under the box's own
+node.
+
+**Not verified by this agent:** `/events` answering with a real session, and
+the page rendering in a browser. Nobody signed in from here, and a signed-out
+probe cannot tell a real route from a made-up one — the box answers 401 for
+both, on purpose (routeAccess: a scan must learn nothing).
+
+**The detector's 28 events at install time** included one lasting 31 minutes
+with 9,209 sightings (21:48:17 to 22:18:59 local, best 0.94). Worth a look on
+the page: either someone really was in frame that long, or the same-thing rule
+is holding a static object open. The marks now make that visible, which is the
+point of D2.
+
+**D2's exit bar is still unmeasured:** "a known person walk-by found in under
+30 s without scrubbing" is a claim about a person using it, and nobody has
+been timed yet. The strip is tiles, not crops — D1 stores `bestBox` and
+`bestUtc` but no image, so crops mean cutting frames from the recording on
+demand (one ffmpeg seek per event, cached, refused when the segment is gone).
+
+**The first thing the markers showed: three vehicles that were never there.**
+Austin saw "Vehicle" on a timeline with no vehicle in the footage. All three
+were single frames at 0.35, 0.36 and 0.36, and all three sat inside one
+four-minute window this afternoon (17:08 to 17:12 local) — written by the
+build that ran BEFORE the 0.5 storing floor. Of 28 stored events, 15 were
+below the floor and every one of them was from that window; nothing stored
+since the current build started (21:43) is below 0.55. So the page was honest
+and the data was old.
+
+Two things followed, both with Austin's go-ahead:
+
+- The 15 pre-fix rows were deleted (backed up first to
+  `~/events-pre-fix-backup.json` on the box; predicate `best_confidence <
+  0.5`, newest row 21:12:14Z, nothing from tonight). 13 events remain, all
+  people.
+- **`detect.json` carried no `minConfidence`.** The 0.5 floor was coming from
+  a default in `detect-service.mjs`, so the number governing what gets stored
+  was not visible anywhere on the box. It is now written in explicitly. A
+  setting that cannot be read cannot be checked, and this one had just spent
+  an evening being blamed on the page.
+
+The UI deliberately does NOT re-filter by confidence: the floor belongs at the
+detector, and a page that hides low-confidence events would be hiding evidence
+from the person whose job is to look at it.
+
+**Still unmeasured:** false events per hour on an empty scene, and recall on a
+walk-by. Austin has deferred both to a session where the room can be left
+alone. Until then nobody should quote a false-positive rate for this box.
