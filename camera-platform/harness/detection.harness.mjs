@@ -7,7 +7,7 @@
 import { check, eq, report } from "./_assert.mjs";
 import {
   EVENT_KINDS, MERGE_GAP_MS, MERGE_MIN_IOU,
-  normalisePlate, checkDetection, iou, foldDetections,
+  normalisePlate, checkDetection, iou, foldDetections, matchScore,
 } from "../dist/detection.js";
 
 console.log("detection");
@@ -114,6 +114,36 @@ check("a person walking across the frame stays one event", () => {
   const ds = [];
   for (let i = 0; i <= 40; i++) ds.push(person(i * 200, box(0.05 + i * 0.02, 0.2)));
   eq(foldDetections(ds).length, 1);
+});
+
+// Bench 2026-09-19: Austin walked toward the camera; the box grew from
+// 0.29 x 0.72 to 0.43 x 0.99 of the frame between sightings, the overlap fell
+// under 0.3, and one walk became two events (and would be two alerts).
+check("FEARED: a person walking toward the camera, box growing fast, stays one event", () => {
+  const a = { x: 0.29484, y: 0.26609, w: 0.29165, h: 0.72458 };
+  const b = { x: 0.50225, y: 0.00273, w: 0.43066, h: 0.98584 };
+  if (iou(a, b) >= MERGE_MIN_IOU) throw new Error("this pair should be below the overlap rule, or the check proves nothing");
+  eq(foldDetections([person(0, a), person(200, b)]).length, 1, "one event: the centre barely moved");
+  const s = matchScore(a, b);
+  if (s === null || s <= 0 || s >= MERGE_MIN_IOU) throw new Error(`a centre match scores below any overlap match: ${s}`);
+});
+
+check("FEARED: a second person appearing across the frame in the next sighting is NOT the first one", () => {
+  const a = box(0.1, 0.2);
+  const far = box(0.7, 0.2);
+  eq(matchScore(a, far), null, "no match by overlap or by centre");
+  eq(foldDetections([person(0, a), person(200, far)]).length, 2, "two events");
+});
+
+check("matchScore: overlap first, centre as the fallback, nothing beyond reach", () => {
+  const a = box(0.3, 0.2);
+  eq(matchScore(a, box(0.31, 0.2)), iou(a, box(0.31, 0.2)), "a good overlap scores its iou");
+  // centres within reach (half the larger diagonal), boxes not overlapping enough
+  const near = { x: 0.42, y: 0.2, w: 0.1, h: 0.3 };
+  if (iou(a, near) >= MERGE_MIN_IOU) throw new Error("fixture overlaps too much");
+  const s = matchScore(a, near);
+  if (s === null || s >= MERGE_MIN_IOU) throw new Error(`centre fallback expected, got ${s}`);
+  eq(matchScore(a, { x: 0.6, y: 0.2, w: 0.1, h: 0.3 }), null, "past reach: no match");
 });
 
 check("leaving for more than the gap and returning is two events; exactly the gap is one", () => {

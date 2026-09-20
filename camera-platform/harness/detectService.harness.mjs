@@ -144,6 +144,52 @@ await check("THE FEARED ONE: one person across many frames is ONE event row in e
   }
 });
 
+// Bench 2026-09-19: the permissive detector's weak guesses (a 0.35 "vehicle",
+// a 0.67 "person" the size of the whole frame) were all stored, cluttering
+// the timeline. The worker stays permissive so the clip library can measure
+// what a floor would miss; STORING has a floor, set per box in detect.json.
+await check("THE FEARED ONE: detections under the storing floor never become events; the floor is 0.5 unless detect.json says otherwise", async () => {
+  const { stateDir, workers, svc } = await run({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }] } });
+  try {
+    const w = workers[0];
+    w.say({ type: "frame", atUtc: at(0), detections: [
+      { kind: "vehicle", confidence: 0.35, box: { x: 0.6, y: 0.5, w: 0.08, h: 0.1 } },
+      { kind: "person", confidence: 0.49, box: { x: 0.1, y: 0.1, w: 0.2, h: 0.4 } },
+      { kind: "person", confidence: 0.5, box: { x: 0.5, y: 0.1, w: 0.2, h: 0.4 } },
+    ] });
+    await settle();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    const rows = db.all();
+    eq(rows.map((r) => [r.kind, r.bestConfidence]), [["person", 0.5]], "only the 0.5 person stored (at the floor counts)");
+    db.close();
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    eq(health.minConfidence, 0.5, "the floor is reported, so nobody wonders why a weak sighting is missing");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a lower storing floor in detect.json is honoured; a floor that is not a number in 0..1 refuses to start", async () => {
+  const { stateDir, workers, svc } = await run({ detect: { capacityFps: 10, minConfidence: 0.3, cameras: [{ cameraId: "cam-1" }] } });
+  try {
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.35, box: { x: 0.1, y: 0.1, w: 0.2, h: 0.4 } }] });
+    await settle();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 1, "0.35 stored under a 0.3 floor");
+    db.close();
+  } finally {
+    await svc.stop();
+  }
+  for (const bad of ["high", 1.5, -0.1, null]) {
+    const sd = await site({ detect: { capacityFps: 10, minConfidence: bad, cameras: [{ cameraId: "cam-1" }] } });
+    let threw = null;
+    try { await startDetect({ stateDir: sd, spawnFn: fakeWorkers().spawnFn, log: () => {} }); } catch (err) { threw = err; }
+    if (!threw) throw new Error(`minConfidence ${JSON.stringify(bad)}: started anyway`);
+    if (!/minConfidence/.test(threw.message)) throw new Error(`the refusal should name the setting: ${threw.message}`);
+  }
+});
+
 await check("THE FEARED ONE: events never touch the recording index", async () => {
   const { stateDir, workers, svc } = await run();
   try {

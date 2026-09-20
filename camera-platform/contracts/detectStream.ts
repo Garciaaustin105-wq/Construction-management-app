@@ -7,7 +7,7 @@
  */
 
 import { parseUtc } from "./time.js";
-import { Detection, DetectionEvent, Box, checkDetection, iou, MERGE_GAP_MS, MERGE_MIN_IOU } from "./detection.js";
+import { Detection, DetectionEvent, Box, checkDetection, matchScore, MERGE_GAP_MS } from "./detection.js";
 
 export const MAX_WORKER_LINE_BYTES = 65536;
 export const MAX_DETECTIONS_PER_FRAME = 300;
@@ -204,10 +204,11 @@ export function advanceFold(
         }
         score = 1;
       } else {
-        score = iou(candidate.lastBox, d.box);
-        if (score < MERGE_MIN_IOU) {
+        const s = matchScore(candidate.lastBox, d.box);
+        if (s === null) {
           continue;
         }
+        score = s;
       }
 
       if (score > bestScore) {

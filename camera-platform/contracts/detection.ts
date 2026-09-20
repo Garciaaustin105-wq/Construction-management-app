@@ -55,8 +55,16 @@ export type Checked = { ok: true; detection: Detection } | { ok: false; reason: 
 
 /** Detections of the same thing further apart than this start a new event. */
 export const MERGE_GAP_MS = 10_000;
-/** Boxes overlapping less than this are different things. */
+/** Boxes overlapping less than this are different things by overlap alone. */
 export const MERGE_MIN_IOU = 0.3;
+/**
+ * The centre fallback's reach, as a fraction of the larger box's diagonal.
+ * A person walking toward the camera grows fast between sightings (bench
+ * 2026-09-19: 0.29 x 0.72 to 0.43 x 0.99 of the frame in 200 ms), so the
+ * overlap falls under MERGE_MIN_IOU while the centre barely moves. Two people
+ * a body-width apart have centres well beyond half a diagonal.
+ */
+export const MERGE_CENTRE_REACH = 0.5;
 
 /**
  * A plate as the reader gives it, normalised: uppercase, with spaces, dashes
@@ -162,6 +170,30 @@ export function iou(a: Box, b: Box): number {
 }
 
 /**
+ * Whether a sighting `next` is the same thing as the last sighting `last`,
+ * and how strongly. The one rule both folds use (foldDetections here,
+ * advanceFold in detectStream.ts), so the scorer grades what the service
+ * stores.
+ *
+ * 1. If iou(last, next) >= MERGE_MIN_IOU, return that iou.
+ * 2. Else let d = distance between the two centres and reach =
+ *    MERGE_CENTRE_REACH * max(diagonal(last), diagonal(next)). If d <= reach,
+ *    return MERGE_MIN_IOU * (1 - d / reach) * 0.999: above 0, and always
+ *    below any overlap match, so overlap wins when both apply.
+ * 3. Else return null: different things.
+ */
+export function matchScore(last: Box, next: Box): number | null {
+  const overlap = iou(last, next);
+  if (overlap >= MERGE_MIN_IOU) return overlap;
+  const dx = (last.x + last.w / 2) - (next.x + next.w / 2);
+  const dy = (last.y + last.h / 2) - (next.y + next.h / 2);
+  const d = Math.sqrt(dx * dx + dy * dy);
+  const reach = MERGE_CENTRE_REACH * Math.max(Math.hypot(last.w, last.h), Math.hypot(next.w, next.h));
+  if (reach <= 0 || d > reach) return null;
+  return MERGE_MIN_IOU * (1 - d / reach) * 0.999;
+}
+
+/**
  * Fold checked detections into events.
  *
  * 1. Copy `detections` and sort the copy by parseUtc(atUtc) ascending; ties
@@ -210,10 +242,11 @@ export function foldDetections(detections: readonly Detection[]): DetectionEvent
         }
         score = 1;
       } else {
-        score = iou(candidate.lastBox, d.box);
-        if (score < MERGE_MIN_IOU) {
+        const s = matchScore(candidate.lastBox, d.box);
+        if (s === null) {
           continue;
         }
+        score = s;
       }
       if (score > bestScore) {
         bestScore = score;

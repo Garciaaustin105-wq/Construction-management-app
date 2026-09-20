@@ -84,6 +84,16 @@ export async function startDetect(opts = {}) {
     throw new Error(message);
   }
 
+  // The storing floor. The worker stays permissive (its own floor is low, so
+  // the clip library can measure what a floor would miss); only sightings at
+  // or above this become events. Bench 2026-09-19: without it, a 0.35
+  // "vehicle" and a whole-frame 0.67 "person" cluttered the timeline.
+  // Absent means the default; null is something someone wrote, and is refused.
+  const minConfidence = detect.minConfidence === undefined ? 0.5 : detect.minConfidence;
+  if (typeof minConfidence !== "number" || !Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+    throw new Error(`detect.json minConfidence must be a number from 0 to 1, got ${JSON.stringify(detect.minConfidence)}`);
+  }
+
   // Load camera config
   const config = await loadConfig(stateDir);
 
@@ -204,7 +214,8 @@ export async function startDetect(opts = {}) {
           log("warn", "detect worker error", { cameraId, message: scrubbed });
         } else if (parsed.kind === "frame") {
           cam.lastFrameUtc = parsed.atUtc;
-          const step = advanceFold(cam.fold, parsed.detections, now().toISOString());
+          const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
+          const step = advanceFold(cam.fold, kept, now().toISOString());
           cam.fold = step.state;
           for (const update of step.updated) {
             eventsDb.upsert(update, false);
@@ -297,6 +308,7 @@ export async function startDetect(opts = {}) {
     const health = {
       atUtc: now().toISOString(),
       capacityFps: plan.capacityFps,
+      minConfidence,
       cameras: getCameras(),
     };
     const tmpFile = path.join(stateDir, "detect-health.json.tmp");
