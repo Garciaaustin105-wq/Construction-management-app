@@ -808,3 +808,62 @@ The live direction is per-camera self-calibration: each camera learns its own
 floor from its own unlabelled data, and rule 15 is the safety valve — a camera
 whose detections do not separate into populations at least 3x apart gets
 nothing suppressed, which is the rule working rather than a gap.
+
+## 2026-09-20 afternoon — the movement discriminator is dead, and dwell is not
+
+An idea that looked like physics this morning did not survive being measured
+properly this afternoon. Recorded in full because a finding that KILLS an idea
+is worth more care than one that confirms it.
+
+**First, a bug of mine.** The morning's analysis chained each detection to the
+last box it overlapped. With one bottle in an empty room that works. On a
+street with seven parked cars it does not: a "track" walked across the frame
+and reported a wander of 5.78 — two different cars stitched together, not an
+object moving. `contracts/trackBoxes.ts` replaces it with proper association:
+best available pairing per frame (not first-match), one detection per track,
+a hard limit of one box-diagonal of movement per frame so nothing teleports,
+and a track that vanishes for more than MAX_MISSES frames ENDS rather than
+resuming later as something else. Ten checks, including the crossing-paths
+identity swap that produced the 5.78.
+
+**Then the correction.** The morning's "a still person wanders 37x more than a
+bottle" was measured over Austin's whole 73 seconds — which included him
+settling and shifting — against the bottle's. Comparing like with like, each
+track's STILLEST 10 seconds:
+
+| over the stillest 10 s | wander | aspect |
+|---|---|---|
+| indoor: Austin holding still | 0.0051 | 0.0290 |
+| indoor: the spray bottle | 0.0022 | 0.0091 |
+| outdoor: Austin | 0.0222 | 0.1089 |
+| outdoor: seven parked cars | 0.0085–0.0518 | 0.0264–0.1456 |
+
+Indoors the gap is 2.3x on position and 3.2x on shape — at or below rule 15's
+3x spread gate. **Outdoors Austin sits INSIDE the range of the parked cars on
+every metric**; one car wobbles more than he does. There is no separation.
+
+So: a person really cannot hold still the way an object can, but at 5 fps,
+seen through a bounding box, that movement is smaller than the box's own
+noise. The detector cannot resolve breathing. **Box movement is not the
+discriminator and nothing should be built on it.** `contracts/boxJitter.ts`
+stays as a measuring instrument — it states no verdict — but no suppression
+may key on it.
+
+**Two more things the afternoon established.**
+
+1. **The outdoor noise floor drifts.** The same seven parked cars measured
+   0.017–0.052 wander in one minute and 0.12–0.35 a few minutes later —
+   5 to 10x, from weather and light alone. Any calibration must be continuous;
+   a floor measured once is wrong within the hour.
+2. **Recall at distance is poor.** Austin at his own kerb (2–3% of frame
+   width, through a window) produced FOUR single-frame events at 0.60–0.65.
+   Near the house he was 0.93–0.94 across hundreds of frames. That is a
+   recall problem, unrelated to suppression, and on a real site it is the
+   more serious of the two.
+
+**What survives, and it is what Austin said first.** Timescale, not wobble:
+the bottle sat in frame for 13 hours, the parked cars 6+, a person for
+minutes. That is a factor of a hundred or more, it held in every scene today
+(ceiling, laundry room, street), and it is the same mechanism as the
+stale-object notification he asked for. One mechanism, both jobs: tell the
+manager something has been there since Tuesday, and stop crying wolf about it.
