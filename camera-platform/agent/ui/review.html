@@ -853,7 +853,7 @@ let cropWatcher = null;
 
 /**
  * The shared observer that decides WHEN a tile asks the recorder for its
- * thumbnail (contracts/cropPlan.ts picks the rectangle; GET /event-crop cuts
+ * thumbnail: the whole frame with the detection drawn on it (GET /event-crop cuts
  * it; this only decides the moment to ask).
  *
  * 1. A day can hold hundreds of events. Asking for all of their crops at once

@@ -371,7 +371,7 @@ await check("an ffprobe that cannot read the frame is refused rather than assumi
   eq(r.code, "crop_failed", "crop_failed, not a guessed 2560x1440 frame");
 });
 
-await check("a box cropPlan refuses is a crop_failed, carrying the reason", async () => {
+await check("a box eventThumb refuses is a crop_failed, carrying the reason", async () => {
   const startMs = Date.parse("2026-09-20T09:00:00.000Z");
   const cutter = createEventCrops({
     stateDir: await makeStateDir(),

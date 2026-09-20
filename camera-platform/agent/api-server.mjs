@@ -40,7 +40,7 @@ import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary } from './clip-library.mjs';
 import { createListeners } from './listeners.mjs';
 
-// event-crop.mjs cuts the JPEG /event-crop serves (see contracts/cropPlan.ts
+// event-crop.mjs cuts the JPEG /event-crop serves (see contracts/eventThumb.ts
 // for where the rectangle comes from). It is a sibling file another agent
 // writes in parallel with this one, so the import is dynamic and tolerant: a
 // static `import ... from './event-crop.mjs'` would throw at module load and
@@ -627,7 +627,7 @@ export function createApiServer({
 
       // ---------- /event-crop ----------
       // A JPEG cut from the recording at one event's bestUtc/bestBox (see
-      // contracts/cropPlan.ts): what fired, on the tile, without playing the
+      // contracts/eventThumb.ts): what fired, on the tile, without playing the
       // clip. THE MORNING THIS EXISTS FOR: a spray bottle on a shelf reported
       // as a person 77 times in 13 hours — finding that out cost an ffmpeg
       // cut, a file copy and someone looking at the picture; with the crop on

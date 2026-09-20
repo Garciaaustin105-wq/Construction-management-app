@@ -6,7 +6,8 @@
  * WHY: on a real morning a spray bottle on a shelf was reported as a person 77
  * times in 13 hours. Working out that it was a bottle cost an ffmpeg cut, a
  * file copy and someone looking at the picture. With the crop on the tile it
- * is a glance. contracts/cropPlan.ts decides the rectangle; this file does the
+ * is a glance. The thumbnail is the WHOLE frame with the detection drawn on
+ * it (contracts/eventThumb.ts decides where to draw); this file does the
  * cutting and the caching around it.
  *
  * THE FEARED FAILURES:
@@ -18,7 +19,7 @@
  *   (segment_open), never read half-written.
  * - a Review page open on 500 events spawning 500 ffmpegs at once: bounded by
  *   maxConcurrent, with a hard cap on how much work can queue behind it.
- * - a bad crop rectangle or an ffmpeg that fails partway producing a
+ * - a bad mark rectangle or an ffmpeg that fails partway producing a
  *   zero-byte or truncated file that LOOKS like a thumbnail: every failure
  *   path refuses instead of renaming a partial result into place.
  * - leaking where footage lives: client-facing messages are fixed strings,
@@ -32,7 +33,7 @@ import { join } from 'node:path';
 import os from 'node:os';
 
 import { resolvePlayback } from '../dist/indexCoverage.js';
-import { planCrop } from '../dist/cropPlan.js';
+import { markRect, THUMB_WIDTH } from '../dist/eventThumb.js';
 import { parseFfprobeJson } from '../dist/ffprobe.js';
 
 const CROPS_DIR = 'crops';
@@ -129,8 +130,8 @@ async function probeFrameSize(spawnFn, absPath) {
 }
 
 /**
- * Cut one frame at `offsetSeconds` into `absPath`, cropped to `rect` and
- * scaled to a 240px-wide thumbnail, into `tmpPath`. Resolves `true` only on a
+ * Cut one frame at `offsetSeconds` into `absPath`, with the detection drawn
+ * at `rect` and the whole frame scaled to THUMB_WIDTH, into `tmpPath`. Resolves `true` only on a
  * zero exit AND a file actually written — ffmpeg exiting 0 with nothing
  * written is treated the same as a failure, never as an empty "crop".
  */
@@ -139,7 +140,11 @@ async function cutFrame(spawnFn, { absPath, offsetSeconds, rect, tmpPath }) {
     '-ss', String(offsetSeconds),
     '-i', absPath,
     '-frames:v', '1',
-    '-vf', `crop=${rect.w}:${rect.h}:${rect.x}:${rect.y},scale=240:-2`,
+    // The WHOLE frame, with the detection marked on it. A crop was tried
+    // first and thrown away the same afternoon: it showed a person at 35% of
+    // the thumbnail's area and still read as "a car in a driveway", because a
+    // crop discards WHERE something happened. Austin's call, and he was right.
+    '-vf', `drawbox=x=${rect.x}:y=${rect.y}:w=${rect.w}:h=${rect.h}:color=red@1.0:t=${rect.thickness},scale=${THUMB_WIDTH}:-2`,
     '-q:v', '5',
     // State the format. ffmpeg otherwise guesses it from the output's
     // extension, and we write to a temp name ending in ".tmp" so a half-cut
@@ -300,7 +305,7 @@ export function createEventCrops({
     if (size === null) {
       return refuse(500, 'crop_failed');
     }
-    const rect = planCrop(event.bestBox, size);
+    const rect = markRect(event.bestBox, size);
     if (!rect.ok) {
       return refuse(500, 'crop_failed', rect.message);
     }
