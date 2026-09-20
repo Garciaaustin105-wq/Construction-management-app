@@ -754,3 +754,57 @@ from the person whose job is to look at it.
 **Still unmeasured:** false events per hour on an empty scene, and recall on a
 walk-by. Austin has deferred both to a session where the room can be left
 alone. Until then nobody should quote a false-positive rate for this box.
+
+## Bench log — 2026-09-20, a person cannot hold still and a bottle can
+
+Austin, on being told the detector might suppress a motionless person: "people
+move nomatter how still they want to be." He is right, and it is measurable.
+
+`detector/replay.py` (new) runs recorded footage back through the model and
+prints every frame's boxes, because events.db keeps only the BEST box of an
+event and so nothing stored could answer "how much did it move". It is also
+the scoring tool D1's exit bar has been waiting for.
+
+300 frames each, same camera, same model, same room, replayed from disk. All
+distances are fractions of the detection's OWN box diagonal, so they do not
+depend on range (`contracts/boxJitter.ts`):
+
+| | person holding still, 73 s | the spray bottle | ratio |
+|---|---|---|---|
+| typical frame-to-frame move | 0.00061 | 0.00014 | 4x |
+| worst single move | 0.105 | 0.0045 | 23x |
+| **total wander** | **0.183** | **0.0050** | **37x** |
+| box aspect variation | 0.555 | 0.0135 | 41x |
+| median confidence | 0.906 | 0.401 | |
+
+He was actively trying to be a statue and still wandered 37x further than the
+bottle. The discriminator is physical, not statistical.
+
+**Incidental, and it explains the burst pattern:** the bottle is detected as a
+person in 100% of those 300 frames at median confidence 0.40. It is not
+appearing and disappearing — it sits just under the 0.50 storing floor and
+crosses it occasionally.
+
+**What this does NOT license.** One person, one object, one room, indoors, on
+infrared. Rule 15 wants three of each before a threshold is set, and no
+threshold is set here: `boxJitter.ts` returns numbers and states no verdict.
+Anyone tempted to write `if (wander < 0.01) suppress()` should read rule 10
+and then go and measure.
+
+**The requirement that shapes everything after this**, in Austin's words: "we
+dont know what cameras are where just that it needs to work for it all" — and
+"there is always movement from trees birds bees and trucks n cars and people
+the wind the sky everything moves." So:
+
+- No absolute threshold can work. A number tuned for a laundry room is wrong in
+  a car park; nobody will label 2,880 cameras.
+- **Motion gating is dead for exterior cameras.** Its premise is "skip the work
+  when nothing moves"; outdoors the gate never closes.
+- Outdoors the OBJECT's floor rises too — wind shakes the camera and the sign,
+  shadows crawl, rain speckles the lens. The 37x indoor gap could be 5x or
+  none outdoors. Unmeasured, and not to be assumed either way.
+
+The live direction is per-camera self-calibration: each camera learns its own
+floor from its own unlabelled data, and rule 15 is the safety valve — a camera
+whose detections do not separate into populations at least 3x apart gets
+nothing suppressed, which is the rule working rather than a gap.
