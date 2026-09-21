@@ -429,5 +429,175 @@ await check("an ffmpeg that exits non-zero is a counted failure, never a zero-by
   eq(result.failures.every((f) => f.reason === "cut_failed"), true, "cut_failed, not silently absent");
 });
 
+// ---------- `background`: matched negatives, same rectangle, quiet moments ----------
+
+await check("background cuts one crop per planned instant, using the same rectangle as the fixture's positives", async () => {
+  const calls = [];
+  const eventsDb = threeEventFixtureDb();
+  // One long segment: covers the three events (0/20/40 min) AND a wide quiet
+  // stretch afterwards (45..300 min) for background sampling to draw from.
+  const index = makeIndex({ segments: [sealedSegment("cam1", T0 - 5 * 60_000, 305 * 60_000, "cam1/seg1.mp4", "/srv/camplat/disk0")] });
+  const harvester = createHarvester({
+    eventsDb, index, config: CONFIG, driveAssignment: driveMap([["cam1", 0]]),
+    now: () => new Date(T0 + 310 * 60_000), spawnFn: makeSpawnFn({ calls }),
+  });
+  const { fixtures } = await harvester.listFixtures();
+  eq(fixtures.length, 1, "one fixture");
+
+  const outDir = await makeOutDir();
+  const positiveResult = await harvester.cutFixture(fixtures, 1, { label: "positive", outDir });
+  eq(positiveResult.ok, true, `positives cut: ${JSON.stringify(positiveResult)}`);
+  eq(positiveResult.cut, 3, "three positives");
+
+  const boundary = calls.length;
+  const bgResult = await harvester.cutBackground(fixtures, 1, { label: "bg", outDir, count: 3 });
+  eq(bgResult.ok, true, `background cut: ${JSON.stringify(bgResult)}`);
+  eq(bgResult.shortfall, 0, "plenty of quiet time for 3 — no shortfall");
+  eq(bgResult.cut, 3, "one crop per planned instant");
+
+  const positiveFfmpeg = calls.slice(0, boundary).filter((c) => c.cmd === "ffmpeg");
+  const bgFfmpeg = calls.slice(boundary).filter((c) => c.cmd === "ffmpeg");
+  eq(positiveFfmpeg.length, 3, "three positive ffmpeg calls");
+  eq(bgFfmpeg.length, 3, "three background ffmpeg calls, one per instant");
+
+  // Same box, same measured frame size (the fake ffprobe always answers
+  // 2560x1440) -> cropRect must produce the identical rectangle cut uses.
+  const expectedRect = cropRect(BOX, { width: 2560, height: 1440 });
+  const expectedFilter = `crop=${expectedRect.w}:${expectedRect.h}:${expectedRect.x}:${expectedRect.y}`;
+  for (const c of [...positiveFfmpeg, ...bgFfmpeg]) {
+    const vfAt = c.args.indexOf("-vf");
+    eq(vfAt >= 0, true, `-vf present: ${JSON.stringify(c.args)}`);
+    eq(c.args[vfAt + 1], expectedFilter, "background crop uses the identical rectangle as its fixture's positives");
+  }
+});
+
+await check("THE FEARED ONE: the ffmpeg args for a background cut contain no drawbox or any other drawing filter", async () => {
+  const calls = [];
+  const eventsDb = threeEventFixtureDb();
+  const index = makeIndex({ segments: [sealedSegment("cam1", T0 - 5 * 60_000, 305 * 60_000, "cam1/seg1.mp4", "/srv/camplat/disk0")] });
+  const harvester = createHarvester({
+    eventsDb, index, config: CONFIG, driveAssignment: driveMap([["cam1", 0]]),
+    now: () => new Date(T0 + 310 * 60_000), spawnFn: makeSpawnFn({ calls }),
+  });
+  const { fixtures } = await harvester.listFixtures();
+  const outDir = await makeOutDir();
+  const bgResult = await harvester.cutBackground(fixtures, 1, { label: "bg", outDir, count: 4 });
+  eq(bgResult.ok, true, `background cut: ${JSON.stringify(bgResult)}`);
+  eq(bgResult.cut > 0, true, "at least one background crop was actually cut");
+
+  const bgFfmpeg = calls.filter((c) => c.cmd === "ffmpeg");
+  eq(bgFfmpeg.length, bgResult.cut, "one ffmpeg call per successful background crop");
+  for (const c of bgFfmpeg) {
+    const vfAt = c.args.indexOf("-vf");
+    const filter = c.args[vfAt + 1];
+    eq(/^crop=\d+:\d+:\d+:\d+$/.test(filter), true, `filter is exactly a crop: ${filter}`);
+    eq(filter.toLowerCase().includes("draw"), false, "no drawing filter hiding in there");
+    eq(c.args.every((a) => typeof a !== "string" || !a.toLowerCase().includes("drawbox")), true,
+      "no drawbox anywhere in the whole argument list");
+  }
+});
+
+await check("a fixture detected continuously across the whole held window refuses with no_quiet_time, cuts nothing, and creates no output directory", async () => {
+  const calls = [];
+  // Five sightings 8 minutes apart: widened by the default 5-minute margin,
+  // each pair of consecutive windows overlaps, merging into ONE continuous
+  // blocked span from -5min to +37min — exactly the held segment's own span.
+  const eventsDb = makeEventsDb([
+    ev("e0", "cam1", "person", at(0), BOX),
+    ev("e8", "cam1", "person", at(8), BOX),
+    ev("e16", "cam1", "person", at(16), BOX),
+    ev("e24", "cam1", "person", at(24), BOX),
+    ev("e32", "cam1", "person", at(32), BOX),
+  ]);
+  const index = makeIndex({ segments: [sealedSegment("cam1", T0 - 5 * 60_000, 42 * 60_000, "cam1/seg1.mp4", "/srv/camplat/disk0")] });
+  const harvester = createHarvester({
+    eventsDb, index, config: CONFIG, driveAssignment: driveMap([["cam1", 0]]),
+    now: () => new Date(T0 + 100 * 60_000), spawnFn: makeSpawnFn({ calls }),
+  });
+  const { fixtures } = await harvester.listFixtures();
+  eq(fixtures.length, 1, "one fixture of five");
+  eq(fixtures[0].eventIds.length, 5, "all five sightings grouped");
+
+  // A path that must never come to exist.
+  const outDir = path.join(tmpdir(), `harvest-bg-untouched-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const result = await harvester.cutBackground(fixtures, 1, { label: "thing", outDir, count: 10 });
+  eq(result.ok, false, "refused");
+  eq(result.reason, "no_quiet_time", "the parked-car case — expected, not a fault");
+  eq(typeof result.message === "string" && result.message.length > 10, true, "in words a person can act on");
+  eq(calls.length, 0, "nothing was spawned — refused before any resolution or crop attempt");
+  eq(existsSync(outDir), false, "the out dir was never created");
+});
+
+await check("the held window comes from the SEGMENT index, not the event span — nothing is sampled outside what is held", async () => {
+  const calls = [];
+  // The fixture's own sightings are 48 hours before T0 — long since evicted.
+  // The only footage actually held is a recent 3-hour segment ending at T0.
+  const eventsDb = makeEventsDb([
+    ev("old0", "cam1", "person", at(-48 * 60), BOX),
+    ev("old30", "cam1", "person", at(-48 * 60 + 30), BOX),
+    ev("old60", "cam1", "person", at(-48 * 60 + 60), BOX),
+  ]);
+  const heldStartMs = T0 - 3 * 60 * 60_000;
+  const index = makeIndex({ segments: [sealedSegment("cam1", heldStartMs, 3 * 60 * 60_000, "cam1/seg1.mp4", "/srv/camplat/disk0")] });
+  const harvester = createHarvester({
+    eventsDb, index, config: CONFIG, driveAssignment: driveMap([["cam1", 0]]),
+    now: () => new Date(T0 + 10 * 60_000), spawnFn: makeSpawnFn({ calls }),
+  });
+  const { fixtures } = await harvester.listFixtures();
+  eq(fixtures.length, 1, "one fixture, its sightings 48h in the past");
+
+  const outDir = await makeOutDir();
+  const result = await harvester.cutBackground(fixtures, 1, { label: "thing", outDir, count: 5 });
+  eq(result.ok, true, `sampled from the held footage, not the ancient event span: ${JSON.stringify(result)}`);
+  eq(result.cut, 5, "every planned instant resolved against the held segment");
+  eq(result.failures.length, 0, "none needed footage from 48 hours ago, which was never asked for");
+
+  const manifestRaw = await readFile(path.join(outDir, "manifest.jsonl"), "utf8");
+  const lines = manifestRaw.trim().split("\n").filter(Boolean);
+  eq(lines.length, 5, "one manifest line per background crop");
+  for (const line of lines) {
+    const entry = JSON.parse(line);
+    const instantMs = Date.parse(entry.instantUtc);
+    eq(instantMs >= heldStartMs && instantMs <= T0, true,
+      `instant ${entry.instantUtc} lies inside the HELD segment window, not the 48h-old event span`);
+  }
+});
+
+await check("the manifest marks background samples distinguishably from positives", async () => {
+  const calls = [];
+  const eventsDb = threeEventFixtureDb();
+  const index = makeIndex({ segments: [sealedSegment("cam1", T0 - 5 * 60_000, 305 * 60_000, "cam1/seg1.mp4", "/srv/camplat/disk0")] });
+  const harvester = createHarvester({
+    eventsDb, index, config: CONFIG, driveAssignment: driveMap([["cam1", 0]]),
+    now: () => new Date(T0 + 310 * 60_000), spawnFn: makeSpawnFn({ calls }),
+  });
+  const { fixtures } = await harvester.listFixtures();
+  const outDir = await makeOutDir();
+
+  const positiveResult = await harvester.cutFixture(fixtures, 1, { label: "positive", outDir });
+  eq(positiveResult.cut, 3, "three positives");
+  const bgResult = await harvester.cutBackground(fixtures, 1, { label: "bg", outDir, count: 2 });
+  eq(bgResult.cut, 2, "two background samples");
+
+  const manifestRaw = await readFile(path.join(outDir, "manifest.jsonl"), "utf8");
+  const lines = manifestRaw.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  eq(lines.length, 5, "positives and background share one manifest.jsonl");
+
+  const positives = lines.filter((l) => l.label === "positive");
+  const backgrounds = lines.filter((l) => l.label === "bg");
+  eq(positives.length, 3, "three positive lines");
+  eq(backgrounds.length, 2, "two background lines");
+
+  for (const p of positives) {
+    eq("sample" in p, false, "positives keep whatever they have now — no sample field added");
+    eq("bestUtc" in p, true, "positives still carry bestUtc");
+  }
+  for (const b of backgrounds) {
+    eq(b.sample, "background", "background samples are marked");
+    eq("instantUtc" in b && typeof b.instantUtc === "string", true, "and carry the instant they were cut at");
+    eq(Number.isNaN(Date.parse(b.instantUtc)), false, "a real, parseable timestamp");
+  }
+});
+
 await cleanupTmpDirs();
 report("harvest");

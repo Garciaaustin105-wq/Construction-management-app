@@ -15,6 +15,16 @@
  * and why). `cut` takes one fixture and a human-supplied label and produces
  * `<out>/<label>/*.jpg` plus a manifest line per crop.
  *
+ * `background` cuts the matched NEGATIVES for one fixture: crops from that
+ * fixture's own rectangle, at moments contracts/negativeSampling.ts is
+ * confident the thing was NOT there. Every positive pile shares a fixed
+ * camera's fixed background — a porch post, a picket fence — and without a
+ * negative pile cut from the SAME rectangle, a classifier learns that
+ * background instead of the object. The held window it samples from comes
+ * from the SEGMENT INDEX for that camera, never the events' own span: events
+ * far outlive footage here, so sampling from when something was detected
+ * would ask for frames long since evicted.
+ *
  * THE FEARED FAILURES, in the order the brief gave them:
  * 1. A red rectangle burned onto a training image teaches the classifier to
  *    find red rectangles, not the object under one. agent/event-crop.mjs
@@ -52,6 +62,7 @@ import { resolvePlayback } from "../dist/indexCoverage.js";
 import { markRect } from "../dist/eventThumb.js";
 import { parseFfprobeJson } from "../dist/ffprobe.js";
 import { groupFixtures } from "../dist/fixtures.js";
+import { planNegativeSamples } from "../dist/negativeSampling.js";
 
 import { openEventsDb } from "./events-db.mjs";
 import { openIndex } from "./segindex.mjs";
@@ -123,6 +134,21 @@ export function cropFileStem(event) {
   const safeCamera = event.cameraId.replace(/[^A-Za-z0-9_-]/g, "_");
   const hash = createHash("sha256").update(event.id).digest("hex").slice(0, 12);
   return `${safeCamera}_${event.kind}_${Date.parse(event.bestUtc)}_${hash}`;
+}
+
+/**
+ * Same job as cropFileStem, for a background (negative) sample: deterministic
+ * in the fixture and the instant planNegativeSamples chose — since that
+ * function is itself deterministic (contracts/negativeSampling.ts), re-running
+ * `background` reuses the same file for the same instant rather than leaving
+ * orphaned duplicates (the same reason rule 7 gives for cropFileStem). The
+ * literal `bg` marker makes a directory listing tell positives and negatives
+ * apart at a glance, ahead of anyone reading the manifest.
+ */
+export function backgroundFileStem(cameraId, kind, atMs) {
+  const safeCamera = cameraId.replace(/[^A-Za-z0-9_-]/g, "_");
+  const hash = createHash("sha256").update(`${cameraId}:${kind}:${atMs}`).digest("hex").slice(0, 12);
+  return `${safeCamera}_${kind}_bg_${atMs}_${hash}`;
 }
 
 /**
@@ -298,41 +324,49 @@ export function createHarvester({ eventsDb, index, config, driveAssignment, now 
     return { ...grouping, fixtures: orderFixturesNewestFirst(grouping.fixtures) };
   }
 
-  /** Steps for one event: resolve its footage, measure the frame, crop it. */
-  async function cutOneEvent(event, { outDir, label }) {
+  /**
+   * Resolve `atUtc` for `cameraId` to a sealed segment, measure its frame,
+   * and cut `box` (padded per cropRect) into `<outDir>/<label>/<stem>.jpg`.
+   *
+   * cutOneEvent and the background sampler below both go through this one
+   * path — the entire point of a matched negative is that nothing about HOW
+   * it was cut can differ from its positives, only whether the object is in
+   * it. Two implementations of "resolve, measure, crop" would be exactly the
+   * kind of quiet drift that defeats that.
+   */
+  async function cutRectAt({ cameraId, atUtc, box, stem, outDir, label }) {
     const resolution = resolvePlayback(
-      event.cameraId,
-      index.forCamera(event.cameraId),
-      index.gapsFor(event.cameraId),
-      event.bestUtc,
+      cameraId,
+      index.forCamera(cameraId),
+      index.gapsFor(cameraId),
+      atUtc,
       now().toISOString(),
     );
     if (resolution.kind === "gap" || resolution.kind === "future") {
-      return { eventId: event.id, ok: false, reason: "footage_gone" };
+      return { ok: false, reason: "footage_gone" };
     }
     if (resolution.kind === "recording") {
-      return { eventId: event.id, ok: false, reason: "segment_open" };
+      return { ok: false, reason: "segment_open" };
     }
     const startMs = Date.parse(resolution.segmentStartUtc);
-    const row = index.getByKey(event.cameraId, startMs);
+    const row = index.getByKey(cameraId, startMs);
     if (!row) {
-      return { eventId: event.id, ok: false, reason: "footage_gone" };
+      return { ok: false, reason: "footage_gone" };
     }
     if (row.state === "open") {
-      return { eventId: event.id, ok: false, reason: "segment_open" };
+      return { ok: false, reason: "segment_open" };
     }
-    const absPath = join(rootOf(row, event.cameraId, { config, driveAssignment }), row.path);
+    const absPath = join(rootOf(row, cameraId, { config, driveAssignment }), row.path);
 
     const size = await probeFrameSize(spawnFn, absPath);
     if (size === null) {
-      return { eventId: event.id, ok: false, reason: "probe_failed" };
+      return { ok: false, reason: "probe_failed" };
     }
-    const rect = cropRect(event.bestBox, size);
+    const rect = cropRect(box, size);
     if (!rect.ok) {
-      return { eventId: event.id, ok: false, reason: "bad_box" };
+      return { ok: false, reason: "bad_box" };
     }
 
-    const stem = cropFileStem(event);
     const labelDir = join(outDir, label);
     await mkdir(labelDir, { recursive: true });
     const finalPath = join(labelDir, `${stem}.jpg`);
@@ -341,9 +375,19 @@ export function createHarvester({ eventsDb, index, config, driveAssignment, now 
     const cut = await cutCropFile(spawnFn, { absPath, offsetSeconds: resolution.offsetSeconds, rect, tmpPath });
     if (!cut) {
       await rm(tmpPath, { force: true }).catch(() => {});
-      return { eventId: event.id, ok: false, reason: "cut_failed" };
+      return { ok: false, reason: "cut_failed" };
     }
     await rename(tmpPath, finalPath);
+    return { ok: true, file: finalPath };
+  }
+
+  /** Steps for one event: resolve its footage, measure the frame, crop it. */
+  async function cutOneEvent(event, { outDir, label }) {
+    const stem = cropFileStem(event);
+    const cut = await cutRectAt({ cameraId: event.cameraId, atUtc: event.bestUtc, box: event.bestBox, stem, outDir, label });
+    if (!cut.ok) {
+      return { eventId: event.id, ok: false, reason: cut.reason };
+    }
 
     const manifest = {
       // Relative to `outDir`, in POSIX form: the appliance is Linux, and a
@@ -362,7 +406,34 @@ export function createHarvester({ eventsDb, index, config, driveAssignment, now 
       bestUtc: event.bestUtc,
       box: event.bestBox,
     };
-    return { eventId: event.id, ok: true, file: finalPath, manifest };
+    return { eventId: event.id, ok: true, file: cut.file, manifest };
+  }
+
+  /**
+   * One matched negative: `atMs` is an instant planNegativeSamples chose,
+   * cut from the FIXTURE's own rectangle (never a per-event box — there is no
+   * event here) so it lands pixel-comparable with that fixture's positives.
+   * The manifest line carries `sample: "background"` and the instant so the
+   * two piles can always be told apart, even after they are merged elsewhere.
+   */
+  async function cutOneBackgroundSample(fixture, atMs, { outDir, label }) {
+    const atUtc = new Date(atMs).toISOString();
+    const stem = backgroundFileStem(fixture.cameraId, fixture.kind, atMs);
+    const cut = await cutRectAt({ cameraId: fixture.cameraId, atUtc, box: fixture.box, stem, outDir, label });
+    if (!cut.ok) {
+      return { atMs, ok: false, reason: cut.reason };
+    }
+
+    const manifest = {
+      file: posixPath.join(label, `${stem}.jpg`),
+      label,
+      sample: "background",
+      cameraId: fixture.cameraId,
+      kind: fixture.kind,
+      instantUtc: atUtc,
+      box: fixture.box,
+    };
+    return { atMs, ok: true, file: cut.file, manifest };
   }
 
   /**
@@ -413,7 +484,102 @@ export function createHarvester({ eventsDb, index, config, driveAssignment, now 
     };
   }
 
-  return { listFixtures, cutFixture };
+  /**
+   * Cut matched NEGATIVES for `orderedFixtures[index1Based - 1]`: crops from
+   * that fixture's own rectangle, at instants planNegativeSamples
+   * (contracts/negativeSampling.ts) says the thing was almost certainly NOT
+   * there — so the only difference between this pile and the fixture's
+   * positives is the object itself.
+   *
+   * The held window fed to planNegativeSamples is the SEGMENT INDEX's own
+   * span for this camera — the earliest segment start, and the latest
+   * SEALED segment end — never the events' own span. Events far outlive
+   * footage on this appliance (a fixture can show 27 hours of sightings while
+   * the box holds 3.3 hours of video), so sampling from the event span would
+   * ask for frames that were deleted days ago.
+   *
+   * Refuses the same way cutFixture does on a bad index, label or out dir,
+   * before anything touches the filesystem. A camera with no footage at all,
+   * or none of it sealed yet, is refused the same way (`no_footage`) rather
+   * than guessed at. `no_quiet_time` from planNegativeSamples — the object
+   * was there for the whole of the held window — is passed straight through;
+   * it is the expected answer for a thing that never left, not a fault, and
+   * it cuts nothing and creates no output directory.
+   */
+  async function cutBackground(orderedFixtures, index1Based, { label, outDir, count = 40 }) {
+    if (!Number.isInteger(index1Based) || index1Based < 1 || index1Based > orderedFixtures.length) {
+      return { ok: false, reason: "bad_index", message: `fixture index must be between 1 and ${orderedFixtures.length}` };
+    }
+    if (!isValidLabel(label)) {
+      return { ok: false, reason: "bad_label", message: "--label must be 1-64 characters of letters, digits, '-' or '_'" };
+    }
+    if (!isValidOutDir(outDir)) {
+      return { ok: false, reason: "bad_out", message: "--out must be a plain, non-empty path" };
+    }
+
+    const fixture = orderedFixtures[index1Based - 1];
+
+    // Busy = when this fixture's OWN events were detected. An event that has
+    // since vanished from events.db contributes no span rather than aborting
+    // the whole request — the same "attempt everything, report what could not
+    // be used" spirit as cutFixture, just at the planning stage instead of
+    // the cutting one.
+    const busy = fixture.eventIds
+      .map((id) => eventsDb.getById(id))
+      .filter((e) => e !== null)
+      .map((e) => ({ startMs: Date.parse(e.firstUtc), endMs: Date.parse(e.lastUtc) }));
+
+    // The held window: what footage this camera ACTUALLY has, from the
+    // segment index — never the events' own span.
+    const segments = index.forCamera(fixture.cameraId);
+    if (segments.length === 0) {
+      return {
+        ok: false, reason: "no_footage",
+        message: `no footage has ever been held for ${fixture.cameraId}; there is nothing to sample against`,
+      };
+    }
+    const availableFrom = Math.min(...segments.map((s) => Date.parse(s.startUtc)));
+    const sealedEnds = segments
+      .filter((s) => s.state === "sealed" && s.endUtc !== null)
+      .map((s) => Date.parse(s.endUtc));
+    if (sealedEnds.length === 0) {
+      return {
+        ok: false, reason: "no_footage",
+        message: `${fixture.cameraId} has no sealed segment yet; there is nothing to sample against`,
+      };
+    }
+    const availableTo = Math.max(...sealedEnds);
+
+    const plan = planNegativeSamples({ busy, availableFrom, availableTo, count });
+    if (!plan.ok) {
+      return plan;
+    }
+
+    const results = await mapWithConcurrency(plan.instants, maxConcurrent, (atMs) =>
+      cutOneBackgroundSample(fixture, atMs, { outDir, label }));
+
+    const successes = results.filter((r) => r.ok);
+    const failures = results.filter((r) => !r.ok).map((r) => ({ atUtc: new Date(r.atMs).toISOString(), reason: r.reason }));
+
+    if (successes.length > 0) {
+      await mkdir(outDir, { recursive: true });
+      const lines = successes.map((r) => JSON.stringify(r.manifest)).join("\n") + "\n";
+      await appendFile(join(outDir, "manifest.jsonl"), lines, "utf8");
+    }
+
+    return {
+      ok: true,
+      label,
+      outDir,
+      asked: plan.asked,
+      cut: successes.length,
+      shortfall: plan.shortfall,
+      files: successes.map((r) => r.file),
+      failures,
+    };
+  }
+
+  return { listFixtures, cutFixture, cutBackground };
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +653,41 @@ async function cmdCut(stateDir, fixtureIndex, label, outDir) {
   }
 }
 
+async function cmdBackground(stateDir, fixtureIndex, label, outDir, count) {
+  const { harvester, close } = await openHarvester(stateDir);
+  try {
+    const { fixtures } = await harvester.listFixtures();
+    const result = await harvester.cutBackground(fixtures, fixtureIndex, { label, outDir, count });
+    if (!result.ok) {
+      if (result.reason === "no_quiet_time") {
+        // Not a fault: the expected answer for something that was there the
+        // whole time (the parked car). Say so plainly, or "refused" alone
+        // reads like the tool is broken.
+        console.error(`no negatives to cut for fixture ${fixtureIndex}: ${result.message}`);
+        console.error("this is EXPECTED when the object was present for the whole of the held footage — not an error.");
+      } else {
+        console.error(`refused: ${result.message}`);
+      }
+      process.exitCode = 2;
+      return;
+    }
+    console.log(
+      `cut ${result.cut} of ${result.asked} background crop(s) for fixture ${fixtureIndex} into ${join(outDir, label)}${pathSep}` +
+      (result.shortfall > 0 ? ` (shortfall ${result.shortfall} — planNegativeSamples had less quiet time than asked for)` : ""),
+    );
+    if (result.failures.length > 0) {
+      const tally = new Map();
+      for (const f of result.failures) tally.set(f.reason, (tally.get(f.reason) ?? 0) + 1);
+      console.log(`${result.failures.length} of ${result.asked} planned crop(s) could NOT be cut:`);
+      for (const [reason, n] of tally) {
+        console.log(`  ${n} ${reason} — ${CUT_MESSAGES[reason] ?? reason}`);
+      }
+    }
+  } finally {
+    close();
+  }
+}
+
 function flagFrom(args, name, fallback = null) {
   const i = args.indexOf(`--${name}`);
   return i === -1 ? fallback : args[i + 1];
@@ -513,18 +714,36 @@ async function main() {
     await cmdCut(stateDir, fixtureIndex, label, outDir);
     return;
   }
+  if (command === "background") {
+    const rawIndex = flagFrom(args, "fixture");
+    const label = flagFrom(args, "label");
+    const outDir = flagFrom(args, "out");
+    if (rawIndex === null || label === null || outDir === null) {
+      console.error("usage: harvest background --fixture <index> --label <name> --out <dir> [--count <n>]");
+      process.exitCode = 2;
+      return;
+    }
+    const fixtureIndex = /^\d+$/.test(rawIndex) ? Number(rawIndex) : NaN;
+    const rawCount = flagFrom(args, "count");
+    const count = rawCount === null ? 40 : (/^\d+$/.test(rawCount) ? Number(rawCount) : NaN);
+    await cmdBackground(stateDir, fixtureIndex, label, outDir, count);
+    return;
+  }
 
   console.log(`harvest <command>
 
-  list [--state-dir D]                          group events.db into fixtures and list them
-  cut --fixture N --label NAME --out DIR         cut every event of fixture N into DIR/NAME/
+  list [--state-dir D]                                   group events.db into fixtures and list them
+  cut --fixture N --label NAME --out DIR                  cut every event of fixture N into DIR/NAME/
       [--state-dir D]
+  background --fixture N --label NAME --out DIR           cut matched NEGATIVES for fixture N: the same
+      [--count 40] [--state-dir D]                        rectangle, at moments the thing was not there
 
   --state-dir defaults to $CAMPLAT_STATE_DIR, else ${DEFAULT_PATHS.stateDir}
 
 example:
   node agent/harvest.mjs list
-  node agent/harvest.mjs cut --fixture 3 --label spray_bottle --out ./training`);
+  node agent/harvest.mjs cut --fixture 3 --label spray_bottle --out ./training
+  node agent/harvest.mjs background --fixture 3 --label spray_bottle_bg --out ./training`);
   process.exitCode = command ? 2 : 0;
 }
 
