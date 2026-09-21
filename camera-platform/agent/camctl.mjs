@@ -13,6 +13,8 @@ import { audit, loadConfig, cleanEmpty } from "./recorder-service.mjs";
 import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUEST, requestCameraRestarts } from "./alerts-run.mjs";
 import { defaultThresholds } from "../dist/alerts.js";
 import { DEFAULT_PATHS } from "./config.mjs";
+import { runScore } from "./score-clips.mjs";
+import { fileURLToPath } from "node:url";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sweep } from "./sweep.mjs";
@@ -422,7 +424,35 @@ async function cmdCleanEmpty() {
   }
 }
 
-const commands = { "clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+// Plays every "Teach the AI" clip back through the live detector, at the
+// frame rate and confidence floor live uses, and scores it against the
+// answer key (agent/score-clips.mjs). --fps N replays at N instead of the
+// live rate, and the report labels it so. The service unit sets the venv
+// python in CAMPLAT_DETECT_PYTHON; run by hand, the same venv is assumed.
+async function cmdScore() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  const config = await loadConfig(stateDir);
+  const fpsFlag = flag("fps");
+  const fpsByHand = fpsFlag === null ? null : Number(fpsFlag);
+  if (fpsByHand !== null && !(fpsByHand > 0 && fpsByHand <= 30)) {
+    console.error("--fps must be a number above 0 and at most 30");
+    process.exitCode = 2;
+    return;
+  }
+  const python = process.env.CAMPLAT_DETECT_PYTHON ?? "/opt/camplat-detect/venv/bin/python";
+  const replayPath = fileURLToPath(new URL("../detector/replay.py", import.meta.url));
+  const result = await runScore({ stateDir, config, python, replayPath, fpsByHand, progress: (m) => console.error(m) });
+  if (result.refused) {
+    console.log(`Refused: ${result.refused}`);
+    process.exitCode = 1;
+    return;
+  }
+  for (const line of result.lines) console.log(line);
+  if (result.savedTo) console.log(`Saved: ${result.savedTo}`);
+  if (result.saveError) console.log(`Not saved (the report above is complete): ${result.saveError}`);
+}
+
+const commands = { score: cmdScore, "clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -440,6 +470,8 @@ if (!handler) {
                                 for when path detection is what failed
   size [options]                disk sizing table for a store
   budget [options]              per-camera bitrate ceiling for a retention target
+  score [--state-dir D]         play every Teach-the-AI clip through the live detector and score it
+        [--fps N]               replay at N fps instead of the live rate (labelled in the report)
   bench [options]               concurrent write throughput of a recording drive
   load --source FILE [options]  N recorders playing a file at once: CPU, write rate, who fell behind
 
