@@ -213,8 +213,13 @@ let holdPlayback = null;
 // The same for /export/plan.
 let holdPlan = null;
 const realFetch = globalThis.fetch;
+// Listeners the page puts on the document (visibilitychange), kept so a
+// check can fire them. `hidden` is flipped by the checks that need it.
+const docListeners = [];
 function install(byId) {
   globalThis.document = {
+    hidden: false,
+    addEventListener: (type, fn) => { docListeners.push({ type, fn }); },
     getElementById: (id) => byId[id] ?? null,
     createElement: (tag) => (tag === "video" ? new FakeVideo() : new FakeEl(tag)),
     createTextNode: textNode,
@@ -254,7 +259,7 @@ const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", 
   "closeSheet", "drawLengthChips", "pickLength", "sheetGo", "showCounts", "bumpCount", "tapNobody",
   "loadTeachProgress", "wireFriendly",
   "loadEvents", "drawEvents", "drawMarks", "drawTiles", "eventWords", "currentMomentUtc",
-  "goToEvent", "updateStepButtons", "stepEvent"];
+  "goToEvent", "updateStepButtons", "stepEvent", "refreshTick", "wireRefresh"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireFriendly();\nwireEvents();\nloadCameras();\n";
@@ -279,8 +284,16 @@ async function until(fn, what, limitMs = 3000) {
 
 const dom = freshDom();
 install(dom);
+// The page starts a 5-second refresh timer when it wires itself up. A real
+// one would keep this suite alive for ever (report() sets the exit code, it
+// does not exit) and fire loadDay() in the middle of other checks. So it is
+// captured here, and the checks below fire ticks by hand.
+const pageIntervals = [];
+const realSetInterval = globalThis.setInterval;
+globalThis.setInterval = (fn, everyMs) => { pageIntervals.push({ fn, everyMs }); return pageIntervals.length; };
 let startupError = null;
 await import(pathToFileURL(tmpScript).href).catch((e) => { startupError = e; });
+globalThis.setInterval = realSetInterval;
 page = globalThis.__page;
 const barsOf = () => dom.strip.children.filter((c) => c !== dom.playhead);
 
@@ -1166,6 +1179,145 @@ await check("THE FEARED ONE: the timeline, filters and Next/Previous still work 
   }
   eq(seen, ["e-car-1", "e-person-1", "e-person-2"], "Next still walks every event, in order, none skipped");
   eq(dom.nextEvent.disabled, true, "and still knows when it has run out");
+});
+
+/* ── keeping today current (refreshDecision, wired in) ───────────────────── */
+
+// Why this block exists: on 2026-09-20 a person walked up to the house and
+// was detected twice, at 0.88 and 0.90, and a Review page opened before he
+// arrived never showed either, because nothing ever asked again.
+const timelineAsks = () => fetchLog.filter((u) => u.startsWith("/timeline?")).length;
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+/** A tick on today as it is at this instant: a check that awaits across
+ *  local midnight must not tick with the date it read before. */
+const tickToday = () => { page.el.day.value = localToday(); page.refreshTick(); };
+/** Run `fn` with today drawn, nothing open and a load long overdue, then put
+ *  the day back. The checks above leave a clip in the player; left there, it
+ *  would (correctly) hold every refresh off. */
+async function onToday(fn) {
+  const before = { day: page.el.day.value };
+  page.stopVideo();
+  page.view.sheetMode = null;
+  page.el.day.value = localToday();
+  page.view.lastLoadMs = Date.now() - 60_000;
+  try {
+    await fn();
+  } finally {
+    fetchBroken = false;
+    globalThis.document.hidden = false;
+    page.view.playing = null;
+    page.view.sheetMode = null;
+    page.el.day.value = before.day;
+    await page.loadDay();
+    await settle();
+  }
+}
+
+await check("the page ticks every 5 s, and once more when the tab is looked at again", async () => {
+  eq(pageIntervals.length, 1, "one timer");
+  eq(pageIntervals[0].everyMs, 5000, "every 5 s");
+  eq(pageIntervals[0].fn === page.refreshTick, true, "running the refresh tick");
+  eq(docListeners.filter((l) => l.type === "visibilitychange").length, 1, "and one visibilitychange listener");
+});
+
+await check("THE ORIGINAL BUG: a page left open on today asks again", async () => {
+  await onToday(async () => {
+    const before = timelineAsks();
+    page.refreshTick();
+    await settle();
+    eq(page.view.lastRefresh.reason, "due", "due");
+    eq(timelineAsks(), before + 1, "and it asked the recorder again");
+  });
+});
+
+await check("THE FEARED ONE: never while a clip is open, and it resumes when the clip is gone", async () => {
+  await onToday(async () => {
+    page.view.playing = { segmentStartUtc: "2026-09-11T10:00:00Z" };
+    const before = timelineAsks();
+    page.refreshTick();
+    await settle();
+    eq(page.view.lastRefresh.reason, "clip_open", "held off");
+    eq(timelineAsks(), before, "nothing asked while someone is watching");
+    page.view.playing = null;
+    tickToday();
+    await settle();
+    eq(timelineAsks(), before + 1, "and asked as soon as the clip was gone");
+  });
+});
+
+await check("nor while the save sheet is open", async () => {
+  await onToday(async () => {
+    page.view.sheetMode = "save";
+    const before = timelineAsks();
+    page.refreshTick();
+    await settle();
+    eq(page.view.lastRefresh.reason, "sheet_open", "held off");
+    eq(timelineAsks(), before, "nothing asked");
+  });
+});
+
+await check("a hidden tab asks nothing; looking at it again asks at once", async () => {
+  await onToday(async () => {
+    globalThis.document.hidden = true;
+    const before = timelineAsks();
+    page.refreshTick();
+    await settle();
+    eq(page.view.lastRefresh.reason, "hidden", "held off");
+    eq(timelineAsks(), before, "nothing asked of a box running inference");
+    globalThis.document.hidden = false;
+    page.el.day.value = localToday();
+    for (const l of docListeners.filter((x) => x.type === "visibilitychange")) l.fn();
+    await settle();
+    eq(timelineAsks(), before + 1, "asked the moment the tab came back, not a tick later");
+  });
+});
+
+await check("a day that is over is never asked again", async () => {
+  const day = page.el.day.value;
+  page.stopVideo();
+  page.el.day.value = "2026-09-11";
+  page.view.lastLoadMs = Date.now() - 60_000;
+  const before = timelineAsks();
+  page.refreshTick();
+  await settle();
+  eq(page.view.lastRefresh.reason, "day_is_over", "history cannot gain events");
+  eq(timelineAsks(), before, "so nothing is asked");
+  page.el.day.value = day;
+});
+
+await check("a recorder that cannot be reached is retried on the interval, not on every tick", async () => {
+  await onToday(async () => {
+    fetchBroken = true;
+    const started = Date.now();
+    await page.loadDay();
+    eq(page.view.lastLoadMs >= started, true, "the failed ATTEMPT is stamped");
+    const before = timelineAsks();
+    page.refreshTick();
+    await settle();
+    eq(page.view.lastRefresh.reason, "too_soon", "so the next tick waits");
+    eq(timelineAsks(), before, "and does not hammer a recorder that is down");
+  });
+});
+
+await check("a clip the browser cannot play is closed, so refreshing resumes", async () => {
+  // Found in review: the video's error handler said so on screen but left
+  // view.playing set, and every tick after answered clip_open, for good.
+  await onToday(async () => {
+    await page.playAt("2026-09-11T10:00:10Z");
+    await until(() => page.view.playing !== null, "a clip to open");
+    page.el.video.fire("error");
+    eq(page.view.playing, null, "the clip that cannot play is no longer open");
+    eq(/cannot play this recording/.test(page.el.status.textContent), true, "and the reason stays on screen");
+    const before = timelineAsks();
+    page.view.lastLoadMs = Date.now() - 60_000;
+    tickToday();
+    await settle();
+    eq(page.view.lastRefresh.reason, "due", "refreshing carries on");
+    eq(timelineAsks(), before + 1, "and asks the recorder again");
+  });
 });
 
 globalThis.fetch = realFetch;

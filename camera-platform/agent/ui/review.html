@@ -530,7 +530,7 @@ const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq
   calYear: 0, calMonth: 0, recordedDays: [], monthSeq: 0,
   sheetMode: null, sheetLength: 5, sheetWindow: null,
   events: [], markers: [], kinds: ['person', 'vehicle', 'plate'], here: null,
-  eventSeq: 0, eventsTruncated: false, lastLoadMs: null };
+  eventSeq: 0, eventsTruncated: false, lastLoadMs: null, lastRefresh: null };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
@@ -670,6 +670,9 @@ async function loadCameras() {
  */
 async function loadDay() {
   const seq = ++view.loadSeq;
+  // Stamped on the ATTEMPT, not on success: a recorder that cannot be
+  // reached is then retried on the refresh interval, not on every tick.
+  view.lastLoadMs = Date.now();
   const win = dayWindow(el.day.value);
   if (!win) {
     showPageError('Pick a day');
@@ -1374,6 +1377,11 @@ function wireEvents() {
   el.video.addEventListener('error', () => {
     if (view.playing !== null) {
       setStatus('This browser cannot play this recording (H.265 needs hardware decoding)', 'problem');
+      // A clip that cannot play is not open. Left as view.playing, it would
+      // hold every background refresh off for the rest of the day with
+      // nothing on screen to say why. stopVideo leaves the status alone,
+      // and the error its own src removal fires is ignored above.
+      stopVideo();
     }
   });
   // Playback speed: 1x to start; stopVideo deliberately leaves it alone.
@@ -1384,6 +1392,48 @@ function wireEvents() {
   el.fwd10.addEventListener('click', () => { step(10); });
   showRate();
   showSteps();
+  wireRefresh();
+}
+
+/* ── keeping today current ────────────────────────────────────────────── */
+
+// How often the page asks refreshDecision whether to reload. The decision
+// itself waits REFRESH_INTERVAL_MS (review-client.mjs) between loads; this
+// only bounds how late a due refresh can be noticed.
+const REFRESH_TICK_MS = 5000;
+
+/**
+ * One tick: hand the clock and the page's state to refreshDecision, and
+ * reload the drawn day if it says so. Without this the page is a snapshot
+ * of the moment it was opened: on 2026-09-20 a person walked up to the house
+ * and was detected twice, at 0.88 and 0.90, and a Review page opened before
+ * he arrived never showed either.
+ *
+ * The decision is kept on view.lastRefresh, reason and all, so "why is this
+ * page not updating" is answered by looking rather than guessing.
+ */
+function refreshTick() {
+  const win = dayWindow(el.day.value);
+  if (win === null) return;
+  const decision = refreshDecision({
+    nowMs: Date.now(),
+    lastLoadMs: view.lastLoadMs,
+    dayStartMs: Date.parse(win.startUtc),
+    dayEndMs: Date.parse(win.endUtc),
+    clipOpen: view.playing !== null,
+    sheetOpen: view.sheetMode !== null,
+    hidden: document.hidden === true,
+  });
+  view.lastRefresh = decision;
+  if (decision.refresh) loadDay();
+}
+
+/** Tick on a timer, and once more the moment the tab is looked at again. */
+function wireRefresh() {
+  setInterval(refreshTick, REFRESH_TICK_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshTick();
+  });
 }
 
 /* ── export: one camera, a time range on the shown day, as a ZIP ──────────── */
