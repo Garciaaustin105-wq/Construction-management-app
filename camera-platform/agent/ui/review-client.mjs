@@ -1200,3 +1200,86 @@ export function markerSummary(markers) {
 
   return { person, vehicle, plate, total: Array.isArray(markers) ? markers.length : 0 };
 }
+
+/** How long a drawn day may go unrefreshed before it is asked for again.
+ *
+ *  Twenty seconds, because the complaint this exists to answer was "my brother
+ *  walked in and there is no person event" when the detector had in fact
+ *  recorded two, at 0.88 and 0.90 confidence, ninety seconds earlier. The page
+ *  had been opened before he arrived and never asked again. A minute of
+ *  staleness is indistinguishable from a broken detector. */
+export const REFRESH_INTERVAL_MS = 20_000;
+
+/**
+ * Whether the day now drawn should be asked for again.
+ *
+ * Pure: takes the clock and the page's state as numbers and booleans, returns
+ * a decision and the reason for it. Called on a short timer, so it must be
+ * cheap and must never throw — a decision function that throws on a timer
+ * takes the page down between one event and the next.
+ *
+ * state:
+ *   nowMs        the clock
+ *   lastLoadMs   when the drawn day last arrived (null: never)
+ *   dayStartMs   the drawn day's window, half-open [dayStartMs, dayEndMs)
+ *   dayEndMs
+ *   clipOpen     a clip is loaded in the player
+ *   sheetOpen    the save/export sheet is showing
+ *   hidden       the tab is not on screen
+ *   intervalMs   optional override of REFRESH_INTERVAL_MS
+ *
+ * Returns { refresh, reason }. The reason is always given, including when the
+ * answer is no, so that "why is this page not updating" is answerable without
+ * guessing.
+ *
+ * WHAT IT REFUSES TO DO, and why each one is deliberate:
+ *
+ * - Never while a clip is open. Reloading redraws the strip, drops the
+ *   playhead and forgets which marker you stepped to. Someone reviewing an
+ *   incident is doing the one job this product exists for, and a background
+ *   refresh that moves the ground under them is worse than a stale count.
+ *   The refresh resumes the moment the clip is closed.
+ * - Never while the save/export sheet is open. The time dropdowns do survive
+ *   a redraw, so this is the smaller sin of the two, but someone half way
+ *   through choosing a range to hand to somebody else is mid-task, and
+ *   mid-task is not the moment to redraw what they are choosing from.
+ * - Never for a day that is over, or one that has not started. Those cannot
+ *   gain events, so a refresh is a redraw under the cursor for nothing. This
+ *   also covers the page left open across midnight: the drawn day stops being
+ *   today, and quietly stops refreshing, which is correct - it is history now.
+ * - Never while the tab is hidden. This box is running inference on every
+ *   camera it holds; a page nobody is looking at does not get to ask it
+ *   questions.
+ */
+export function refreshDecision(state) {
+  if (!isNonArrayObject(state)) return { refresh: false, reason: "unreadable" };
+
+  const { nowMs, dayStartMs, dayEndMs } = state;
+  const intervalMs = typeof state.intervalMs === "number" ? state.intervalMs : REFRESH_INTERVAL_MS;
+  for (const v of [nowMs, dayStartMs, dayEndMs, intervalMs]) {
+    if (typeof v !== "number" || !Number.isFinite(v)) return { refresh: false, reason: "unreadable" };
+  }
+  if (dayEndMs <= dayStartMs) return { refresh: false, reason: "unreadable" };
+
+  // THE FEARED ONE first: whatever else is true, do not move the page under
+  // someone who is watching a clip.
+  if (state.clipOpen === true) return { refresh: false, reason: "clip_open" };
+  if (state.sheetOpen === true) return { refresh: false, reason: "sheet_open" };
+  if (state.hidden === true) return { refresh: false, reason: "hidden" };
+
+  if (nowMs >= dayEndMs) return { refresh: false, reason: "day_is_over" };
+  if (nowMs < dayStartMs) return { refresh: false, reason: "day_not_started" };
+
+  const lastLoadMs = state.lastLoadMs;
+  if (typeof lastLoadMs !== "number" || !Number.isFinite(lastLoadMs)) {
+    // Never loaded, or loaded at a time we cannot read. Ask.
+    return { refresh: true, reason: "never_loaded" };
+  }
+  // A load stamped in the future means the clock moved - a laptop waking, or
+  // NTP stepping the box. Without this the page would wait out the skew and
+  // look frozen for as long as it lasted.
+  if (lastLoadMs > nowMs) return { refresh: true, reason: "clock_moved" };
+
+  if (nowMs - lastLoadMs < intervalMs) return { refresh: false, reason: "too_soon" };
+  return { refresh: true, reason: "due" };
+}

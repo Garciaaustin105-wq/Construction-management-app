@@ -448,7 +448,7 @@
 <script type="module">
 import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer,
   monthCalendar, timeOptions, recordedDays, rangeAround, friendlyProblem, clipProgress,
-  eventMarkers, stepToEvent, seekInstantFor, markerSummary } from '/ui/review-client.js';
+  eventMarkers, stepToEvent, seekInstantFor, markerSummary, refreshDecision } from '/ui/review-client.js';
 import { PLAYBACK_RATES, nextRate, rateLabel } from '/ui/playback.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 
@@ -530,7 +530,7 @@ const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq
   calYear: 0, calMonth: 0, recordedDays: [], monthSeq: 0,
   sheetMode: null, sheetLength: 5, sheetWindow: null,
   events: [], markers: [], kinds: ['person', 'vehicle', 'plate'], here: null,
-  eventSeq: 0, eventsTruncated: false };
+  eventSeq: 0, eventsTruncated: false, lastLoadMs: null };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
