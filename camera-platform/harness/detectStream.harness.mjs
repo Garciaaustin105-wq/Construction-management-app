@@ -43,6 +43,29 @@ check("an empty frame is still a frame: the service knows the worker is alive", 
   eq([r.kind, r.detections.length], ["frame", 0], "alive, nothing seen");
 });
 
+check("a worker line carrying a species parses and keeps it", () => {
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "vehicle", confidence: 0.8, box: box(0.2, 0.3), species: "truck" },
+  ]), "cam-1");
+  eq(r.refused, [], "nothing refused");
+  eq(r.detections.map((d) => [d.kind, d.species]), [["vehicle", "truck"]], "the species rides along");
+});
+
+check("a line with no species still parses, because that is every worker running today", () => {
+  const r = parseWorkerLine(frameLine(0, [{ kind: "person", confidence: 0.8, box: box(0.2, 0.3) }]), "cam-1");
+  eq(r.refused, [], "nothing refused");
+  eq(r.detections[0].species, undefined, "absent, not defaulted to anything");
+});
+
+check("THE FEARED ONE: a species that does not belong to its kind is refused by name, not silently stripped - a truck filed as a person would make a search for trucks return people", () => {
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "person", confidence: 0.8, box: box(0.2, 0.3), species: "truck" },   // a truck's species, wrong kind
+    { kind: "vehicle", confidence: 0.8, box: box(0.2, 0.3), species: "dog" },    // not in any kind's vocabulary
+  ]), "cam-1");
+  eq(r.detections.length, 0, "neither detection kept");
+  eq(r.refused, ["bad_species", "bad_species"], "both refused and named, so a widening worker is caught here rather than in the database");
+});
+
 check("THE FEARED ONE: a detection the contract refuses is refused here too, and named", () => {
   const r = parseWorkerLine(frameLine(0, [
     { kind: "person", confidence: 1.7, box: box(0.1, 0.2) },       // confidence past 1
@@ -105,17 +128,24 @@ check("THE FEARED ONE: one person across many frames is ONE event, updated as it
 
 check("THE FEARED ONE: the streaming fold and the batch fold give the same events, so the scorer grades what is stored", () => {
   // Seeded pseudo-random traffic: two cameras, people and vehicles, walking,
-  // pausing, overlapping, leaving and coming back.
+  // pausing, overlapping, leaving and coming back. Species rides along on
+  // most sightings and is missing on the rest, like an older worker mixed in.
   let s = 12345;
   const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const VEHICLE_SPECIES = ["bus", "car", "motorcycle", "truck"];
   const frames = [];
   for (let ms = 0; ms < 120_000; ms += 200) {
     const ds = [];
     for (const cameraId of ["cam-1", "cam-2"]) {
       const n = Math.floor(rnd() * 3);
       for (let k = 0; k < n; k++) {
-        ds.push({ cameraId, atUtc: at(ms), kind: rnd() < 0.7 ? "person" : "vehicle", confidence: 0.3 + rnd() * 0.7,
-          box: box(Math.floor(rnd() * 3) * 0.3 + rnd() * 0.02, 0.2 + rnd() * 0.02) });
+        const kind = rnd() < 0.7 ? "person" : "vehicle";
+        const d = { cameraId, atUtc: at(ms), kind, confidence: 0.3 + rnd() * 0.7,
+          box: box(Math.floor(rnd() * 3) * 0.3 + rnd() * 0.02, 0.2 + rnd() * 0.02) };
+        if (rnd() < 0.6) {
+          d.species = kind === "person" ? "person" : VEHICLE_SPECIES[Math.floor(rnd() * VEHICLE_SPECIES.length)];
+        }
+        ds.push(d);
       }
     }
     if (rnd() < 0.15) { ms += 12_000; } // sometimes a long quiet spell

@@ -8,6 +8,7 @@ import { check, eq, report } from "./_assert.mjs";
 import {
   EVENT_KINDS, MERGE_GAP_MS, MERGE_MIN_IOU,
   normalisePlate, checkDetection, iou, foldDetections, matchScore,
+  SPECIES_OF_KIND, speciesOf,
 } from "../dist/detection.js";
 
 console.log("detection");
@@ -195,6 +196,102 @@ check("input out of order is sorted, and the input is not mutated", () => {
   eq(ev.map((e) => e.firstUtc), [at(0), at(200)]);
   eq(ev[0].lastUtc, at(400));
   eq(foldDetections([]), []);
+});
+
+/* ── species: the precise thing, under the coarse kind ─────────────────────
+ *
+ * The detector already tells a truck from a car (COCO 2 car, 3 motorcycle,
+ * 5 bus, 7 truck) and we were flattening all four to "vehicle" in one line —
+ * throwing away exactly the word Austin needs to search for. `kind` stays
+ * coarse so the forty-one places that read it keep working; `species` carries
+ * the precise class alongside it.
+ *
+ * THE FEARED FAILURES: a species that contradicts its kind, so searching for
+ * a truck returns a person; the fold dropping it, so every event is "vehicle"
+ * and no search can ever find a truck; and an event whose species disagrees
+ * with the very crop shown next to it.
+ */
+
+check("the vocabulary: every species belongs to exactly one kind", () => {
+  eq(SPECIES_OF_KIND.person, ["person"], "a person is a person");
+  eq(SPECIES_OF_KIND.vehicle, ["bus", "car", "motorcycle", "truck"], "what the model can actually tell apart");
+  eq(SPECIES_OF_KIND.plate, [], "a plate is not a thing with a species");
+  const all = Object.values(SPECIES_OF_KIND).flat();
+  eq(all.length, new Set(all).size, "no species belongs to two kinds");
+  eq(Object.keys(SPECIES_OF_KIND).sort(), [...EVENT_KINDS].sort(), "one entry per kind, and no more");
+});
+
+check("speciesOf answers which kind a species belongs to, or refuses", () => {
+  eq(speciesOf("truck"), "vehicle", "truck");
+  eq(speciesOf("person"), "person", "person");
+  eq(speciesOf("dog"), null, "a species this detector does not report");
+  eq(speciesOf(""), null, "blank");
+  eq(speciesOf(null), null, "not a string");
+  eq(speciesOf("TRUCK"), null, "case matters: the stored vocabulary is lower case");
+});
+
+check("a detection may carry its species, and it is copied out clean", () => {
+  const d = checkDetection({ cameraId: "cam1", atUtc: at(0), kind: "vehicle", confidence: 0.8,
+    box: box(0.1, 0.1), species: "truck" });
+  eq(d.ok, true, "accepted");
+  eq(d.detection.species, "truck", "carried through");
+  eq(d.detection.kind, "vehicle", "with its coarse kind intact");
+});
+
+check("a detection without a species is still perfectly valid", () => {
+  // Every event recorded before today has none, and the plate reader has no
+  // species to give. Absence is normal, not an error.
+  const d = checkDetection({ cameraId: "cam1", atUtc: at(0), kind: "vehicle", confidence: 0.8, box: box(0.1, 0.1) });
+  eq(d.ok, true, "accepted");
+  eq("species" in d.detection, false, "and the field is simply absent, not null");
+});
+
+check("THE FEARED ONE: a species that contradicts its kind is refused", () => {
+  for (const [kind, species] of [["person", "truck"], ["vehicle", "person"], ["plate", "car"], ["person", "car"]]) {
+    const d = checkDetection({ cameraId: "cam1", atUtc: at(0), kind, confidence: 0.8, box: box(0.1, 0.1),
+      species, ...(kind === "plate" ? { plate: "ABC123" } : {}) });
+    eq(d.ok, false, `${kind} + ${species} refused`);
+    eq(d.reason, "bad_species", "says why");
+  }
+});
+
+check("a species outside the vocabulary is refused, never stored as typed", () => {
+  // This string reaches a search index and a database. It is not free text.
+  for (const bad of ["lorry", "Truck", "truck ", "", "  ", 7, null, {}, ["truck"], "dog"]) {
+    const d = checkDetection({ cameraId: "cam1", atUtc: at(0), kind: "vehicle", confidence: 0.8,
+      box: box(0.1, 0.1), species: bad });
+    eq(d.ok, false, `refused ${JSON.stringify(bad)}`);
+    eq(d.reason, "bad_species", `reason for ${JSON.stringify(bad)}`);
+  }
+});
+
+check("THE FEARED ONE: the fold keeps the species of the sighting it shows", () => {
+  // The event's crop is cut at bestUtc. If the word and the picture come from
+  // different frames, an operator is told "truck" beside a picture of a car.
+  const v = (ms, confidence, species) =>
+    ({ cameraId: "cam1", atUtc: at(ms), kind: "vehicle", confidence, box: box(0.4, 0.4), species });
+  const [ev] = foldDetections([
+    v(0, 0.55, "car"),
+    v(400, 0.91, "truck"),
+    v(800, 0.60, "car"),
+  ]);
+  eq(ev.count, 3, "one event");
+  eq(ev.bestConfidence, 0.91, "the best sighting");
+  eq(ev.bestUtc, at(400), "at that moment");
+  eq(ev.species, "truck", "and the species from that same sighting, not the first or the commonest");
+});
+
+check("an event folded from sightings with no species has none", () => {
+  const [ev] = foldDetections([person(0, box(0.4, 0.4)), person(400, box(0.4, 0.4))]);
+  eq("species" in ev, false, "absent, not guessed");
+});
+
+check("the species follows the best sighting even when it arrives first", () => {
+  const v = (ms, confidence, species) =>
+    ({ cameraId: "cam1", atUtc: at(ms), kind: "vehicle", confidence, box: box(0.4, 0.4), species });
+  const [ev] = foldDetections([v(0, 0.95, "bus"), v(400, 0.5, "truck"), v(800, 0.5, "car")]);
+  eq(ev.species, "bus", "the first sighting was the best one");
+  eq(ev.bestUtc, at(0), "and the crop comes from there too");
 });
 
 report("detection");

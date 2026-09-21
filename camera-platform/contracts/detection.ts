@@ -15,6 +15,42 @@ import { parseUtc } from "./time.js";
 export type EventKind = "person" | "vehicle" | "plate";
 export const EVENT_KINDS: readonly EventKind[] = Object.freeze(["person", "vehicle", "plate"]);
 
+/**
+ * The precise thing, underneath the coarse kind.
+ *
+ * The detector already tells a truck from a car - COCO classes 2 car, 3
+ * motorcycle, 5 bus, 7 truck - and we were flattening all four to "vehicle"
+ * in a single line, throwing away exactly the word an operator wants to search
+ * for ("show me all the events of a white truck"). `kind` stays coarse,
+ * because forty-one places across the codebase read it and none of them should
+ * have to change; `species` rides alongside it.
+ *
+ * This is a CLOSED vocabulary, not free text: the value reaches a database and
+ * a search index, and a detector that one day reports something new must be
+ * refused here rather than silently widening what can be stored. Lower case,
+ * sorted, and every species belongs to exactly one kind.
+ */
+export const SPECIES_OF_KIND: Readonly<Record<EventKind, readonly string[]>> = Object.freeze({
+  person: Object.freeze(["person"]),
+  vehicle: Object.freeze(["bus", "car", "motorcycle", "truck"]),
+  // A plate is a reading, not a thing that has a species.
+  plate: Object.freeze([]),
+});
+
+/**
+ * Which kind a species belongs to, or null when it is not one this detector
+ * reports. Exact match only: "TRUCK" and "truck " are not species, because the
+ * stored vocabulary has to be one thing and searching for it has to be
+ * predictable.
+ */
+export function speciesOf(species: unknown): EventKind | null {
+  if (typeof species !== "string" || species === "") return null;
+  for (const kind of EVENT_KINDS) {
+    if ((SPECIES_OF_KIND[kind] as readonly string[]).includes(species)) return kind;
+  }
+  return null;
+}
+
 /** A box in the frame, as fractions of its width and height (0..1). */
 export interface Box {
   x: number;
@@ -33,6 +69,11 @@ export interface Detection {
   box: Box;
   /** Plate kind only: the normalised text. */
   plate?: string;
+  /**
+   * The precise class, from SPECIES_OF_KIND, when the detector reported one.
+   * Absent on everything recorded before species existed, and on plates.
+   */
+  species?: string;
 }
 
 /** Many detections of the same thing, folded. */
@@ -49,6 +90,15 @@ export interface DetectionEvent {
   /** The time of the most confident detection: the crop Review shows. */
   bestUtc: string;
   plate?: string;
+  /**
+   * The species of the MOST CONFIDENT sighting - the same one bestBox and
+   * bestUtc come from, so the word and the picture beside it always describe
+   * the same frame. Sightings of one thing can disagree (a van reading as
+   * "car" from behind and "truck" from the side); following the best sighting
+   * is a stated rule rather than a vote, so the same input always gives the
+   * same answer.
+   */
+  species?: string;
 }
 
 export type Checked = { ok: true; detection: Detection } | { ok: false; reason: string };
@@ -97,7 +147,10 @@ export function normalisePlate(raw: unknown): string | null {
  * 7. plate: when kind is "plate", normalisePlate(raw.plate) must not be null:
  *    else "bad_plate". When kind is not "plate", raw.plate must be undefined:
  *    else "plate_on_non_plate".
- * 8. Return { ok: true, detection } with a NEW object holding exactly cameraId,
+ * 8. species: optional. When present it must be a species of THIS kind
+ *    (SPECIES_OF_KIND): else "bad_species". It is a closed vocabulary, not
+ *    free text, because the value reaches a database and a search index.
+ * 9. Return { ok: true, detection } with a NEW object holding exactly cameraId,
  *    atUtc, kind, confidence, box (a new {x, y, w, h}), and plate (normalised)
  *    only for the plate kind. Never return the caller's objects.
  */
@@ -141,6 +194,19 @@ export function checkDetection(raw: unknown): Checked {
     return { ok: false, reason: "bad_box" };
   }
   const box = { x, y, w, h };
+  // Species is optional - everything recorded before today has none - but when
+  // it is present it must be a species of THIS kind. A "truck" filed under
+  // person would make a search for trucks return people.
+  const rawSpecies = r.species;
+  let species: string | undefined;
+  // `undefined` is absence; an explicit null is a caller's bug and is refused,
+  // as plate and detect.json's minConfidence already are.
+  if (rawSpecies !== undefined) {
+    if (speciesOf(rawSpecies) !== kind) {
+      return { ok: false, reason: "bad_species" };
+    }
+    species = rawSpecies as string;
+  }
   if (kind === "plate") {
     const plate = normalisePlate(r.plate);
     if (plate === null) {
@@ -151,7 +217,11 @@ export function checkDetection(raw: unknown): Checked {
   if (r.plate !== undefined) {
     return { ok: false, reason: "plate_on_non_plate" };
   }
-  return { ok: true, detection: { cameraId, atUtc, kind: kind as EventKind, confidence, box } };
+  const detection: Detection = { cameraId, atUtc, kind: kind as EventKind, confidence, box };
+  if (species !== undefined) {
+    detection.species = species;
+  }
+  return { ok: true, detection };
 }
 
 /**
@@ -267,6 +337,9 @@ export function foldDetections(detections: readonly Detection[]): DetectionEvent
       if (d.kind === "plate") {
         event.plate = d.plate;
       }
+      if (d.species !== undefined) {
+        event.species = d.species;
+      }
       open.push({ event, lastBox: d.box, lastMs: atMs });
     } else {
       const ev = match.event;
@@ -278,6 +351,13 @@ export function foldDetections(detections: readonly Detection[]): DetectionEvent
         ev.bestConfidence = d.confidence;
         ev.bestBox = { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h };
         ev.bestUtc = d.atUtc;
+        // The species moves with the box and the moment, so the word and the
+        // crop beside it always describe the same frame.
+        if (d.species === undefined) {
+          delete ev.species;
+        } else {
+          ev.species = d.species;
+        }
       }
     }
   }

@@ -6,7 +6,8 @@ JSON object per line; contracts/detectStream.ts reads and checks every line):
 
   {"type": "ready", "model": "yolox_s", "inputSize": 640}
   {"type": "frame", "atUtc": "...Z", "detections": [
-      {"kind": "person", "confidence": 0.82, "box": {"x": .., "y": .., "w": .., "h": ..}}]}
+      {"kind": "vehicle", "species": "truck", "confidence": 0.82,
+       "box": {"x": .., "y": .., "w": .., "h": ..}}]}
   {"type": "error", "message": "..."}
 
 Boxes are fractions of the camera's frame (0..1). The worker never prints the
@@ -34,6 +35,13 @@ INPUT = 640
 STRIDES = (8, 16, 32)
 # COCO class ids -> the kinds contracts/detection.ts stores.
 KIND_OF_CLASS = {0: "person", 2: "vehicle", 3: "vehicle", 5: "vehicle", 7: "vehicle"}
+# COCO class ids -> the species contracts/detection.ts stores (SPECIES_OF_KIND
+# there is the source of truth; keep this in lockstep with it by hand, since
+# nothing here can import a .ts file). Every key is also a key of
+# KIND_OF_CLASS, and SPECIES_OF_CLASS[c] must always be a species of
+# KIND_OF_CLASS[c] - a mismatch would make checkDetection refuse the whole
+# detection ("bad_species"), not just drop the word.
+SPECIES_OF_CLASS = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 SCORE_FLOOR = 0.25   # permissive: alert rules apply their own, higher floors
 NMS_IOU = 0.45
 STALL_SECONDS = 15   # no frame for this long: exit, and the service restarts us
@@ -75,10 +83,15 @@ def postprocess(output, width, height, size=INPUT, score_floor=SCORE_FLOOR, nms_
 
     1. Decode: for each stride s, a grid of (size/s)^2 cells; cx,cy =
        (raw + cell) * s; w,h = exp(raw) * s.
-    2. score = objectness x class probability, per class we keep.
-    3. Per kind, drop below score_floor, NMS at nms_iou.
+    2. score = objectness x class probability, per class we keep; for each
+       anchor also remember WHICH of the kind's classes scored highest, so the
+       species survives the max() that picks the kind's score.
+    3. Per kind, drop below score_floor, NMS at nms_iou - per kind, not per
+       species (see the comment at the call site: a car reading and a truck
+       reading of the same box are one physical object, not two).
     4. Undo the letterbox (divide by the ratio: the image sits at the top-left)
        and express boxes as fractions of the camera frame, clipped to it.
+       Species is the winning class of the kept, winning anchor.
     """
     import numpy as np
     pred = np.array(output, dtype=np.float32).reshape(-1, output.shape[-1]).copy()
@@ -103,11 +116,22 @@ def postprocess(output, width, height, size=INPUT, score_floor=SCORE_FLOOR, nms_
     detections = []
     for kind in ("person", "vehicle"):
         class_ids = [c for c, k in KIND_OF_CLASS.items() if k == kind]
-        scores = (objectness[:, None] * pred[:, 5:][:, class_ids]).max(1)
+        # One score per anchor per class in this kind; scores.max(1) is exactly
+        # the old per-kind score, and winner.argmax(1) is the class that won it
+        # - the thing the old max() threw away.
+        class_scores = objectness[:, None] * pred[:, 5:][:, class_ids]
+        scores = class_scores.max(1)
+        winner = class_scores.argmax(1)
         mask = scores >= score_floor
         if not mask.any():
             continue
-        b, sc = xyxy[mask], scores[mask]
+        b, sc, win = xyxy[mask], scores[mask], winner[mask]
+        # NMS stays per KIND, not per species: a car-class box and a truck-class
+        # box overlapping the same object are two readings of one thing (the
+        # same reason a person seen by two grid cells is one detection, not
+        # two), so they must still suppress each other. Splitting NMS by
+        # species would let a van that reads "car" from the front and "truck"
+        # from the side survive as two vehicles for one physical object.
         for i in nms(b, sc, nms_iou):
             x1 = float(np.clip(b[i, 0], 0, width))
             y1 = float(np.clip(b[i, 1], 0, height))
@@ -119,6 +143,7 @@ def postprocess(output, width, height, size=INPUT, score_floor=SCORE_FLOOR, nms_
             fw, fh = min((x2 - x1) / width, 1.0 - fx), min((y2 - y1) / height, 1.0 - fy)
             detections.append({
                 "kind": kind,
+                "species": SPECIES_OF_CLASS[class_ids[win[i]]],
                 "confidence": round(float(sc[i]), 4),
                 "box": {"x": round(fx, 5), "y": round(fy, 5), "w": round(fw, 5), "h": round(fh, 5)},
             })

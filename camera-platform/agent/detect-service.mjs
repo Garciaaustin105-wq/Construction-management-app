@@ -217,6 +217,10 @@ export async function startDetect(opts = {}) {
           const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
           const step = advanceFold(cam.fold, kept, now().toISOString());
           cam.fold = step.state;
+          // update.event / finished.event already carry species when
+          // advanceFold set one (the best sighting's) - nothing here needs to
+          // single it out, the same as plate: eventsDb.upsert stores whatever
+          // the event holds.
           for (const update of step.updated) {
             eventsDb.upsert(update, false);
           }

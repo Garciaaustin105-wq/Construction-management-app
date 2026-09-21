@@ -15,9 +15,12 @@ import numpy as np  # noqa: E402
 from yolox_worker import postprocess, letterbox_ratio  # noqa: E402
 
 failures = []
+total = 0
 
 
 def check(name, fn):
+    global total
+    total += 1
     try:
         fn()
         print(f"  ok   {name}")
@@ -131,6 +134,47 @@ def a_different_input_size_is_refused():
     raise AssertionError("decoded a 416-px model's output as if it were 640")
 
 
+def a_person_reports_the_species_person():
+    out = empty()
+    place(out, 8, 10, 20, 0.5, 0.5, 40, 80, 0.9, 0, 0.9)
+    d = postprocess(out, 1280, 720)[0]
+    if d["kind"] != "person" or d["species"] != "person":
+        raise AssertionError(d)
+
+
+def a_car_class_detection_reports_car():
+    out = empty()
+    place(out, 8, 50, 20, 0.5, 0.5, 80, 40, 0.9, 2, 0.9)   # 2: car
+    d = postprocess(out, 1280, 720)[0]
+    if d["kind"] != "vehicle" or d["species"] != "car":
+        raise AssertionError(d)
+
+
+def a_truck_class_detection_reports_truck():
+    out = empty()
+    place(out, 8, 70, 40, 0.5, 0.5, 80, 60, 0.9, 7, 0.9)   # 7: truck
+    d = postprocess(out, 1280, 720)[0]
+    if d["kind"] != "vehicle" or d["species"] != "truck":
+        raise AssertionError(d)
+
+
+def the_higher_scoring_class_wins_the_species_and_nms_still_collapses_to_one():
+    # Two neighbouring cells (the same "one person seen twice" shape as
+    # one_person_is_one_detection above) see the same vehicle: one reads it as
+    # a car, the other - scoring higher - as a truck. NMS runs per KIND, so
+    # this must still collapse to ONE vehicle, and its species must follow the
+    # stronger reading, not the first one written.
+    out = empty()
+    place(out, 8, 50, 20, 0.5, 0.5, 80, 40, 0.9, 2, 0.6)   # car: 0.9*0.6 = 0.54
+    place(out, 8, 51, 20, 0.4, 0.5, 80, 40, 0.9, 7, 0.8)   # truck: 0.9*0.8 = 0.72, overlapping box
+    ds = [d for d in postprocess(out, 1280, 720) if d["kind"] == "vehicle"]
+    if len(ds) != 1:
+        raise AssertionError(f"one physical object should stay one vehicle detection: {ds}")
+    if ds[0]["species"] != "truck":
+        raise AssertionError(f"the higher-scoring class should decide the species: {ds[0]}")
+    close(ds[0]["confidence"], 0.72, "confidence is the winning class's score")
+
+
 print("yolox postprocess")
 check("THE FEARED ONE: a person lands exactly where the model put them, in the camera's frame", person_in_the_right_place)
 check("the letterbox is undone on a portrait frame too", letterbox_is_undone_on_a_tall_frame)
@@ -140,5 +184,9 @@ check("THE FEARED ONE: a dog or a chair is never a person; cars and trucks are v
 check("a score below the floor is dropped", below_the_floor_is_dropped)
 check("a box hanging off the frame is clipped to it", boxes_stay_inside_the_frame)
 check("THE FEARED ONE: a model with another input size is refused, not misread", a_different_input_size_is_refused)
-print(f"yolox postprocess: {8 - len(failures)} passed, {len(failures)} failed")
+check("a person reports the species person", a_person_reports_the_species_person)
+check("a car-class detection reports the species car", a_car_class_detection_reports_car)
+check("a truck-class detection reports the species truck", a_truck_class_detection_reports_truck)
+check("THE FEARED ONE: the higher-scoring class wins the species, and NMS (per kind) still collapses two class readings of one object to one detection", the_higher_scoring_class_wins_the_species_and_nms_still_collapses_to_one)
+print(f"yolox postprocess: {total - len(failures)} passed, {len(failures)} failed")
 sys.exit(1 if failures else 0)

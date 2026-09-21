@@ -28,7 +28,10 @@ export type WorkerLine =
  *   - "ready": model must be non-empty string -> { kind: "ready", model }
  *   - "error": message must be string -> { kind: "error", message: message.slice(0, 500) }
  *   - "frame": atUtc must parse; detections must be array, length <= MAX_DETECTIONS_PER_FRAME;
- *     each item validated with checkDetection.
+ *     each item validated with checkDetection, species carried through - a
+ *     worker that starts reporting a species not of its kind, or not in the
+ *     vocabulary, is refused ("bad_species") rather than silently widening
+ *     what gets stored.
  *   - any other type -> invalid "unknown_type".
  */
 export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
@@ -97,7 +100,10 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
         continue;
       }
 
-      // Build a detection with forced cameraId and atUtc from the frame
+      // Build a detection with forced cameraId and atUtc from the frame.
+      // species rides through to checkDetection unchanged: it is the only
+      // field a worker can add that widens what gets stored, so it gets the
+      // same discipline as cameraId and atUtc, not a free pass.
       const raw = item as Record<string, unknown>;
       const toCheck = {
         cameraId,
@@ -106,6 +112,7 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
         confidence: raw.confidence,
         box: raw.box,
         plate: raw.plate,
+        species: raw.species,
       };
 
       const checked = checkDetection(toCheck);
@@ -160,7 +167,9 @@ export function emptyFold(): FoldState {
  *
  * Never mutates the input state. Returns a new state and the updates and
  * finished events, in exactly the order they were touched or finished.
- * The events produced match foldDetections' output when fed the same input.
+ * The events produced match foldDetections' output when fed the same input,
+ * species included: it follows the most confident sighting there too, so the
+ * word and the crop (cut at bestUtc) always describe the same frame.
  */
 export function advanceFold(
   state: FoldState,
@@ -234,6 +243,9 @@ export function advanceFold(
       if (d.kind === "plate") {
         event.plate = d.plate;
       }
+      if (d.species !== undefined) {
+        event.species = d.species;
+      }
 
       const oe: OpenEvent = {
         id,
@@ -254,6 +266,13 @@ export function advanceFold(
         ev.bestConfidence = d.confidence;
         ev.bestBox = { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h };
         ev.bestUtc = d.atUtc;
+        // The species moves with the box and the moment, so the word and the
+        // crop beside it always describe the same frame.
+        if (d.species === undefined) {
+          delete ev.species;
+        } else {
+          ev.species = d.species;
+        }
       }
 
       updated.push({ id: match.id, event: { ...ev, bestBox: { ...ev.bestBox } } });
