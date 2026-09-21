@@ -146,6 +146,8 @@ check("the empty answer key says how to fill it", () => {
   const score = scoreLibrary({ version: 1, clips: [] }, []);
   const text = scoreReport(score, exitGate(score), meta({ clips: 0, clipsScored: 0 })).join("\n");
   eq(/Teach the AI/.test(text), true, "points at the button");
+  // Found running it on the box: "The gate needs need at least 20...".
+  eq(/need need|needs need/.test(text), false, `reads as English: ${text.split("\n")[1]}`);
   eq(/\bmeets\b/.test(text), false, "and judges nothing");
 });
 

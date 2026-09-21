@@ -176,7 +176,7 @@ export function scoreReport(score: Score, gate: GateVerdict, meta: RunMeta): str
   const lines: string[] = [];
   if (meta.clips === 0) {
     lines.push("The answer key is empty: no clips have been saved with Teach the AI on the Review page.");
-    lines.push(`Nothing was scored. The gate needs ${gate.why.length > 0 ? gate.why.join("; ") : "clips"}.`);
+    lines.push(`Nothing was scored yet. To judge, the gate would ${gate.why.length > 0 ? gate.why.join("; ") : "need clips"}.`);
     return lines;
   }
   lines.push(`Answer key: ${meta.clips} clip${meta.clips === 1 ? "" : "s"}, ${meta.clipsScored} scored, ` +
