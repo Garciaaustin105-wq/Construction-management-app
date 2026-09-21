@@ -23,7 +23,7 @@
  * - it throws. This runs on a timer, so an exception here takes the page down
  *   between one event and the next - the worst possible moment.
  */
-import { refreshDecision, REFRESH_INTERVAL_MS } from "../agent/ui/review-client.mjs";
+import { refreshDecision, REFRESH_INTERVAL_MS, followToday } from "../agent/ui/review-client.mjs";
 import { check, eq, report } from "./_assert.mjs";
 
 console.log("reviewRefresh");
@@ -175,6 +175,68 @@ check("it states no verdict about what it found", () => {
   // to ask a question, and nothing else.
   const d = refreshDecision(state());
   eq(Object.keys(d).sort(), ["reason", "refresh"], "a decision and its reason, nothing more");
+});
+
+/* ── following today across midnight (followToday) ─────────────────────── */
+
+// Austin, 2026-09-21: "make it jump to the new day at midnight". A page left
+// open on today used to go quiet on what had become yesterday.
+const follow = (over = {}) => followToday({
+  drawnDay: "2026-09-21", followDay: "2026-09-21", today: "2026-09-22",
+  clipOpen: false, sheetOpen: false, pickingDay: false, hidden: false, ...over,
+});
+
+check("THE MIDNIGHT ONE: a page left on today moves to the new today", () => {
+  const d = follow();
+  eq(d.move, true, "it moves");
+  eq(d.toDay, "2026-09-22", "to the new today");
+  eq(d.reason, "new_day", "and says why");
+});
+
+check("THE FEARED ONE: a day picked on purpose is never taken away", () => {
+  // Someone reviewing Saturday's footage at midnight is not following today.
+  const d = follow({ drawnDay: "2026-09-19", followDay: "2026-09-21" });
+  eq(d.move, false, "left alone");
+  eq(d.reason, "not_following", "because it was not the day being followed");
+  eq(follow({ followDay: null }).move, false, "and a page that never saw today follows nothing");
+});
+
+check("it waits rather than move the ground under someone", () => {
+  for (const [key, reason] of [["clipOpen", "clip_open"], ["sheetOpen", "sheet_open"],
+    ["pickingDay", "picking_day"], ["hidden", "hidden"]]) {
+    const d = follow({ [key]: true });
+    eq(d.move, false, `not while ${key}`);
+    eq(d.reason, reason, "and says which");
+  }
+  eq(follow().move, true, "and moves once nothing is in the way");
+});
+
+check("a page asleep for days goes straight to today", () => {
+  const d = follow({ today: "2026-09-25" });
+  eq(d.toDay, "2026-09-25", "not through the days between");
+});
+
+check("a clock stepped back is not a new day", () => {
+  const d = follow({ today: "2026-09-20" });
+  eq(d.move, false, "no move backwards");
+  eq(d.reason, "clock_behind", "and it says so");
+});
+
+check("a page already on today stays put", () => {
+  eq(follow({ drawnDay: "2026-09-22", followDay: "2026-09-22" }).reason, "already_today", "nothing to do");
+});
+
+check("followToday never throws, and never moves on what it cannot read", () => {
+  const rubbish = [null, undefined, 0, "x", [], {}, { drawnDay: "2026-09-21" },
+    { drawnDay: 20260921, followDay: 20260921, today: "2026-09-22" },
+    { drawnDay: "21/09/2026", followDay: "21/09/2026", today: "22/09/2026" }, Object.create(null)];
+  for (const [i, bad] of rubbish.entries()) {
+    let d;
+    let threw = false;
+    try { d = followToday(bad); } catch { threw = true; }
+    eq(threw, false, `survived rubbish #${i}`);
+    eq(d?.move, false, `and did not move for #${i}`);
+  }
 });
 
 report("reviewRefresh");

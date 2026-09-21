@@ -259,7 +259,7 @@ const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", 
   "closeSheet", "drawLengthChips", "pickLength", "sheetGo", "showCounts", "bumpCount", "tapNobody",
   "loadTeachProgress", "wireFriendly",
   "loadEvents", "drawEvents", "drawMarks", "drawTiles", "eventWords", "currentMomentUtc",
-  "goToEvent", "updateStepButtons", "stepEvent", "refreshTick", "wireRefresh"];
+  "goToEvent", "updateStepButtons", "stepEvent", "refreshTick", "wireRefresh", "localDayValue", "chooseDay"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireFriendly();\nwireEvents();\nloadCameras();\n";
@@ -1318,6 +1318,114 @@ await check("a clip the browser cannot play is closed, so refreshing resumes", a
     eq(page.view.lastRefresh.reason, "due", "refreshing carries on");
     eq(timelineAsks(), before + 1, "and asks the recorder again");
   });
+});
+
+/* ── following today across midnight ─────────────────────────────────────── */
+
+const localYesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return page.localDayValue(d); };
+/** Today and yesterday from ONE reading of the clock, so a check that runs
+ *  across local midnight compares like with like. */
+const days = () => {
+  const at = new Date();
+  return { today: page.localDayValue(at), yesterday: page.localDayValue(new Date(at.getFullYear(), at.getMonth(), at.getDate() - 1)),
+    before: page.localDayValue(new Date(at.getFullYear(), at.getMonth(), at.getDate() - 2)) };
+};
+
+await check("THE MIDNIGHT ONE: a page left open on today moves to the new day", async () => {
+  // Midnight, from the page's side: it was showing, and following, the day
+  // that has just become yesterday.
+  page.stopVideo();
+  const was = page.el.day.value;
+  const d = days();
+  page.el.day.value = d.yesterday;
+  page.view.followDay = page.el.day.value;
+  const before = timelineAsks();
+  page.refreshTick();
+  await settle();
+  eq(page.view.lastFollow.reason, "new_day", "it saw the new day");
+  eq(page.el.day.value, d.today, "and moved to it");
+  eq(page.view.followDay, d.today, "and follows it from here, though the move went through chooseDay");
+  eq(timelineAsks() > before, true, "and asked the recorder for it");
+  page.el.day.value = was;
+  await page.loadDay();
+  await settle();
+});
+
+await check("THE FEARED ONE: a day picked on purpose is left alone at midnight", async () => {
+  page.stopVideo();
+  const was = page.el.day.value;
+  const d = days();
+  page.el.day.value = d.yesterday;
+  page.view.followDay = d.today;
+  page.refreshTick();
+  await settle();
+  eq(page.view.lastFollow.reason, "not_following", "not the day being followed");
+  eq(page.el.day.value, d.yesterday, "so it stays where it was put");
+  page.el.day.value = was;
+});
+
+await check("it waits while a clip is open or the calendar is open, then moves", async () => {
+  const was = page.el.day.value;
+  for (const [open, close, reason] of [
+    [() => { page.view.playing = { segmentStartUtc: "2026-09-11T10:00:00Z" }; }, () => { page.view.playing = null; }, "clip_open"],
+    [() => { page.el.calendar.hidden = false; }, () => { page.el.calendar.hidden = true; }, "picking_day"],
+    [() => { page.view.sheetMode = "save"; }, () => { page.view.sheetMode = null; }, "sheet_open"],
+    [() => { globalThis.document.hidden = true; }, () => { globalThis.document.hidden = false; }, "hidden"],
+  ]) {
+    const d = days();
+    page.el.day.value = d.yesterday;
+    page.view.followDay = page.el.day.value;
+    open();
+    page.refreshTick();
+    await settle();
+    eq(page.view.lastFollow.reason, reason, `held: ${reason}`);
+    eq(page.el.day.value, d.yesterday, `the day is not changed under ${reason}`);
+    close();
+    page.refreshTick();
+    await settle();
+    eq(page.el.day.value, d.today, `and it moves once ${reason} is over`);
+  }
+  page.el.day.value = was;
+  await page.loadDay();
+  await settle();
+});
+
+await check("coming back to today follows it again", async () => {
+  const was = page.el.day.value;
+  page.view.followDay = "2026-01-01";
+  const d = days();
+  page.el.day.value = d.today;
+  page.refreshTick();
+  await settle();
+  eq(page.view.followDay, d.today, "showing today means following today");
+  page.el.day.value = was;
+  await page.loadDay();
+  await settle();
+});
+
+await check("THE STALE ONE: stepping away and back after midnight is a choice, not a follow", async () => {
+  // Found in review. Following the day that has just become yesterday, the
+  // person steps back a day, then forward again to it. The page used to
+  // still remember that day as followed, and pulled them on to today within
+  // 5 s of the click that put them there.
+  page.stopVideo();
+  const was = page.el.day.value;
+  const d = days();
+  page.el.day.value = d.yesterday;
+  page.view.followDay = d.yesterday;
+  dom.prevDay.fire("click");
+  await settle();
+  eq(page.el.day.value, d.before, "stepped back a day");
+  dom.nextDay.fire("click");
+  await settle();
+  eq(page.el.day.value, d.yesterday, "and forward again, by hand");
+  page.refreshTick();
+  await settle();
+  eq(page.view.lastFollow.reason, "not_following", "a day reached by hand is not followed");
+  eq(page.el.day.value, d.yesterday, "so it stays where the person put it");
+  page.el.day.value = was;
+  await page.loadDay();
+  await settle();
 });
 
 globalThis.fetch = realFetch;

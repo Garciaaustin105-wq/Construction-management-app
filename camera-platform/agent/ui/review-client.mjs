@@ -1283,3 +1283,47 @@ export function refreshDecision(state) {
   if (nowMs - lastLoadMs < intervalMs) return { refresh: false, reason: "too_soon" };
   return { refresh: true, reason: "due" };
 }
+
+/**
+ * Whether a page that was showing TODAY should move on to the new today.
+ *
+ * Asked on every refresh tick, before refreshDecision. The page follows today
+ * while it shows today: open it and leave it, and at midnight it moves on by
+ * itself, where before it went quiet on what had become yesterday. Pick
+ * another day and it stays where you put it; come back to today and it
+ * follows again.
+ *
+ * state:
+ *   drawnDay    the day on screen, "YYYY-MM-DD"
+ *   followDay   the day the page last saw as today while showing it, or null
+ *   today       the local today, "YYYY-MM-DD"
+ *   clipOpen, sheetOpen, hidden   as for refreshDecision
+ *   pickingDay  the calendar is open
+ *
+ * Returns { move, reason, toDay }; toDay is set only when move is true.
+ *
+ * It holds off rather than move the ground: while a clip is loaded, the save
+ * sheet is open or the calendar is open, and while the tab is hidden, the
+ * move waits until it would not interrupt anyone. It never moves backwards: a
+ * clock stepped back across midnight is not a new day. A page asleep for
+ * three days goes straight to today, not through the days between.
+ */
+export function followToday(state) {
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const stay = (reason) => ({ move: false, reason, toDay: null });
+  if (!isNonArrayObject(state)) return stay("unreadable");
+  const { drawnDay, followDay, today } = state;
+  if (typeof drawnDay !== "string" || !DAY.test(drawnDay) || typeof today !== "string" || !DAY.test(today)) {
+    return stay("unreadable");
+  }
+  if (drawnDay === today) return stay("already_today");
+  // Only a day the page was following. A day picked on purpose is left alone.
+  if (followDay !== drawnDay) return stay("not_following");
+  // "YYYY-MM-DD" compares as text in date order.
+  if (today < drawnDay) return stay("clock_behind");
+  if (state.clipOpen === true) return stay("clip_open");
+  if (state.sheetOpen === true) return stay("sheet_open");
+  if (state.pickingDay === true) return stay("picking_day");
+  if (state.hidden === true) return stay("hidden");
+  return { move: true, reason: "new_day", toDay: today };
+}

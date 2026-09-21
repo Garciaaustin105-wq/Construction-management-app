@@ -448,7 +448,7 @@
 <script type="module">
 import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer,
   monthCalendar, timeOptions, recordedDays, rangeAround, friendlyProblem, clipProgress,
-  eventMarkers, stepToEvent, seekInstantFor, markerSummary, refreshDecision } from '/ui/review-client.js';
+  eventMarkers, stepToEvent, seekInstantFor, markerSummary, refreshDecision, followToday } from '/ui/review-client.js';
 import { PLAYBACK_RATES, nextRate, rateLabel } from '/ui/playback.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 
@@ -530,7 +530,8 @@ const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq
   calYear: 0, calMonth: 0, recordedDays: [], monthSeq: 0,
   sheetMode: null, sheetLength: 5, sheetWindow: null,
   events: [], markers: [], kinds: ['person', 'vehicle', 'plate'], here: null,
-  eventSeq: 0, eventsTruncated: false, lastLoadMs: null, lastRefresh: null };
+  eventSeq: 0, eventsTruncated: false, lastLoadMs: null, lastRefresh: null,
+  followDay: null, lastFollow: null };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
@@ -1295,14 +1296,20 @@ function step(deltaS) {
  *   (H.265 needs hardware decoding)", "problem").
  */
 function wireEvents() {
-  const now = new Date();
-  el.day.value = now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate());
+  el.day.value = localDayValue(new Date());
+  // Opened on today, so it follows today (followToday) until another day is picked.
+  view.followDay = el.day.value;
   el.camera.addEventListener('change', () => {
     stopVideo();
     setStatus('');
     loadDay();
   });
+  // A day picked by hand (the box, the calendar, Previous, Next) is not
+  // followed: forget the followed day, or a pick that happens to land on it
+  // after midnight would be taken away within 5 s. Picking today follows
+  // again from the next tick.
   el.day.addEventListener('change', () => {
+    view.followDay = null;
     stopVideo();
     setStatus('');
     loadDay();
@@ -1311,6 +1318,7 @@ function wireEvents() {
     const v = shiftDay(el.day.value, -1);
     if (v !== null) {
       el.day.value = v;
+      view.followDay = null;
       stopVideo();
       setStatus('');
       loadDay();
@@ -1320,6 +1328,7 @@ function wireEvents() {
     const v = shiftDay(el.day.value, 1);
     if (v !== null) {
       el.day.value = v;
+      view.followDay = null;
       stopVideo();
       setStatus('');
       loadDay();
@@ -1413,6 +1422,25 @@ const REFRESH_TICK_MS = 5000;
  * page not updating" is answered by looking rather than guessing.
  */
 function refreshTick() {
+  // Following today across midnight comes first: a page left open on today
+  // moves on to the new day, through the same path as picking it by hand.
+  const today = localDayValue(new Date());
+  if (el.day.value === today) view.followDay = today;
+  const follow = followToday({
+    drawnDay: el.day.value,
+    followDay: view.followDay,
+    today,
+    clipOpen: view.playing !== null,
+    sheetOpen: view.sheetMode !== null,
+    pickingDay: !el.calendar.hidden,
+    hidden: document.hidden === true,
+  });
+  view.lastFollow = follow;
+  if (follow.move) {
+    chooseDay(follow.toDay);
+    view.followDay = follow.toDay;
+    return;
+  }
   const win = dayWindow(el.day.value);
   if (win === null) return;
   const decision = refreshDecision({
@@ -1426,6 +1454,11 @@ function refreshTick() {
   });
   view.lastRefresh = decision;
   if (decision.refresh) loadDay();
+}
+
+/** The local calendar day of `d` as "YYYY-MM-DD", the form el.day holds. */
+function localDayValue(d) {
+  return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
 }
 
 /** Tick on a timer, and once more the moment the tab is looked at again. */
