@@ -56,6 +56,12 @@ export const MIN_GATE_EMPTY_HOURS = 1;
  */
 export const DEFAULT_TOLERANCE_MS = 2000;
 
+/** D1's bars (AI-PLAN): at least this share of expected people found... */
+export const GATE_RECALL = 0.95;
+/** ...and at most this many false people per hour of empty-scene footage.
+ *  Exported so a report states the bar the gate applies, not a copy of it. */
+export const GATE_FALSE_PER_HOUR = 1;
+
 /** What the key promises about a clip: `count` of a kind within [fromUtc, toUtc]. */
 export interface ExpectedEvent {
   kind: "person" | "vehicle";
@@ -93,9 +99,17 @@ export interface KindScore {
   found: number;
   duplicates: number;
   falseEvents: number;
+  /** False events inside clips tagged "empty": the only footage where every
+   *  detection of this kind is false by definition. */
+  emptyFalseEvents: number;
   missed: { clipId: string; fromUtc: string; count: number }[];
   recall: number | null;
+  /** False events over ALL hours scored. Informational: busy clips add hours
+   *  in which, with whole-clip windows, no false event can even occur. */
   falsePerHour: number | null;
+  /** False events in empty-scene clips over empty-scene hours: the rate
+   *  AI-PLAN D1's bar is written against, and the one the gate judges. */
+  falsePerEmptyHour: number | null;
 }
 
 /**
@@ -117,7 +131,8 @@ export interface GateVerdict {
   enough: boolean;
   why: string[];
   recall: number | null;
-  falsePerHour: number | null;
+  /** False people per hour of EMPTY-SCENE footage: what the bar is about. */
+  falsePerEmptyHour: number | null;
   meetsRecall: boolean | null;
   meetsFalseRate: boolean | null;
 }
@@ -363,7 +378,10 @@ interface ExpectedWindow {
 }
 
 function newKindScore(): KindScore {
-  return { expected: 0, found: 0, duplicates: 0, falseEvents: 0, missed: [], recall: null, falsePerHour: null };
+  return {
+    expected: 0, found: 0, duplicates: 0, falseEvents: 0, emptyFalseEvents: 0, missed: [],
+    recall: null, falsePerHour: null, falsePerEmptyHour: null,
+  };
 }
 
 /**
@@ -399,15 +417,20 @@ export function scoreLibrary(
     if (clip.scenes.indexOf("empty") !== -1) {
       emptyHours += hours;
     }
-    scoreOneClip(clip, startMs, endMs, events, toleranceMs, person, vehicle);
+    scoreOneClip(clip, startMs, endMs, events, toleranceMs, person, vehicle, clip.scenes.indexOf("empty") !== -1);
   }
 
   // Null means "not measurable", never 0: with nothing expected, recall says
   // nothing; with no footage, a false rate says nothing.
   person.recall = person.expected === 0 ? null : person.found / person.expected;
   person.falsePerHour = hoursScored === 0 ? null : person.falseEvents / hoursScored;
+  // The gate's rate. Dividing by ALL hours let walk-by clips dilute it: two
+  // false people in one empty hour beside five hours of walk-bys read 0.33 an
+  // hour and passed a bar of 1, when the empty-scene rate was 2.
+  person.falsePerEmptyHour = emptyHours === 0 ? null : person.emptyFalseEvents / emptyHours;
   vehicle.recall = vehicle.expected === 0 ? null : vehicle.found / vehicle.expected;
   vehicle.falsePerHour = hoursScored === 0 ? null : vehicle.falseEvents / hoursScored;
+  vehicle.falsePerEmptyHour = emptyHours === 0 ? null : vehicle.emptyFalseEvents / emptyHours;
 
   return { hoursScored: hoursScored, emptyHours: emptyHours, person: person, vehicle: vehicle };
 }
@@ -420,6 +443,7 @@ function scoreOneClip(
   toleranceMs: number,
   person: KindScore,
   vehicle: KindScore,
+  isEmptyScene: boolean,
 ): void {
   for (const kind of ["person", "vehicle"] as const) {
     const score = kind === "person" ? person : vehicle;
@@ -502,6 +526,7 @@ function scoreOneClip(
         score.duplicates += 1;
       } else {
         score.falseEvents += 1;
+        if (isEmptyScene) score.emptyFalseEvents += 1;
       }
     }
   }
@@ -520,23 +545,24 @@ export function exitGate(score: Score): GateVerdict {
     why.push(`need at least ${MIN_GATE_PERSONS} expected people, have ${score.person.expected}`);
   }
   if (score.emptyHours < MIN_GATE_EMPTY_HOURS) {
-    why.push(`need at least ${MIN_GATE_EMPTY_HOURS} hour of empty-scene footage, have ${score.emptyHours}`);
+    // Rounded DOWN: 0.996 must never read as the 1 it falls short of.
+    why.push(`need at least ${MIN_GATE_EMPTY_HOURS} hour of empty-scene footage, have ${Math.floor(score.emptyHours * 100) / 100}`);
   }
 
   let meetsRecall: boolean | null = null;
   if (score.person.expected >= MIN_GATE_PERSONS && score.person.recall !== null) {
-    meetsRecall = score.person.recall >= 0.95;
+    meetsRecall = score.person.recall >= GATE_RECALL;
   }
   let meetsFalseRate: boolean | null = null;
-  if (score.emptyHours >= MIN_GATE_EMPTY_HOURS && score.person.falsePerHour !== null) {
-    meetsFalseRate = score.person.falsePerHour <= 1;
+  if (score.emptyHours >= MIN_GATE_EMPTY_HOURS && score.person.falsePerEmptyHour !== null) {
+    meetsFalseRate = score.person.falsePerEmptyHour <= GATE_FALSE_PER_HOUR;
   }
 
   return {
     enough: why.length === 0,
     why: why,
     recall: score.person.recall,
-    falsePerHour: score.person.falsePerHour,
+    falsePerEmptyHour: score.person.falsePerEmptyHour,
     meetsRecall: meetsRecall,
     meetsFalseRate: meetsFalseRate,
   };

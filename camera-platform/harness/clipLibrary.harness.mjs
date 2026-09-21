@@ -168,6 +168,25 @@ check("hours are measured; false per hour is null with no footage, not zero", ()
   eq(s.hoursScored, 1, "one hour");
   eq(s.emptyHours, 1, "and it is empty-scene footage");
   eq(s.person.falsePerHour, 2, "two false people an hour");
+  eq(s.person.falsePerEmptyHour, 2, "and, all of it being empty scene, two per empty hour");
+  eq(empty.person.falsePerEmptyHour, null, "no empty-scene rate from nothing");
+});
+
+check("THE DILUTED ONE: walk-by hours cannot water down the false rate", () => {
+  // Found scoring real footage: false people were divided by ALL hours. The
+  // Review page's answer windows cover the whole clip, so a busy clip can
+  // never produce a false person, only add hours. Two false people in one
+  // empty hour beside five hours of walk-bys read 0.33 an hour and passed.
+  const emptyHour = clip({ id: "empty-1", endUtc: at(3600), scenes: ["empty"], expected: [] });
+  const walks = [1, 2, 3, 4, 5].map((i) => clip({
+    id: `walk-${i}`, startUtc: at(i * 3600), endUtc: at((i + 1) * 3600), scenes: ["person"],
+    expected: [{ kind: "person", fromUtc: at(i * 3600), toUtc: at((i + 1) * 3600), count: 4 }],
+  }));
+  const found = walks.flatMap((w, i) => [0, 1, 2, 3].map((k) => event("person", (i + 1) * 3600 + 100 + k * 600, (i + 1) * 3600 + 110 + k * 600)));
+  const s = scoreLibrary(checkLibrary(lib(emptyHour, ...walks)).library, [event("person", 100, 101), event("person", 900, 905), ...found]);
+  eq(s.person.falsePerHour, 2 / 6, "over all six hours it reads 0.33");
+  eq(s.person.falsePerEmptyHour, 2, "over the one empty hour it is 2");
+  eq(exitGate(s).meetsFalseRate === true, false, "and the gate is not fooled by the 0.33");
 });
 
 check("scoring does not mutate what it was given", () => {
@@ -180,11 +199,20 @@ check("scoring does not mutate what it was given", () => {
 
 /* ---------------- the gate refuses small samples ---------------- */
 
+// falseEvents here all sit in the empty-scene hours, as they must with the
+// Review page's whole-clip answer windows; the extra busy hour adds none.
 function scoreWith(persons, emptyHours, found, falseEvents) {
   return {
     hoursScored: emptyHours + 1, emptyHours,
-    person: { expected: persons, found, duplicates: 0, falseEvents, missed: [], recall: persons ? found / persons : null, falsePerHour: falseEvents / (emptyHours + 1) },
-    vehicle: { expected: 0, found: 0, duplicates: 0, falseEvents: 0, missed: [], recall: null, falsePerHour: 0 },
+    person: {
+      expected: persons, found, duplicates: 0, falseEvents, emptyFalseEvents: falseEvents, missed: [],
+      recall: persons ? found / persons : null, falsePerHour: falseEvents / (emptyHours + 1),
+      falsePerEmptyHour: emptyHours ? falseEvents / emptyHours : null,
+    },
+    vehicle: {
+      expected: 0, found: 0, duplicates: 0, falseEvents: 0, emptyFalseEvents: 0, missed: [],
+      recall: null, falsePerHour: 0, falsePerEmptyHour: 0,
+    },
   };
 }
 
@@ -205,10 +233,12 @@ check("with enough footage the gate reports each bar separately", () => {
   const g = exitGate(scoreWith(40, 2, 38, 1));
   eq(g.enough, true, "enough");
   eq(g.meetsRecall, true, "38/40 = 95% meets 95%");
-  eq(g.meetsFalseRate, true, "1 in 3 h is under 1/h");
+  eq(g.meetsFalseRate, true, "1 in 2 empty hours is under 1/h");
   const bad = exitGate(scoreWith(40, 2, 37, 9));
   eq(bad.meetsRecall, false, "92.5% does not");
-  eq(bad.meetsFalseRate, false, "3/h does not");
+  eq(bad.meetsFalseRate, false, "9 in 2 empty hours, 4.5/h, does not");
+  const edge = exitGate(scoreWith(40, 2, 40, 3));
+  eq(edge.meetsFalseRate, false, "3 in 2 empty hours is 1.5/h: it fails, though over all 3 h it would read exactly 1 and pass");
 });
 
 report("clipLibrary");
