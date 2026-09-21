@@ -551,7 +551,8 @@ export function createApiServer({
             segments,
             gaps,
             window.effective,
-            now().toISOString()
+            now().toISOString(),
+            index.earliestFor(camera)
           );
         } catch (e) {
           if (e instanceof IndexCoverageError) {

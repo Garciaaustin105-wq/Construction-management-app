@@ -65,6 +65,34 @@ check("THE FEARED ONE: a 40 s outage in a 24 h strip is widened to visible", () 
   eq(out.bars[2].width, (86_400_000 - 36_040_000) / 86_400_000, "the recording beside it keeps its true width");
 });
 
+check("layout: a nodata run carries through as a nodata bar", () => {
+  const out = layoutCoverage(body([
+    run("nodata", DAY_START, "2026-09-11T06:00:00.000Z"),
+    run("recorded", "2026-09-11T06:00:00.000Z", DAY_END),
+  ]));
+  eq(out.bars.map((b) => [b.kind, b.left, b.width, b.widened, b.gapReason, b.gapSource]),
+    [["nodata", 0, 0.25, false, null, null], ["recorded", 0.25, 0.75, false, null, null]],
+    "nodata geometry, never widened, no gap fields");
+});
+
+check("THE FEARED ONE: a narrow nodata run is never widened; a narrow gap beside it still is", () => {
+  // Same 30 s width on both, so the only thing that can explain a difference
+  // is the kind — nodata is never-held time, not a failure, and must not be
+  // dressed up as one just because it happens to be thin.
+  const out = layoutCoverage(body([
+    run("nodata", DAY_START, "2026-09-11T00:00:30.000Z"),
+    run("recorded", "2026-09-11T00:00:30.000Z", "2026-09-11T10:00:00.000Z"),
+    run("gap", "2026-09-11T10:00:00.000Z", "2026-09-11T10:00:30.000Z"),
+    run("recorded", "2026-09-11T10:00:30.000Z", DAY_END),
+  ]));
+  const nodataBar = out.bars[0];
+  const gapBar = out.bars[2];
+  eq([nodataBar.kind, nodataBar.width, nodataBar.widened],
+    ["nodata", 30_000 / 86_400_000, false], "nodata keeps its true, sub-minimum width");
+  eq([gapBar.kind, gapBar.width, gapBar.widened],
+    ["gap", 0.004, true], "the same-width gap is still widened to visible");
+});
+
 check("layout: a custom minGapFraction, and a gap already wider is left alone", () => {
   const runs = [
     run("recorded", DAY_START, "2026-09-11T12:00:00.000Z"),

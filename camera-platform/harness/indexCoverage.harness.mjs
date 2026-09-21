@@ -343,4 +343,80 @@ check("THE FEARED ONE: coverage and playback never disagree, over a sweep of win
   if (windows < 300) throw new Error(`the sweep only covered ${windows} windows`);
 });
 
+/* ── blank, not red: time this recorder never held ────────────────────────
+ *
+ * Austin, looking at his own Review page: the day was a wall of red saying
+ * "not recorded", and nothing was wrong — the footage had simply aged out of
+ * a small disk. Red is for something that failed. Footage ageing out is the
+ * system working exactly as configured, and painting the two the same colour
+ * teaches an operator to ignore red.
+ *
+ * So: time before the earliest footage this camera still holds is NOTHING.
+ * Not a gap, not a reason, not a colour.
+ *
+ * THE FEARED ONE: blanking a real failure. A camera that died today, inside
+ * the period we do hold, must still be red — and a LOGGED outage stays red
+ * even out in the blank zone, because "the camera was offline" is something
+ * we know, not an absence.
+ */
+
+const blank = (a, b) =>
+  ({ startUtc: iso(a), endUtc: iso(b), kind: "nodata", segmentCount: 0, includesOpen: false, gapReason: null, gapSource: null });
+
+check("a whole window older than anything held is blank, not a wall of red", () => {
+  const earliest = B + 600 * M;
+  const cov = coverageFromIndex(CAM, [], [], range(B, B + 60 * M), NOW, iso(earliest));
+  same(cov.runs, [blank(B, B + 60 * M)], "one blank run covering the window");
+  same(cov.gapSeconds, 0, "nothing is counted as lost");
+  same(cov.noDataSeconds, 3600, "it is counted as never held");
+  same(cov.gapSecondsByReason, ZERO, "and no reason is invented for it");
+});
+
+check("a window that straddles the edge is blank before and honest after", () => {
+  const earliest = B + 30 * M;
+  const segs = run(earliest, 10);
+  const cov = coverageFromIndex(CAM, segs, [], range(B, B + 60 * M), NOW, iso(earliest));
+  same(cov.runs[0], blank(B, earliest), "before the earliest footage: blank");
+  same(cov.runs[1].kind, "recorded", "then the footage we do hold");
+  same(cov.runs.at(-1).kind, "gap", "and a real hole after it is still a gap");
+  same(cov.noDataSeconds, 30 * 60, "half an hour never held");
+});
+
+check("THE FEARED ONE: a camera that failed inside the held period is still red", () => {
+  const earliest = B;
+  const segs = [...run(B, 10), ...run(B + 40 * M, 10)];
+  const cov = coverageFromIndex(CAM, segs, [gap(B + 10 * M, B + 40 * M, "camera_offline")], range(B, B + 50 * M), NOW, iso(earliest));
+  const holes = cov.runs.filter((r) => r.kind === "gap");
+  same(holes.length, 1, "the outage is one run");
+  same(holes[0].gapReason, "camera_offline", "with its reason");
+  same(cov.runs.some((r) => r.kind === "nodata"), false, "and nothing inside the held period is blanked");
+  same(cov.gapSeconds, 30 * 60, "the outage is still counted as lost");
+});
+
+check("a LOGGED outage out in the blank zone stays red: we know that one", () => {
+  // The footage either side has aged out, but the gaps table still says the
+  // camera was down. That is knowledge, not absence, and it survives.
+  const earliest = B + 60 * M;
+  const cov = coverageFromIndex(CAM, [], [gap(B + 10 * M, B + 20 * M, "camera_offline")], range(B, B + 30 * M), NOW, iso(earliest));
+  const kinds = cov.runs.map((r) => r.kind);
+  same(kinds, ["nodata", "gap", "nodata"], `blank, then the known outage, then blank: ${kinds.join(",")}`);
+  same(cov.runs[1].gapReason, "camera_offline", "still named");
+  same(cov.gapSeconds, 600, "and still counted as lost");
+});
+
+check("a camera that holds nothing at all is entirely blank", () => {
+  const cov = coverageFromIndex(CAM, [], [], range(B, B + 60 * M), NOW, null);
+  same(cov.runs, [blank(B, B + 60 * M)], "all of it");
+  same(cov.noDataSeconds, 3600, "counted as never held");
+});
+
+check("callers that say nothing about retention behave exactly as before", () => {
+  // Backwards compatibility is not a nicety here: every existing caller and
+  // every existing check above passes five arguments.
+  const cov = coverageFromIndex(CAM, [], [], range(B, B + 60 * M), NOW);
+  same(cov.runs.length, 1, "one run");
+  same(cov.runs[0].kind, "gap", "which is a gap, as it always was");
+  same(cov.noDataSeconds, 0, "and nothing is blank");
+});
+
 report("indexCoverage");

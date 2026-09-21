@@ -116,6 +116,7 @@ export function openIndex(file) {
     extendGap: db.prepare("UPDATE gaps SET end_ms = MAX(end_ms, ?) WHERE id = ?"),
     pullGapStart: db.prepare("UPDATE gaps SET start_ms = MIN(start_ms, ?) WHERE id = ?"),
     gapsFor: db.prepare("SELECT * FROM gaps WHERE camera_id = ? ORDER BY start_ms"),
+    earliestForCamera: db.prepare("SELECT start_ms FROM segments WHERE camera_id = ? ORDER BY start_ms LIMIT 1"),
   };
 
   return {
@@ -204,6 +205,11 @@ export function openIndex(file) {
     gapsFor: (cameraId) => stmts.gapsFor.all(cameraId).map((r) => ({
       cameraId: r.camera_id, startUtc: toIso(r.start_ms), endUtc: toIso(r.end_ms), reason: r.reason,
     })),
+    /** Start of this camera's oldest held segment, or null when it holds none. */
+    earliestFor: (cameraId) => {
+      const row = stmts.earliestForCamera.get(cameraId);
+      return row ? toIso(row.start_ms) : null;
+    },
     close: () => db.close(),
   };
 }

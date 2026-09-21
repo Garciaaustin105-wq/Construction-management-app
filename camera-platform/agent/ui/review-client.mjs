@@ -22,16 +22,19 @@
  * (they are the server's own ISO strings) and a time that is not a string, or
  * parses to NaN, "does not parse". A gap narrower than
  * minGapFraction is widened to it (widened: true) and shifted left if it would
- * pass the right edge; recorded and future bars are never widened.
+ * pass the right edge; recorded, "nodata" and future bars are never widened.
+ * "nodata" is never widened ON PURPOSE: widening exists to make a FAILURE
+ * visible, and time this recorder never held is not a failure — see
+ * REVIEW-UI-SPEC.md and contracts/indexCoverage.ts's CoverageRun.kind.
  * startUtc/endUtc are copied through as given. gapReason/gapSource are the
- * run's (null for recorded and future).
+ * run's (null for recorded, "nodata" and future).
  *
  * { error } when body is not an object; requested/effective are missing or a
  * time does not parse; requested end <= requested start; effective start is not
  * requested start; effective end is after requested end or not after effective
- * start; runs is not a non-empty array; a run's kind is not "recorded" or
- * "gap"; the runs are not contiguous from effective start to effective end;
- * minGapFraction is not a finite number in [0, 1).
+ * start; runs is not a non-empty array; a run's kind is not "recorded", "gap"
+ * or "nodata"; the runs are not contiguous from effective start to effective
+ * end; minGapFraction is not a finite number in [0, 1).
  */
 function isNonArrayObject(x) { return typeof x === "object" && x !== null && !Array.isArray(x); }
 function parseTime(s, name) { if (typeof s !== "string") return { error: `${name} not a string` }; const ms = Date.parse(s); if (Number.isNaN(ms)) return { error: `${name} does not parse` }; return ms; }
@@ -63,7 +66,7 @@ export function layoutCoverage(body, minGapFraction = 0.004) {
     const run = runs[i];
     if (!isNonArrayObject(run)) return { error: "run must be an object" };
     const kind = run.kind;
-    if (kind !== "recorded" && kind !== "gap") return { error: "run kind must be recorded or gap" };
+    if (kind !== "recorded" && kind !== "gap" && kind !== "nodata") return { error: "run kind must be recorded, gap or nodata" };
     const startMs = parseTime(run.startUtc, `run ${i} startUtc`); if (startMs.error) return startMs;
     const endMs = parseTime(run.endUtc, `run ${i} endUtc`); if (endMs.error) return endMs;
     if (endMs <= startMs) return { error: "run end <= run start" };

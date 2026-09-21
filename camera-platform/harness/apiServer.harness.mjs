@@ -286,16 +286,53 @@ await check("a window past now is clipped, and says it was clipped", async () =>
   eq(json.effective.endUtc, now().toISOString(), "effective pulled back to now");
 });
 
-await check("a camera with nothing recorded gets coverage with a reason, not an empty 200", async () => {
+await check("a camera with nothing recorded ever gets nodata coverage, not a guessed gap", async () => {
+  // cam-2 has no rows in `segments` yet (its fixtures land further down, once
+  // this check has already run) — index.earliestFor("cam-2") is null, so
+  // coverageFromIndex is told the camera holds nothing at all. That is the
+  // whole point of earliestFor: a camera nobody has ever recorded is not a
+  // failure and must not paint red on the strip.
   const { res, json } = await fetchJson(
     `${base}/timeline?camera=cam-2&start=2026-09-11T08:00:00Z&end=2026-09-11T09:00:00Z`);
   eq(res.status, 200, "status");
   eq(json.runs.length, 1, "one run");
-  eq(json.runs[0].kind, "gap", "gap");
-  eq(json.runs[0].gapReason, "unknown", "reason");
-  eq(json.runs[0].gapSource, "inferred", "source");
+  eq(json.runs[0].kind, "nodata", "never held, not a gap");
+  eq(json.runs[0].gapReason, null, "no reason - there is nothing to explain");
+  eq(json.runs[0].gapSource, null, "no source either");
   eq(json.recordedSeconds, 0, "recorded");
-  eq(json.gapSeconds, 3600, "the whole window");
+  eq(json.gapSeconds, 0, "not counted as a gap");
+  eq(json.noDataSeconds, 3600, "the whole window, counted apart from gapSeconds");
+});
+
+await check("/timeline before the oldest held segment answers nodata, never a guessed gap", async () => {
+  // cam-1's oldest segment (T.D) starts at 2026-09-11T09:00:00Z. A window
+  // entirely before that is time this recorder never held.
+  const { res, json } = await fetchJson(
+    `${base}/timeline?camera=cam-1&start=2026-09-11T08:00:00Z&end=2026-09-11T08:30:00Z`);
+  eq(res.status, 200, "status");
+  eq(json.runs.length, 1, "one run");
+  eq(json.runs[0].kind, "nodata", "never held, not a failure");
+  eq(json.runs[0].gapReason, null, "no reason");
+  eq(json.runs[0].gapSource, null, "no source");
+  eq(json.recordedSeconds, 0, "recorded");
+  eq(json.gapSeconds, 0, "not counted as a gap");
+  eq(json.noDataSeconds, 1800, "the whole window");
+});
+
+await check("THE FEARED ONE: earliestFor only blanks time BEFORE it, not a real hole after", async () => {
+  // A window straddling cam-1's oldest segment (T.D, 09:00-09:01Z): before it
+  // is nodata, the segment itself is recorded, and the unlogged hole AFTER it
+  // is a real "unknown" gap, not nodata — earliestFor must not blank out a
+  // hole nobody explained just because it is near the edge of what is held.
+  const { res, json } = await fetchJson(
+    `${base}/timeline?camera=cam-1&start=2026-09-11T08:30:00Z&end=2026-09-11T09:30:00Z`);
+  eq(res.status, 200, "status");
+  eq(json.runs.map((r) => r.kind), ["nodata", "recorded", "gap"], "kinds in order");
+  eq(json.runs[2].gapReason, "unknown", "the hole after the boundary is a real, unexplained gap");
+  eq(json.runs[2].gapSource, "inferred", "nobody logged it");
+  eq(json.recordedSeconds, 60, "the T.D segment");
+  eq(json.noDataSeconds, 1800, "only the 30 minutes before the boundary");
+  eq(json.gapSeconds, 1740, "the 29 minutes after it, uncounted as nodata");
 });
 
 await check("refusals arrive with the contract's status and code", async () => {

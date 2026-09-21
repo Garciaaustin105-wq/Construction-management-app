@@ -55,6 +55,11 @@
   .bar { position: absolute; top: 0; bottom: 0; }
   .bar.recorded { background: #2e7d32; }
   .bar.gap { background: #c62828; }
+  /* Never held, not a failure: renders as nothing so the strip's own dark
+     background (#1b1d22, see .strip above) shows through. No border either —
+     there is nothing here to outline. Deliberately no .legend entry: nothing
+     to see is nothing to explain. */
+  .bar.nodata { background: transparent; border: none; }
   .bar.future { box-sizing: border-box; border: 1px dashed #6b7078; background: transparent; }
   .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; }
   .hours { position: relative; height: 18px; margin: 2px 0 8px; color: #b6bcc4; font-size: 12px; }
@@ -1019,6 +1024,10 @@ function clearStrip() {
  * - gap: describeGap(bar.gapReason, bar.gapSource) + ", " +
  *   localTime(bar.startUtc) + " to " + localTime(bar.endUtc)
  * - recorded: "Recorded, " + localTime(bar.startUtc) + " to " + localTime(bar.endUtc)
+ * - nodata: "No footage kept for this time" — plain words, same as every
+ *   other title here; this is time the recorder never held, not a failure,
+ *   so it gets no reason and no times (see .bar.nodata below: it renders as
+ *   nothing, so there is nothing to add a legend entry for either).
  * - future: "Not yet happened"
  */
 function drawStrip(bars) {
@@ -1037,6 +1046,8 @@ function drawStrip(bars) {
       title = describeGap(bar.gapReason, bar.gapSource) + ', ' + localTime(bar.startUtc) + ' to ' + localTime(bar.endUtc);
     } else if (bar.kind === 'recorded') {
       title = 'Recorded, ' + localTime(bar.startUtc) + ' to ' + localTime(bar.endUtc);
+    } else if (bar.kind === 'nodata') {
+      title = 'No footage kept for this time';
     } else if (bar.kind === 'future') {
       title = 'Not yet happened';
     }

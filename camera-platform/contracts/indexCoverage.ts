@@ -62,7 +62,13 @@ export interface IndexedGap {
 export interface CoverageRun {
   startUtc: string;
   endUtc: string;
-  kind: "recorded" | "gap";
+  /**
+   * "nodata" is time this recorder never held - older than its oldest
+   * footage. It is NOT a gap: a gap is something that should have been
+   * recorded and was not, and painting the two the same colour teaches an
+   * operator to ignore the colour that means failure.
+   */
+  kind: "recorded" | "gap" | "nodata";
   /** Recorded: how many index segments intersect this run. Gap: 0. */
   segmentCount: number;
   /** Recorded: the run ends in the segment still being written. Gap: false. */
@@ -80,6 +86,9 @@ export interface IndexCoverage {
   runs: CoverageRun[];
   recordedSeconds: number;
   gapSeconds: number;
+  /** Seconds this recorder never held. Counted apart from gapSeconds: it is
+   *  not footage that was lost, it is footage that was never kept. */
+  noDataSeconds: number;
   /** Every reason present, zeros included — zero seconds of a reason is a measured zero. */
   gapSecondsByReason: Record<GapReason, number>;
   /** Holes closed as seams (see SEAM_TOLERANCE_MS), among the segments supplied. */
@@ -125,9 +134,23 @@ export function coverageFromIndex(
   gaps: readonly IndexedGap[],
   range: UtcRange,
   nowUtc: string,
+  /**
+   * The start of the oldest footage this camera still holds, so anything
+   * earlier can be shown as nothing rather than as a failure.
+   * - omitted: behave exactly as before, every hole is a gap (every existing
+   *   caller passes five arguments and must not change meaning);
+   * - a string: time before it is "nodata" unless a LOGGED gap covers it;
+   * - null: this camera holds nothing at all, so the whole range is "nodata".
+   */
+  earliestHeldUtc?: string | null,
 ): IndexCoverage {
   const { startMs, endMs } = checkRange(range);
   const nowMs = parseUtc(nowUtc);
+  // undefined: the caller said nothing, so nothing is blank (old behaviour).
+  // null: this camera holds nothing, so everything unlogged is blank.
+  const heldFromMs = earliestHeldUtc === undefined ? null
+    : earliestHeldUtc === null ? Number.POSITIVE_INFINITY
+    : parseUtc(earliestHeldUtc);
   if (endMs > nowMs) {
     throw new IndexCoverageError(
       `range ends after now (${range.endUtc} > ${nowUtc}); clip the window with parseWindow first`,
@@ -141,7 +164,7 @@ export function coverageFromIndex(
     const a = Math.max(seg.startMs, startMs);
     const b = Math.min(seg.endMs, endMs);
     if (b <= a) continue;
-    if (a > cursor) fillHole(runs, cursor, a, normalised.gaps);
+    if (a > cursor) fillHole(runs, cursor, a, normalised.gaps, heldFromMs);
     const last = runs[runs.length - 1];
     if (last !== undefined && last.kind === "recorded" && last.endMs === a) {
       last.endMs = b;
@@ -155,7 +178,7 @@ export function coverageFromIndex(
     }
     cursor = b;
   }
-  if (cursor < endMs) fillHole(runs, cursor, endMs, normalised.gaps);
+  if (cursor < endMs) fillHole(runs, cursor, endMs, normalised.gaps, heldFromMs);
 
   const gapSecondsByReason: Record<GapReason, number> = {
     camera_offline: 0, appliance_offline: 0, disk_full: 0,
@@ -163,10 +186,13 @@ export function coverageFromIndex(
   };
   let recordedSeconds = 0;
   let gapSeconds = 0;
+  let noDataSeconds = 0;
   for (const run of runs) {
     const seconds = (run.endMs - run.startMs) / 1000;
     if (run.kind === "recorded") {
       recordedSeconds += seconds;
+    } else if (run.kind === "nodata") {
+      noDataSeconds += seconds;
     } else {
       gapSeconds += seconds;
       const reason = run.gapReason ?? "unknown";
@@ -188,6 +214,7 @@ export function coverageFromIndex(
     })),
     recordedSeconds,
     gapSeconds,
+    noDataSeconds,
     gapSecondsByReason,
     seamsBridged: normalised.seamsBridged,
     overlapsTruncated: normalised.overlapsTruncated,
@@ -220,7 +247,7 @@ interface Normalised {
 interface MutableRun {
   startMs: number;
   endMs: number;
-  kind: "recorded" | "gap";
+  kind: "recorded" | "gap" | "nodata";
   segmentCount: number;
   includesOpen: boolean;
   gapReason: GapReason | null;
@@ -342,7 +369,10 @@ function gapAt(atMs: number, logged: readonly LoggedGapMs[]): { reason: GapReaso
 }
 
 /** Fill [a, b) with gap runs, merging into `runs` when the neighbour is identical. */
-function fillHole(runs: MutableRun[], a: number, b: number, logged: readonly LoggedGapMs[]): void {
+function fillHole(
+  runs: MutableRun[], a: number, b: number, logged: readonly LoggedGapMs[],
+  heldFromMs: number | null,
+): void {
   let t = a;
   while (t < b) {
     const found = gapAt(t, logged);
@@ -356,6 +386,28 @@ function fillHole(runs: MutableRun[], a: number, b: number, logged: readonly Log
       for (const g of logged) {
         if (g.startMs > t && g.startMs < end) end = g.startMs;
       }
+    }
+    // Before the oldest footage this recorder holds, an UNLOGGED hole is not
+    // a failure - there is simply nothing, and nothing is what to show. A
+    // LOGGED gap keeps its colour even out here: "the camera was offline" is
+    // something we know, not an absence.
+    let kind: MutableRun["kind"] = "gap";
+    if (found.source === "inferred" && heldFromMs !== null && t < heldFromMs) {
+      kind = "nodata";
+      end = Math.min(end, heldFromMs);
+    }
+    if (kind === "nodata") {
+      const prev = runs[runs.length - 1];
+      if (prev !== undefined && prev.kind === "nodata" && prev.endMs === t) {
+        prev.endMs = end;
+      } else {
+        runs.push({
+          startMs: t, endMs: end, kind: "nodata", segmentCount: 0,
+          includesOpen: false, gapReason: null, gapSource: null,
+        });
+      }
+      t = end;
+      continue;
     }
     const last = runs[runs.length - 1];
     if (last !== undefined && last.kind === "gap" && last.endMs === t
@@ -378,7 +430,9 @@ function fillHole(runs: MutableRun[], a: number, b: number, logged: readonly Log
  * has no codec column, and a byte sum over clipped files would be invented.
  */
 export function runsAsSegments(coverage: IndexCoverage): Segment[] {
-  return coverage.runs.map((run) => {
+  // "nodata" runs are dropped: they are not spans of anything, and a caller
+  // summarising buckets must not count never-held time as lost time.
+  return coverage.runs.filter((run) => run.kind !== "nodata").map((run) => {
     const span: Segment = {
       cameraId: coverage.cameraId,
       startUtc: run.startUtc,
