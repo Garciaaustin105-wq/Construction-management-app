@@ -68,6 +68,12 @@ export function openIndex(file) {
     db.exec("ALTER TABLE segments ADD COLUMN root TEXT");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_segments_root_start ON segments(root, start_ms)");
+  // healthfacts.mjs footageFacts() groups sealed rows by camera and drive on
+  // every GET /health (the System page polls every 5 s) and every 30 s health
+  // write. Measured on 691,200 rows (16 cameras x 30 days): about 320 ms
+  // without this index, which forces a temporary B-tree for the grouping;
+  // about 130 ms with it.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_segments_state_camera_root ON segments(state, camera_id, root)");
 
   const stmts = {
     upsert: db.prepare(`

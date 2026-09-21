@@ -23,13 +23,16 @@
 //    appliance that will not boot.
 
 import { stat, statfs, readFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 // The ONLY way an unresolved reason reaches this file's output. resolveCameraUrl's
 // raw reason can echo the configured url, and that url carries the camera
 // password — cameraView is the audited place where it gets scrubbed, and a
 // second scrubber here would be a second thing to get wrong.
 import { cameraView } from '../dist/cameraView.js';
+import { DAY_MS, PROJECTION_WINDOW_MS } from '../dist/footageHeld.js';
+import { RECORDING_FILE, readRecordingFile } from '../dist/recordingSettings.js';
+import { RING_FILL } from './config.mjs';
 
 /** How stale health.json may be before the recorder is presumed not running. */
 export const RECORDER_STALE_AFTER_MS = 90_000; // three 30s health writes
@@ -115,6 +118,62 @@ function median(sorted) {
 }
 
 /**
+ * Sealed, evictable footage grouped by camera and drive, for contracts/
+ * footageHeld.ts. One row per (camera, root) the index has ever written.
+ *
+ * Held and pending-upload segments are left out on purpose: eviction cannot
+ * touch either one, so they are not rolling footage that footageHeld() can
+ * reason about — a held clip does not free up when the ring needs room, and
+ * a pending upload is leaving the drive regardless of what retention says.
+ * Their bytes are still real, though, so they must still be counted against
+ * the drive; they land in siteHealth's per-store `otherBytes` instead of here.
+ *
+ * A camera that was removed from config.json still has rows: its footage is
+ * still sitting on the drive and still needs to be reported (build rule 16:
+ * say what is there), even though nobody asks how long IT keeps footage.
+ *
+ * `index` is an openIndex() handle; only its `db` is used, read-only.
+ */
+export function footageFacts(index, nowMs) {
+  const windowStartMs = nowMs - PROJECTION_WINDOW_MS;
+  const rows = index.db
+    .prepare(
+      `SELECT camera_id,
+              root,
+              COUNT(*) AS segments,
+              COALESCE(SUM(bytes), 0) AS bytes,
+              MIN(start_ms) AS oldest_ms,
+              -- A segment whose length was never measured (a recovered
+              -- orphan, or one ffprobe could not read) has no end_ms. Its
+              -- start is still a floor for "newest"; without the COALESCE a
+              -- group of only such segments reads as newest = 0 and can pick
+              -- the wrong drive as the one the camera records to now.
+              MAX(COALESCE(end_ms, start_ms)) AS newest_ms,
+              COALESCE(SUM(end_ms - start_ms), 0) AS recorded_ms,
+              -- The rate is bytes over time, so a segment counts in both or in
+              -- neither: its bytes without its duration would inflate it.
+              COALESCE(SUM(CASE WHEN start_ms >= ? AND end_ms IS NOT NULL THEN bytes END), 0) AS window_bytes,
+              COALESCE(SUM(CASE WHEN start_ms >= ? AND end_ms IS NOT NULL THEN end_ms - start_ms END), 0) AS window_recorded_ms
+         FROM segments
+        WHERE state = 'sealed' AND COALESCE(hold, 0) = 0 AND COALESCE(pending_upload, 0) = 0
+        GROUP BY camera_id, root`,
+    )
+    .all(windowStartMs, windowStartMs);
+
+  return rows.map((r) => ({
+    cameraId: r.camera_id,
+    root: r.root ?? null,
+    segments: Number(r.segments),
+    bytes: Number(r.bytes),
+    oldestMs: Number(r.oldest_ms),
+    newestMs: Number(r.newest_ms),
+    recordedMs: Number(r.recorded_ms),
+    windowBytes: Number(r.window_bytes),
+    windowRecordedMs: Number(r.window_recorded_ms),
+  }));
+}
+
+/**
  * What one store root really is. Never throws: a root that cannot be examined
  * is reported as unmounted and unmeasured, which is the truth, rather than
  * taking the health endpoint down with it.
@@ -188,6 +247,28 @@ export async function recorderRunning(healthFile, nowMs, staleAfterMs = RECORDER
 }
 
 /**
+ * The Recording page's keep-for limit (recording.json), in milliseconds, or
+ * null when there is none. `stateDir` is the directory recording.json lives
+ * in, the same directory runAgeEviction (recorder-service.mjs) reads it from.
+ *
+ * ENOENT (never set) and a broken file (unreadable, not JSON, invalid) both
+ * come back from readRecordingFile() with maxDays: null — runAgeEviction
+ * applies no age limit in either case, so this must not show one either: a
+ * limit the recorder is not enforcing must not appear as the reason footage
+ * is kept.
+ */
+export async function keepForLimitMs(stateDir) {
+  let text;
+  try {
+    text = await readFile(join(stateDir, RECORDING_FILE), 'utf8');
+  } catch (err) {
+    text = err.code === 'ENOENT' ? null : undefined;
+  }
+  const { settings } = readRecordingFile(text);
+  return typeof settings.maxDays === 'number' ? settings.maxDays * DAY_MS : null;
+}
+
+/**
  * Everything siteHealth() needs, measured. `resolveOne(cam)` is passed in
  * rather than imported so this file never has to hold a credential resolver;
  * it returns resolveCameraUrl's { kind, reason? }.
@@ -220,5 +301,9 @@ export async function gatherHealthFacts({ config, index, healthFile, now, resolv
     cameras,
     stores,
     recorderRunning: await recorderRunning(healthFile, at.getTime()),
+    footage: footageFacts(index, at.getTime()),
+    ringFill: RING_FILL,
+    // health.json lives in the state dir, and so does recording.json.
+    maxAgeMs: await keepForLimitMs(dirname(healthFile)),
   };
 }

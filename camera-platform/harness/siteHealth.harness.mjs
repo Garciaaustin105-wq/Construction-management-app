@@ -1,9 +1,12 @@
 import { siteHealth, DEFAULT_SILENT_AFTER_SECONDS } from "../dist/siteHealth.js";
-import { check, same, report } from "./_assert.mjs";
+import { HOUR_MS } from "../dist/footageHeld.js";
+import { check, same, close, report } from "./_assert.mjs";
 
 console.log("siteHealth");
 
 const AT = "2026-09-15T12:00:00.000Z";
+const NOW = Date.parse(AT);
+const H = HOUR_MS;
 
 function cam(cameraId, over = {}) {
   return {
@@ -29,6 +32,41 @@ function store(root, over = {}) {
   };
 }
 
+/**
+ * One group of sealed segments for footageHeld (contracts/footageHeld.ts),
+ * on the given drive. Defaults: 4 hours of unbroken history ending just now,
+ * all inside the projection window -- not a full day, so a fixture that does
+ * not ask for more lands on basis "at_least".
+ */
+function footageRow(cameraId, root, over = {}) {
+  return {
+    cameraId,
+    root,
+    segments: 240,
+    bytes: 1_000_000_000, // 1 GB
+    oldestMs: NOW - 4 * H,
+    newestMs: NOW - 30_000,
+    recordedMs: 4 * H,
+    windowBytes: 1_000_000_000,
+    windowRecordedMs: 4 * H,
+    ...over,
+  };
+}
+
+/** A camera with a whole, unbroken day behind it, having written `perDay`
+ *  bytes in that day -- what footageHeld needs to PROJECT a rate rather than
+ *  report a floor. */
+function fullDayRow(cameraId, root, perDay, over = {}) {
+  return footageRow(cameraId, root, {
+    bytes: perDay * 1.25,
+    oldestMs: NOW - 30 * H,
+    recordedMs: 30 * H,
+    windowBytes: perDay,
+    windowRecordedMs: 24 * H,
+    ...over,
+  });
+}
+
 function input(over = {}) {
   return {
     siteId: "site-1",
@@ -36,6 +74,10 @@ function input(over = {}) {
     cameras: [cam("cam1-main")],
     stores: [store("/srv/camplat/disk0")],
     recorderRunning: true,
+    // Matches the default camera/store above: 4h on disk0, still filling.
+    footage: [footageRow("cam1-main", "/srv/camplat/disk0")],
+    ringFill: 0.85,
+    maxAgeMs: null,
     ...over,
   };
 }
@@ -153,42 +195,83 @@ check("a zero-byte total does not become a divide-by-zero fraction", () => {
 });
 
 // ------------------------------------------------------------------ retention
-check("retention refuses when any camera is unmeasured, and names it", () => {
+// Retention now comes from contracts/footageHeld.ts: bytes on disk, per drive,
+// never a bitrate and never drives pooled together. See that file's own
+// harness for the arithmetic; these checks are about how siteHealth FOLDS its
+// answer in, and about the shapes an older or partial caller can hand it.
+
+check("THE POOLED ONE: two stores never blend into one retention figure", () => {
+  const smallTotal = 6_000_000_000; // 6 GB
+  const bigTotal = 200_000_000_000; // 200 GB
+  const ringFill = 0.85;
+  const smallUsed = smallTotal * ringFill; // exactly at the ring: full
+  const bigUsed = 20_000_000_000; // 20 GB: still filling
+
   const h = siteHealth(input({
-    cameras: [cam("cam1-main"), cam("cam2-sub", { measuredKbps: null })],
+    cameras: [cam("cam1-main"), cam("cam2-sub")],
+    stores: [
+      store("/srv/camplat/disk0", { totalBytes: smallTotal, freeBytes: smallTotal - smallUsed }),
+      store("/srv/camplat/disk1", { totalBytes: bigTotal, freeBytes: bigTotal - bigUsed }),
+    ],
+    footage: [
+      // Alone on a small, full drive: 4.1h is ALL that drive holds.
+      footageRow("cam1-main", "/srv/camplat/disk0", {
+        bytes: smallUsed, oldestMs: NOW - 4.1 * H, newestMs: NOW - 60_000,
+        recordedMs: 4.1 * H, windowBytes: smallUsed, windowRecordedMs: 4.1 * H,
+      }),
+      // A full day on a big drive with room to spare: keeps far longer.
+      fullDayRow("cam2-sub", "/srv/camplat/disk1", 2_000_000_000),
+    ],
+    ringFill,
   }));
-  same(h.retention.kind, "unknown", "refused");
-  same(h.retention.reason, "unmeasured_cameras", "reason");
-  same(h.retention.unmeasuredCameraIds, ["cam2-sub"], "which camera");
-  same(h.totals.camerasUnmeasured, 1, "counted");
-  same(h.totals.measuredKbps, 200, "an unmeasured camera adds NOTHING, it does not add 0 kbps");
+  same(h.retention.kind, "ok", "answers, not a refusal");
+  close(h.retention.hours, 4.1, 0.01, "the small drive's own figure");
+  same(h.retention.basis, "measured", "disk0 is full: what is held is what is kept");
+  same(h.retention.limitingCameraId, "cam1-main", "the small full drive, not a pooled total across both");
+  same(h.retention.days, h.retention.hours / 24, "days mirrors hours");
 });
 
-check("retention refuses when a mounted store did not report its size", () => {
+check("THE UNMOUNTED STORE TRAP: its camera goes unmeasured, the rest of the snapshot still stands", () => {
   const h = siteHealth(input({
-    stores: [store("/d0"), store("/d1", { totalBytes: null, freeBytes: null })],
+    stores: [store("/srv/camplat/disk0", { mounted: false, totalBytes: 500_000_000_000, freeBytes: 490_000_000_000 })],
   }));
-  same(h.retention.kind, "unknown", "refused");
-  same(h.retention.reason, "unmeasured_stores", "a part-measured total would read low and be believed");
+  same(h.retention.kind, "unknown", "an unmounted drive cannot vouch for what it holds");
+  same(h.retention.reason, "cameras_unknown", "a specific camera is the problem, not the whole site");
+  same(h.retention.unmeasuredCameraIds, ["cam1-main"], "names the camera recording to it");
+  same(h.status, "down", "the rest of the snapshot is still produced: status");
+  same(h.stores[0].state, "unmounted", "stores");
+  same(h.totals.cameras, 1, "totals");
+  same(h.cameras.length, 1, "and the camera list");
 });
 
-check("retention is computed from measured cameras and mounted stores only", () => {
-  // 200 kbps = 25000 bytes/s. 6e9 bytes / 25000 = 240000s = 2.777... days.
-  const h = siteHealth(input());
-  same(h.retention.kind, "ok", "computed");
-  same(h.retention.totalKbps, 200, "total kbps");
-  same(h.retention.camerasCounted, 1, "cameras counted");
-  if (!(h.retention.days > 2.7 && h.retention.days < 2.8)) {
-    throw new Error(`expected ~2.78 days, got ${h.retention.days}`);
-  }
+check("a camera with segments but no measured bitrate still gets a retention figure", () => {
+  const h = siteHealth(input({
+    cameras: [cam("cam1-main", { measuredKbps: null })],
+  }));
+  same(h.retention.kind, "ok", "the bitrate is no longer needed to answer");
+  same(h.retention.basis, "at_least", "4h of history, drive still filling: a floor");
+  same(h.retention.totalKbps, 0, "informational only, and an unmeasured camera adds nothing");
+  same(h.retention.camerasCounted, 1, "still counted as a camera");
+  same(h.totals.camerasUnmeasured, 1, "counted as unmeasured for the bitrate total");
+  same(h.totals.measuredKbps, 0, "and contributes nothing to it");
 });
 
-check("an unmounted store's capacity is not counted toward retention", () => {
-  const withGhost = siteHealth(input({
-    stores: [store("/d0"), store("/ghost", { mounted: false, totalBytes: 600_000_000_000 })],
-  }));
-  const alone = siteHealth(input());
-  same(withGhost.retention.days, alone.retention.days, "a disk that is not there stores nothing");
+check("an input missing footage entirely (an older caller) does not throw", () => {
+  const raw = input();
+  delete raw.footage; // simulate a caller built before this field existed
+  const h = siteHealth(raw);
+  same(h.retention.kind, "unknown", "cannot invent footage");
+  same(h.retention.reason, "bad_input", "and says exactly why, not a generic refusal");
+  same(h.cameras.length, 1, "the rest of the snapshot is unaffected");
+  same(h.stores.length, 1, "stores too");
+  same(h.totals.cameras, 1, "and totals");
+});
+
+check("a store still filling is ok with basis at_least -- never mistaken for unknown", () => {
+  const h = siteHealth(input()); // default fixture: 4h on a disk0 that has not filled yet
+  same(h.retention.kind, "ok", "still filling is a measurement, not a refusal");
+  same(h.retention.basis, "at_least", "a floor, not a projection and not an alarm");
+  close(h.retention.hours, 4, 0.01, "the hours actually held so far");
 });
 
 // -------------------------------------------------------------- the recorder

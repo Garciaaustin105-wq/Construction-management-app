@@ -22,7 +22,13 @@
  * Pure. No fs, no clock, no SQLite -- the caller measures, this decides.
  */
 
-import { computeRetentionDays } from "./retention.js";
+import {
+  footageHeld,
+  type CameraFootage,
+  type FootageRow,
+  type KeepBasis,
+  type StoreFootage,
+} from "./footageHeld.js";
 import { MS_PER_SECOND } from "./time.js";
 
 /** A camera as the recorder and the index actually observed it. */
@@ -70,6 +76,16 @@ export interface SiteHealthInput {
   stores: readonly StoreHealthInput[];
   /** Whether the recorder process reports itself as running, or null if unknown. */
   recorderRunning: boolean | null;
+  /**
+   * Sealed, evictable footage grouped by camera and drive, as footageHeld()
+   * takes it. Retention is decided from these bytes on disk, per drive; never
+   * from a bitrate, and never from drives pooled together.
+   */
+  footage: readonly FootageRow[];
+  /** The recorder's RING_FILL: the fraction of each drive eviction keeps it at. */
+  ringFill: number;
+  /** The Recording page's keep-for limit in milliseconds, or null for none. */
+  maxAgeMs: number | null;
 }
 
 export interface SiteHealthOptions {
@@ -140,19 +156,39 @@ export interface StoreHealth {
   usedFraction: number | null;
 }
 
+/**
+ * How long footage is kept, from contracts/footageHeld.ts. `basis` says what
+ * kind of number `hours` is and must be shown with it: "measured" (the drive
+ * is full), "projected" (an estimate from the last full day), "age_limit" (the
+ * keep-for limit deletes first) or "at_least" (still filling: a floor).
+ */
 export type RetentionSummary =
-  | { kind: "ok"; days: number; totalKbps: number; camerasCounted: number }
+  | {
+      kind: "ok";
+      hours: number;
+      /** hours / 24, kept for clients that read days. */
+      days: number;
+      basis: KeepBasis;
+      limitingCameraId: string;
+      /** What drive space alone allows, ignoring the keep-for limit. */
+      spaceHours: number;
+      spaceBasis: KeepBasis;
+      cameras: CameraFootage[];
+      stores: StoreFootage[];
+      /** Sum of measured median bitrates. Informational only: retention is
+       *  no longer computed from it. */
+      totalKbps: number;
+      camerasCounted: number;
+    }
   | {
       kind: "unknown";
       /** What is missing, so the page can say so instead of showing a dash. */
-      reason:
-        | "unmeasured_cameras"
-        | "unmeasured_stores"
-        | "no_cameras"
-        | "no_usable_bytes"
-        | "zero_bitrate";
+      reason: "no_cameras" | "cameras_unknown" | "bad_input";
       message: string;
+      /** The cameras nothing could be said about. */
       unmeasuredCameraIds: string[];
+      cameras: CameraFootage[];
+      stores: StoreFootage[];
     };
 
 export interface SiteHealth {
@@ -316,27 +352,48 @@ export function siteHealth(
     if (c.state === "silent") silent++;
   }
 
-  // Retention needs the WHOLE store, not the part we happened to measure. If
-  // any mounted root's size is unknown the total is unknown, and a retention
-  // figure computed from a partial total would read low and be believed.
-  const mounted = stores.filter((s) => s.state !== "unmounted");
-  const anyStoreUnmeasured = mounted.some((s) => s.totalBytes === null);
-  let usableBytes = 0;
-  for (const s of mounted) usableBytes += s.totalBytes ?? 0;
-
-  const retention: RetentionSummary = anyStoreUnmeasured
-    ? {
-        kind: "unknown",
-        reason: "unmeasured_stores",
-        message: "a mounted store did not report its size; retention is unknowable",
-        unmeasuredCameraIds: [],
-      }
-    : toRetentionSummary(
-        computeRetentionDays(
-          cameras.map((c) => ({ cameraId: c.cameraId, bitrateKbps: c.measuredKbps })),
-          usableBytes,
-        ),
-      );
+  // Retention per drive, from the bytes on it (contracts/footageHeld.ts). An
+  // unmounted drive is passed as unmeasured: recording to a bare mountpoint
+  // fills the root filesystem, and its size says nothing about the drive
+  // that should be there.
+  const held = footageHeld({
+    nowMs: atMs ?? Number.NaN,
+    cameraIds: input.cameras.map((c) => c.cameraId),
+    footage: input.footage,
+    stores: input.stores.map((s) => {
+      const measured = s.mounted && s.totalBytes !== null && s.freeBytes !== null;
+      return {
+        root: s.root,
+        totalBytes: measured ? s.totalBytes : null,
+        usedBytes: measured ? (s.totalBytes as number) - (s.freeBytes as number) : null,
+      };
+    }),
+    ringFill: input.ringFill,
+    maxAgeMs: input.maxAgeMs,
+  });
+  const retention: RetentionSummary =
+    held.kind === "ok"
+      ? {
+          kind: "ok",
+          hours: held.hours,
+          days: held.hours / 24,
+          basis: held.basis,
+          limitingCameraId: held.limitingCameraId,
+          spaceHours: held.spaceHours,
+          spaceBasis: held.spaceBasis,
+          cameras: held.cameras,
+          stores: held.stores,
+          totalKbps: measuredKbps,
+          camerasCounted: cameras.length,
+        }
+      : {
+          kind: "unknown",
+          reason: held.reason,
+          message: held.message,
+          unmeasuredCameraIds: held.unknownCameraIds,
+          cameras: held.cameras,
+          stores: held.stores,
+        };
 
   let status: HealthStatus = "ok";
   for (const c of cameras) status = worst(status, c.status);
@@ -366,22 +423,5 @@ export function siteHealth(
       camerasUnmeasured,
     },
     retention,
-  };
-}
-
-function toRetentionSummary(estimate: ReturnType<typeof computeRetentionDays>): RetentionSummary {
-  if (estimate.kind === "ok") {
-    return {
-      kind: "ok",
-      days: estimate.days,
-      totalKbps: estimate.totalKbps,
-      camerasCounted: estimate.camerasCounted,
-    };
-  }
-  return {
-    kind: "unknown",
-    reason: estimate.reason,
-    message: estimate.message,
-    unmeasuredCameraIds: estimate.unmeasuredCameraIds,
   };
 }

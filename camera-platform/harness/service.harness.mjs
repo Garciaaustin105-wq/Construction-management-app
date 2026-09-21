@@ -448,6 +448,52 @@ await check("THE FEARED ONE: health names every configured camera and drive, and
   }
 });
 
+// THE FEARED ONE this file exists for: before this fix, a camera with no
+// configured bitrateKbps raised "retention unknown" forever, even sitting on
+// a nearly-empty drive with real footage on it -- the retention figure was
+// read from a setting nobody had entered, not from what the drive actually
+// held. footageHeld() decides from bytes on disk, so this must now succeed.
+await check("THE FEARED ONE: with no bitrateKbps configured anywhere, real footage on disk still produces a retention figure, not a refusal", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "camplat-nobitrate-"));
+  const d0 = await mkdtemp(path.join(tmpdir(), "camplat-nb0-"));
+  const d1 = await mkdtemp(path.join(tmpdir(), "camplat-nb1-"));
+  // Neither camera names a bitrate -- the exact configuration that used to
+  // read the retention estimate's only input as null and refuse forever.
+  await writeFile(path.join(dir, "config.json"), JSON.stringify({
+    siteId: "carwash-01", storeRoots: [d0, d1], segmentSeconds: 60, credentials: creds,
+    cameras: [
+      { cameraId: "cam-a", host: "10.0.0.21", vendor: "avycon" },
+      { cameraId: "cam-b", host: "10.0.0.22", vendor: "avycon" },
+    ],
+  }));
+  const spawnFn = () => { const c = new EventEmitter(); c.stderr = new EventEmitter(); c.kill = () => c.emit("exit", 0); return c; };
+  const realLog = console.log;
+  console.log = () => {};
+  let handle;
+  try {
+    handle = await start({ stateDir: dir, spawnFn, storeCheck: mounted });
+    // Real sealed segments, written the same way the health-naming check
+    // above does it: two .inprogress files 60 s apart so the older one is
+    // complete and gets sealed with a real byte count on a real drive.
+    for (const r of handle.recorders) {
+      for (const epochSeconds of [1_700_000_000, 1_700_000_060]) {
+        await writeFile(path.join(r.root, r.cameraId, INPROGRESS, `${epochSeconds}.mp4`), Buffer.alloc(6_000_000));
+      }
+      await r.recorder.poll();
+    }
+    await handle.writeHealth();
+    const health = JSON.parse(await readFile(path.join(dir, "health.json"), "utf8"));
+    eq(health.retentionRefused, null, "no configured bitrate is not a reason to refuse");
+    if (typeof health.retentionHours !== "number" || !Number.isFinite(health.retentionHours)) {
+      throw new Error(`retentionHours is not a finite number: ${JSON.stringify(health.retentionHours)}`);
+    }
+  } finally {
+    await handle?.stop();
+    console.log = realLog;
+    for (const d of [dir, d0, d1]) await rm(d, { recursive: true, force: true });
+  }
+});
+
 await check("THE FEARED ONE: a camera restart request restarts that camera only, and junk requests are deleted", async () => {
   const children = [];
   const spawnFn = (cmd, args) => {

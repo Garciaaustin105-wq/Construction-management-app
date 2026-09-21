@@ -164,6 +164,24 @@ function usageText(store) {
   return `${used} used of ${total} (${percent})`;
 }
 
+// Same rule the System page uses for a duration: under 48 h stays in hours
+// (a day is a bad unit for "4.3"), 48 h and over switches to days.
+function formatHoursOrDays(hours) {
+  return hours < 48 ? `${hours.toFixed(1)} hours` : `${(hours / 24).toFixed(1)} days`;
+}
+
+// What the drive SPACE alone allows, ignoring the keep-for limit -- the
+// number a new limit must be checked against, from contracts/footageHeld.ts
+// via RetentionSummary.spaceHours/spaceBasis. An older server that has not
+// been upgraded yet only sends {days, basis}, its days already the same
+// figure the keep-for limit was applied to; treat that as an estimate
+// ("projected") rather than claim a basis the server never measured.
+function retentionSpace(info) {
+  if (hasNumber(info.spaceHours)) return { hours: info.spaceHours, basis: info.spaceBasis };
+  if (hasNumber(info.days)) return { hours: info.days * 24, basis: "projected" };
+  return null;
+}
+
 function renderRetention() {
   if (!retentionInfo) {
     retentionLineEl.hidden = true;
@@ -171,10 +189,26 @@ function renderRetention() {
     return;
   }
   retentionLineEl.hidden = false;
-  if (retentionInfo.kind === "ok") {
-    retentionLineEl.textContent = `At the current recording rate the drives hold about ${Math.floor(retentionInfo.days)} days`;
-  } else {
+  if (retentionInfo.kind !== "ok") {
     retentionLineEl.textContent = `How long the drives hold can't be worked out yet: ${retentionInfo.message}`;
+    return;
+  }
+  const space = retentionSpace(retentionInfo);
+  if (space === null) {
+    retentionLineEl.textContent = "How long the drives hold can't be worked out yet: the recorder did not report drive space.";
+    return;
+  }
+  const amount = formatHoursOrDays(space.hours);
+  if (space.basis === "measured") {
+    retentionLineEl.textContent = `The drives are full and hold about ${amount}.`;
+  } else if (space.basis === "projected") {
+    retentionLineEl.textContent = `At the current recording rate the drives hold about ${amount} (estimate from the last full day).`;
+  } else if (space.basis === "at_least") {
+    retentionLineEl.textContent = `The drives hold at least ${amount} so far. They are still filling, so how long they will hold is not known until there is a full day of recording.`;
+  } else {
+    // A basis this page does not recognise: say so rather than guess which
+    // of the three sentences above it would have earned.
+    retentionLineEl.textContent = "How long the drives hold can't be worked out yet: the recorder reported an unrecognized basis.";
   }
 }
 
@@ -184,12 +218,31 @@ function selectedMaxDays() {
   return Number.isFinite(value) ? value : null;
 }
 
+// Whether a new keep-for limit (still being typed, not yet saved) would be
+// beaten by the drives filling up first. "at_least" is a floor, not a
+// measurement -- house rule 11, never render a verdict from a floor -- so a
+// limit past it says "not known yet", never "fills first" and never "safe".
 function updateFillsFirst() {
-  const limit = selectedMaxDays();
-  const fills = limit !== null && retentionInfo && retentionInfo.kind === "ok"
-    && hasNumber(retentionInfo.days) && limit > retentionInfo.days;
-  if (fills) {
-    fillsFirstEl.textContent = `The drives fill in about ${Math.floor(retentionInfo.days)} days, before this limit, so the oldest recordings will be deleted sooner.`;
+  const limitDays = selectedMaxDays();
+  const space = retentionInfo && retentionInfo.kind === "ok" ? retentionSpace(retentionInfo) : null;
+  if (limitDays === null || space === null) {
+    fillsFirstEl.hidden = true;
+    fillsFirstEl.textContent = "";
+    return;
+  }
+  const limitHours = limitDays * 24;
+  if (space.basis === "at_least") {
+    if (space.hours < limitHours) {
+      fillsFirstEl.textContent = "Not known yet whether the drives fill before this limit.";
+      fillsFirstEl.hidden = false;
+    } else {
+      fillsFirstEl.hidden = true;
+      fillsFirstEl.textContent = "";
+    }
+    return;
+  }
+  if ((space.basis === "measured" || space.basis === "projected") && space.hours < limitHours) {
+    fillsFirstEl.textContent = `The drives fill in about ${formatHoursOrDays(space.hours)}, before this limit, so the oldest recordings will be deleted sooner.`;
     fillsFirstEl.hidden = false;
   } else {
     fillsFirstEl.hidden = true;

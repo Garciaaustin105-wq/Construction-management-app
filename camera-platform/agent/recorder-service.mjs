@@ -12,20 +12,21 @@ import { openIndex } from "./segindex.mjs";
 import { scanDisk, applyRecovery, applyEviction, ensureCameraDirs, quarantineUsage, hasVideoBoxes, quarantineFile, INPROGRESS } from "./segstore.mjs";
 import { createCameraRecorder } from "./recorder.mjs";
 import { planEvictionScalable } from "./evict.mjs";
-import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives, checkStoreRoot } from "./config.mjs";
+import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives, checkStoreRoot, RING_FILL } from "./config.mjs";
 import { planRecovery } from "../dist/recovery.js";
 import { bytesToFreeFor } from "../dist/eviction.js";
-import { computeRetentionDays, usableBytesFromRaw } from "../dist/retention.js";
+import { usableBytesFromRaw } from "../dist/retention.js";
 import { buildRtspUrl, redactRtspUrl, urlForPath } from "../dist/rtsp.js";
 import { parseRtspUrl } from "../dist/cameraSource.js";
 import { parseCameraFile } from "../dist/cameraEdit.js";
 import { RECORDING_FILE, readRecordingFile, ageCutoffMs } from "../dist/recordingSettings.js";
+import { footageHeld } from "../dist/footageHeld.js";
+import { footageFacts, keepForLimitMs } from "./healthfacts.mjs";
 import { cameraFromRestartFile } from "./alerts-run.mjs";
 
 const EVICTION_INTERVAL_MS = 5 * 60_000;
 const HEALTH_INTERVAL_MS = 30_000;
 const RESTART_POLL_MS = 5000;
-const RING_FILL = 0.85;
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
@@ -237,14 +238,6 @@ async function runEviction(index, storeRoots, log_) {
   }
 }
 
-function currentRetention(index, cameras) {
-  const bitrates = cameras.map((c) => ({
-    cameraId: c.cameraId,
-    bitrateKbps: typeof c.bitrateKbps === "number" ? c.bitrateKbps : null,
-  }));
-  return bitrates;
-}
-
 /**
  * Report what recovery WOULD do right now, changing nothing.
  *
@@ -414,17 +407,56 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
   // Read by `camctl alerts` (contracts/alerts.ts HealthSnapshot), a separate process.
   const writeHealth = async () => {
     const disks = [];
+    // One entry per store root for footageHeld() too, root-for-root with disks:
+    // a root whose diskUsage failed is unmeasured, not zero, so it goes in as
+    // nulls rather than being left out of the list eviction actually uses.
+    const stores = [];
     for (const root of storeRoots) {
       const usage = await diskUsage(root).catch(() => null);
-      if (usage) disks.push({ root, ...usage, quarantine: await quarantineUsage(root).catch(() => null) });
+      if (usage) {
+        disks.push({ root, ...usage, quarantine: await quarantineUsage(root).catch(() => null) });
+        stores.push({ root, totalBytes: usage.total, usedBytes: usage.used });
+      } else {
+        stores.push({ root, totalBytes: null, usedBytes: null });
+      }
     }
-    const retention = computeRetentionDays(
-      currentRetention(index, config.cameras),
-      disks.reduce((sum, d) => sum + d.total, 0) * RING_FILL,
-    );
+
+    const nowMs = now().getTime();
+    // footageHeld() decides retention from bytes actually on disk, per drive
+    // (contracts/footageHeld.ts) -- never from a bitrate, and never from
+    // drives pooled together. It never throws on its own, but the two facts
+    // it is fed here (a fresh SQL query and a file read) can, and a health
+    // file that stops being written is worse than one retention figure
+    // sitting out for a cycle -- so nothing above may escape this try.
+    let retentionHours = null;
+    let retentionDays = null;
+    let retentionBasis = null;
+    let retentionRefused = null;
+    try {
+      const held = footageHeld({
+        nowMs,
+        cameraIds: config.cameras.map((c) => c.cameraId),
+        footage: footageFacts(index, nowMs),
+        stores,
+        ringFill: RING_FILL,
+        maxAgeMs: await keepForLimitMs(stateDir),
+      });
+      if (held.kind === "ok") {
+        retentionHours = held.hours;
+        retentionDays = held.hours / 24;
+        retentionBasis = held.basis;
+      } else {
+        // "unknown" is the only refusal: an "at_least" answer (still filling,
+        // no full day to project from) is a real measurement, not one.
+        retentionRefused = held.message;
+      }
+    } catch (err) {
+      retentionRefused = `retention could not be computed: ${err.message}`;
+    }
+
     const health = {
       siteId: config.siteId,
-      atUtc: now().toISOString(),
+      atUtc: new Date(nowMs).toISOString(),
       startedUtc,
       cameras: recorders.length,
       cameraIds: config.cameras.map((c) => c.cameraId),
@@ -434,10 +466,10 @@ export async function start({ stateDir = DEFAULT_PATHS.stateDir, spawnFn, storeC
       lastSealedUtc: Object.fromEntries(lastSealed),
       segments: index.count(),
       disks,
-      // A refusal is reported as one. An appliance that cannot compute its own
-      // retention should say so, not print a number it guessed.
-      retentionDays: retention.kind === "ok" ? retention.days : null,
-      retentionRefused: retention.kind === "refused" ? retention.message : null,
+      retentionHours,
+      retentionDays,
+      retentionBasis,
+      retentionRefused,
     };
     // Written aside and renamed, so the alerts reader never sees half a file.
     const file = path.join(stateDir, "health.json");

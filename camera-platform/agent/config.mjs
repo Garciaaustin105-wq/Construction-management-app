@@ -88,3 +88,8 @@ export const XFS_MOUNT_OPTIONS = "defaults,noatime,nodiratime,allocsize=64m,logb
 /** Node heap cap. The rest of RAM is far more useful as page cache absorbing
  *  write bursts than as headroom a recorder will never use. */
 export const NODE_MAX_OLD_SPACE_MB = 512;
+
+/** Eviction keeps each drive at this fraction of its size. The recorder uses
+ *  it to plan eviction, and the API process needs the same number to say how
+ *  long footage is kept, so it lives here once instead of twice. */
+export const RING_FILL = 0.85;
