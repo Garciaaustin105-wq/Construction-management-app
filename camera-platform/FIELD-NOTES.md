@@ -1014,3 +1014,56 @@ gate check is unaffected (it matches live events within 10 s).
 made every `camctl` command, and the recorder at startup, print the password:
 Node's JSON error quotes the text around the fault. `loadConfig` now says only
 the line and column.
+
+## Bench log — 2026-09-22, the gate's first night and morning, checked by eye
+
+**Overnight (22:45-07:00, gate on).** The model ran on **5.9%** of frames.
+Every stored event was checked against a still cut from the recording: the
+three "person" events, all at 06:45-06:46 as it grew light, were a dark
+stationary object by a fence post - no person came by all night. The 37
+vehicle events were the same parked white SUV counted again and again; no
+moving vehicle at all. So a night of events, and not one of them was a thing
+worth telling anyone about.
+
+**A blinking light costs the gate its saving.** From 00:22 to 00:42 the model
+ran on 35-50% of frames instead of 4%. The recording shows why: the porch
+ceiling at the top of the picture brightened for ONE frame about once a
+second - 1,243 flashes in 20 minutes, very regular - while nothing else in the
+picture changed. Not the camera's exposure: taking each frame's overall
+brightness shift out first leaves the same count. Scanning all 4,074 recorded
+minutes on the box (9/18 22:03 to 9/22 12:21) found this happening ONCE, so it
+is something that was there for twenty minutes, not a fixture. At a real site
+a permanently blinking light in view would cost the gate most of its saving.
+Two ways out if it ever matters: let the installer mark a patch for the gate
+to ignore, or have the gate ignore a regular one-frame flicker. Neither is
+built.
+
+**The morning, 07:00-10:00 (`camctl gate-check`).** 54,314 frames, 181 files,
+about an hour of replay at 4 threads.
+
+| | every frame | with the gate | missed | split |
+|---|---|---|---|---|
+| people | 5 | 4 | 1 | 0 |
+| vehicles | 42 | 29 | 13 | 7 |
+
+The model ran on **5.1%** of frames: 1,425 keepalives, 1,225 holds, and only
+128 motion looks - a quiet morning.
+
+**The one missed person was not a person.** A still of it, cut 1.2 s before
+the stored moment, shows the white fence post's pointed cap with a lens flare
+on it: 0.65 confidence, one sighting. The gate skipping it is the gate cutting
+a false alarm. The other four were a real person at 07:03-07:17, all close to
+the camera, 40-58% of the frame's height, and the gate found every one. The
+live service also stored a person event beside the "missed" one, because live
+and a replay make their gate decisions on slightly different frames.
+
+**So: no real person was lost in either run** (5 of 5 on 09-21 noon, 4 of 4
+real people this morning). **But every real person measured so far has been
+close to the camera.** The case the gate is built to be weak at - someone far
+off at the kerb, moving fewer pixels than the threshold - has not happened
+while anything was measuring it. Staged far walk-bys saved with **Teach the
+AI**, then `camctl score`, are still the only way to put a number on that.
+
+**Recurring false alarms, now named:** the patio umbrella, the fence-post cap
+(both read as people), and the parked car across the street, which triggers
+again and again and splits into several events when the gate holds on it.
