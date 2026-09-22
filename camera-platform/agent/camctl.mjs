@@ -14,6 +14,7 @@ import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUE
 import { defaultThresholds } from "../dist/alerts.js";
 import { DEFAULT_PATHS } from "./config.mjs";
 import { runScore } from "./score-clips.mjs";
+import { runGateCheck, DEFAULT_THREADS, MAX_HOURS, MAX_THREADS } from "./gate-check.mjs";
 import { fileURLToPath } from "node:url";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -452,7 +453,103 @@ async function cmdScore() {
   if (result.saveError) console.log(`Not saved (the report above is complete): ${result.saveError}`);
 }
 
-const commands = { score: cmdScore, "clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+// Replays the recorded substream with the model on every frame and the motion
+// gate beside it, and reports who the gate would have missed
+// (agent/gate-check.mjs). It measures only: no setting is changed. Every flag
+// is checked before anything is read, and a bad one exits 2 rather than
+// running an hour of replay on a guess.
+async function cmdGateCheck() {
+  const usage = "usage: camctl gate-check [--state-dir D] [--camera ID] [--from ISO --to ISO | --hours N] [--fps N] [--threads N] [--footage-camera ID]";
+  const bad = (message) => {
+    console.error(`${message}\n${usage}`);
+    process.exitCode = 2;
+  };
+  const known = ["state-dir", "camera", "from", "to", "hours", "fps", "threads", "footage-camera"];
+  const given = new Map();
+  for (let i = 0; i < args.length; i += 2) {
+    // Only an option's name is ever echoed back: a value typed in the wrong
+    // place could be anything, a password included.
+    if (!args[i].startsWith("--")) return bad("a value was given with no option before it");
+    const name = args[i].slice(2);
+    if (!known.includes(name)) return bad(`unknown option --${name.split("=")[0]}`);
+    if (given.has(name)) return bad(`--${name} is given twice`);
+    const value = args[i + 1];
+    if (value === undefined || value === "" || value.startsWith("--")) return bad(`--${name} needs a value`);
+    given.set(name, value);
+  }
+  const number = (name) => (given.has(name) ? Number(given.get(name)) : null);
+  const hours = number("hours");
+  if (hours !== null && !(hours > 0 && hours <= MAX_HOURS)) return bad(`--hours must be a number above 0 and at most ${MAX_HOURS}`);
+  const threads = number("threads");
+  if (threads !== null && !(Number.isInteger(threads) && threads >= 1 && threads <= MAX_THREADS)) {
+    return bad(`--threads must be a whole number from 1 to ${MAX_THREADS}`);
+  }
+  const fpsByHand = number("fps");
+  if (fpsByHand !== null && !(fpsByHand > 0 && fpsByHand <= 30)) return bad("--fps must be a number above 0 and at most 30");
+  const fromUtc = given.get("from") ?? null;
+  const toUtc = given.get("to") ?? null;
+  if ((fromUtc === null) !== (toUtc === null)) return bad("--from and --to go together");
+  if (fromUtc !== null) {
+    if (hours !== null) return bad("give --from and --to, or --hours, not both");
+    // A time with no zone would be read in the box's own zone, hours away
+    // from what was meant, and the report would look right.
+    const zoned = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+    const fromMs = Date.parse(fromUtc);
+    const toMs = Date.parse(toUtc);
+    if (!zoned.test(fromUtc) || !zoned.test(toUtc) || !Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+      return bad("--from and --to must be ISO times with a zone, e.g. 2026-09-21T03:00:00Z");
+    }
+    if (!(fromMs < toMs)) return bad("--from must be before --to");
+    if (toMs - fromMs > MAX_HOURS * 3_600_000) return bad(`--from to --to must be at most ${MAX_HOURS} h`);
+  }
+
+  const stateDir = given.get("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  let config;
+  try {
+    config = await loadConfig(stateDir);
+  } catch (err) {
+    // loadConfig names the file and, since 2026-09-22, where it broke and
+    // nothing more. A JSON parser's own detail quotes a slice of the file, and
+    // config.json holds the camera login, so anything after "is not valid
+    // JSON" other than that line and column is still cut here.
+    const message = String(err?.message ?? err)
+      .replace(/(is not valid JSON)(?! at line \d+, column \d+$).*$/s, "$1")
+      .replace(/rtsps?:\/\/\S*/gi, "[a camera address]");
+    console.log(`Refused: ${message}`);
+    process.exitCode = 1;
+    return;
+  }
+  const python = process.env.CAMPLAT_DETECT_PYTHON ?? "/opt/camplat-detect/venv/bin/python";
+  const replayPath = fileURLToPath(new URL("../detector/replay.py", import.meta.url));
+  const run = await runGateCheck({
+    stateDir, config, python, replayPath,
+    cameraId: given.get("camera") ?? null,
+    footageCameraId: given.get("footage-camera") ?? null,
+    fromUtc, toUtc,
+    hours: hours ?? 1,
+    fpsByHand,
+    threads: threads ?? DEFAULT_THREADS,
+    progress: (m) => console.error(m),
+  });
+  if (run.refused) {
+    console.log(`Refused: ${run.refused}`);
+    process.exitCode = 1;
+    return;
+  }
+  for (const [i, r] of run.results.entries()) {
+    if (i > 0) console.log("");
+    if (r.refused) {
+      console.log(`Refused for ${r.cameraId}: ${r.refused}`);
+      process.exitCode = 1;
+      continue;
+    }
+    for (const line of r.lines) console.log(line);
+    if (r.savedTo) console.log(`Saved: ${r.savedTo}`);
+    if (r.saveError) console.log(`Not saved (the report above is complete): ${r.saveError}`);
+  }
+}
+
+const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -472,7 +569,13 @@ if (!handler) {
   budget [options]              per-camera bitrate ceiling for a retention target
   score [--state-dir D]         play every Teach-the-AI clip through the live detector and score it
         [--fps N]               replay at N fps instead of the live rate (labelled in the report)
-  bench [options]               concurrent write throughput of a recording drive
+  gate-check [--state-dir D]    replay the recorded substream, the model on every frame and the gate beside it: who the gate would miss
+             [--camera ID]      one camera the detector watches (default: every one)
+             [--from ISO --to ISO | --hours N]  the footage to replay (default: the last 1 h recorded)
+             [--fps N]          replay at N fps instead of the live rate (labelled in the report)
+             [--threads N]      model threads, 1 to 8 (default 2)
+             [--footage-camera ID]  replay this recording instead (labelled: not the live stream)
+  bench [options]              concurrent write throughput of a recording drive
   load --source FILE [options]  N recorders playing a file at once: CPU, write rate, who fell behind
 
 probe options:

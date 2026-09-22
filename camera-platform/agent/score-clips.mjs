@@ -53,13 +53,16 @@ export function recordedStream(camera) {
  *  hang the whole run with no report at all. */
 export const REPLAY_TIMEOUT_MS = 15 * 60_000;
 
-/** Run replay.py over one whole file. Never rejects: a failure is a result. */
-function replayFile({ spawnFn, python, replayPath, file, model, fps, nice, timeoutMs = REPLAY_TIMEOUT_MS, gateArgs = [] }) {
+/** Run replay.py over one whole file. Never rejects: a failure is a result.
+ *  Exported for the gate check (agent/gate-check.mjs), which replays hours
+ *  rather than clips and so may give it more than one thread. */
+export function replayFile({ spawnFn, python, replayPath, file, model, fps, nice, timeoutMs = REPLAY_TIMEOUT_MS, gateArgs = [], threads = 1 }) {
   // gateArgs: the same extra flags detect-service.mjs would give the live
   // worker (protocol item 2), appended after everything replay.py already
   // takes today — empty when the gate is off, so an ungated run's argv is
-  // byte-for-byte what it always was.
-  const args = [replayPath, "--file", file, "--model", model, "--fps", String(fps), "--threads", "1", ...gateArgs];
+  // byte-for-byte what it always was. threads defaults to the 1 scoring has
+  // always used, so a score's argv does not change either.
+  const args = [replayPath, "--file", file, "--model", model, "--fps", String(fps), "--threads", String(threads), ...gateArgs];
   const [cmd, argv] = nice ? ["nice", ["-n", "19", python, ...args]] : [python, args];
   return new Promise((resolve) => {
     let child;

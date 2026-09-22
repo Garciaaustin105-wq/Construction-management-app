@@ -232,12 +232,19 @@ export function emptyFold(): FoldState {
  * The events produced match foldDetections' output when fed the same input,
  * species included: it follows the most confident sighting there too, so the
  * word and the crop (cut at bestUtc) always describe the same frame.
+ *
+ * `assigned` is the id of the event each input detection joined or opened,
+ * one per detection, in INPUT order (not the sorted order the fold walks).
+ * `updated` cannot answer that on its own: two sightings in one batch can
+ * touch the same event, and the batch is sorted before it is folded. The gate
+ * check needs it to say which event a sighting belongs to exactly, rather
+ * than guessing from time overlap. The live service ignores it.
  */
 export function advanceFold(
   state: FoldState,
   detections: readonly Detection[],
   nowUtc: string
-): { state: FoldState; updated: EventUpdate[]; finished: EventUpdate[] } {
+): { state: FoldState; updated: EventUpdate[]; finished: EventUpdate[]; assigned: string[] } {
   const nowMs = parseUtc(nowUtc);
 
   // Copy the state to avoid mutating it.
@@ -251,11 +258,13 @@ export function advanceFold(
   let nextSeq = state.nextSeq;
   const updated: EventUpdate[] = [];
 
-  // Sort detections by atUtc (stable sort).
-  const timed = detections.map((d) => ({ d, atMs: parseUtc(d.atUtc) }));
+  // Sort detections by atUtc (stable sort). Each keeps its input position, so
+  // `assigned` can be written back in the order the caller gave them.
+  const timed = detections.map((d, index) => ({ d, atMs: parseUtc(d.atUtc), index }));
   timed.sort((a, b) => a.atMs - b.atMs);
+  const assigned: string[] = new Array<string>(detections.length);
 
-  for (const { d, atMs } of timed) {
+  for (const { d, atMs, index } of timed) {
     let match: OpenEvent | undefined;
     let bestScore = -1;
 
@@ -317,6 +326,7 @@ export function advanceFold(
       };
       newOpen.push(oe);
       updated.push({ id, event: { ...event, bestBox: { ...event.bestBox } } });
+      assigned[index] = id;
     } else {
       const ev = match.event;
       ev.lastUtc = d.atUtc;
@@ -338,6 +348,7 @@ export function advanceFold(
       }
 
       updated.push({ id: match.id, event: { ...ev, bestBox: { ...ev.bestBox } } });
+      assigned[index] = match.id;
     }
   }
 
@@ -357,5 +368,6 @@ export function advanceFold(
     state: { open: stillOpen, nextSeq },
     updated,
     finished,
+    assigned,
   };
 }

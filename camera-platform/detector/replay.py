@@ -16,6 +16,13 @@ Output, one per frame:
     {"frame": 0, "tSec": 0.0, "detections": [{"kind": "person", "confidence": 0.91,
      "box": {"x": .., "y": .., "w": .., "h": ..}}]}
 
+With --gate, only the frames the gate looked at are printed. With --gate
+--gate-shadow (camctl gate-check), EVERY frame is printed, the model having
+run on each, with one more key, "gateLooked": true or false, saying whether
+the gate running beside it would have looked. One replay then answers both
+"what was there" and "what would the gated detector have seen", which is
+what the gate costs.
+
 READ ONLY. It opens one file, decodes it and prints. It never touches the
 index, events.db, the live services or the camera — a diagnostic that could
 disturb recording would be worse than no diagnostic (build rule 21).
@@ -50,6 +57,39 @@ def probe_size(path):
         return None
 
 
+def step(gate, frame, t_ms, detect, shadow=False):
+    """One frame: (detections, looked). detections is None when the model did
+    not run; `detect(frame)` runs it.
+
+    Ungated, the model runs on every frame. Gated, only when the gate says to
+    look, as live does. In shadow mode it runs on every frame, but the gate is
+    told only what its OWN looks found: that is all live would have told it,
+    and its next decisions depend on it (a kept sighting holds the camera, a
+    look resets the keepalive). A gate told about frames it skipped would be a
+    different gate, and the frames it marked would stop being the ones live
+    would have looked at.
+    """
+    if gate is None:
+        return detect(frame), True
+    looked = gate.should_look(frame, t_ms)
+    if not looked and not shadow:
+        return None, False
+    detections = detect(frame)
+    if looked:
+        gate.looked(detections, t_ms)
+    return detections, looked
+
+
+def frame_line(i, t_sec, detections, looked=None):
+    """One frame's output line. `looked` is given only in shadow mode, so a
+    plain gated or ungated line is exactly what replay has always printed and
+    the scoring runner reads it unchanged."""
+    line = {"frame": i, "tSec": round(t_sec, 3), "detections": detections}
+    if looked is not None:
+        line["gateLooked"] = bool(looked)
+    return line
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True, help="a recorded mp4 on disk")
@@ -76,7 +116,19 @@ def main():
                     help="carry the gate across files: read at start if present, written at the end")
     ap.add_argument("--gate-clock-offset-ms", type=float, default=0.0,
                     help="this file's start on the clip's clock, for the gate only")
+    # Shadow mode (camctl gate-check): the model runs on every frame, and the
+    # gate runs beside it exactly as live, marking the frames it would have
+    # looked at. The cost of the gate is then measured on the same frames,
+    # not estimated from a second run.
+    ap.add_argument("--gate-shadow", action="store_true",
+                    help="with --gate: run the model on every frame, marking each one the gate would have looked at")
     args = ap.parse_args()
+    # Refused before anything is opened, like the gate's own refusals below.
+    # A shadow with no gate would print every frame as looked at, by a gate
+    # that never ran.
+    if args.gate_shadow and not args.gate:
+        say({"type": "error", "message": "--gate-shadow needs --gate: it runs the gate beside the model"})
+        return 2
     gate_settings = None
     if args.gate:
         threshold = motion_gate.DEFAULT_THRESHOLD if args.gate_threshold is None else args.gate_threshold
@@ -108,6 +160,10 @@ def main():
     session = ort.InferenceSession(args.model, sess_options=opts, providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
 
+    def detect(frame):
+        blob = frame.transpose(2, 0, 1)[None].astype(np.float32)
+        return postprocess(session.run(None, {input_name: blob})[0], width, height)
+
     vf = (f"fps={args.fps},scale={INPUT}:{INPUT}:force_original_aspect_ratio=decrease,"
           f"pad={INPUT}:{INPUT}:0:0:color=0x727272")
     cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
@@ -138,13 +194,11 @@ def main():
             # Frame time, not wall time: a replay runs faster or slower than
             # life, and the gate must see the clip's own clock.
             t_ms = (args.start + i / args.fps) * 1000 + args.gate_clock_offset_ms
-            if gate is None or gate.should_look(frame, t_ms):
-                blob = frame.transpose(2, 0, 1)[None].astype(np.float32)
-                detections = postprocess(session.run(None, {input_name: blob})[0], width, height)
-                if gate is not None:
-                    gate.looked(detections, t_ms)
-                print(json.dumps({"frame": i, "tSec": round(args.start + i / args.fps, 3),
-                                  "detections": detections}, separators=(",", ":")))
+            detections, looked = step(gate, frame, t_ms, detect, args.gate_shadow)
+            if detections is not None:
+                line = frame_line(i, args.start + i / args.fps, detections,
+                                  looked if args.gate_shadow else None)
+                print(json.dumps(line, separators=(",", ":")))
             i += 1
             if args.frames and i >= args.frames:
                 break

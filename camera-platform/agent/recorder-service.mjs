@@ -76,12 +76,29 @@ export async function readCameraFile(stateDir) {
   return parsed.ok ? { kind: "ok", cameras: parsed.cameras, login: parsed.login } : { kind: "broken", reason: parsed.reason };
 }
 
+/**
+ * Where JSON.parse gave up, as " at line L, column C", or "" when it did not
+ * say. Never its text: Node quotes the file around the fault (Unexpected
+ * token 'h', ..."password": hunter2"...), so a typo beside the camera
+ * password would print the password to the terminal and, at startup, to the
+ * system journal (found 2026-09-22).
+ */
+function jsonFaultAt(err, raw) {
+  const message = String(err?.message ?? "");
+  const lineCol = /line (\d+) column (\d+)/.exec(message);
+  if (lineCol) return ` at line ${lineCol[1]}, column ${lineCol[2]}`;
+  const pos = /position (\d+)/.exec(message);
+  if (!pos) return "";
+  const before = raw.slice(0, Number(pos[1]));
+  return ` at line ${before.split("\n").length}, column ${before.length - before.lastIndexOf("\n")}`;
+}
+
 export async function loadConfig(stateDir) {
   const file = path.join(stateDir, "config.json");
   const raw = await readFile(file, "utf8").catch((err) => { if (err.code === "ENOENT") return null; throw new Error(`cannot read ${file}: ${err.code ?? err.message}`); });
   if (raw === null) throw new Error(`no config at ${file} — the appliance has not been commissioned`);
   let config;
-  try { config = JSON.parse(raw); } catch (err) { throw new Error(`${file} is not valid JSON: ${err.message}`); }
+  try { config = JSON.parse(raw); } catch (err) { throw new Error(`${file} is not valid JSON${jsonFaultAt(err, raw)}`); }
   // A broken cameras.json keeps recording what config.json lists rather than
   // nothing; the problem is carried out so the Cameras page can show it.
   const overlay = await readCameraFile(stateDir);

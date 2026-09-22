@@ -230,4 +230,72 @@ check("advanceFold never mutates the state it was given", () => {
   eq(JSON.stringify(r1.state), snapshot, "a later step leaves the earlier state as it was");
 });
 
+// ---------------- which event each sighting joined ----------------
+// The gate check compares two folds sighting by sighting, so it has to know
+// the event each detection went into exactly, not by time overlap.
+
+const person = (ms, x, confidence = 0.8) => ({ cameraId: "cam-1", atUtc: at(ms), kind: "person", confidence, box: box(x, 0.2) });
+
+check("assigned: one event id per detection, in INPUT order, agreeing with updated - even when the batch arrives out of time order", () => {
+  const first = advanceFold(emptyFold(), [person(0, 0.1)], at(0));
+  const a = first.assigned[0];
+  eq(first.assigned, [first.updated[0].id], "the opening sighting names the event it opened");
+  // A second person far to the right at 400 ms, listed BEFORE the first
+  // person's 200 ms sighting: the fold walks them sorted, the ids come back
+  // in the order they were given.
+  const step = advanceFold(first.state, [person(400, 0.8), person(200, 0.11)], at(400));
+  eq(step.assigned.length, 2, "one id per detection");
+  eq(step.assigned[1], a, "the 200 ms sighting joined the first person's event");
+  eq(step.assigned[0] !== a, true, "the 400 ms sighting is someone else");
+  eq(step.updated.map((u) => u.id), [step.assigned[1], step.assigned[0]], "updated is in time order; assigned in input order; same ids");
+});
+
+check("THE FEARED ONE: two people in one frame get two different ids", () => {
+  const step = advanceFold(emptyFold(), [person(0, 0.1), person(0, 0.8)], at(0));
+  eq(step.assigned.length, 2, "one id each");
+  eq(step.assigned[0] !== step.assigned[1], true, "never the same event");
+  eq([...step.assigned].sort(), step.updated.map((u) => u.id).sort(), "and both are the ids updated names");
+});
+
+check("two sightings of one person in one batch each name that one event, not one id for the pair", () => {
+  const first = advanceFold(emptyFold(), [person(0, 0.1)], at(0));
+  const a = first.assigned[0];
+  const step = advanceFold(first.state, [person(400, 0.12), person(200, 0.11)], at(400));
+  eq(step.assigned, [a, a], "both joined the same event");
+  eq(step.updated.map((u) => u.id), [a, a], "updated touched it twice");
+});
+
+check("an empty batch assigns nothing", () => {
+  eq(advanceFold(emptyFold(), [], at(0)).assigned, [], "no detections, no ids");
+});
+
+check("THE FEARED ONE: across mixed traffic, every event's count is exactly the number of sightings assigned to it", () => {
+  let s = 777;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  let state = emptyFold();
+  const perId = new Map();
+  const finalById = new Map();
+  let fed = 0;
+  let assignedTotal = 0;
+  for (let ms = 0; ms < 60_000; ms += 200) {
+    const ds = [];
+    const n = Math.floor(rnd() * 4);
+    for (let k = 0; k < n; k++) {
+      ds.push({ cameraId: "cam-1", atUtc: at(ms - Math.floor(rnd() * 2) * 100), kind: rnd() < 0.7 ? "person" : "vehicle",
+        confidence: 0.5 + rnd() * 0.5, box: box(Math.floor(rnd() * 3) * 0.3 + rnd() * 0.02, 0.2) });
+    }
+    if (rnd() < 0.1) ms += 11_000;
+    fed += ds.length;
+    const step = advanceFold(state, ds, at(ms));
+    state = step.state;
+    eq(step.assigned.length, ds.length, `one id per detection at ${ms} ms`);
+    for (const id of step.assigned) { perId.set(id, (perId.get(id) ?? 0) + 1); assignedTotal++; }
+    for (const u of [...step.updated, ...step.finished]) finalById.set(u.id, u.event);
+  }
+  for (const u of advanceFold(state, [], at(10 ** 9)).finished) finalById.set(u.id, u.event);
+  eq(assignedTotal, fed, "every detection fed was assigned");
+  eq([...perId.keys()].sort(), [...finalById.keys()].sort(), "the ids assigned are exactly the events produced");
+  for (const [id, n] of perId) eq(finalById.get(id).count, n, `event ${id}: count matches its sightings`);
+});
+
 report("detect stream");

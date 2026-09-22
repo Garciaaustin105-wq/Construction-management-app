@@ -967,3 +967,50 @@ rule**; the day replay has no per-frame boxes to apply it to. The live figure,
 
 **Off by default.** A site turns it on in `detect.json` with
 `"motionGate": {"enabled": true}` (optionally `threshold`, `keepaliveMs`).
+
+## Bench log — 2026-09-22 early hours, the gate check, and event times that run late
+
+**What the gate costs, measured without labels.** `camctl gate-check` replays
+recorded footage of the stream the live detector reads (cam2-sub, the
+substream) with the model on EVERY frame as the reference, and runs the motion
+gate beside it exactly as live does. Both are folded with the live fold and
+compared sighting by sighting (`contracts/gateCheck.ts`): a person the
+every-frame model finds that the gated one does not is "missed". It also puts
+both beside the events the live service stored. First real run, 12:00-13:00
+EDT on 2026-09-21 (61 files, 18,300 frames, 19 min at 4 threads):
+
+| | every frame | with the gate | missed | split |
+|---|---|---|---|---|
+| people | 5 | 5 | 0 | 0 |
+| vehicles | 30 | 23 | 7 | 3 |
+
+The gate would have run the model on **8.7%** of that daytime hour's frames
+(motion 833, keepalive 523, hold 237), beside the 6.6% the day replay
+estimated before the local-motion rule. The seven missed vehicles were all
+brief and weak (0.51-0.75 confidence, one to thirteen sightings over about 2
+s), which is what the parked cars across the street flickering above and below
+the floor look like, and the three splits were long still vehicles (up to
+1,220 sightings over six minutes) cut where several holds in a row scored under
+the floor. One hour and five people is not a verdict on the gate. A person
+standing still with flickering confidence could split the same way, which is
+what the morning's run on real foot traffic is for.
+
+**Event times run about a second behind the footage.** A still cut from the
+recording at a stored event's best time showed an empty box where the AI had
+seen a person at 0.92. The person was in the box about 2 s EARLIER in the
+recording. Measured by replaying the recording around confident person events
+and finding the stored sighting: stored time minus footage time was 0.83-1.45
+s, **median 1.17 s**, on the main-stream recording (7 events), and 0.71-1.87 s,
+median 1.10 s, on the substream recording (8 events, rising across the day).
+The camera's burned-in clock on one segment suggested the two streams differ
+by a second; the model-based measurement shows no consistent difference, and
+is the one to trust. The worker stamps a frame when it arrives from ffmpeg,
+after the stream's buffering. So the Review page's crops and jump-to-event,
+which cut the recording AT the stored time, show the scene about a second
+late, and a walking person can be out of the drawn box. Not fixed yet; the
+gate check is unaffected (it matches live events within 10 s).
+
+**Also found tonight.** A `config.json` with a typo beside the camera password
+made every `camctl` command, and the recorder at startup, print the password:
+Node's JSON error quotes the text around the fault. `loadConfig` now says only
+the line and column.

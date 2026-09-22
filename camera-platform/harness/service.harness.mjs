@@ -149,6 +149,25 @@ await check("THE FEARED ONE: a config the service cannot read is not reported as
     try { await loadConfig(dir); } catch (e) { message = e.message; }
     if (message === "") throw new Error("a corrupt config was accepted");
     if (!message.includes("config.json")) throw new Error(`a corrupt config does not name the file: ${message}`);
+
+    // THE FEARED ONE: a typo right beside the camera password. Node's parse
+    // error quotes the text around the fault, so the message used to carry
+    // the password out to the terminal and the journal.
+    for (const [what, text] of [
+      ["an unquoted password", '{"credentials": {"username": "admin", "password": hunter2sec}}'],
+      ["a missing comma after the password", '{\n  "credentials": {\n    "password": "hunter2sec"\n    "username": "admin"\n  }\n}'],
+    ]) {
+      await writeFile(path.join(dir, "config.json"), text);
+      message = "";
+      try { await loadConfig(dir); } catch (e) { message = e.message; }
+      if (message === "") throw new Error(`${what}: accepted`);
+      if (!message.includes("config.json")) throw new Error(`${what}: does not name the file: ${message}`);
+      for (let i = 0; i + 4 <= "hunter2sec".length; i++) {
+        if (message.includes("hunter2sec".slice(i, i + 4))) throw new Error(`${what}: the message carries part of the password: ${message}`);
+      }
+    }
+    // Where it broke is still said, without the text around it.
+    if (!/line 4, column 5/.test(message)) throw new Error(`the fault's place is not given: ${message}`);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

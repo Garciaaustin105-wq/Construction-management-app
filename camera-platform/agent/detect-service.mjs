@@ -385,7 +385,7 @@ export async function startDetect(opts = {}) {
       grantedFps: cam.grantedFps,
       // Read only as "this camera is alive", never as "this camera is
       // stalled": with the gate on, a quiet camera can go a whole
-      // keepalive (~10 s, motion_gate.py's DEFAULT_KEEPALIVE_MS) between
+      // keepalive (5 s by default, motion_gate.py's DEFAULT_KEEPALIVE_MS) between
       // frame lines on purpose. Checked 2026-09-21: no consumer in agent/,
       // contracts/ or agent/ui/ reads detect-health.json's lastFrameUtc as a
       // staleness signal today (score-clips.mjs reads only state/grantedFps;
