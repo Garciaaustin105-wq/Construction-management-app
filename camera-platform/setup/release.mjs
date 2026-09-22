@@ -78,6 +78,9 @@ export function stageFiles(root, stageDir) {
     for (const rel of readdirSync(path.join(root, d), { recursive: true })) {
       const src = path.join(root, d, rel);
       if (statSync(src).isDirectory()) continue;
+      // Bytecode a local test run left behind is built for the machine that
+      // ran it, not the box. Python rebuilds its own from the shipped source.
+      if (rel.split(/[\\/]/).includes("__pycache__") || rel.endsWith(".pyc")) continue;
       const dest = path.join(stageDir, d, rel);
       mkdirSync(path.dirname(dest), { recursive: true });
       if (TEXT_EXTENSIONS.includes(path.extname(rel))) {
