@@ -74,3 +74,7 @@ next-env.d.ts
 # camera-platform standalone contract build output
 camera-platform/dist/
 camera-platform/release/
+
+# Python bytecode (the detector)
+__pycache__/
+*.pyc

@@ -13,7 +13,7 @@
  * - running the detector at full priority beside the live one.
  */
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runScore, recordedStream, SCORES_DIR } from "../agent/score-clips.mjs";
@@ -86,7 +86,7 @@ const config = (s, cameras = [{ cameraId: CAM, host: "192.168.1.64", vendor: "hi
   ({ storeRoots: s.drives, cameras });
 const run = (s, spawn, o = {}) => runScore({
   stateDir: s.stateDir, config: config(s), python: "py", replayPath: "/opt/camplat/detector/replay.py",
-  spawnFn: spawn.spawnFn, now: () => new Date("2026-09-21T22:00:00Z"), ...o,
+  spawnFn: spawn.spawnFn, now: () => new Date("2026-09-21T22:00:00Z"), gateStateDir: s.root, ...o,
 });
 
 await check("THE LIVE SETTINGS: the granted rate, the live model, whole files, niced", async () => {
@@ -245,6 +245,145 @@ await check("an empty answer key says how to fill it, runs nothing and saves not
     eq(r.lines[0].includes("Teach the AI"), true, "points at the button");
     eq(spawn.calls.length, 0, "nothing run");
     eq(r.savedTo, null, "nothing saved");
+  } finally { s.done(); }
+});
+
+// --- Motion-gated inference (protocol items 1, 2 and 4) ---
+
+await check("THE FEARED ONE: a gated live service is scored with the gate", async () => {
+  const s = site({
+    clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] },
+    detect: { minConfidence: 0.6, model: "/m/x.onnx", motionGate: { enabled: true, threshold: 0.01, keepaliveMs: 20_000 } },
+  });
+  try {
+    const spawn = fakeSpawn({ framesFor: () => walk(10, 14) });
+    const r = await run(s, spawn);
+    const argv = spawn.calls[0].argv;
+    eq(argv.slice(argv.length - 11, argv.length - 4), ["--gate", "--track-floor", "0.6", "--gate-threshold", "0.01", "--gate-keepalive-ms", "20000"],
+      `the gate args follow everything replay.py already took, in order: ${argv.join(" ")}`);
+    eq([argv.at(-4), argv.at(-2), argv.at(-1)], ["--gate-state", "--gate-clock-offset-ms", "0"],
+      "then the carried state, and the file's place on the clip's clock");
+    eq(r.meta.gate, { enabled: true, threshold: 0.01, keepaliveMs: 20_000 }, "recorded on the result");
+  } finally { s.done(); }
+});
+
+await check("an ungated site's replay argv is byte-for-byte what it always was", async () => {
+  const s = site({ clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] } }); // no motionGate key at all
+  try {
+    const spawn = fakeSpawn({ framesFor: () => walk(10, 14) });
+    const r = await run(s, spawn);
+    const argv = spawn.calls[0].argv;
+    eq(argv.length, 12, "not one extra element: -n 19 py replay --file f --model m --fps n --threads 1");
+    eq(argv.includes("--gate"), false, "no gate flag");
+    eq(argv.includes("--track-floor"), false, "no floor flag");
+    eq(r.meta.gate, { enabled: false }, "recorded as off");
+  } finally { s.done(); }
+});
+
+await check("only the setting given is passed on; enabled:false launches ungated even carrying settings", async () => {
+  const s1 = site({ clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] },
+    detect: { minConfidence: 0.5, motionGate: { enabled: true, threshold: 0.02 } } });
+  try {
+    const spawn = fakeSpawn({ framesFor: () => walk(10, 14) });
+    await run(s1, spawn);
+    eq(spawn.calls[0].argv.slice(-9, -4), ["--gate", "--track-floor", "0.5", "--gate-threshold", "0.02"],
+      "no --gate-keepalive-ms when keepaliveMs was not given");
+  } finally { s1.done(); }
+
+  const s2 = site({ clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] },
+    detect: { minConfidence: 0.5, motionGate: { enabled: false, threshold: 0.02, keepaliveMs: 5000 } } });
+  try {
+    const spawn = fakeSpawn({ framesFor: () => walk(10, 14) });
+    const r = await run(s2, spawn);
+    eq(spawn.calls[0].argv.includes("--gate"), false, "enabled:false: no gate flag at all");
+    eq(r.meta.gate, { enabled: false }, "and recorded as off, not as a half-on state");
+  } finally { s2.done(); }
+});
+
+await check("THE MALFORMED GATE: refused before anything runs, naming the field, like a bad minConfidence", async () => {
+  for (const [what, motionGate] of [
+    ["enabled not a boolean", { enabled: "yes" }],
+    ["threshold out of range", { enabled: true, threshold: 1 }],
+    ["threshold the wrong type", { enabled: true, threshold: "0.01" }],
+    ["keepaliveMs out of range", { enabled: true, keepaliveMs: 500 }],
+    ["keepaliveMs not an integer", { enabled: true, keepaliveMs: 2500.5 }],
+    ["an unknown key", { enabled: true, mode: "fast" }],
+  ]) {
+    const s = site({ clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] },
+      detect: { minConfidence: 0.5, motionGate } });
+    try {
+      const spawn = fakeSpawn();
+      const r = await run(s, spawn);
+      eq(typeof r.refused, "string", `${what}: refused`);
+      eq(/motionGate/.test(r.refused), true, `${what}: names the field: ${r.refused}`);
+      eq(spawn.calls.length, 0, `${what}: the detector is never run — there is no live behaviour to match`);
+    } finally { s.done(); }
+  }
+});
+
+await check("ONE GATE PER CLIP: a clip's files carry the gate across, on the clip's clock; clips do not share one", async () => {
+  // Found in review: each file used to start a fresh gate, with a free first
+  // look and a reset keepalive at every segment boundary. Live never does.
+  const s = site({
+    clips: [clip("walk", T0, T0 + 120_000, 1), clip("later", T0 + 600_000, T0 + 660_000, 1)],
+    files: { walk: [[1, T0 + 60_000], [0, T0]], later: [[0, T0 + 600_000]] },
+    detect: { minConfidence: 0.5, motionGate: { enabled: true } },
+  });
+  try {
+    // A stale state file where the first clip's will go: from a run that died.
+    const stale = join(s.root, `camplat-gate-${process.pid}-0.json`);
+    writeFileSync(stale, JSON.stringify({ state: { last_look_ms: 1, last_seen_ms: 1 }, boxes: [], prev: null }));
+    const seen = [];
+    const base = fakeSpawn({ framesFor: () => walk(10, 11) });
+    const spawn = {
+      calls: base.calls,
+      spawnFn: (cmd, argv) => {
+        const at = argv[argv.indexOf("--gate-state") + 1];
+        seen.push({ at, existed: existsSync(at), offset: argv[argv.indexOf("--gate-clock-offset-ms") + 1] });
+        writeFileSync(at, "{}"); // what replay.py leaves at the end
+        return base.spawnFn(cmd, argv);
+      },
+    };
+    await run(s, spawn);
+    eq(seen.length, 3, "three replays");
+    eq(seen[0].at, seen[1].at, "both of the first clip's files carry one gate");
+    eq(seen[2].at !== seen[0].at, true, "the second clip gets its own");
+    eq(seen.map((x) => x.offset), ["0", "60000", "0"], "each file placed on its clip's clock, in time order");
+    eq(seen.map((x) => x.existed), [false, true, false], "a stale state is cleared first; the second file picks up the first's");
+    eq(existsSync(seen[0].at) || existsSync(seen[2].at), false, "and nothing is left behind");
+  } finally { s.done(); }
+});
+
+await check("THE GATE TOTALS REACH THE REPORT: the final gate line becomes the report's frames looked", async () => {
+  const s = site({
+    clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] },
+    detect: { minConfidence: 0.5, motionGate: { enabled: true, threshold: 0.005, keepaliveMs: 10_000 } },
+  });
+  try {
+    const spawn = fakeSpawn({
+      framesFor: () => [...walk(10, 10.2), { type: "gate", frames: 100, looked: 5, reasons: { first: 1, motion: 4 } }],
+    });
+    const r = await run(s, spawn);
+    eq(r.meta.gateFrames, 100, "summed from the final line");
+    eq(r.meta.gateLooked, 5, "and looked");
+    eq(r.lines.some((l) => /Motion gate: on \(threshold 0\.005, keepalive 10 s\), as live runs it; the model looked at 5 of 100 frames \(5\.0%\)\./.test(l)),
+      true, `stated in the report: ${r.lines.find((l) => /Motion gate/.test(l))}`);
+  } finally { s.done(); }
+});
+
+await check("A BAD GATE LINE IS UNREADABLE: malformed totals never silently read as zero", async () => {
+  const s = site({
+    clips: [clip("walk", T0, T0 + 60_000, 1)], files: { walk: [[0, T0]] },
+    detect: { minConfidence: 0.5, motionGate: { enabled: true } },
+  });
+  try {
+    const spawn = fakeSpawn({
+      // looked (20) exceeds frames (10): invalid, per protocol item 3/4.
+      framesFor: () => [...walk(10, 10.2), { type: "gate", frames: 10, looked: 20, reasons: {} }],
+    });
+    const r = await run(s, spawn);
+    eq(r.meta.gateFrames, 0, "not counted as a total");
+    eq(r.meta.unreadable, 1, "counted as unreadable instead");
   } finally { s.done(); }
 });
 

@@ -12,10 +12,18 @@ import { Detection, DetectionEvent, Box, checkDetection, matchScore, MERGE_GAP_M
 export const MAX_WORKER_LINE_BYTES = 65536;
 export const MAX_DETECTIONS_PER_FRAME = 300;
 
+// The names motion_gate.py's decide() can hand back as a look's reason
+// (LOOK_REASONS there). Duplicated rather than imported, same as MERGE_GAP_MS
+// is duplicated into that Python file: the two sides cannot drift silently,
+// because a name only one side knows about fails the "subset of exactly
+// these six" check below, out loud, as bad_gate.
+export const GATE_REASONS: readonly string[] = Object.freeze(["first", "unsure", "clock", "motion", "hold", "keepalive"]);
+
 export type WorkerLine =
   | { kind: "ready"; model: string }
   | { kind: "frame"; atUtc: string; detections: Detection[]; refused: string[] }
   | { kind: "error"; message: string }
+  | { kind: "gate"; windowS: number; frames: number; looked: number; reasons: Record<string, number> }
   | { kind: "invalid"; reason: string };
 
 /**
@@ -32,6 +40,12 @@ export type WorkerLine =
  *     worker that starts reporting a species not of its kind, or not in the
  *     vocabulary, is refused ("bad_species") rather than silently widening
  *     what gets stored.
+ *   - "gate": a motion gate's once-a-minute summary of what it looked at.
+ *     Valid only as a whole: windowS a positive number; frames and looked
+ *     integers >= 0 with looked <= frames; reasons an object whose keys are a
+ *     subset of GATE_REASONS (unknown keys refused, not dropped), each value
+ *     an integer >= 0, summing to exactly looked. Anything else -> invalid
+ *     "bad_gate", never a partly-trusted reading.
  *   - any other type -> invalid "unknown_type".
  */
 export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
@@ -124,6 +138,54 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
     }
 
     return { kind: "frame", atUtc, detections, refused };
+  }
+
+  if (type === "gate") {
+    const windowSRaw = r.windowS;
+    if (!Number.isFinite(windowSRaw) || (windowSRaw as number) <= 0) {
+      return { kind: "invalid", reason: "bad_gate" };
+    }
+    const windowS = windowSRaw as number;
+
+    const framesRaw = r.frames;
+    if (!Number.isInteger(framesRaw) || (framesRaw as number) < 0) {
+      return { kind: "invalid", reason: "bad_gate" };
+    }
+    const frames = framesRaw as number;
+
+    const lookedRaw = r.looked;
+    if (!Number.isInteger(lookedRaw) || (lookedRaw as number) < 0 || (lookedRaw as number) > frames) {
+      return { kind: "invalid", reason: "bad_gate" };
+    }
+    const looked = lookedRaw as number;
+
+    const reasonsRaw = r.reasons;
+    if (typeof reasonsRaw !== "object" || reasonsRaw === null || Array.isArray(reasonsRaw)) {
+      return { kind: "invalid", reason: "bad_gate" };
+    }
+
+    // Every key must be one of the six known reasons (an unknown key is
+    // refused whole, not dropped - the same discipline as bad_species: a
+    // reason only one side knows about must not slide through half-read),
+    // every value a non-negative integer, and they must sum to exactly
+    // `looked` - the reasons ARE the accounting for every look, not a sample.
+    const reasons: Record<string, number> = {};
+    let sum = 0;
+    for (const [key, value] of Object.entries(reasonsRaw as Record<string, unknown>)) {
+      if (!GATE_REASONS.includes(key)) {
+        return { kind: "invalid", reason: "bad_gate" };
+      }
+      if (!Number.isInteger(value) || (value as number) < 0) {
+        return { kind: "invalid", reason: "bad_gate" };
+      }
+      reasons[key] = value as number;
+      sum += value as number;
+    }
+    if (sum !== looked) {
+      return { kind: "invalid", reason: "bad_gate" };
+    }
+
+    return { kind: "gate", windowS, frames, looked, reasons };
   }
 
   return { kind: "invalid", reason: "unknown_type" };

@@ -313,6 +313,175 @@ check("THE FEARED ONE: the installed detector never outranks recording, and is o
   eq(/camplat-detect/.test(enables), false, "and install.sh never enables it: it needs a measured capacity, a model and its Python first");
 });
 
+// ---------------- motion gating (detect.json's optional motionGate) ----------------
+
+await check("THE FEARED ONE: no motionGate in detect.json - the worker args are byte-for-byte what they were, no --gate", async () => {
+  const { workers, svc } = await run({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }] } });
+  try {
+    const a = workers[0].args;
+    eq(a.length, 9, "exactly the five existing flags (workerPath + 4 pairs), nothing appended");
+    eq([a[1], a[3], a[5], a[7]], ["--camera", "--url", "--fps", "--model"], "the same four flags, in the same order");
+    if (a.some((x) => String(x).startsWith("--gate") || String(x) === "--track-floor")) {
+      throw new Error("a gate flag leaked in with the gate off");
+    }
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("motionGate enabled with no threshold or keepaliveMs: --gate --track-floor <minConfidence>, nothing more", async () => {
+  const { workers, svc } = await run({ detect: { capacityFps: 10, minConfidence: 0.4, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } } });
+  try {
+    const a = workers[0].args;
+    const i = a.indexOf("--gate");
+    if (i < 0) throw new Error("--gate missing");
+    eq(a.slice(i), ["--gate", "--track-floor", "0.4"], "the gate flags, in order, and nothing after them");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("motionGate enabled with threshold and keepaliveMs: both appended in protocol order", async () => {
+  const { workers, svc } = await run({
+    detect: { capacityFps: 10, minConfidence: 0.5, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true, threshold: 0.02, keepaliveMs: 15000 } },
+  });
+  try {
+    const a = workers[0].args;
+    const i = a.indexOf("--gate");
+    eq(a.slice(i), ["--gate", "--track-floor", "0.5", "--gate-threshold", "0.02", "--gate-keepalive-ms", "15000"], "gate, track-floor, threshold, keepalive, in that order");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("motionGate enabled with threshold only, or keepaliveMs only: the missing one is simply not passed", async () => {
+  {
+    const { workers, svc } = await run({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true, threshold: 0.1 } } });
+    try {
+      const a = workers[0].args;
+      eq(a.slice(a.indexOf("--gate")), ["--gate", "--track-floor", "0.5", "--gate-threshold", "0.1"], "threshold only");
+    } finally { await svc.stop(); }
+  }
+  {
+    const { workers, svc } = await run({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true, keepaliveMs: 20000 } } });
+    try {
+      const a = workers[0].args;
+      eq(a.slice(a.indexOf("--gate")), ["--gate", "--track-floor", "0.5", "--gate-keepalive-ms", "20000"], "keepaliveMs only");
+    } finally { await svc.stop(); }
+  }
+});
+
+await check("motionGate: enabled false is off, args unchanged, same as absent - and health does not report its settings", async () => {
+  const { stateDir, workers, svc } = await run({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: false, threshold: 0.3, keepaliveMs: 9000 } } });
+  try {
+    if (workers[0].args.includes("--gate")) throw new Error("enabled:false still gated");
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    eq(health.motionGate, { enabled: false, threshold: null, keepaliveMs: null }, "off reports no threshold, not one it is not running");
+    eq(health.cameras.find((c) => c.cameraId === "cam-1").gate, null, "and no per-camera gate figures");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("THE FEARED ONE: every way motionGate can be malformed refuses to start and names the field", async () => {
+  for (const [motionGate, why] of [
+    [{ enabled: "yes" }, "enabled not a boolean"],
+    [{ enabled: true, threshold: 0 }, "threshold not > 0"],
+    [{ enabled: true, threshold: 1 }, "threshold not < 1"],
+    [{ enabled: true, threshold: 1.5 }, "threshold past 1"],
+    [{ enabled: true, threshold: "0.1" }, "threshold not a number"],
+    [{ enabled: true, keepaliveMs: 999 }, "keepaliveMs under 1000"],
+    [{ enabled: true, keepaliveMs: 600001 }, "keepaliveMs over 600000"],
+    [{ enabled: true, keepaliveMs: 5000.5 }, "keepaliveMs not an integer"],
+    [{ enabled: true, keepaliveMs: "5000" }, "keepaliveMs not a number"],
+    [{ enabled: true, extra: 1 }, "an unknown key"],
+    [true, "motionGate itself not an object"],
+    [[], "motionGate is an array"],
+  ]) {
+    const sd = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate } });
+    let threw = null;
+    try { await startDetect({ stateDir: sd, spawnFn: fakeWorkers().spawnFn, log: () => {} }); } catch (err) { threw = err; }
+    if (!threw) throw new Error(`${why}: started anyway`);
+    if (!/motionGate/.test(threw.message)) throw new Error(`${why}: the refusal should name motionGate: ${threw.message}`);
+  }
+});
+
+await check("a gate line updates detect-health.json's per-camera gate figures, and does not count as invalid", async () => {
+  const { stateDir, workers, svc, setClock } = await run({
+    detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true, threshold: 0.02 } },
+  });
+  try {
+    const w = workers[0];
+    setClock(0);
+    await svc.writeHealth();
+    let health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    eq(health.motionGate, { enabled: true, threshold: 0.02, keepaliveMs: null }, "the config is reported");
+    let c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    eq(c1.gate, { lastWindow: null, sinceStart: null }, "before any gate line: null fields, never zeros");
+
+    setClock(60_000);
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 9, reasons: { first: 1, motion: 6, keepalive: 2 } });
+    await settle();
+    eq(svc.cameras().find((c) => c.cameraId === "cam-1").invalidLines, 0, "a valid gate line is not an invalid line");
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    eq(c1.gate.lastWindow, { atUtc: at(60_000), windowS: 60, frames: 300, looked: 9, share: 0.03, reasons: { first: 1, motion: 6, keepalive: 2 } }, "the last window");
+    eq(c1.gate.sinceStart, { frames: 300, looked: 9, share: 0.03 }, "running totals since the worker started");
+
+    setClock(120_000);
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 3, reasons: { motion: 3 } });
+    await settle();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    eq(c1.gate.lastWindow.looked, 3, "the last window replaces, it does not add");
+    eq(c1.gate.sinceStart, { frames: 600, looked: 12, share: 12 / 600 }, "sinceStart accumulates across gate lines");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a BAD gate line IS counted as invalid, and does not disturb the figures already recorded", async () => {
+  const { stateDir, workers, svc, setClock } = await run({
+    detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } },
+  });
+  try {
+    const w = workers[0];
+    setClock(0);
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 9, reasons: { motion: 9 } });
+    await settle();
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 500, reasons: { motion: 500 } }); // looked > frames
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 5, reasons: { motion: 4 } }); // sum short of looked
+    await settle();
+    eq(svc.cameras().find((c) => c.cameraId === "cam-1").invalidLines, 2, "both bad lines counted");
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    eq(c1.gate.sinceStart, { frames: 300, looked: 9, share: 0.03 }, "unchanged: the bad lines never touched it");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a respawned worker starts its gate figures over, not carried from the one before it", async () => {
+  const { workers, svc, setClock } = await run({
+    detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } },
+  });
+  try {
+    setClock(0);
+    workers[0].say({ type: "gate", windowS: 60, frames: 300, looked: 30, reasons: { motion: 30 } });
+    await settle();
+    workers[0].emit("exit", 1);
+    await settle(80);
+    eq(workers.length, 2, "restarted");
+    eq(svc.cameras().find((c) => c.cameraId === "cam-1").gate, { lastWindow: null, sinceStart: null }, "the new worker's gate figures start clean");
+  } finally {
+    await svc.stop();
+  }
+});
+
 // Bench 2026-09-20: with the camera unplugged the worker exited at once, and
 // the SERVICE exited with it ("Deactivated successfully"), because every
 // timer was unref()'d and nothing else was pending; systemd restarted it every

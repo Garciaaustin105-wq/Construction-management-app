@@ -94,6 +94,49 @@ export async function startDetect(opts = {}) {
     throw new Error(`detect.json minConfidence must be a number from 0 to 1, got ${JSON.stringify(detect.minConfidence)}`);
   }
 
+  // Motion gating: OPTIONAL. Absent means off, and the worker is launched
+  // exactly as it is today - no new args, nothing for an older detect.json to
+  // trip over. Present but malformed refuses to start and names the field,
+  // the same discipline as minConfidence above: a gate silently ignored would
+  // leave a camera thinking it is being watched every frame when it is not.
+  const motionGateRaw = detect.motionGate;
+  let motionGate = { enabled: false, threshold: null, keepaliveMs: null };
+  if (motionGateRaw !== undefined) {
+    if (typeof motionGateRaw !== "object" || motionGateRaw === null || Array.isArray(motionGateRaw)) {
+      throw new Error(`detect.json motionGate must be an object, got ${JSON.stringify(motionGateRaw)}`);
+    }
+    for (const key of Object.keys(motionGateRaw)) {
+      if (key !== "enabled" && key !== "threshold" && key !== "keepaliveMs") {
+        throw new Error(`detect.json motionGate has an unknown field: ${key}`);
+      }
+    }
+    if (typeof motionGateRaw.enabled !== "boolean") {
+      throw new Error(`detect.json motionGate.enabled must be a boolean, got ${JSON.stringify(motionGateRaw.enabled)}`);
+    }
+    let threshold = null;
+    if (motionGateRaw.threshold !== undefined) {
+      threshold = motionGateRaw.threshold;
+      if (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold <= 0 || threshold >= 1) {
+        throw new Error(`detect.json motionGate.threshold must be a number strictly between 0 and 1, got ${JSON.stringify(threshold)}`);
+      }
+    }
+    let keepaliveMs = null;
+    if (motionGateRaw.keepaliveMs !== undefined) {
+      keepaliveMs = motionGateRaw.keepaliveMs;
+      if (!Number.isInteger(keepaliveMs) || keepaliveMs < 1000 || keepaliveMs > 600000) {
+        throw new Error(`detect.json motionGate.keepaliveMs must be an integer from 1000 to 600000, got ${JSON.stringify(keepaliveMs)}`);
+      }
+    }
+    // enabled:false is still a validated config (a malformed threshold beside
+    // it is not let through just because the gate is off) - it just leaves
+    // the gate off, same as motionGate being absent entirely. Found in
+    // review: off, its settings used to reach detect-health.json, which then
+    // read as a gate running at that threshold. Off reports none.
+    motionGate = motionGateRaw.enabled
+      ? { enabled: true, threshold, keepaliveMs }
+      : { enabled: false, threshold: null, keepaliveMs: null };
+  }
+
   // Load camera config
   const config = await loadConfig(stateDir);
 
@@ -119,6 +162,7 @@ export async function startDetect(opts = {}) {
       restarts: 0,
       invalidLines: 0,
       fold: emptyFold(),
+      gate: motionGate.enabled ? { lastWindow: null, sinceStart: null } : null,
     });
   }
 
@@ -133,6 +177,7 @@ export async function startDetect(opts = {}) {
         restarts: 0,
         invalidLines: 0,
         fold: emptyFold(),
+        gate: motionGate.enabled ? { lastWindow: null, sinceStart: null } : null,
       });
       return cameras.get(cameraId);
     }
@@ -173,12 +218,22 @@ export async function startDetect(opts = {}) {
     }
 
     const grantedFps = assignment.grantedFps;
+    // Protocol item 2, exact order: nothing new when the gate is off, so an
+    // unchanged detect.json launches byte-for-byte what it always has.
+    const gateArgs = motionGate.enabled
+      ? [
+          "--gate", "--track-floor", String(minConfidence),
+          ...(motionGate.threshold !== null ? ["--gate-threshold", String(motionGate.threshold)] : []),
+          ...(motionGate.keepaliveMs !== null ? ["--gate-keepalive-ms", String(motionGate.keepaliveMs)] : []),
+        ]
+      : [];
     const child = spawnFn(python, [
       workerPath,
       "--camera", cameraId,
       "--url", substreamUrl,
       "--fps", String(grantedFps),
       "--model", finalModelPath,
+      ...gateArgs,
     ], { stdio: ["ignore", "pipe", "pipe"] });
 
     workers.set(cameraId, { child, substreamUrl, urlPassword: extractUrlPassword(substreamUrl) });
@@ -189,6 +244,9 @@ export async function startDetect(opts = {}) {
     cam.lastFrameUtc = null;
     cam.invalidLines = 0;
     cam.fold = emptyFold();
+    // Reset with the worker: a respawned worker starts its own duty cycle
+    // over, and yesterday's totals must not bleed into it.
+    cam.gate = motionGate.enabled ? { lastWindow: null, sinceStart: null } : null;
 
     // Handle stdout
     let pendingLine = "";
@@ -226,6 +284,29 @@ export async function startDetect(opts = {}) {
           }
           for (const finished of step.finished) {
             eventsDb.upsert(finished, true);
+          }
+        } else if (parsed.kind === "gate") {
+          // Only kept when the gate is actually on for this camera: a worker
+          // launched without --gate should never say "gate", and if one did
+          // anyway the health file must still read "off" the way the config
+          // says, not flip live because a line arrived.
+          if (motionGate.enabled) {
+            const share = parsed.frames > 0 ? parsed.looked / parsed.frames : null;
+            const lastWindow = {
+              atUtc: now().toISOString(),
+              windowS: parsed.windowS,
+              frames: parsed.frames,
+              looked: parsed.looked,
+              share,
+              reasons: parsed.reasons,
+            };
+            const prevTotal = cam.gate?.sinceStart ?? null;
+            const totalFrames = (prevTotal?.frames ?? 0) + parsed.frames;
+            const totalLooked = (prevTotal?.looked ?? 0) + parsed.looked;
+            cam.gate = {
+              lastWindow,
+              sinceStart: { frames: totalFrames, looked: totalLooked, share: totalFrames > 0 ? totalLooked / totalFrames : null },
+            };
           }
         }
       }
@@ -302,9 +383,21 @@ export async function startDetect(opts = {}) {
       cameraId: cam.cameraId,
       state: cam.state,
       grantedFps: cam.grantedFps,
+      // Read only as "this camera is alive", never as "this camera is
+      // stalled": with the gate on, a quiet camera can go a whole
+      // keepalive (~10 s, motion_gate.py's DEFAULT_KEEPALIVE_MS) between
+      // frame lines on purpose. Checked 2026-09-21: no consumer in agent/,
+      // contracts/ or agent/ui/ reads detect-health.json's lastFrameUtc as a
+      // staleness signal today (score-clips.mjs reads only state/grantedFps;
+      // health.json's own staleAfterMs is the RECORDER's file, not this
+      // one) - so nothing here currently misreads a gated, healthy camera as
+      // stalled. If a staleness check on this field is ever added, it must
+      // compare against cam.gate?.lastWindow?.atUtc too, not lastFrameUtc
+      // alone.
       lastFrameUtc: cam.lastFrameUtc,
       restarts: cam.restarts,
       invalidLines: cam.invalidLines,
+      gate: cam.gate,
     }));
   }
 
@@ -313,6 +406,7 @@ export async function startDetect(opts = {}) {
       atUtc: now().toISOString(),
       capacityFps: plan.capacityFps,
       minConfidence,
+      motionGate,
       cameras: getCameras(),
     };
     const tmpFile = path.join(stateDir, "detect-health.json.tmp");

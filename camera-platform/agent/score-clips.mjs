@@ -21,12 +21,13 @@
  */
 
 import { spawn } from "node:child_process";
-import { readFile, readdir, mkdir, writeFile, rename } from "node:fs/promises";
+import { readFile, readdir, mkdir, writeFile, rename, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { checkLibrary, scoreLibrary, exitGate } from "../dist/clipLibrary.js";
 import { foldDetections } from "../dist/detection.js";
-import { clipFiles, detectionsFromReplay, scoreReport } from "../dist/scoreRun.js";
+import { checkMotionGate, clipFiles, detectionsFromReplay, scoreReport } from "../dist/scoreRun.js";
 import { CLIP_DIR, LIBRARY_FILE } from "./clip-library.mjs";
 
 /** Where each run's result is kept, so the next change can be compared with it. */
@@ -53,8 +54,12 @@ export function recordedStream(camera) {
 export const REPLAY_TIMEOUT_MS = 15 * 60_000;
 
 /** Run replay.py over one whole file. Never rejects: a failure is a result. */
-function replayFile({ spawnFn, python, replayPath, file, model, fps, nice, timeoutMs = REPLAY_TIMEOUT_MS }) {
-  const args = [replayPath, "--file", file, "--model", model, "--fps", String(fps), "--threads", "1"];
+function replayFile({ spawnFn, python, replayPath, file, model, fps, nice, timeoutMs = REPLAY_TIMEOUT_MS, gateArgs = [] }) {
+  // gateArgs: the same extra flags detect-service.mjs would give the live
+  // worker (protocol item 2), appended after everything replay.py already
+  // takes today — empty when the gate is off, so an ungated run's argv is
+  // byte-for-byte what it always was.
+  const args = [replayPath, "--file", file, "--model", model, "--fps", String(fps), "--threads", "1", ...gateArgs];
   const [cmd, argv] = nice ? ["nice", ["-n", "19", python, ...args]] : [python, args];
   return new Promise((resolve) => {
     let child;
@@ -114,6 +119,8 @@ export async function runScore({
   nice = true,
   timeoutMs = REPLAY_TIMEOUT_MS,
   progress = () => {},
+  gateStateDir = os.tmpdir(),
+  rmFn = rm,
 }) {
   const lib = await readJson(path.join(stateDir, LIBRARY_FILE), readFileFn);
   let library;
@@ -136,6 +143,25 @@ export async function runScore({
     return { refused: `detect.json minConfidence is ${JSON.stringify(detect.minConfidence)}, not a number from 0 to 1, so the live floor is unknown` };
   }
   const model = typeof detect.model === "string" && detect.model !== "" ? detect.model : DEFAULT_MODEL;
+
+  // Read detect.json's motionGate exactly as detect-service.mjs will before it
+  // starts a worker (protocol item 1): a malformed one refuses here too, since
+  // the live service would not have started either and there is no live
+  // behaviour left to match.
+  const gateCheck = checkMotionGate(detect.motionGate);
+  if (!gateCheck.ok) return { refused: gateCheck.reason };
+  const motionGate = gateCheck.gate;
+  // The same extra args live would give the worker (protocol item 2), using
+  // the live floor as --track-floor: off, this is [], so an ungated replay's
+  // argv never changes.
+  const gateArgs = motionGate.enabled
+    ? [
+        "--gate", "--track-floor", String(minConfidence),
+        ...(motionGate.threshold !== null ? ["--gate-threshold", String(motionGate.threshold)] : []),
+        ...(motionGate.keepaliveMs !== null ? ["--gate-keepalive-ms", String(motionGate.keepaliveMs)] : []),
+      ]
+    : [];
+
   const granted = new Map(
     (Array.isArray(health.cameras) ? health.cameras : [])
       // A granted rate is only the live rate if a worker is running on it:
@@ -161,6 +187,9 @@ export async function runScore({
     belowFloor: 0,
     unreadable: 0,
     replayErrors: [],
+    gate: motionGate.enabled ? { enabled: true, threshold: motionGate.threshold, keepaliveMs: motionGate.keepaliveMs } : { enabled: false },
+    gateFrames: 0,
+    gateLooked: 0,
   };
   const scored = [];
   const events = [];
@@ -195,16 +224,31 @@ export async function runScore({
 
     const detections = [];
     const failed = [];
+    // Gated, the clip's files are replayed as ONE gate, as live runs one
+    // gate across segment boundaries: each replay picks up the state the last
+    // one left (--gate-state) on the clip's own clock (--gate-clock-offset-ms).
+    // Found in review: a fresh gate per file had a free first look and a reset
+    // keepalive at every boundary, which live never has.
+    const gateState = motionGate.enabled ? path.join(gateStateDir, `camplat-gate-${process.pid}-${i}.json`) : null;
+    if (gateState) await rmFn(gateState, { force: true }).catch(() => {});
     for (const f of files) {
-      const run = await replayFile({ spawnFn, python, replayPath, file: path.join(dirOf.get(f.name), f.name), model, fps, nice, timeoutMs });
+      const fileGateArgs = gateState
+        ? [...gateArgs, "--gate-state", gateState, "--gate-clock-offset-ms", String(f.startMs - files[0].startMs)]
+        : gateArgs;
+      const run = await replayFile({ spawnFn, python, replayPath, file: path.join(dirOf.get(f.name), f.name), model, fps, nice, timeoutMs, gateArgs: fileGateArgs });
       const read = detectionsFromReplay({ cameraId: clip.cameraId, fileStartMs: f.startMs, lines: run.lines, minConfidence });
       detections.push(...read.detections);
       meta.frames += read.frames;
       meta.belowFloor += read.belowFloor;
       meta.unreadable += read.unreadable;
+      if (read.gate) {
+        meta.gateFrames += read.gate.frames;
+        meta.gateLooked += read.gate.looked;
+      }
       for (const e of read.errors) failed.push(`${f.name}: ${e}`);
       if (run.error) failed.push(`${f.name}: ${run.error}`);
     }
+    if (gateState) await rmFn(gateState, { force: true }).catch(() => {});
     // A replay that did not run found nobody because it looked at nothing.
     // Scored, its people would count as missed and blame the detector for a
     // broken python, model or disk; so the clip is refused whole, like a

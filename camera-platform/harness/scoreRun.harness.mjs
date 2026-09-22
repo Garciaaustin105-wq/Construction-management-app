@@ -12,7 +12,7 @@
  * - a short answer key reported as a pass;
  * - something that could not be read, dropped without a word.
  */
-import { clipFiles, detectionsFromReplay, scoreReport } from "../dist/scoreRun.js";
+import { checkMotionGate, clipFiles, detectionsFromReplay, scoreReport } from "../dist/scoreRun.js";
 import { foldDetections } from "../dist/detection.js";
 import { scoreLibrary, exitGate, MIN_GATE_PERSONS } from "../dist/clipLibrary.js";
 import { check, eq, report } from "./_assert.mjs";
@@ -36,7 +36,8 @@ const clip = (o = {}) => ({
 const meta = (o = {}) => ({
   clips: 1, clipsScored: 1, clipsRefused: [], fps: [{ cameraId: CAM, fps: 5, source: "live" }],
   minConfidence: 0.5, model: "yolox_s.onnx", streams: [{ cameraId: CAM, recorded: "sub" }],
-  frames: 300, belowFloor: 0, unreadable: 0, replayErrors: [], ...o,
+  frames: 300, belowFloor: 0, unreadable: 0, replayErrors: [],
+  gate: { enabled: false }, gateFrames: 0, gateLooked: 0, ...o,
 });
 
 check("THE FLOOR: a box under the live floor is dropped, as live drops it", () => {
@@ -202,6 +203,106 @@ check("THE DILUTED ONE: the false rate printed is per hour of EMPTY scene, as th
   const none = handScore({ expected: 4, found: 4, emptyHours: 0 });
   eq(/not measured: no empty-scene footage/.test(scoreReport(none, exitGate(none), meta()).join("\n")), true,
     "no empty scene says so, rather than showing a rate");
+});
+
+// --- Motion-gated inference (protocol items 1, 3 minus windowS, and 4) ---
+
+check("THE MOTION GATE, ABSENT: no key at all means off, unchanged", () => {
+  const r = checkMotionGate(undefined);
+  eq(r, { ok: true, gate: { enabled: false, threshold: null, keepaliveMs: null } }, "off, nothing given");
+});
+
+check("THE MOTION GATE, ENABLED: reads threshold and keepaliveMs when given, null when not", () => {
+  eq(checkMotionGate({ enabled: true }), { ok: true, gate: { enabled: true, threshold: null, keepaliveMs: null } },
+    "enabled alone: the worker's own defaults");
+  eq(checkMotionGate({ enabled: true, threshold: 0.005, keepaliveMs: 10_000 }),
+    { ok: true, gate: { enabled: true, threshold: 0.005, keepaliveMs: 10_000 } }, "both given");
+  eq(checkMotionGate({ enabled: false, threshold: 0.005 }), { ok: true, gate: { enabled: false, threshold: null, keepaliveMs: null } },
+    "enabled:false is off, even carrying a threshold: never partly on");
+});
+
+check("THE MOTION GATE, MALFORMED: refused, naming the field — never guessed at", () => {
+  for (const [what, raw] of [
+    ["not an object", "on"],
+    ["an array", [1]],
+    ["an unknown key", { enabled: true, mode: "fast" }],
+    ["enabled missing", {}],
+    ["enabled not a boolean", { enabled: "true" }],
+    ["threshold zero", { enabled: true, threshold: 0 }],
+    ["threshold one", { enabled: true, threshold: 1 }],
+    ["threshold negative", { enabled: true, threshold: -0.1 }],
+    ["threshold not a number", { enabled: true, threshold: "0.01" }],
+    ["threshold NaN", { enabled: true, threshold: NaN }],
+    ["keepaliveMs under 1000", { enabled: true, keepaliveMs: 999 }],
+    ["keepaliveMs over 600000", { enabled: true, keepaliveMs: 600_001 }],
+    ["keepaliveMs not an integer", { enabled: true, keepaliveMs: 2500.5 }],
+  ]) {
+    const r = checkMotionGate(raw);
+    eq(r.ok, false, `${what}: refused`);
+    eq(typeof r.reason === "string" && r.reason.length > 0, true, `${what}: says why`);
+    eq(/motionGate/.test(r.reason), true, `${what}: names the field: ${r.reason}`);
+  }
+  // The boundaries themselves are valid, not malformed.
+  eq(checkMotionGate({ enabled: true, threshold: 0.001 }).ok, true, "just above 0");
+  eq(checkMotionGate({ enabled: true, threshold: 0.999 }).ok, true, "just below 1");
+  eq(checkMotionGate({ enabled: true, keepaliveMs: 1000 }).ok, true, "1000 itself");
+  eq(checkMotionGate({ enabled: true, keepaliveMs: 600_000 }).ok, true, "600000 itself");
+});
+
+const gateLine = (frames, looked, reasons) => JSON.stringify({ type: "gate", frames, looked, reasons });
+
+check("THE FINAL GATE LINE: parsed into detectionsFromReplay's result, not counted unreadable", () => {
+  const r = read([frame(1, person(0.9)), gateLine(600, 14, { first: 1, motion: 10, keepalive: 3 })]);
+  eq(r.gate, { frames: 600, looked: 14, reasons: { first: 1, motion: 10, keepalive: 3 } }, "the totals, as printed");
+  eq(r.unreadable, 0, "a valid gate line is not an unreadable one");
+  eq(r.frames, 1, "and it is not counted as a detection frame either");
+});
+
+check("no gate line at all means gate: null — not zero, there was simply no gate", () => {
+  eq(read([frame(1, person(0.9))]).gate, null, "the gate was off; nothing claims a total");
+});
+
+check("A BAD GATE LINE IS UNREADABLE: never partly accepted, never a guessed total", () => {
+  for (const [what, bad] of [
+    ["looked over frames", gateLine(10, 11, { motion: 11 })],
+    ["reasons short of looked", gateLine(10, 5, { motion: 3 })],
+    ["reasons over looked", gateLine(10, 5, { motion: 6 })],
+    ["an unknown reason", gateLine(10, 5, { motion: 5, extra: 0 })],
+    ["a negative count", gateLine(10, 5, { motion: -5 })],
+    ["a fractional count", gateLine(10, 5, { motion: 2.5 })],
+    ["frames not an integer", JSON.stringify({ type: "gate", frames: 10.5, looked: 0, reasons: {} })],
+    ["reasons not an object", JSON.stringify({ type: "gate", frames: 10, looked: 0, reasons: [] })],
+    ["frames missing", JSON.stringify({ type: "gate", looked: 0, reasons: {} })],
+  ]) {
+    const r = read([bad]);
+    eq(r.gate, null, `${what}: no total kept`);
+    eq(r.unreadable, 1, `${what}: counted as unreadable instead`);
+  }
+});
+
+check("THE GATE, STATED: the report always says whether it ran, and how", () => {
+  const score = scoreLibrary({ version: 1, clips: [clip()] }, []);
+  const off = scoreReport(score, exitGate(score), meta()).join("\n");
+  eq(/Motion gate: off, as live runs it\./.test(off), true, "off, plainly");
+
+  const on = scoreReport(score, exitGate(score), meta({
+    gate: { enabled: true, threshold: 0.005, keepaliveMs: 10_000 }, gateFrames: 6000, gateLooked: 312,
+  })).join("\n");
+  eq(/Motion gate: on \(threshold 0\.005, keepalive 10 s\), as live runs it; the model looked at 312 of 6000 frames \(5\.2%\)\./.test(on),
+    true, `states threshold, keepalive and the share: ${on.split("\n").find((l) => /Motion gate/.test(l))}`);
+
+  const defaults = scoreReport(score, exitGate(score), meta({
+    gate: { enabled: true, threshold: null, keepaliveMs: null }, gateFrames: 100, gateLooked: 100,
+  })).join("\n");
+  eq(/threshold the worker's default, keepalive the worker's default/.test(defaults), true,
+    "a setting left out reads as the worker's default, never as 0 or blank");
+
+  const untouchedLines = scoreReport(score, exitGate(score), meta({
+    gate: { enabled: true, threshold: 0.005, keepaliveMs: 10_000 }, gateFrames: 0, gateLooked: 0,
+  }));
+  const untouchedGateLine = untouchedLines.find((l) => /Motion gate/.test(l));
+  eq(/looked at 0 of 0 frames\./.test(untouchedGateLine), true, `zero frames replayed is said plainly: ${untouchedGateLine}`);
+  eq(/%\)/.test(untouchedGateLine), false, "and never turned into a percentage of nothing");
 });
 
 report("scoreRun");

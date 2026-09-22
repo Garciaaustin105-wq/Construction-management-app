@@ -23,6 +23,13 @@ decoded on strides 8/16/32, score = objectness x class, per-class NMS.
 
 Only numpy and onnxruntime are needed. postprocess() and letterbox_ratio() are
 pure and tested by detector/test_postprocess.py.
+
+With --gate the model runs only on frames motion_gate.Gate says to look at,
+so a "frame" line is printed only for those, and about once a minute a line
+  {"type": "gate", "windowS": 60, "frames": N, "looked": K,
+   "reasons": {"first": .., "unsure": .., "clock": .., "motion": .., "hold": .., "keepalive": ..}}
+says how many frames were read and why each look happened: the measured
+load of this camera, which is what decides how many cameras a box can take.
 """
 import argparse
 import json
@@ -30,6 +37,8 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+
+import motion_gate
 
 INPUT = 640
 STRIDES = (8, 16, 32)
@@ -171,7 +180,28 @@ def main():
     ap.add_argument("--fps", type=float, required=True)
     ap.add_argument("--model", required=True)
     ap.add_argument("--threads", type=int, default=2)
+    # Motion gate (detector/motion_gate.py): look only when something moves,
+    # holds still while tracked, or is due a keepalive. Off unless detect.json
+    # turns it on; detect-service passes these.
+    ap.add_argument("--gate", action="store_true")
+    ap.add_argument("--track-floor", type=float, default=None,
+                    help="detect.json minConfidence: what counts as tracking")
+    ap.add_argument("--gate-threshold", type=float, default=None)
+    ap.add_argument("--gate-keepalive-ms", type=float, default=None)
     args = ap.parse_args()
+    gate_settings = None
+    if args.gate:
+        threshold = motion_gate.DEFAULT_THRESHOLD if args.gate_threshold is None else args.gate_threshold
+        keepalive = motion_gate.DEFAULT_KEEPALIVE_MS if args.gate_keepalive_ms is None else args.gate_keepalive_ms
+        # Refused here rather than guessed: a gate that never looks, or one
+        # that ignores every sighting, would read as a quiet camera.
+        if args.track_floor is None or not 0 <= args.track_floor <= 1:
+            say({"type": "error", "message": "--gate needs --track-floor from 0 to 1"})
+            return 2
+        if not 0 < threshold < 1 or not 1000 <= keepalive <= 600000:
+            say({"type": "error", "message": "the gate's threshold must be between 0 and 1, its keepalive 1000-600000 ms"})
+            return 2
+        gate_settings = (args.track_floor, threshold, keepalive)
 
     import numpy as np
     import onnxruntime as ort
@@ -202,6 +232,11 @@ def main():
     say({"type": "ready", "model": args.model.rsplit("/", 1)[-1].rsplit(".", 1)[0], "inputSize": INPUT})
 
     frame_bytes = INPUT * INPUT * 3
+    gate = None
+    if gate_settings is not None:
+        ratio = letterbox_ratio(width, height)
+        floor, threshold, keepalive = gate_settings
+        gate = motion_gate.Gate(int(width * ratio), int(height * ratio), floor, threshold, keepalive)
     last = time.monotonic()
     try:
         while True:
@@ -211,8 +246,16 @@ def main():
                 return 3
             at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             frame = np.frombuffer(buf, dtype=np.uint8).reshape(INPUT, INPUT, 3)
-            detections = postprocess(run_model(frame), width, height)
-            say({"type": "frame", "atUtc": at, "detections": detections})
+            now_ms = time.monotonic() * 1000
+            if gate is None or gate.should_look(frame, now_ms):
+                detections = postprocess(run_model(frame), width, height)
+                if gate is not None:
+                    gate.looked(detections, now_ms)
+                say({"type": "frame", "atUtc": at, "detections": detections})
+            if gate is not None:
+                report = gate.window_report(now_ms)
+                if report is not None:
+                    say(report)
             now = time.monotonic()
             if now - last > STALL_SECONDS:
                 say({"type": "error", "message": f"fell {int(now - last)} s behind"})

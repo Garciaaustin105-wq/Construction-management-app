@@ -867,3 +867,103 @@ minutes. That is a factor of a hundred or more, it held in every scene today
 (ceiling, laundry room, street), and it is the same mechanism as the
 stale-object notification he asked for. One mechanism, both jobs: tell the
 manager something has been there since Tuesday, and stop crying wolf about it.
+
+## Bench log — 2026-09-21 night, motion-gated inference measured on a real day
+
+**The question.** The model is the expensive part. The EliteDesk runs about
+9 frames a second of it; sixteen cameras at 5 fps ask for 80. A motion gate,
+which looks only when something moves, is what decides whether the NVR ever
+needs an accelerator. The day-long duty sampler (`motion-duty.py`, 19.7 h on
+the main stream) said the scene moved in 2.3% of frames. That number is not
+the gate. The gate also has to hold on things it is tracking, and it has to
+catch people who barely move.
+
+**How it was measured.** `detector/gate_replay.py` replayed today's whole
+recorded **substream** (cam2-sub, 21.5 h, 386,957 frames), which is the stream
+the live detector reads. It decoded exactly as `yolox_worker.py` decodes and
+used the gate's own measure (`motion_gate.grid_of` / `changed_fraction`). It ran
+`motion_gate.decide` over every frame at 30 threshold/keepalive settings. The
+day's 1,185 live events stood in for "tracked", and the 86 live person events
+were the ones to find. `detector/gate_events.py` then measured each person
+event's peak movement.
+
+**What it found.**
+
+| threshold | keepalive | frames looked at | person events looked at |
+|---|---|---|---|
+| 0.2% | 5 s | 10.1% | 68 / 86 |
+| 0.5% | 5 s | **6.6%** | 57 / 86 |
+| 0.5% | 10 s | 5.2% | 51 / 86 |
+| 1% | 10 s | 4.1% | 52 / 86 |
+
+"Looked at" is generous: a look anywhere inside an event counts, though live
+stores only an event's first, best and last sightings, so the model may have
+seen nobody on that frame. The column bounds what the gate could find; the
+scoring runner, below, measures what it does find.
+
+Missing a third of the person events looked alarming. It was not:
+
+- **All 30 confident person events (0.8 and over) moved at least 1.45% of the
+  grid**, 2.9 times the 0.5% threshold. The median was 6.3%. The gate looks at
+  every one of them on movement alone.
+- The 49 that moved less than 0.5% had a median confidence of 0.56 and a median
+  box of 0.42% of the frame. **Eight of them were cut from the substream and
+  looked at, and all 8 were fixed objects the detector took for people:** a
+  furled patio umbrella by the right-hand fence, backlit against the sky
+  (08:21-09:35, the same object again and again); a fence-post cap on the
+  left fence line, visible only against the dark trees at dusk (19:05-19:27);
+  and one small object at the right gate corner. The gate skipping those is
+  the gate cutting false alarms, not losing people.
+
+**Chosen: threshold 0.5%, keepalive 5 s** (`motion_gate.py`
+`DEFAULT_THRESHOLD`, `DEFAULT_KEEPALIVE_MS`). That looks at 6.6% of frames
+over the day, parked-car holds included. Across 16 cameras that is about
+5.3 fps of the 9 available, so **still no accelerator**. The keepalive is 5 s
+rather than 10 because it bounds the one case this day could not test: a REAL
+person far enough away to move fewer pixels than the threshold.
+
+**Checked with the real model** (before the review fixes below). On this afternoon's walk-by minute, gated
+against ungated, the model ran on 80 of 300 frames instead of 300. It first saw
+the person on the same frame (34.6 s into the file) and saw them in 46 of the
+47 frames ungated did. The gated event ends 1.6 s earlier: the person leaving
+moved too little to trigger a look, and the next hold came after they had
+gone. **On the live stream** (night, nothing moving), the gated worker read
+302 frames in its first minute and ran the model on 12 (the first frame and a
+keepalive every 5 s), and reported on schedule. **Through the scoring runner**
+(`camctl score` with `motionGate` on, the real model, the same walk-by's two
+segments), the model ran on 153 of 600 frames. It found all 4 people the live
+service stored, at the same times, each still one event. The parked car across
+the street stayed ONE event with 90 sightings instead of 440: the hold keeping a
+still, tracked thing whole while looking at it every 3 s.
+
+**Still unmeasured, and how to measure it.** First, a real person far away
+(Austin at the far kerb, 2-3% of the frame wide, gave single-frame events on
+2026-09-20). Second, rain, wind and headlights, which could trip the gate
+constantly and push the load up. Third, any other camera or site. For the
+first, record staged far walk-bys with **Teach the AI** and run `camctl
+score`: with `motionGate` on in detect.json the runner gates exactly as live
+does, so the score states what the gate costs in recall. For the second, the
+worker now reports its own load once a minute (`detect-health.json` →
+`gate.lastWindow.share`).
+
+**Found in review, fixed before it went live.** An adversarial review
+confirmed seven problems. The one that mattered: the fold joins sightings by
+where the box is as well as when. A person drifting slowly across the frame
+changes less of the whole picture than the threshold, so the gate held at one
+look every 3 s; one look scored under the floor then left six seconds between
+sightings, the box had moved too far to be joined, and one walk-by became
+two events. The gate now also measures change inside the boxes it is
+tracking, and a tracked thing whose own patch changes (10% of its cells) is
+looked at every frame. A parked car's patch does not change, so it keeps the
+cheap 3 s hold. The harness replays exactly that drifter through the real
+fold: two events without the rule, one with it. The others: the scoring
+runner started a fresh gate for every 60 s file (now one gate per clip, as
+live), pictures smaller than the grid were measured with padding, a bad gate
+setting crashed the replay instead of refusing, a gate switched off still
+reported its threshold in detect-health.json, and one test passed without
+testing anything. **The 6.6% load above was measured before the local-motion
+rule**; the day replay has no per-frame boxes to apply it to. The live figure,
+`gate.lastWindow.share`, includes it.
+
+**Off by default.** A site turns it on in `detect.json` with
+`"motionGate": {"enabled": true}` (optionally `threshold`, `keepaliveMs`).

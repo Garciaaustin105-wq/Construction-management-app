@@ -14,7 +14,7 @@
  * finishes, or finishes while the person is still there; a worker's error
  * text (it may hold the camera URL) passed along unscrubbed.
  */
-import { parseWorkerLine, emptyFold, advanceFold, MAX_WORKER_LINE_BYTES } from "../dist/detectStream.js";
+import { parseWorkerLine, emptyFold, advanceFold, MAX_WORKER_LINE_BYTES, GATE_REASONS } from "../dist/detectStream.js";
 import { foldDetections, MERGE_GAP_MS } from "../dist/detection.js";
 import { check, eq, report } from "./_assert.mjs";
 
@@ -102,6 +102,60 @@ check("ready and error lines are read; an error's text is capped and never trust
   eq(err.message.length <= 500, true, "capped");
   const notText = parseWorkerLine(JSON.stringify({ type: "error", message: { url: "rtsp://a:b@c/d" } }), "cam-1");
   eq(notText.kind, "invalid", "an error whose message is not text is invalid");
+});
+
+// ---------------- the motion gate's once-a-minute summary ----------------
+
+const gateLine = (extra) => JSON.stringify({ type: "gate", windowS: 60, frames: 300, looked: 7,
+  reasons: { first: 1, motion: 4, keepalive: 2 }, ...extra });
+
+check("a valid gate line is accepted, reasons and all", () => {
+  const r = parseWorkerLine(gateLine(), "cam-1");
+  eq(r.kind, "gate", "a gate line");
+  eq([r.windowS, r.frames, r.looked], [60, 300, 7], "window, frames, looked");
+  eq(r.reasons, { first: 1, motion: 4, keepalive: 2 }, "reasons carried through");
+});
+
+check("a gate line naming every reason, including zeros, is still accepted", () => {
+  const r = parseWorkerLine(gateLine({ looked: 6, reasons: { first: 1, unsure: 0, clock: 0, motion: 4, hold: 0, keepalive: 1 } }), "cam-1");
+  eq(r.kind, "gate", "a gate line");
+  eq(r.reasons, { first: 1, unsure: 0, clock: 0, motion: 4, hold: 0, keepalive: 1 }, "zeros are not the same as absent, but both are fine here");
+});
+
+check("a gate line naming NO reasons because nothing was looked at is still accepted", () => {
+  const r = parseWorkerLine(gateLine({ looked: 0, reasons: {} }), "cam-1");
+  eq([r.kind, r.looked, r.reasons], ["gate", 0, {}], "zero looks, zero reasons, still a gate line");
+});
+
+check("THE FEARED ONE: every way a gate line can be wrong is refused as bad_gate, never partly accepted", () => {
+  for (const [extra, why] of [
+    [{ looked: 301 }, "looked > frames"],
+    [{ reasons: { first: 1, motion: 4, keepalive: 1 } }, "reasons sum (6) short of looked (7)"],
+    [{ reasons: { first: 1, motion: 4, keepalive: 3 } }, "reasons sum (8) over looked (7)"],
+    [{ reasons: { first: 1, motion: 4, keepalive: 2, dozing: 0 } }, "an unknown reason key"],
+    [{ frames: -1, looked: 0, reasons: {} }, "a negative frame count"],
+    [{ frames: 300.5 }, "a fractional frame count"],
+    [{ looked: 7.5, reasons: { first: 7.5 } }, "a fractional looked count"],
+    [{ reasons: { first: 1, motion: 4, keepalive: 1.5 } }, "a fractional reason count"],
+    [{ reasons: { first: -1, motion: 4, keepalive: 4 } }, "a negative reason count"],
+    [{ windowS: undefined }, "missing windowS"],
+    [{ windowS: 0 }, "windowS not positive"],
+    [{ windowS: -60 }, "windowS negative"],
+    [{ windowS: "60" }, "windowS not a number"],
+    [{ frames: "300" }, "frames not a number"],
+    [{ reasons: [] }, "reasons is an array, not an object"],
+    [{ reasons: null }, "reasons is null"],
+    [{ reasons: "none" }, "reasons is not an object at all"],
+  ]) {
+    const obj = { type: "gate", windowS: 60, frames: 300, looked: 7, reasons: { first: 1, motion: 4, keepalive: 2 }, ...extra };
+    const r = parseWorkerLine(JSON.stringify(obj), "cam-1");
+    eq(r.kind, "invalid", why);
+    eq(r.reason, "bad_gate", `${why}: named bad_gate`);
+  }
+});
+
+check("GATE_REASONS is exactly the six names motion_gate.py's decide() can return", () => {
+  eq([...GATE_REASONS].sort(), ["clock", "first", "hold", "keepalive", "motion", "unsure"].sort(), "the six look reasons");
 });
 
 // ---------------- folding as they arrive ----------------

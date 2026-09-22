@@ -27,10 +27,13 @@ notice, and every conclusion drawn from them would be wrong too.
 """
 import argparse
 import json
+import math
+import os
 import subprocess
 import sys
 
-from yolox_worker import INPUT, postprocess
+from yolox_worker import INPUT, postprocess, letterbox_ratio, say  # noqa: E402
+import motion_gate  # noqa: E402
 
 
 def probe_size(path):
@@ -55,7 +58,41 @@ def main():
     ap.add_argument("--start", type=float, default=0.0, help="seconds into the file")
     ap.add_argument("--frames", type=int, default=0, help="stop after this many (0 = all)")
     ap.add_argument("--threads", type=int, default=2)
+    # Motion gate (detector/motion_gate.py): look only when something moves,
+    # holds still while tracked, or is due a keepalive. Off unless detect.json
+    # turns it on; the scoring runner passes the live settings, so a
+    # score is made the way live runs.
+    ap.add_argument("--gate", action="store_true")
+    ap.add_argument("--track-floor", type=float, default=None,
+                    help="detect.json minConfidence: what counts as tracking")
+    ap.add_argument("--gate-threshold", type=float, default=None)
+    ap.add_argument("--gate-keepalive-ms", type=float, default=None)
+    # A clip is recorded as several files, and live runs ONE gate across all
+    # of them. Found in review: replaying each file with a fresh gate gave
+    # every file a free first look and a reset keepalive, which live never
+    # has. The runner passes a state file (read if it exists, written at the
+    # end) and each file's start on the clip's clock.
+    ap.add_argument("--gate-state", default=None,
+                    help="carry the gate across files: read at start if present, written at the end")
+    ap.add_argument("--gate-clock-offset-ms", type=float, default=0.0,
+                    help="this file's start on the clip's clock, for the gate only")
     args = ap.parse_args()
+    gate_settings = None
+    if args.gate:
+        threshold = motion_gate.DEFAULT_THRESHOLD if args.gate_threshold is None else args.gate_threshold
+        keepalive = motion_gate.DEFAULT_KEEPALIVE_MS if args.gate_keepalive_ms is None else args.gate_keepalive_ms
+        # Refused here rather than guessed: a gate that never looks, or one
+        # that ignores every sighting, would read as a quiet camera.
+        if args.track_floor is None or not 0 <= args.track_floor <= 1:
+            say({"type": "error", "message": "--gate needs --track-floor from 0 to 1"})
+            return 2
+        if not 0 < threshold < 1 or not 1000 <= keepalive <= 600000:
+            say({"type": "error", "message": "the gate's threshold must be between 0 and 1, its keepalive 1000-600000 ms"})
+            return 2
+        if not math.isfinite(args.gate_clock_offset_ms) or args.gate_clock_offset_ms < 0:
+            say({"type": "error", "message": "--gate-clock-offset-ms must be a time from 0 on"})
+            return 2
+        gate_settings = (args.track_floor, threshold, keepalive)
 
     import numpy as np
     import onnxruntime as ort
@@ -80,6 +117,17 @@ def main():
     ff = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     frame_bytes = INPUT * INPUT * 3
+    gate = None
+    if gate_settings is not None:
+        ratio = letterbox_ratio(width, height)
+        floor, threshold, keepalive = gate_settings
+        gate = motion_gate.Gate(int(width * ratio), int(height * ratio), floor, threshold, keepalive)
+        if args.gate_state and os.path.exists(args.gate_state):
+            try:
+                with open(args.gate_state, encoding="utf8") as fh:
+                    gate.restore(json.load(fh))
+            except (OSError, ValueError):
+                pass  # unreadable: a fresh gate, which only looks more
     i = 0
     try:
         while True:
@@ -87,15 +135,26 @@ def main():
             if not buf or len(buf) < frame_bytes:
                 break
             frame = np.frombuffer(buf, dtype=np.uint8).reshape(INPUT, INPUT, 3)
-            blob = frame.transpose(2, 0, 1)[None].astype(np.float32)
-            detections = postprocess(session.run(None, {input_name: blob})[0], width, height)
-            print(json.dumps({"frame": i, "tSec": round(args.start + i / args.fps, 3),
-                              "detections": detections}, separators=(",", ":")))
+            # Frame time, not wall time: a replay runs faster or slower than
+            # life, and the gate must see the clip's own clock.
+            t_ms = (args.start + i / args.fps) * 1000 + args.gate_clock_offset_ms
+            if gate is None or gate.should_look(frame, t_ms):
+                blob = frame.transpose(2, 0, 1)[None].astype(np.float32)
+                detections = postprocess(session.run(None, {input_name: blob})[0], width, height)
+                if gate is not None:
+                    gate.looked(detections, t_ms)
+                print(json.dumps({"frame": i, "tSec": round(args.start + i / args.fps, 3),
+                                  "detections": detections}, separators=(",", ":")))
             i += 1
             if args.frames and i >= args.frames:
                 break
     finally:
         ff.kill()
+    if gate is not None:
+        print(json.dumps(gate.totals(), separators=(",", ":")))
+        if args.gate_state:
+            with open(args.gate_state, "w", encoding="utf8") as fh:
+                json.dump(gate.save(), fh)
     print(json.dumps({"type": "done", "frames": i, "size": [width, height]}), file=sys.stderr)
     return 0
 
