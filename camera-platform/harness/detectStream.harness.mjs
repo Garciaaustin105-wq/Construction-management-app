@@ -57,6 +57,29 @@ check("a line with no species still parses, because that is every worker running
   eq(r.detections[0].species, undefined, "absent, not defaulted to anything");
 });
 
+// ---------------- timeSource: which clock atUtc came from ----------------
+
+check("a frame line naming timeSource \"arrival\" or \"read\" parses and carries it through", () => {
+  const arrival = parseWorkerLine(JSON.stringify({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [] }), "cam-1");
+  eq(arrival.timeSource, "arrival", "arrival");
+  const read = parseWorkerLine(JSON.stringify({ type: "frame", atUtc: at(0), timeSource: "read", detections: [] }), "cam-1");
+  eq(read.timeSource, "read", "read");
+});
+
+check("a frame line with no timeSource at all still parses - an older worker that has never heard of it", () => {
+  const r = parseWorkerLine(frameLine(0, []), "cam-1");
+  eq(r.timeSource, undefined, "absent, not defaulted to \"read\" or anything else");
+  eq("timeSource" in r, false, "not even present as a key, the same as a species-less detection");
+});
+
+check("THE FEARED ONE: any timeSource other than \"arrival\" or \"read\" refuses the WHOLE line, named bad_time_source - never silently dropped or defaulted", () => {
+  for (const bad of ["ARRIVAL", "arrival ", "", "guess", 0, null, true, ["arrival"], { value: "arrival" }]) {
+    const r = parseWorkerLine(JSON.stringify({ type: "frame", atUtc: at(0), timeSource: bad, detections: [] }), "cam-1");
+    eq(r.kind, "invalid", `timeSource ${JSON.stringify(bad)}`);
+    eq(r.reason, "bad_time_source", `timeSource ${JSON.stringify(bad)}: named bad_time_source`);
+  }
+});
+
 check("THE FEARED ONE: a species that does not belong to its kind is refused by name, not silently stripped - a truck filed as a person would make a search for trucks return people", () => {
   const r = parseWorkerLine(frameLine(0, [
     { kind: "person", confidence: 0.8, box: box(0.2, 0.3), species: "truck" },   // a truck's species, wrong kind

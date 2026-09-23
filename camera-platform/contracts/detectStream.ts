@@ -19,9 +19,17 @@ export const MAX_DETECTIONS_PER_FRAME = 300;
 // these six" check below, out loud, as bad_gate.
 export const GATE_REASONS: readonly string[] = Object.freeze(["first", "unsure", "clock", "motion", "hold", "keepalive"]);
 
+// yolox_worker.py's timeSource: "arrival" when atUtc came from the wall
+// clock the frame's packet ARRIVED at (ffmpeg's showinfo, paired by frame
+// index - see detector/yolox_worker.py's module docstring), "read" when it
+// fell back to the wall clock the frame was READ from the pipe (today's
+// only behaviour). Absent means an older worker that has never heard of
+// either - still accepted, same as a line with no species.
+export type FrameTimeSource = "arrival" | "read";
+
 export type WorkerLine =
   | { kind: "ready"; model: string }
-  | { kind: "frame"; atUtc: string; detections: Detection[]; refused: string[] }
+  | { kind: "frame"; atUtc: string; timeSource?: FrameTimeSource; detections: Detection[]; refused: string[] }
   | { kind: "error"; message: string }
   | { kind: "gate"; windowS: number; frames: number; looked: number; reasons: Record<string, number> }
   | { kind: "invalid"; reason: string };
@@ -39,7 +47,11 @@ export type WorkerLine =
  *     each item validated with checkDetection, species carried through - a
  *     worker that starts reporting a species not of its kind, or not in the
  *     vocabulary, is refused ("bad_species") rather than silently widening
- *     what gets stored.
+ *     what gets stored. timeSource, if present, must be exactly "arrival" or
+ *     "read" -> else invalid "bad_time_source"; absent is fine (an older
+ *     worker that has never heard of it) and carried through as undefined,
+ *     never defaulted to either value - a default here would claim to know
+ *     which clock atUtc came from when the line never said.
  *   - "gate": a motion gate's once-a-minute summary of what it looked at.
  *     Valid only as a whole: windowS a positive number; frames and looked
  *     integers >= 0 with looked <= frames; reasons an object whose keys are a
@@ -96,6 +108,20 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
       return { kind: "invalid", reason: "bad_time" };
     }
 
+    // Optional: absent (an older worker) is fine and stays undefined; present
+    // must be exactly one of the two names yolox_worker.py can send. Refused
+    // whole rather than dropped, the same discipline as bad_species and
+    // bad_gate - a worker that starts sending a third value here must not
+    // slide silently into "read" or "arrival" by accident.
+    const timeSourceRaw = r.timeSource;
+    let timeSource: FrameTimeSource | undefined;
+    if (timeSourceRaw !== undefined) {
+      if (timeSourceRaw !== "arrival" && timeSourceRaw !== "read") {
+        return { kind: "invalid", reason: "bad_time_source" };
+      }
+      timeSource = timeSourceRaw;
+    }
+
     const detectionsRaw = r.detections;
     if (!Array.isArray(detectionsRaw)) {
       return { kind: "invalid", reason: "bad_detections" };
@@ -137,7 +163,9 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
       }
     }
 
-    return { kind: "frame", atUtc, detections, refused };
+    return timeSource === undefined
+      ? { kind: "frame", atUtc, detections, refused }
+      : { kind: "frame", atUtc, timeSource, detections, refused };
   }
 
   if (type === "gate") {
