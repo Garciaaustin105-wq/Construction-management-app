@@ -783,19 +783,42 @@ await check("THE FEARED ONE: with the gate off, the real timeSourceWindowMs time
       w.say({ type: "frame", atUtc: at(sent), timeSource: "arrival", detections: [] });
       sent += 1;
     }, 10);
-    await settle(300);
-    clearInterval(feeder);
+    const readCam = async () => {
+      await svc.writeHealth();
+      const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+      return health.cameras.find((c) => c.cameraId === "cam-1");
+    };
+    // Read WHILE frames still flow. Once the feed stops, the next 40 ms
+    // window legitimately closes empty (null), and on a loaded machine the
+    // gap before the read can outlast a window: that raced here once
+    // (2026-09-23, three reviewers running suites at once). A few windows'
+    // worth of tries, so one stalled window on a busy machine cannot fail
+    // a check whose only question is whether the timer fires at all.
+    let windowSeen = null;
+    let sinceStartThen = null;
+    try {
+      await settle(300);
+      for (let tries = 0; tries < 20 && windowSeen === null; tries += 1) {
+        const c = await readCam();
+        if (c.timeSource.lastWindow.arrival !== null) {
+          windowSeen = c.timeSource.lastWindow.arrival;
+          sinceStartThen = c.timeSource.sinceStart.arrival;
+        } else {
+          await settle(40);
+        }
+      }
+    } finally {
+      clearInterval(feeder);
+    }
     await settle();
-    await svc.writeHealth();
-    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
-    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    const c1 = await readCam();
     if (sent < 5) throw new Error(`too few frames fed to trust this check: ${sent}`);
     eq(c1.timeSource.sinceStart.arrival, sent, "sinceStart counts every frame regardless of any window closing");
-    if (c1.timeSource.lastWindow.arrival === null) {
-      throw new Error(`lastWindow is still null after 300ms of a 40ms window timer with constant frames - the real timer never closed a window (sent ${sent})`);
+    if (windowSeen === null) {
+      throw new Error(`lastWindow stayed null through 20 reads, over 300 ms of a 40 ms window timer, with constant frames - the real timer never closed a window (sent ${sent})`);
     }
-    if (c1.timeSource.lastWindow.arrival >= sent) {
-      throw new Error(`lastWindow.arrival (${c1.timeSource.lastWindow.arrival}) should be a PARTIAL count from the one most recently closed window, not all ${sent} frames sent - the timer does not appear to be closing more than once`);
+    if (windowSeen >= sinceStartThen) {
+      throw new Error(`lastWindow.arrival (${windowSeen}) should be a PARTIAL count from the one most recently closed window, not all ${sinceStartThen} frames seen by then - the timer does not appear to be closing more than once`);
     }
   } finally {
     await svc.stop();
