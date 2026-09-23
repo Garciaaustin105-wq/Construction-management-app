@@ -35,7 +35,7 @@ import { check, eq, same, report } from "./_assert.mjs";
 // against, so a hand mutation-check never edits the shared file.
 const here = dirname(fileURLToPath(import.meta.url));
 const modulePath = process.env.CAMPLAT_DEVICE_IDENTITY_UNDER_TEST ?? join(here, "../agent/device-identity.mjs");
-const { loadOrCreateIdentity, signWithIdentity, DEVICE_IDENTITY_FILE, DEVICE_IDENTITY_VERSION } = await import(pathToFileURL(modulePath).href);
+const { loadOrCreateIdentity, signWithIdentity, DEVICE_IDENTITY_FILE, DEVICE_IDENTITY_VERSION, identityOwner } = await import(pathToFileURL(modulePath).href);
 const camctlPath = process.env.CAMPLAT_CAMCTL_UNDER_TEST ?? join(here, "../agent/camctl.mjs");
 
 console.log("deviceIdentity");
@@ -366,4 +366,15 @@ await check("THE FEARED ONE (camctl checkin --dry-run): a fuzzed health.json ful
 });
 
 await rm(root, { recursive: true, force: true });
+check("THE SERVICE CAN READ IT: an identity made by root (sudo camctl identity) goes to the state directory's owner", () => {
+  // Found 2026-09-23 before it ever ran on the box: root would have kept a
+  // 0600 file the camplat service could never read to sign check-ins.
+  const camplatDir = { uid: 998, gid: 998 };
+  same(identityOwner(0, camplatDir), { uid: 998, gid: 998 }, "root creating it hands it to camplat");
+  eq(identityOwner(998, camplatDir), null, "camplat creating it owns it already");
+  eq(identityOwner(0, { uid: 0, gid: 0 }), null, "a root-owned state directory: root stays the owner");
+  eq(identityOwner(null, camplatDir), null, "no getuid (Windows): left as created");
+  eq(identityOwner(0, null), null, "a directory that cannot be read: left as created, never guessed");
+});
+
 report("deviceIdentity");

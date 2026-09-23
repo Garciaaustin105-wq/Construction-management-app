@@ -29,7 +29,7 @@
 // export and their exact shapes; keep this file and that comment in sync.
 
 import { generateKeyPairSync, createHash, createPrivateKey, createPublicKey, sign as signBytes, randomBytes } from "node:crypto";
-import { readFile, open, link, unlink, stat } from "node:fs/promises";
+import { readFile, open, link, unlink, stat, chown } from "node:fs/promises";
 import path from "node:path";
 
 export const DEVICE_IDENTITY_FILE = "device-identity.json";
@@ -168,6 +168,21 @@ async function readIdentityFileOrNull(stateDir) {
  * time instead of at read time. Returns whether THIS call's write actually
  * became the file (false if it lost the race).
  */
+/**
+ * Who a NEW identity file should belong to, or null to leave it as created.
+ * Found 2026-09-23, before it was ever run on the box: `sudo camctl identity`
+ * runs as root, so the file would come out root-owned and 0600 - and the
+ * camera service, which runs as its own user and will sign check-ins with it,
+ * could never read it. When root creates it, it belongs to whoever owns the
+ * state directory (camplat on the appliance). Anyone else creating it owns it
+ * already, and a root-owned state directory means root is the right owner.
+ */
+export function identityOwner(runningUid, dirStat) {
+  if (runningUid !== 0 || !dirStat) return null;
+  if (!Number.isInteger(dirStat.uid) || !Number.isInteger(dirStat.gid) || dirStat.uid === 0) return null;
+  return { uid: dirStat.uid, gid: dirStat.gid };
+}
+
 async function writeIdentityFileAtomic(realPath, text) {
   const tmp = `${realPath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   const fh = await open(tmp, "w", 0o600);
@@ -177,6 +192,9 @@ async function writeIdentityFileAtomic(realPath, text) {
   } finally {
     await fh.close();
   }
+  const runningUid = typeof process.getuid === "function" ? process.getuid() : null;
+  const owner = identityOwner(runningUid, await stat(path.dirname(realPath)).catch(() => null));
+  if (owner) await chown(tmp, owner.uid, owner.gid);
   try {
     await link(tmp, realPath);
     return true;
