@@ -8,7 +8,7 @@
 // generic server_error envelope.  No stack traces are sent to the client.
 
 import { createServer } from 'node:http';
-import { stat, readFile, mkdir, rename, rm, readdir } from 'node:fs/promises';
+import { stat, readFile, writeFile, mkdir, rename, rm, readdir } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
@@ -20,6 +20,7 @@ import { openIndex } from './segindex.mjs';
 import { readHealth, alertsResponse } from './alerts-run.mjs';
 import { gatherHealthFacts, cameraFacts } from './healthfacts.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
+import { runEventRetention, EVENT_RETENTION_INTERVAL_MS } from './event-retention.mjs';
 
 // The pure contracts, compiled. Refusals are VALUES (ok === false), not
 // exceptions — detect them by shape, never by instanceof (they are interfaces,
@@ -604,6 +605,13 @@ export function createApiServer({
   // a test would turn off every other route's protection too, so nothing in
   // this file ever does.
   decideRouteImpl = decideRoute,
+  // Injectable so a harness can prove the events-retention TIMER wiring
+  // itself (runs once at start, ticks on its own schedule, never overlaps,
+  // stops on closeEventRetention) in bounded time, the same way spawnFn above
+  // lets it prove live.mjs without a real ffmpeg's real timing. Every real
+  // deployment gets the real EVENT_RETENTION_INTERVAL_MS (5 minutes);
+  // nothing in this file ever passes anything else outside a test.
+  eventRetentionIntervalMs = EVENT_RETENTION_INTERVAL_MS,
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -724,6 +732,63 @@ export function createApiServer({
   cleanOldStills().catch(() => {});
   const stillsCleanupTimer = setInterval(() => { cleanOldStills().catch(() => {}); }, ONE_DAY_MS);
   stillsCleanupTimer.unref?.();
+
+  /**
+   * Events retention (EVENTS-RETENTION-SPEC.md): an event lives exactly as
+   * long as its video. Once at start, then every 5 minutes, unref()'d for the
+   * same reason the stills sweep above is -- a harness that never calls
+   * closeEventRetention must not hang waiting on this timer.
+   *
+   * Every tick calls openEvents() fresh rather than closing over `eventsDb`
+   * directly: openEvents() is the one lazy-open-or-reuse handle /events and
+   * /event-crop already share, and it is what stays correct across
+   * server.closeEvents() setting `eventsDb` back to null (see closeEvents
+   * below) -- a tick after that either finds events.db still missing (skip,
+   * same as no detector installed) or opens its OWN fresh handle, never one
+   * this function is holding onto past its close.
+   */
+  let eventRetentionRunning = false;
+  let eventRetentionDeletedSinceStart = 0;
+  const eventRetentionFile = join(stateDir, 'event-retention.json');
+  async function runEventRetentionPass() {
+    // Never two runs at once: a first run over years of pre-existing events
+    // (the 3,450-in-4-days case the spec measured) can still be batching when
+    // the next tick arrives.
+    if (eventRetentionRunning) return;
+    eventRetentionRunning = true;
+    try {
+      const result = await runEventRetention({ eventsDb: openEvents(), index, now });
+      if (result.deleted > 0) eventRetentionDeletedSinceStart += result.deleted;
+      const state = { ...result, deletedSinceStart: eventRetentionDeletedSinceStart };
+      try {
+        await mkdir(stateDir, { recursive: true });
+        const tmp = `${eventRetentionFile}.tmp`;
+        await writeFile(tmp, JSON.stringify(state, null, 2) + '\n');
+        await rename(tmp, eventRetentionFile);
+      } catch (err) {
+        log('error', 'event retention: could not write event-retention.json', { error: err.message });
+      }
+      if (result.error) {
+        log('error', 'event retention failed', { error: result.error });
+      } else if (result.deleted > 0) {
+        // One line only when something actually happened -- a quiet box logs
+        // nothing every five minutes forever.
+        log('info', 'event retention deleted events whose video is gone', {
+          deleted: result.deleted, deletedSinceStart: eventRetentionDeletedSinceStart,
+        });
+      }
+    } catch (err) {
+      // runEventRetention refuses (a value, not a throw) for anything it can
+      // anticipate; this is the last-resort net for anything it cannot, so a
+      // bug here costs a log line, never the server.
+      log('error', 'event retention: unexpected error', { error: err?.message ?? String(err) });
+    } finally {
+      eventRetentionRunning = false;
+    }
+  }
+  runEventRetentionPass().catch(() => {});
+  const eventRetentionTimer = setInterval(() => { runEventRetentionPass().catch(() => {}); }, eventRetentionIntervalMs);
+  eventRetentionTimer.unref?.();
 
   const STILLS_MAX_CONCURRENT = 2;
   const STILLS_MAX_QUEUE = 32;
@@ -1491,6 +1556,13 @@ export function createApiServer({
     clearInterval(stillsCleanupTimer);
   };
 
+  // Same reasoning again: events retention is this server's own timer.
+  // Cleared before shutdown moves on, so no tick past this point reopens
+  // events.db after closeEvents() above has already let go of it.
+  server.closeEventRetention = () => {
+    clearInterval(eventRetentionTimer);
+  };
+
   return server;
 }
 
@@ -1542,6 +1614,10 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
     closeAll();
     listeners.stop().then(() => {
       server.close(() => {
+        // Stop the retention timer before letting go of the events database
+        // it reads: no in-between tick can slip in either way (there is no
+        // await between these two lines), but this keeps the order honest.
+        server.closeEventRetention();
         index.close();
         server.closeEvents();
         server.closeEventCrops();

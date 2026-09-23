@@ -54,6 +54,42 @@ const toIso = (ms) => new Date(ms).toISOString();
 const fromIso = (iso) => Date.parse(iso);
 
 /**
+ * The connection's normal busy_timeout: how long ANY statement on this handle
+ * waits for a lock before giving up. Fine for a read (WAL readers do not
+ * block on a writer) and fine for the upsert/setSuppressed writes camctl and
+ * detect-service make from their own short-lived processes.
+ */
+const DEFAULT_BUSY_TIMEOUT_MS = 5000;
+
+/**
+ * Found in review (2026-09-23): events retention's deleteEndedBefore is the
+ * FIRST write agent/api-server.mjs's own long-lived process ever issues
+ * against this file (every other route it serves only reads). node:sqlite's
+ * DatabaseSync runs every call synchronously on the caller's own thread, so
+ * `BEGIN IMMEDIATE` waiting out the connection's normal 5000 ms busy_timeout
+ * while detect-service's separate process holds the write lock would freeze
+ * every HTTP request and live stream that server is serving for up to 5
+ * seconds, once per tick and once per batch of a backlog (reproduced with two
+ * DatabaseSync handles on one file: a 5000 ms busy_timeout blocked the
+ * process for ~5.6 s before throwing "database is locked").
+ *
+ * The fix is not a shorter wait tolerated silently — it is a short wait that,
+ * on a miss, is reported as "try again" rather than guessed at: a lock miss
+ * costs one skipped batch (the caller's loop or next tick retries), never a
+ * multi-second stall of the whole process.
+ */
+const RETENTION_WRITE_BUSY_TIMEOUT_MS = 200;
+
+/** SQLITE_BUSY (node:sqlite's DatabaseSync throws ERR_SQLITE_ERROR with this
+ *  errcode, "database is locked") — the one failure a short busy_timeout on
+ *  the retention write path is expected to hit, and the only one it is
+ *  allowed to swallow into "try again later" rather than a thrown error. */
+function isSqliteBusy(err) {
+  return Boolean(err) && err.code === "ERR_SQLITE_ERROR"
+    && (err.errcode === 5 || /database is locked/i.test(String(err.message ?? "")));
+}
+
+/**
  * Columns added after the table first shipped, in the order they arrived.
  *
  * None has a DEFAULT, on purpose: ALTER TABLE ADD COLUMN without one leaves
@@ -185,7 +221,7 @@ export function openEventsDb(file) {
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec(`PRAGMA busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MS}`);
   db.exec(SCHEMA);
   ensureAddedColumns(db);
 
@@ -208,6 +244,25 @@ export function openEventsDb(file) {
     // the count is of rows that actually changed.
     setSuppressed: db.prepare("UPDATE events SET suppressed_by = ? WHERE id = ? AND suppressed_by IS NOT ?"),
     clearSuppressed: db.prepare("UPDATE events SET suppressed_by = NULL WHERE suppressed_by = ?"),
+    // Every distinct camera in the table and how many rows it has, for
+    // events retention (EVENTS-RETENTION-SPEC.md): idx_events_camera_first
+    // is (camera_id, first_ms), so grouping by camera_id alone still walks
+    // it rather than the whole table.
+    cameraEventCounts: db.prepare("SELECT camera_id, COUNT(*) AS n FROM events GROUP BY camera_id ORDER BY camera_id"),
+    // Deletes the oldest matching rows for one camera, oldest first, a batch
+    // at a time. `first_ms < ?` is redundant with `last_ms < ?` (first_ms is
+    // never after last_ms) but it is what lets idx_events_camera_first do the
+    // work: without it sqlite would have to check every row of the camera
+    // against last_ms with no index to narrow the scan first.
+    deleteEndedBefore: db.prepare(`
+      DELETE FROM events WHERE id IN (
+        SELECT id FROM events WHERE camera_id = ? AND first_ms < ? AND last_ms < ? LIMIT ?
+      )
+    `),
+    // The same predicate, unbounded by any LIMIT: every row that a real
+    // deletion would eventually remove across as many batches as it takes,
+    // counted rather than removed. What a dry run reports.
+    countEndedBefore: db.prepare("SELECT COUNT(*) AS n FROM events WHERE camera_id = ? AND first_ms < ? AND last_ms < ?"),
   };
 
   /**
@@ -437,6 +492,69 @@ export function openEventsDb(file) {
         throw new TypeError(`clearSuppressed needs an object id, not ${JSON.stringify(objectId)}`);
       }
       return Number(stmts.clearSuppressed.run(objectId).changes);
+    },
+
+    /**
+     * Every camera with at least one event, and how many it has right now.
+     * Used by events retention (EVENTS-RETENTION-SPEC.md) to know which
+     * cameras to plan for without loading a single event into memory.
+     */
+    cameraEventCounts() {
+      return stmts.cameraEventCounts.all().map((r) => ({ cameraId: r.camera_id, events: Number(r.n) }));
+    },
+
+    /**
+     * Delete up to `limit` of one camera's events that ended before
+     * `beforeMs` (`last_ms < beforeMs`), oldest first. Returns how many rows
+     * were removed — fewer than `limit` (0 included) means nothing more is
+     * left to delete for this camera at this threshold; the caller loops
+     * until that happens (events retention's own batching, so one camera's
+     * backlog never holds the write lock in a single huge transaction).
+     *
+     * `opts.dryRun` counts every matching row instead — never bounded by
+     * `limit`, so it answers the same question a real run would take
+     * however many batches to finish, and deletes nothing. A dry run only
+     * reads (`BEGIN`, not `BEGIN IMMEDIATE`), so it never takes the write
+     * lock and never hits the short retention busy_timeout below.
+     *
+     * A real delete runs under a SHORT busy_timeout
+     * (RETENTION_WRITE_BUSY_TIMEOUT_MS), not the connection's normal one:
+     * this is api-server.mjs's only write against a file detect-service's
+     * separate process writes to continuously, and node:sqlite's DatabaseSync
+     * is synchronous, so waiting out the normal 5 s busy_timeout for
+     * `BEGIN IMMEDIATE` would freeze the whole server (every HTTP request,
+     * every live stream) for up to 5 seconds. On a lock miss this returns
+     * `null` — "try again later", not zero rows deleted — rather than
+     * throwing or blocking; the caller's batch loop (agent/event-retention.mjs)
+     * treats `null` as "stop for this camera this pass, the next tick will
+     * pick up where this left off".
+     */
+    deleteEndedBefore(cameraId, beforeMs, limit, opts = {}) {
+      if (typeof cameraId !== "string" || cameraId === "") {
+        throw new TypeError(`deleteEndedBefore needs a camera id, not ${JSON.stringify(cameraId)}`);
+      }
+      if (!Number.isFinite(beforeMs)) {
+        throw new RangeError(`deleteEndedBefore needs a real instant in ms, not ${JSON.stringify(beforeMs)}`);
+      }
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw new RangeError(`deleteEndedBefore needs a positive whole-number limit, not ${JSON.stringify(limit)}`);
+      }
+      const dryRun = opts?.dryRun === true;
+      if (dryRun) {
+        return together(() => Number(stmts.countEndedBefore.get(cameraId, beforeMs, beforeMs).n), { write: false });
+      }
+      db.exec(`PRAGMA busy_timeout = ${RETENTION_WRITE_BUSY_TIMEOUT_MS}`);
+      try {
+        return together(() => Number(stmts.deleteEndedBefore.run(cameraId, beforeMs, beforeMs, limit).changes), { write: true });
+      } catch (err) {
+        if (isSqliteBusy(err)) return null;
+        throw err;
+      } finally {
+        // Restored unconditionally, success or failure: every other query on
+        // this shared connection (upsert, inRange, the next dry run) must go
+        // back to waiting the connection's normal amount, not this one's.
+        db.exec(`PRAGMA busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MS}`);
+      }
     },
 
     close() {

@@ -24,6 +24,7 @@
  * are the ones in view; and a reset by hand showing another object's events.
  */
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 import { mkdtemp, rm } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -629,5 +630,176 @@ check("this evening's bench camera: the 17 umbrella rows hidden, the two people 
   eq([evening("exclude").events.length, evening("exclude").hiddenCount], [19, 0], "and the evening is back as it was stored");
   db.close();
 });
+
+// ---------- events retention: cameraEventCounts and deleteEndedBefore ----------
+
+check("cameraEventCounts: every camera with an event, and how many, sorted by camera id", () => {
+  const db = dbWith([
+    ev("a1", "person", DAY, 5000, "cam1"),
+    ev("a2", "person", DAY + 60_000, 5000, "cam1"),
+    ev("b1", "vehicle", DAY, 5000, "cam2"),
+  ]);
+  eq(db.cameraEventCounts(), [{ cameraId: "cam1", events: 2 }, { cameraId: "cam2", events: 1 }], "counts, not the rows themselves");
+  db.close();
+});
+
+check("cameraEventCounts: an empty table is an empty list, not an error", () => {
+  const db = openEventsDb(":memory:");
+  eq(db.cameraEventCounts(), [], "nothing stored, nothing reported");
+  db.close();
+});
+
+check("deleteEndedBefore: THE FEARED ONE - only rows that ENDED before the threshold go, an event straddling it stays", () => {
+  const db = dbWith([
+    ev("gone", "person", DAY, 5000, "cam1"),                 // ends DAY+5000, well before
+    ev("straddles", "person", DAY + 4000, 10_000, "cam1"),    // starts before the threshold, ends after
+    ev("kept", "person", DAY + 20_000, 5000, "cam1"),         // entirely after
+  ]);
+  const threshold = DAY + 10_000;
+  const n = db.deleteEndedBefore("cam1", threshold, 10);
+  eq(n, 1, "exactly the one event that ended before the threshold");
+  eq(db.all().map((e) => e.id).sort(), ["kept", "straddles"], "the straddling and the later event both survive");
+  db.close();
+});
+
+check("deleteEndedBefore: the LIMIT bounds one call, and the caller loops to finish the rest", () => {
+  const events = [];
+  for (let i = 0; i < 7; i++) events.push(ev(`e${i}`, "person", DAY + i * 1000, 500, "cam1"));
+  const db = dbWith(events);
+  const threshold = DAY + 100_000; // after all seven
+  eq(db.deleteEndedBefore("cam1", threshold, 3), 3, "first batch: exactly the limit");
+  eq(db.all().length, 4, "four left");
+  eq(db.deleteEndedBefore("cam1", threshold, 3), 3, "second batch");
+  eq(db.all().length, 1, "one left");
+  eq(db.deleteEndedBefore("cam1", threshold, 3), 1, "THE FEARED ONE: the last batch reports fewer than the limit, not the limit again");
+  eq(db.all().length, 0, "and the loop's caller now knows to stop: nothing left");
+  eq(db.deleteEndedBefore("cam1", threshold, 3), 0, "an empty camera answers 0, not an error");
+  db.close();
+});
+
+check("deleteEndedBefore only touches its own camera", () => {
+  const db = dbWith([
+    ev("c1", "person", DAY, 5000, "cam1"),
+    ev("c2", "person", DAY, 5000, "cam2"),
+  ]);
+  eq(db.deleteEndedBefore("cam1", DAY + 100_000, 100), 1, "only cam1's row");
+  eq(db.all().map((e) => e.id), ["c2"], "cam2's event is untouched");
+  db.close();
+});
+
+check("deleteEndedBefore dryRun: counts everything a real run would eventually remove, deletes nothing, is not bound by limit", () => {
+  const events = [];
+  for (let i = 0; i < 9; i++) events.push(ev(`e${i}`, "person", DAY + i * 1000, 500, "cam1"));
+  const db = dbWith(events);
+  const threshold = DAY + 100_000;
+  const dry = db.deleteEndedBefore("cam1", threshold, 3, { dryRun: true });
+  eq(dry, 9, "THE FEARED ONE: the total, not one batch's worth of 3");
+  eq(db.all().length, 9, "and nothing was actually deleted");
+  eq(db.cameraEventCounts(), [{ cameraId: "cam1", events: 9 }], "still every row, by another measure too");
+  db.close();
+});
+
+check("deleteEndedBefore refuses arguments that would answer a question nobody asked", () => {
+  const db = dbWith([ev("a", "person", DAY, 5000, "cam1")]);
+  for (const cameraId of ["", null, undefined, 7]) {
+    throws(() => db.deleteEndedBefore(cameraId, DAY, 10), `cameraId ${JSON.stringify(cameraId)}`);
+  }
+  for (const beforeMs of [NaN, Infinity, -Infinity, "10", null, undefined]) {
+    throws(() => db.deleteEndedBefore("cam1", beforeMs, 10), `beforeMs ${JSON.stringify(beforeMs)}`);
+  }
+  for (const limit of [0, -1, 1.5, NaN, undefined, "10"]) {
+    throws(() => db.deleteEndedBefore("cam1", DAY, limit), `limit ${JSON.stringify(limit)}`);
+  }
+  eq(db.all().length, 1, "not one refused call deleted the row");
+  db.close();
+});
+
+/** Runs `workerData.file`'s lock-holder on a REAL second thread and resolves
+ *  once it confirms the write lock is actually taken -- see
+ *  harness/_eventsDbLockWorker.mjs's top comment for why a worker thread,
+ *  not a second connection on this same thread, is required to make the
+ *  parent's synchronous calls genuinely wait on someone else. */
+function startLockHolder(file, holdMs) {
+  const worker = new Worker(new URL("./_eventsDbLockWorker.mjs", import.meta.url), { workerData: { file, holdMs } });
+  const locked = new Promise((resolve, reject) => {
+    worker.once("message", (msg) => { if (msg === "locked") resolve(); });
+    worker.once("error", reject);
+  });
+  const exited = new Promise((resolve) => worker.once("exit", resolve));
+  return { locked, exited };
+}
+
+await mustAwait(
+  "deleteEndedBefore: THE FEARED ONE (found in review) - a real delete must never block the whole process for as long as another process holds the write lock; a lock miss is reported quickly as 'try again', never thrown",
+  async () => {
+    await withTempDb(async (file) => {
+      const events = openEventsDb(file);
+      events.upsert({ id: "gone", event: ev("gone", "person", DAY, 5000, "cam1") }, true);
+
+      // Held well past RETENTION_WRITE_BUSY_TIMEOUT_MS (200ms, events-db.mjs)
+      // but comfortably inside the connection's normal 5000ms busy_timeout,
+      // so unpatched code would simply wait it out and succeed slowly rather
+      // than throw - the wait itself, and the wrong return value, are what
+      // this check catches; see the next check for the full-timeout case.
+      const HOLD_MS = 1200;
+      const holder = startLockHolder(file, HOLD_MS);
+      await holder.locked;
+
+      const start = Date.now();
+      let threw = null;
+      let result;
+      try {
+        result = events.deleteEndedBefore("cam1", DAY + 100_000, 10);
+      } catch (err) {
+        threw = err;
+      }
+      const elapsedMs = Date.now() - start;
+
+      await holder.exited;
+      events.close();
+
+      eq(threw, null, "a lock miss must never throw an uncaught error out of the retention write path");
+      eq(result, null, "THE FEARED ONE: a lock miss is reported as 'try again', never guessed at as zero rows deleted");
+      eq(elapsedMs < HOLD_MS - 200, true,
+        `must not wait out the lock holder (held ${HOLD_MS}ms) - took ${elapsedMs}ms, proving it gave up on a short timeout instead of the connection's full one`);
+    });
+  },
+);
+
+await mustAwait(
+  "deleteEndedBefore: a short busy_timeout for the retention write is restored afterwards - a normal write's own wait is untouched",
+  async () => {
+    await withTempDb(async (file) => {
+      const events = openEventsDb(file);
+      events.upsert({ id: "gone", event: ev("gone", "person", DAY, 5000, "cam1") }, true);
+
+      // Longer than the 200ms retention timeout (so deleteEndedBefore gives
+      // up and reports null while the lock is still held) but the holder is
+      // still holding when the very next call - a normal upsert - starts.
+      // If the connection's busy_timeout were left at the short value
+      // instead of being restored, this upsert would give up on the
+      // remaining wait and throw; restored to its normal 5000ms, it waits
+      // the lock out and succeeds, same as any ordinary write ever has.
+      const HOLD_MS = 600;
+      const holder = startLockHolder(file, HOLD_MS);
+      await holder.locked;
+
+      const missed = events.deleteEndedBefore("cam1", DAY + 100_000, 10);
+      eq(missed, null, "the setup: the delete really did miss the lock this time too");
+
+      let threw = null;
+      try {
+        events.upsert({ id: "afterwards", event: ev("afterwards", "person", DAY + 1000, 5000, "cam1") }, true);
+      } catch (err) {
+        threw = err;
+      }
+      await holder.exited;
+
+      eq(threw, null, "THE FEARED ONE: the short retention timeout must not leak into every later write on this connection");
+      eq(events.getById("afterwards") !== null, true, "and the write actually landed once the lock was free");
+      events.close();
+    });
+  },
+);
 
 report("events db");

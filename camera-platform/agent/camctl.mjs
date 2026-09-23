@@ -12,13 +12,15 @@ import { runLoad, formatLoadReport } from "./loadtest.mjs";
 import { audit, loadConfig, cleanEmpty } from "./recorder-service.mjs";
 import { runAlertsCheck, shouldRestartRecorder, transitionLogLine, RESTART_REQUEST, requestCameraRestarts } from "./alerts-run.mjs";
 import { defaultThresholds } from "../dist/alerts.js";
-import { DEFAULT_PATHS } from "./config.mjs";
+import { DEFAULT_PATHS, indexPathFor } from "./config.mjs";
+import { openIndex } from "./segindex.mjs";
+import { runEventRetention } from "./event-retention.mjs";
 import { runScore } from "./score-clips.mjs";
 import { runGateCheck, DEFAULT_THREADS, MAX_HOURS, MAX_THREADS } from "./gate-check.mjs";
 import { loadOrCreateIdentity } from "./device-identity.mjs";
 import { composeCheckin, readCheckinState } from "./checkin.mjs";
 import { fileURLToPath } from "node:url";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { openEventsDb } from "./events-db.mjs";
@@ -431,6 +433,76 @@ async function cmdCleanEmpty() {
   }
 }
 
+// Read-only (EVENTS-RETENTION-SPEC.md): what the server's own timer would
+// delete next, without deleting anything, plus the last real run it wrote.
+// Never writes event-retention.json itself — that file is api-server.mjs's,
+// written only by an actual (non-dry-run) pass.
+async function cmdEventsRetention() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  console.log("events-retention — read-only: nothing is deleted");
+  console.log();
+
+  const indexFile = indexPathFor(stateDir);
+  if (!existsSync(indexFile)) {
+    console.log(`Refused: no index at ${indexFile}: nothing has recorded here, or the state directory is wrong`);
+    process.exitCode = 1;
+    return;
+  }
+  const eventsFile = path.join(stateDir, "events.db");
+  if (!existsSync(eventsFile)) {
+    console.log(`no events.db in ${stateDir}: nothing has ever been detected here, so there is nothing to plan`);
+    return;
+  }
+
+  const index = openIndex(indexFile);
+  const events = openEventsDb(eventsFile);
+  let plan;
+  try {
+    plan = await runEventRetention({ eventsDb: events, index, dryRun: true });
+  } finally {
+    index.close();
+    events.close();
+  }
+
+  console.log("what the next real run would delete:");
+  if (plan.error) {
+    console.log(`  Refused: ${plan.error}`);
+  } else if (plan.cameras.length === 0 && plan.kept.length === 0) {
+    console.log("  no cameras have any events stored");
+  } else {
+    for (const c of plan.cameras) {
+      console.log(`  ${c.cameraId.padEnd(20)} would delete ${c.deleted} (footage from ${c.footageFromUtc})`);
+    }
+    for (const k of plan.kept) {
+      console.log(`  ${k.cameraId.padEnd(20)} keeps all ${k.events} (${k.reason})`);
+    }
+    console.log(`\n  ${plan.deleted} event(s) total, margin ${plan.marginMs} ms`);
+  }
+
+  console.log("\nthe last real run (agent/api-server.mjs, every 5 min while it is up):");
+  const stateFile = path.join(stateDir, "event-retention.json");
+  let raw;
+  try {
+    raw = await readFile(stateFile, "utf8");
+  } catch (err) {
+    console.log(err.code === "ENOENT" ? "  none yet — the server has not run one, or is not running" : `  cannot be read: ${err.message}`);
+    return;
+  }
+  let last;
+  try {
+    last = JSON.parse(raw);
+  } catch {
+    console.log(`  ${stateFile} is not valid JSON`);
+    return;
+  }
+  console.log(`  at ${last.atUtc}, margin ${last.marginMs} ms`);
+  if (last.error) console.log(`  Refused: ${last.error}`);
+  console.log(`  ${last.deleted} deleted this run, ${last.deletedSinceStart} since the server started`);
+  for (const c of last.cameras ?? []) console.log(`  ${c.cameraId.padEnd(20)} deleted ${c.deleted} (footage from ${c.footageFromUtc})`);
+  for (const k of last.kept ?? []) console.log(`  ${k.cameraId.padEnd(20)} kept all ${k.events} (${k.reason})`);
+  for (const id of last.busyCameras ?? []) console.log(`  ${id.padEnd(20)} stopped early: detection held the database; the rest goes next pass`);
+}
+
 // Plays every "Teach the AI" clip back through the live detector, at the
 // frame rate and confidence floor live uses, and scores it against the
 // answer key (agent/score-clips.mjs). --fps N replays at N instead of the
@@ -696,7 +768,7 @@ async function cmdCheckin() {
   console.log(`deviceId:           ${composed.deviceId}`);
 }
 
-const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects, identity: cmdIdentity, checkin: cmdCheckin };
+const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects, identity: cmdIdentity, checkin: cmdCheckin, "events-retention": cmdEventsRetention };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -729,6 +801,7 @@ if (!handler) {
                 --camera ID --reset           lapse every active object of that camera
   identity [--state-dir D]      show this box's cloud check-in deviceId and public key (creating it on first use); never the private key
   checkin --dry-run [--state-dir D]  print the next signed check-in payload and its signature; sends nothing
+  events-retention [--state-dir D]  read-only: the dry-run plan for the next real pass, and the last one the server actually ran
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS

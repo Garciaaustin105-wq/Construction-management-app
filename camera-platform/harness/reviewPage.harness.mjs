@@ -1539,6 +1539,42 @@ await check("known objects: the section shows the measurement, localised, and th
   }
 });
 
+await check("known objects: a sample crop that 404s (no_such_event - events retention has since deleted the row) hides quietly, the same as any other footage-gone thumbnail", async () => {
+  // EVENTS-RETENTION-SPEC.md section 6: once an event's row is deleted along
+  // with its video, /event-crop?id= for it answers 404 no_such_event instead
+  // of the 409 footage_gone it would have answered while the row still
+  // existed but the footage did not. The <img> error event this page reacts
+  // to carries no status code at all, so there is nothing here that COULD
+  // treat the two differently - which is exactly the point: retention
+  // deleting the row must not turn a quiet missing-picture card into a
+  // broken one.
+  const KNOWN_OBJECT = {
+    id: "cam-1:person:1758000001000", cameraId: "cam-1", kind: "person",
+    box: { x: 0.3, y: 0.2, w: 0.1, h: 0.42 }, state: "active",
+    lapsedAtUtc: null, lapseReason: null, learnedAtUtc: "2026-09-11T09:00:00.000Z",
+    firstSeenUtc: "2026-09-11T05:55:00.000Z", lastSeenUtc: "2026-09-11T08:10:00.000Z",
+    lastMatchedUtc: "2026-09-11T08:10:00.000Z", members: 34, matched: 4,
+    confidenceMax: 0.8, sampleEventId: "e-retired-1", memberEventIds: ["e-retired-1"],
+    cameraFingerprint: "abc123def4567890", answer: null,
+    notice: ["Seen as a person 34 times.", "Highest score as a person: 0.80.", "No answer recorded yet."],
+  };
+  const pageFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => {
+    if (String(url).startsWith("/known-objects?")) return Promise.resolve({ ok: true, json: async () => ({ ok: true, problem: null, objects: [KNOWN_OBJECT] }) });
+    return pageFetch(url, opts);
+  };
+  try {
+    await page.loadKnownObjects();
+    const img = findDescendant(dom.knownObjectsList, (c) => c.tagName === "IMG");
+    eq(img.src, "/event-crop?id=e-retired-1", "still asks for it by id, whether or not the row survived retention");
+    img.fire("error");
+    eq(img.hidden, true, "hidden quietly, the same as a 409 footage_gone would leave it");
+    eq(dom.knownObjects.hidden, false, "the card itself stays: its measurement and answer buttons never depended on the picture");
+  } finally {
+    globalThis.fetch = pageFetch;
+  }
+});
+
 await check("known objects: nothing readable from the recorder means nothing shown, not a broken section", async () => {
   const pageFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {

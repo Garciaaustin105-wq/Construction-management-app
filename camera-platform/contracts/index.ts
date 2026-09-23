@@ -19,3 +19,4 @@ export * from "./indexCoverage.js";
 export * from "./cameraView.js";
 export * from "./zipStore.js";
 export * from "./exportPlan.js";
+export * from "./eventRetention.js";

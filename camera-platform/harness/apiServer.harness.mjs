@@ -14,13 +14,14 @@
  * on the port the recorded-past routes answer on, with a fake ffmpeg injected
  * through createApiServer's spawnFn — the harness never spawns a real one.
  */
-import { mkdtemp, writeFile, mkdir, rm, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { readZip } from "./_zipReader.mjs";
 import { createApiServer } from "../agent/api-server.mjs";
+import { openEventsDb } from "../agent/events-db.mjs";
 // These suites test the routes, not sign-in: an installer is always signed in.
 // Access itself is proven in auth.harness.mjs against the real module.
 const installerAuth = {
@@ -1136,6 +1137,110 @@ try {
 } catch (e) {
   if (e.code !== "ERR_MODULE_NOT_FOUND") throw e;
   console.log("  SKIPPED: agent/event-crop.mjs does not exist yet — the route wiring above covers this file's contract with a fake cutter");
+}
+
+// ---------- events retention: the TIMER wiring itself ----------
+// Found in review: only the pure contract (eventRetention.harness.mjs) and
+// the standalone I/O function called with hand-built fixtures
+// (eventRetentionRun.harness.mjs) had any coverage. Nothing proved that THIS
+// file's own glue works — that it really runs once at construction, that it
+// really ticks on its own schedule, that server.closeEventRetention() really
+// stops it, and that event-retention.json is really written tmp-then-rename.
+// eventRetentionIntervalMs is injectable (createApiServer, real deployments
+// never pass it) for exactly this: proving the schedule in milliseconds
+// instead of the real 5 minutes.
+{
+  const retStateDir = await mkdtemp(join(tmpdir(), "camplat-api-retention-"));
+  const retIndex = openIndex(join(retStateDir, "index.db"));
+  retIndex.put(seg("cam-r", "2026-09-20T00:00:00Z", "2026-09-20T00:01:00Z", "cam-r/0.mp4", 100, "sealed"));
+
+  const retEventsFile = join(retStateDir, "events.db");
+  const oldEvent = {
+    id: "cam-r:old:1", cameraId: "cam-r", kind: "person",
+    firstUtc: "2026-09-19T00:00:00Z", lastUtc: "2026-09-19T00:00:05Z",
+    count: 1, bestConfidence: 0.9, bestBox: { x: 0.1, y: 0.1, w: 0.1, h: 0.1 }, bestUtc: "2026-09-19T00:00:00Z",
+  };
+  const keptEvent = {
+    id: "cam-r:kept:1", cameraId: "cam-r", kind: "person",
+    firstUtc: "2026-09-21T00:00:00Z", lastUtc: "2026-09-21T00:00:05Z",
+    count: 1, bestConfidence: 0.9, bestBox: { x: 0.1, y: 0.1, w: 0.1, h: 0.1 }, bestUtc: "2026-09-21T00:00:00Z",
+  };
+  const seedDb = openEventsDb(retEventsFile);
+  seedDb.upsert({ id: oldEvent.id, event: oldEvent }, true);
+  seedDb.upsert({ id: keptEvent.id, event: keptEvent }, true);
+  seedDb.close();
+
+  const retentionFile = join(retStateDir, "event-retention.json");
+  const readRetentionState = async () => JSON.parse(await readFile(retentionFile, "utf8"));
+  const pollRetentionState = async (predicate, { timeoutMs = 3000, stepMs = 20 } = {}) => {
+    const start = Date.now();
+    for (;;) {
+      try {
+        const state = await readRetentionState();
+        if (predicate(state)) return state;
+      } catch { /* not written yet, or mid tmp-then-rename */ }
+      if (Date.now() - start > timeoutMs) throw new Error("timed out waiting for event-retention.json");
+      await new Promise((resolve) => setTimeout(resolve, stepMs));
+    }
+  };
+
+  // Real wall-clock time, not the suite's fixed `now` (2026-09-11): this is
+  // the one place in this file where a changing atUtc across polls is itself
+  // the thing being proven -- a fixed clock would make every tick's report
+  // look identical to the last, hiding a timer that never actually ticks.
+  const retentionTickMs = 75;
+  const retServer = createApiServer({
+    stateDir: retStateDir, config, index: retIndex, now: () => new Date(), auth: installerAuth,
+    eventRetentionIntervalMs: retentionTickMs,
+  });
+
+  await check("events retention wiring: runs once at construction through the REAL server, not a hand-built call to runEventRetention", async () => {
+    const state = await pollRetentionState((s) => s.deleted >= 1);
+    eq(state.error, null, "no error");
+    eq(state.deleted, 1, "exactly the one old event");
+    eq(state.deletedSinceStart, 1, "deletedSinceStart tracks the same total this early");
+    eq(state.cameras, [{ cameraId: "cam-r", deleted: 1, footageFromUtc: "2026-09-20T00:00:00.000Z" }],
+      "reported against the REAL index's footage horizon, not a fixture");
+    eq(state.kept, [], "cam-r has footage");
+    eq(Object.keys(state).sort(), ["atUtc", "busyCameras", "cameras", "deleted", "deletedSinceStart", "error", "kept", "marginMs"].sort(),
+      "the documented shape (spec section 4), nothing else");
+
+    // Not just the report: the real file, through the real wiring's own
+    // openEvents(), really lost the row.
+    const after = openEventsDb(retEventsFile);
+    eq(after.all().map((e) => e.id), [keptEvent.id], "the old event is really gone; the kept one is really still there");
+    after.close();
+  });
+
+  await check("events retention wiring: server.closeEventRetention() really stops future ticks, and the file it leaves behind is tmp-then-rename with no stray .tmp", async () => {
+    // The interval is real and short; a changing atUtc across polls is the
+    // ticking itself (the only work left for cam-r each tick is "nothing new
+    // to prune", which still rewrites the file with a fresh atUtc).
+    const first = await readRetentionState();
+    await pollRetentionState((s) => s.atUtc !== first.atUtc, { timeoutMs: 2000 });
+
+    retServer.closeEventRetention();
+    // A tick already in flight at the instant of close() is allowed to
+    // finish (clearInterval only stops FUTURE ticks) -- wait it out before
+    // taking the baseline, so this check is about ticks AFTER close, not a
+    // race with one already under way. This also settles any writeFile/rename
+    // pair in progress, so the .tmp check below is never racing a live tick.
+    await new Promise((resolve) => setTimeout(resolve, retentionTickMs * 5));
+    const atClose = await readRetentionState();
+    await new Promise((resolve) => setTimeout(resolve, retentionTickMs * 10));
+    const afterWait = await readRetentionState();
+    eq(afterWait.atUtc, atClose.atUtc, "THE FEARED ONE: a tick landing after close() would mean the timer never really stopped");
+
+    const names = await readdir(retStateDir);
+    eq(names.includes("event-retention.json"), true, "the real file exists");
+    eq(names.some((n) => n.endsWith(".tmp")), false, "THE FEARED ONE: an interrupted rename must never leave a stray tmp file for the next reader to trip on");
+  });
+
+  retServer.closeEventRetention();
+  retServer.closeEvents();
+  retServer.close();
+  retIndex.close();
+  await rm(retStateDir, { recursive: true, force: true });
 }
 
 closeAll(); // the live registry and its watchdog end here — nothing outlives the harness
