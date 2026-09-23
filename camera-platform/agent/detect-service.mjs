@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { parseWorkerLine, emptyFold, advanceFold, MAX_WORKER_LINE_BYTES } from "../dist/detectStream.js";
 import { MERGE_GAP_MS } from "../dist/detection.js";
 import { planDetectSchedule } from "../dist/detectSchedule.js";
-import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
+import { buildRtspUrl, redactRtspUrl, RtspTemplateError } from "../dist/rtsp.js";
 import { matchKnown, noteMatch, lapseKnownObjects, learnKnownObjects, LEARN_WINDOW_MS } from "../dist/knownObjects.js";
 import { loadConfig, resolveCameraUrl } from "./recorder-service.mjs";
 import { openEventsDb } from "./events-db.mjs";
@@ -541,13 +541,32 @@ export async function startDetect(opts = {}) {
     let substreamUrl = null;
     if (typeof configCam.substreamUrl === "string" && configCam.substreamUrl !== "") {
       // The site login is added when the address has none, as the recorder
-      // does (resolveCameraUrl); without it the camera answers 401.
+      // does (resolveCameraUrl); without it the camera answers 401. Checked:
+      // resolveCameraUrl never calls buildRtspUrl on this path (a substream
+      // URL always has `camera.url` set, so it takes the manual-URL branch,
+      // which only ever calls urlForPath) - so a bad site login cannot throw
+      // out of this call the way it could out of the host branch below.
       const resolved = resolveCameraUrl({ url: configCam.substreamUrl }, config.credentials);
       if (resolved.kind === "ok") substreamUrl = resolved.url;
     } else if (typeof configCam.host === "string" && configCam.host !== "") {
       const vendor = configCam.vendor ?? "generic";
       const channel = configCam.channel ?? 1;
-      const built = buildRtspUrl({ vendor, ip: configCam.host, channel, stream: "sub" }, config.credentials);
+      // buildRtspUrl REFUSES (throws RtspTemplateError) rather than hand back
+      // a broken address when the site login has no username, or the ip it
+      // was given is empty - either one would just 401 or never connect. That
+      // refusal used to reach here uncaught: one camera with a bad login took
+      // the WHOLE detector down, and systemd restarted it in a loop while
+      // every other camera on the site sat undetected too. One bad camera
+      // must only take itself out.
+      let built;
+      try {
+        built = buildRtspUrl({ vendor, ip: configCam.host, channel, stream: "sub" }, config.credentials);
+      } catch (err) {
+        if (!(err instanceof RtspTemplateError)) throw err; // anything else is a real bug - let it surface
+        cam.state = "bad_login";
+        log("warn", "detection skipped: camera's stream address could not be built", { cameraId, reason: scrub(err.message) });
+        return;
+      }
       if (built.kind === "ok") {
         substreamUrl = built.url;
       }

@@ -358,6 +358,73 @@ await check("closeAll kills every child and empties the registry", async () => {
   for (const w of [w1, w2]) await nextClose(w);
 });
 
+// A separate server + config: this camera's site login has NO username, which
+// is the one buildRtspUrl refuses to template with (dist/rtsp.js: "username is
+// required"). A manual url resolves its mainstream fine regardless — urlForPath
+// happily builds a URL with an empty user — so only the substream DERIVATION
+// (host + vendor + channel, tried live against the real template) hits the
+// throw, and only the try/catch around it stands between that throw and the
+// 'upgrade' handler that has no other guard.
+await check("THE FEARED ONE: a site login with no username still gets a clean substream refusal, not a dead server", async () => {
+  const NO_USER_PASSWORD = "no-user-pw";
+  const noUserConfig = {
+    siteId: "no-user-site",
+    credentials: { username: "", password: NO_USER_PASSWORD },
+    cameras: [
+      { cameraId: "cam-no-user", url: "rtsp://10.9.9.9:554/main", host: "10.9.9.9", vendor: "hikvision", channel: 1 },
+    ],
+  };
+  const noUserSpawnCalls = [];
+  const noUserSpawnFn = (cmd, args) => {
+    const child = fakeChild();
+    child.args = args;
+    noUserSpawnCalls.push(child);
+    return child;
+  };
+  const noUserServer = createServer(() => {});
+  noUserServer.listen(0, "127.0.0.1");
+  await once(noUserServer, "listening");
+  const noUserPort = noUserServer.address().port;
+  attachLive(noUserServer, {
+    config: noUserConfig, spawnFn: noUserSpawnFn,
+    maxSourcesPerCamera: 1, maxSources: 16, maxViewers: 64, killAfterMs: 150,
+    authorize: () => ({ kind: "allow" }),
+  });
+  const noUserWsOpen = (path) =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${noUserPort}${path}`);
+      ws.binaryType = "arraybuffer";
+      const timer = setTimeout(() => reject(new Error("ws open timeout")), 3000);
+      ws.addEventListener("open", () => { clearTimeout(timer); resolve(ws); });
+      ws.addEventListener("error", (e) => { clearTimeout(timer); reject(new Error("ws error: " + (e.error?.message ?? e.message ?? "unknown"))); });
+    });
+
+  try {
+    const ws = await noUserWsOpen("/live/cam-no-user?quality=substream");
+    const env = JSON.parse((await nextMessage(ws)).toString());
+    same([env.ok, env.code], [false, "substream_unavailable"], "the contract's normal no-substream refusal, from negotiateLive itself");
+    same(env.message, "substream not available for this camera", "the fixed contract sentence, not ffmpeg's or buildRtspUrl's own words");
+    same(env.message.includes(NO_USER_PASSWORD), false, "the refusal never carries the fixture's password");
+    same([...liveRegistry().values()].some((v) => v.cameraId === "cam-no-user"), false, "a refused client holds no slot");
+    same(await nextClose(ws), "closed", "closed after refusal, never a bare close");
+
+    // The bad request did not take the server down: the SAME camera's
+    // mainstream — which never needed the substream derivation to succeed —
+    // still negotiates normally right after.
+    const again = await noUserWsOpen("/live/cam-no-user?quality=mainstream");
+    const child = noUserSpawnCalls[noUserSpawnCalls.length - 1];
+    child.stdout.emit("data", Buffer.concat([mp4Box("ftyp", 20, 91), mp4Box("moov", 200, 92)]));
+    const initMsg = await nextMessage(again);
+    same(initMsg.length > 0, true, "the server is still alive: a normal request right after the feared one still streams");
+    same(initMsg.includes(NO_USER_PASSWORD), false, "and that stream's own frame carries no password either");
+    again.close();
+    await nextClose(again);
+  } finally {
+    closeAll();
+    noUserServer.close();
+  }
+});
+
 server.close();
 
 report("live");

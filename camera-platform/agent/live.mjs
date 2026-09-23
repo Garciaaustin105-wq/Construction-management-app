@@ -15,7 +15,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { negotiateLive, liveFfmpegArgs } from "../dist/liveNegotiation.js";
 import { resolveCameraUrl } from "./recorder-service.mjs";
-import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
+import { buildRtspUrl, redactRtspUrl, RtspTemplateError } from "../dist/rtsp.js";
 
 /** What a viewer is told. Fixed sentences: ffmpeg's own words carry the
  *  camera's URL, password included (bench 2026-09-19: a reconnecting tile
@@ -298,11 +298,18 @@ export function attachLive(server, deps) {
     let vendorDerivesSubstream = false;
     let vendorSubstreamUrl = null;
     if (cameraExists && typeof cam.host === "string" && cam.host !== "") {
-      const sub = buildRtspUrl(
-        { vendor: cam.vendor ?? "generic", ip: cam.host, channel: cam.channel ?? 1, stream: "sub" },
-        config.credentials,
-      );
-      if (sub.kind === "ok") {
+      // Throws for a login with no user name (found 2026-09-23 beside the
+      // same crash in the recorder): then no substream can be derived.
+      let sub = null;
+      try {
+        sub = buildRtspUrl(
+          { vendor: cam.vendor ?? "generic", ip: cam.host, channel: cam.channel ?? 1, stream: "sub" },
+          config.credentials,
+        );
+      } catch (err) {
+        if (!(err instanceof RtspTemplateError)) throw err;
+      }
+      if (sub?.kind === "ok") {
         vendorDerivesSubstream = true;
         vendorSubstreamUrl = sub.url;
       }

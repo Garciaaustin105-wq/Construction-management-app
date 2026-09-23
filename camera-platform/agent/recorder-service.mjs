@@ -16,7 +16,7 @@ import { DEFAULT_PATHS, indexPathFor, assignCamerasToDrives, checkStoreRoot, RIN
 import { planRecovery } from "../dist/recovery.js";
 import { bytesToFreeFor } from "../dist/eviction.js";
 import { usableBytesFromRaw } from "../dist/retention.js";
-import { buildRtspUrl, redactRtspUrl, urlForPath } from "../dist/rtsp.js";
+import { buildRtspUrl, redactRtspUrl, urlForPath, RtspTemplateError } from "../dist/rtsp.js";
 import { parseRtspUrl } from "../dist/cameraSource.js";
 import { parseCameraFile } from "../dist/cameraEdit.js";
 import { RECORDING_FILE, readRecordingFile, ageCutoffMs } from "../dist/recordingSettings.js";
@@ -52,10 +52,21 @@ export function resolveCameraUrl(camera, credentials) {
   if (typeof camera.host !== "string" || camera.host === "") {
     return { kind: "unresolved", reason: "camera has neither a url nor a host" };
   }
-  const built = buildRtspUrl(
-    { vendor: camera.vendor ?? "generic", ip: camera.host, channel: camera.channel ?? 1, stream: camera.stream ?? "main" },
-    credentials,
-  );
+  // buildRtspUrl THROWS for a site login with no user name or a channel out
+  // of range. Found 2026-09-23: thrown here, it escaped start()'s camera loop,
+  // so ONE camera's bad login stopped the recorder for EVERY camera. It is a
+  // camera we cannot resolve, and is reported like one. Its messages name the
+  // missing field or the channel number, never the login itself.
+  let built;
+  try {
+    built = buildRtspUrl(
+      { vendor: camera.vendor ?? "generic", ip: camera.host, channel: camera.channel ?? 1, stream: camera.stream ?? "main" },
+      credentials,
+    );
+  } catch (err) {
+    if (err instanceof RtspTemplateError) return { kind: "unresolved", reason: err.message };
+    throw err;
+  }
   if (built.kind !== "ok") return { kind: "unresolved", reason: built.message };
   return { kind: "ok", url: built.url, origin: "discovered" };
 }

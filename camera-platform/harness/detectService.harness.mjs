@@ -39,12 +39,15 @@ const SECRET = "s3cret-pw";
 const T0 = Date.parse("2026-09-19T22:00:00.000Z");
 const at = (ms) => new Date(T0 + ms).toISOString();
 
-async function site({ detect = { capacityFps: 20, cameras: [{ cameraId: "cam-1" }, { cameraId: "cam-2" }] }, cameras } = {}) {
+async function site({ detect = { capacityFps: 20, cameras: [{ cameraId: "cam-1" }, { cameraId: "cam-2" }] }, cameras, credentials } = {}) {
   const stateDir = await mkdtemp(path.join(tmpdir(), "camplat-detect-"));
   const store = await mkdtemp(path.join(tmpdir(), "camplat-detect-store-"));
   await writeFile(path.join(stateDir, "config.json"), JSON.stringify({
     siteId: "t", storeRoots: [store], segmentSeconds: 60,
-    credentials: { username: "admin", password: SECRET },
+    // A check can supply its own site login (e.g. one with no username, to
+    // check a bad camera cannot take the rest of the site down); every
+    // existing check keeps the admin/SECRET login it always had.
+    credentials: credentials ?? { username: "admin", password: SECRET },
     cameras: cameras ?? [
       { cameraId: "cam-1", url: `rtsp://admin:${SECRET}@10.0.0.1:554/main`, substreamUrl: `rtsp://admin:${SECRET}@10.0.0.1:554/sub` },
       { cameraId: "cam-2", host: "10.0.0.2", vendor: "hikvision" },
@@ -126,6 +129,55 @@ await check("THE FEARED ONE: a substream address saved without a login gets the 
     eq(workers.length, 1, "watched");
     eq(urlOf(workers[0]).includes(`admin:${SECRET}@10.0.0.4`), true, "the site login added");
     eq(urlOf(workers[0]).endsWith("/sub"), true, "still the substream");
+  } finally {
+    await svc.stop();
+  }
+});
+
+// A site whose login has no username used to crash the WHOLE detector:
+// buildRtspUrl refuses (RtspTemplateError) rather than build an anonymous
+// RTSP address, and that refusal reached spawnWorker uncaught - so ONE
+// camera needing the site login to build its address took every camera on
+// the site off detection, and systemd restarted the service in a loop. A
+// bad login on one camera must mark that camera unusable and leave the rest
+// watching.
+await check("THE FEARED ONE: a site login with no username must not crash the whole detector; the camera that needs it is marked, the one that does not keeps watching", async () => {
+  const stateDir = await site({
+    detect: { capacityFps: 20, cameras: [{ cameraId: "cam-1" }, { cameraId: "cam-bad" }] },
+    credentials: { username: "", password: SECRET },
+    cameras: [
+      // Its substream carries its own login: never touches the site's.
+      { cameraId: "cam-1", url: `rtsp://admin:${SECRET}@10.0.0.1:554/main`, substreamUrl: `rtsp://admin:${SECRET}@10.0.0.1:554/sub` },
+      // No substreamUrl: its address has to be built from the site login,
+      // which has no username - buildRtspUrl refuses.
+      { cameraId: "cam-bad", host: "10.0.0.9", vendor: "hikvision" },
+    ],
+  });
+  const { workers, spawnFn } = fakeWorkers();
+  const logs = [];
+  const svc = await startDetect({
+    stateDir, spawnFn, restartMs: { first: 40, max: 200 }, killAfterMs: 100,
+    log: (level, msg, extra) => logs.push(JSON.stringify({ level, msg, ...extra })),
+  });
+  try {
+    eq(workers.map(cameraOf), ["cam-1"], "only cam-1 got a worker; cam-bad's address could not be built");
+    const bad = svc.cameras().find((c) => c.cameraId === "cam-bad");
+    if (bad === undefined) throw new Error("cam-bad missing from svc.cameras()");
+    if (bad.state === "watching" || bad.state === "unknown") throw new Error(`cam-bad should be reported unusable, not "${bad.state}"`);
+    const badLine = logs.find((l) => l.includes("cam-bad"));
+    if (!badLine) throw new Error("cam-bad's problem was never logged");
+    if (badLine.includes("10.0.0.9") || /rtsp:\/\//i.test(badLine) || badLine.includes(SECRET) || badLine.includes("admin")) {
+      throw new Error(`the log line must not carry cam-bad's address, user or password: ${badLine}`);
+    }
+    // cam-1 keeps detecting: its worker still turns frames into events.
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.9, box: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } }] });
+    await settle();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 1, "cam-1 still detects while cam-bad sits unusable");
+    db.close();
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    eq(health.cameras.find((c) => c.cameraId === "cam-bad").state, bad.state, "the same state reaches detect-health.json");
   } finally {
     await svc.stop();
   }

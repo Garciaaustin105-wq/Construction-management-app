@@ -24,6 +24,21 @@ check("a verbatim URL wins over any template", () => {
   if (r.url.includes("Streaming/Channels")) throw new Error("vendor template was applied anyway");
 });
 
+check("THE FEARED ONE: a site login with no user name leaves that camera unresolved; it does not throw out of the recorder", () => {
+  // Found 2026-09-23: buildRtspUrl throws for an empty user name, and the throw
+  // escaped start()'s camera loop, so one bad login stopped every camera.
+  const noUser = { username: "", password: "hunter2sec" };
+  let r;
+  try { r = resolveCameraUrl({ cameraId: "c9", host: "10.0.0.9", vendor: "hikvision" }, noUser); }
+  catch (err) { throw new Error(`threw instead of reporting the camera unresolved: ${err.message}`); }
+  eq(r.kind, "unresolved", "reported as a camera it cannot resolve");
+  if (typeof r.reason !== "string" || r.reason === "") throw new Error("no reason given");
+  if (r.reason.includes("hunter2sec")) throw new Error(`the reason carries the password: ${r.reason}`);
+  // A channel out of range is the same kind of refusal.
+  const r2 = resolveCameraUrl({ cameraId: "c9", host: "10.0.0.9", vendor: "hikvision", channel: 500 }, creds);
+  eq(r2.kind, "unresolved", "a channel out of range too");
+});
+
 check("a URL carrying its own credentials keeps them", () => {
   const r = resolveCameraUrl({ cameraId: "c1", url: "rtsp://bob:secret@10.0.0.5/live" }, creds);
   if (!r.url.includes("bob")) throw new Error("its own credentials were discarded");
