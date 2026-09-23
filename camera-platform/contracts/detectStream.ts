@@ -7,7 +7,7 @@
  */
 
 import { parseUtc } from "./time.js";
-import { Detection, DetectionEvent, Box, checkDetection, matchScore, MERGE_GAP_MS } from "./detection.js";
+import { Detection, DetectionEvent, Box, checkDetection, matchScore, travelFrom, MERGE_GAP_MS } from "./detection.js";
 
 export const MAX_WORKER_LINE_BYTES = 65536;
 export const MAX_DETECTIONS_PER_FRAME = 300;
@@ -197,6 +197,13 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
 export interface OpenEvent {
   id: string;
   event: DetectionEvent;
+  /**
+   * The box of the sighting that opened the event: what event.travel is
+   * measured from. Carried here because the streaming fold never sees the
+   * event's earlier sightings again, and the batch fold keeps the same thing,
+   * so the two measure travel from the same place.
+   */
+  firstBox: Box;
   lastBox: Box;
   lastMs: number;
 }
@@ -231,7 +238,9 @@ export function emptyFold(): FoldState {
  * finished events, in exactly the order they were touched or finished.
  * The events produced match foldDetections' output when fed the same input,
  * species included: it follows the most confident sighting there too, so the
- * word and the crop (cut at bestUtc) always describe the same frame.
+ * word and the crop (cut at bestUtc) always describe the same frame. Travel
+ * included too, to the bit: both folds measure it with the same travelFrom
+ * from the same first box, and keep the largest.
  *
  * `assigned` is the id of the event each input detection joined or opened,
  * one per detection, in INPUT order (not the sorted order the fold walks).
@@ -251,6 +260,7 @@ export function advanceFold(
   const newOpen = state.open.map((oe) => ({
     id: oe.id,
     event: { ...oe.event, bestBox: { ...oe.event.bestBox } },
+    firstBox: { ...oe.firstBox },
     lastBox: { ...oe.lastBox },
     lastMs: oe.lastMs,
   }));
@@ -310,6 +320,9 @@ export function advanceFold(
         bestConfidence: d.confidence,
         bestBox: { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h },
         bestUtc: d.atUtc,
+        // 0, the same call foldDetections makes: the first sighting is where
+        // the thing started, and the call refuses a box with no diagonal.
+        travel: travelFrom(d.box, d.box),
       };
       if (d.kind === "plate") {
         event.plate = d.plate;
@@ -321,6 +334,7 @@ export function advanceFold(
       const oe: OpenEvent = {
         id,
         event,
+        firstBox: { ...d.box },
         lastBox: { ...d.box },
         lastMs: atMs,
       };
@@ -333,6 +347,13 @@ export function advanceFold(
       ev.count += 1;
       match.lastBox = { ...d.box };
       match.lastMs = atMs;
+      // The farthest it has been, not where it is now, exactly as
+      // foldDetections keeps it: a thing that walked in and back out still
+      // walked.
+      const travel = travelFrom(match.firstBox, d.box);
+      if (travel > ev.travel) {
+        ev.travel = travel;
+      }
 
       if (d.confidence > ev.bestConfidence) {
         ev.bestConfidence = d.confidence;

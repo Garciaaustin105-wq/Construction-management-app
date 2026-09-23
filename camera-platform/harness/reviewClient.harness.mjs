@@ -2,10 +2,16 @@
  *  failures feared: a gap drawn too thin to see (so the strip says "recorded"
  *  over a hole), today's future drawn as a gap, a URL built from unchecked
  *  response text, and the storage path reaching the page. */
+// localizeNoticeLines (below) reads the system's local time, exactly as the
+// browser it runs in would — like the page's own localTime, it takes no zone
+// argument. Pinned here, before any Date is built, the same way
+// reviewPage.harness.mjs pins it for the same reason: a machine in another
+// zone must see the same "9/22, 5:55 PM" this suite asserts.
+process.env.TZ = "America/New_York";
 import {
   layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback,
   formatBytes, planExportOffer, monthCalendar, timeOptions, rangeAround, friendlyProblem,
-  clipProgress, recordedDays,
+  clipProgress, recordedDays, eventMarkers, hiddenNote, localizeNoticeLines, answerSummary,
 } from "../agent/ui/review-client.mjs";
 import { check, eq, same, report } from "./_assert.mjs";
 
@@ -730,6 +736,80 @@ await check("month: a run it cannot read is ignored, and refusals are values", (
     { days: ["2026-09-11"] }, "only what reads as a run counts");
   for (const [what, args] of [["runs not an array", [{}, NY]], ["not a zone", [[], "Mars/Olympus"]],
     ["no zone", [[], undefined]], ["nothing", []]]) eq(isError(recordedDays(...args)), true, what);
+});
+
+/* ── known objects (D: KNOWN-OBJECTS-SPEC.md) ─────────────────────────────
+ * The failures feared here: a mark that only LOOKS unsuppressed because the
+ * field it should carry is missing rather than null; a wrong plural on the
+ * hidden count; a notice's UTC instant either left unconverted or converted
+ * to garbage; and an owner's answer read from a shape close to but not
+ * exactly the one contracts/knownObjects.ts actually produces. ────────────── */
+
+// === eventMarkers: suppressedBy passthrough ===
+
+await check("markers: suppressedBy is always present, never merely absent", () => {
+  const events = [
+    { id: "e1", cameraId: "cam-1", kind: "person", firstUtc: "2026-09-22T22:00:00Z", lastUtc: "2026-09-22T22:00:04Z", suppressedBy: "cam-1:person:1758000000000" },
+    { id: "e2", cameraId: "cam-1", kind: "person", firstUtc: "2026-09-22T22:05:00Z", lastUtc: "2026-09-22T22:05:04Z", suppressedBy: null },
+    { id: "e3", cameraId: "cam-1", kind: "person", firstUtc: "2026-09-22T22:10:00Z", lastUtc: "2026-09-22T22:10:04Z" },
+  ];
+  const { markers } = eventMarkers(events, "2026-09-22T00:00:00Z", "2026-09-23T00:00:00Z", null);
+  eq(markers.map((m) => m.suppressedBy), ["cam-1:person:1758000000000", null, null],
+    "set, cleared, and never-set events read the same way: a string or null, never undefined");
+});
+
+// === hiddenNote ===
+
+await check("hiddenNote: a plain count, singular and plural, nothing for zero or bad input", () => {
+  eq(hiddenNote(1), "1 hidden - known object", "one");
+  eq(hiddenNote(3), "3 hidden - known objects", "several");
+  eq(hiddenNote(0), null, "THE FEARED ONE: zero hidden says nothing, rather than an empty-looking row");
+  for (const bad of [-1, 1.5, NaN, Infinity, "3", null, undefined, {}]) {
+    eq(hiddenNote(bad), null, `refused: ${String(bad)}`);
+  }
+});
+
+// === localizeNoticeLines ===
+
+await check("localizeNoticeLines: every UTC instant in a line becomes the viewer's local time", () => {
+  const lines = [
+    "Seen as a person 34 times at the same spot, never moving, from 2026-09-22T21:55:07.748Z to 2026-09-23T00:20:31.210Z.",
+    "Highest score as a person: 0.80.",
+  ];
+  const out = localizeNoticeLines(lines);
+  eq(out[0], "Seen as a person 34 times at the same spot, never moving, from 9/22, 5:55 PM to 9/22, 8:20 PM.",
+    `converted: ${out[0]}`);
+  eq(out[1], "Highest score as a person: 0.80.", "a line with no instant in it is unchanged");
+});
+
+await check("localizeNoticeLines: midnight and noon read as 12, not 0; refusals are values", () => {
+  eq(localizeNoticeLines(["at 2026-09-22T04:00:00.000Z"])[0], "at 9/22, 12:00 AM", "midnight local");
+  eq(localizeNoticeLines(["at 2026-09-22T16:00:00.000Z"])[0], "at 9/22, 12:00 PM", "noon local");
+  eq(localizeNoticeLines([7, null, undefined])[0], "", "a non-string line becomes empty, not thrown");
+  eq(localizeNoticeLines([7, null, undefined]).length, 3, "one output per input line, in order");
+  eq(localizeNoticeLines(null), [], "not an array at all: nothing, never a throw");
+  eq(localizeNoticeLines("a string"), [], "a bare string is not a list of lines");
+});
+
+// === answerSummary ===
+
+await check("answerSummary: plain words, never the two verdicts a click would have shown", () => {
+  const belongs = answerSummary({ belongs: true, atUtc: "2026-09-23T01:10:00.000Z", by: "tech" });
+  eq(belongs, "tech said it belongs there, 9/22, 9:10 PM.", belongs);
+  const not = answerSummary({ belongs: false, atUtc: "2026-09-23T01:10:00.000Z", by: "austin" });
+  eq(not, "austin said it should not be there, 9/22, 9:10 PM.", not);
+  eq(/umbrella|false|fake/i.test(belongs + not), false, "no verdict word sneaks in either way");
+});
+
+await check("answerSummary: no answer yet, or one that cannot be trusted, is null", () => {
+  for (const bad of [
+    null, undefined, "answered", 7, [],
+    { belongs: true, atUtc: "2026-09-23T01:10:00.000Z", by: "" },
+    { belongs: "yes", atUtc: "2026-09-23T01:10:00.000Z", by: "tech" },
+    { belongs: true, atUtc: "soon", by: "tech" },
+    { belongs: true, by: "tech" },
+    { atUtc: "2026-09-23T01:10:00.000Z", by: "tech" },
+  ]) eq(answerSummary(bad), null, `refused: ${JSON.stringify(bad) ?? String(bad)}`);
 });
 
 report("reviewClient");

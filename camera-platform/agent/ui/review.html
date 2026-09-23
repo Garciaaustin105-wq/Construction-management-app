@@ -314,6 +314,59 @@
     color: #e8eaed;
     font: inherit;
   }
+  /* Known objects (KNOWN-OBJECTS-SPEC.md): a recurring detection at one spot,
+     hidden automatically once it is learned -- nobody clicks before it
+     applies (Austin, 2026-09-20). Greyed, not removed from the legend's own
+     colours: an operator must still see WHAT it thought it saw, only that it
+     is not being counted right now. */
+  .hiddenRow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 8px; color: #b6bcc4; font-size: 13px; }
+  .hiddenRow button {
+    min-height: 36px;
+    padding: 4px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .hiddenRow button[aria-pressed="true"] { border-color: #8ab4f8; background: #33415c; }
+  /* Declared after .mark.person/.vehicle/.plate above, so it wins on the tie
+     (same specificity, later rule): a suppressed mark of any kind greys out. */
+  .mark.suppressed { background: #6b7078; opacity: 0.6; }
+  .mark.suppressed.here { background: #fff; opacity: 1; }
+  .eventTiles button.suppressed { opacity: 0.55; }
+  .eventTiles button.suppressed .what { font-style: italic; }
+  .knownObjects { margin: 14px 0 0; }
+  .knownObjects h2 { margin: 0 0 8px; font-size: 16px; }
+  .knownCard {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px;
+    margin: 0 0 10px;
+    border: 1px solid #2c2f36;
+    border-radius: 8px;
+    background: #1b1d22;
+  }
+  .knownCard .thumbBox { display: block; width: 120px; aspect-ratio: 4 / 3; flex: 0 0 auto; border-radius: 4px; overflow: hidden; background: #22242a; }
+  .knownCard .thumb { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .knownCard .thumb[hidden] { display: none; }
+  .knownBody { flex: 1 1 200px; min-width: 200px; }
+  .knownNotice { margin: 0 0 8px; color: #d7dadf; font-size: 13px; }
+  .knownNotice p { margin: 0 0 2px; }
+  .knownActions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .knownActions button {
+    min-height: 40px;
+    padding: 6px 12px;
+    border: 1px solid #4a4f58;
+    border-radius: 8px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .knownAnswer { color: #9fe0a8; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -358,6 +411,12 @@
      has no detector, or when the account may not see events: an empty row
      here would read as "nothing happened", which is a different claim. -->
 <div class="events" id="events" hidden>
+  <!-- Known objects (KNOWN-OBJECTS-SPEC.md): shown only once something is
+       actually hidden, never as an empty row asserting "0 hidden". -->
+  <div class="hiddenRow" id="hiddenRow" hidden>
+    <span id="hiddenNote"></span>
+    <button id="hiddenToggle" type="button" aria-pressed="false">Show hidden</button>
+  </div>
   <div class="eventBar">
     <button id="prevEvent" type="button">Previous event</button>
     <button id="nextEvent" type="button">Next event</button>
@@ -367,6 +426,15 @@
   </div>
   <div class="eventTiles" id="eventTiles"></div>
   <div class="eventNote" id="eventNote"></div>
+</div>
+
+<!-- This camera's known objects (KNOWN-OBJECTS-SPEC.md): what has been
+     learned at this spot, a measurement never a verdict (rule 11), and the
+     two buttons that record the owner's own answer. Not tied to the day
+     picker above -- these are active for the camera, not for a date. -->
+<div class="knownObjects" id="knownObjects" hidden>
+  <h2>Known objects</h2>
+  <div id="knownObjectsList"></div>
 </div>
 
 <video id="video" controls playsinline></video>
@@ -448,7 +516,8 @@
 <script type="module">
 import { layoutCoverage, fractionToInstant, instantToFraction, describeGap, planPlayback, planExportOffer,
   monthCalendar, timeOptions, recordedDays, rangeAround, friendlyProblem, clipProgress,
-  eventMarkers, stepToEvent, seekInstantFor, markerSummary, refreshDecision, followToday } from '/ui/review-client.js';
+  eventMarkers, stepToEvent, seekInstantFor, markerSummary, refreshDecision, followToday,
+  hiddenNote, localizeNoticeLines, answerSummary } from '/ui/review-client.js';
 import { PLAYBACK_RATES, nextRate, rateLabel } from '/ui/playback.js';
 import { startAlertBanner } from '/ui/alert-banner.js';
 
@@ -509,6 +578,11 @@ const el = {
   filterPlate: document.getElementById('filterPlate'),
   eventTiles: document.getElementById('eventTiles'),
   eventNote: document.getElementById('eventNote'),
+  hiddenRow: document.getElementById('hiddenRow'),
+  hiddenNote: document.getElementById('hiddenNote'),
+  hiddenToggle: document.getElementById('hiddenToggle'),
+  knownObjects: document.getElementById('knownObjects'),
+  knownObjectsList: document.getElementById('knownObjectsList'),
 };
 
 // What is on screen now. `requested` is the /timeline body's requested range
@@ -526,12 +600,22 @@ const el = {
 // one is switched off). `kinds` is which are shown, `here` is the id of the
 // event the buttons last jumped to, and `eventSeq` drops a slow /events
 // answer for a day already left, exactly as loadSeq does for the timeline.
+// `hiddenMode` is what the last /events fetch asked for: 'exclude' (the
+// page's own default -- KNOWN-OBJECTS-SPEC.md) or 'include', flipped by the
+// hidden-row toggle. `hiddenCount` is the recorder's own count of suppressed
+// events matching this window, whatever hiddenMode was, so the row can say
+// "3 hidden" even while hiding them. `knownObjects` is this camera's known
+// objects (not day-scoped: GET /known-objects has no window), reloaded
+// alongside every loadDay(); knownSeq drops a slow answer for a camera
+// already left, exactly as eventSeq does for /events.
 const view = { requested: null, playing: null, loadSeq: 0, playSeq: 0, exportSeq: 0,
   calYear: 0, calMonth: 0, recordedDays: [], monthSeq: 0,
   sheetMode: null, sheetLength: 5, sheetWindow: null,
   events: [], markers: [], kinds: ['person', 'vehicle', 'plate'], here: null,
   eventSeq: 0, eventsTruncated: false, lastLoadMs: null, lastRefresh: null,
-  followDay: null, lastFollow: null };
+  followDay: null, lastFollow: null,
+  hiddenMode: 'exclude', hiddenCount: 0,
+  knownObjects: [], knownSeq: 0 };
 
 // Every text that came from the server or a camera goes in with textContent.
 // Nothing in this page parses a string as HTML.
@@ -720,6 +804,10 @@ async function loadDay() {
   // After the coverage bar: drawStrip clears the strip, marks included, so
   // the marks must be drawn onto a bar that is already there.
   loadEvents(win);
+  // Not windowed by this day at all (KNOWN-OBJECTS-SPEC.md: GET /known-objects
+  // takes only a camera), but reloaded here too so a camera or day change, and
+  // every refresh tick, keeps it current without a click of its own.
+  loadKnownObjects();
 }
 
 /**
@@ -746,7 +834,7 @@ async function loadEvents(win) {
   // marks and counts sit under today's bar for as long as the answer takes,
   // which is the same lie as a slow timeline drawn over the day you moved to.
   resetEvents();
-  const q = new URLSearchParams({ camera: el.camera.value, start: win.startUtc, end: win.endUtc });
+  const q = new URLSearchParams({ camera: el.camera.value, start: win.startUtc, end: win.endUtc, hidden: view.hiddenMode });
   let body;
   let reached = true;
   try {
@@ -758,6 +846,7 @@ async function loadEvents(win) {
   if (seq !== view.eventSeq) return;
   view.events = [];
   view.eventsTruncated = false;
+  view.hiddenCount = 0;
   view.here = null;
   if (!reached || !body || typeof body !== 'object' || body.ok === false || body.available === false) {
     // Nothing here is a page error: the timeline itself is fine, and the
@@ -768,6 +857,7 @@ async function loadEvents(win) {
   }
   view.events = Array.isArray(body.events) ? body.events : [];
   view.eventsTruncated = body.truncated === true;
+  view.hiddenCount = typeof body.hiddenCount === 'number' ? body.hiddenCount : 0;
   el.events.hidden = false;
   drawEvents();
 }
@@ -778,9 +868,11 @@ function resetEvents() {
   view.markers = [];
   view.here = null;
   view.eventsTruncated = false;
+  view.hiddenCount = 0;
   el.events.hidden = true;
   el.eventTiles.textContent = '';
   el.eventNote.textContent = '';
+  el.hiddenRow.hidden = true;
   for (const c of Array.from(el.strip.childNodes)) {
     if (c !== el.playhead && c.className && String(c.className).startsWith('mark')) el.strip.removeChild(c);
   }
@@ -826,6 +918,18 @@ function drawEvents() {
   if (view.eventsTruncated) bits.push('This is as many as the recorder will send at once; narrow the day to see the rest.');
   if (all.dropped.unreadable > 0) bits.push(all.dropped.unreadable + ' could not be read and are not shown.');
   el.eventNote.textContent = bits.join(' ');
+
+  // Known objects (KNOWN-OBJECTS-SPEC.md): the row only appears once there is
+  // something to say (hiddenNote returns null for 0), and the toggle's own
+  // label always says what clicking it would do next, not the state it is in.
+  const note = hiddenNote(view.hiddenCount);
+  el.hiddenRow.hidden = note === null;
+  if (note !== null) {
+    el.hiddenNote.textContent = note;
+    const showing = view.hiddenMode === 'include';
+    el.hiddenToggle.setAttribute('aria-pressed', showing ? 'true' : 'false');
+    el.hiddenToggle.textContent = showing ? 'Hide known objects' : 'Show hidden';
+  }
   updateStepButtons();
 }
 
@@ -840,9 +944,9 @@ function drawMarks(markers) {
   }
   for (const m of markers) {
     const div = document.createElement('div');
-    div.className = 'mark ' + m.kind + (m.id === view.here ? ' here' : '');
+    div.className = 'mark ' + m.kind + (m.suppressedBy !== null ? ' suppressed' : '') + (m.id === view.here ? ' here' : '');
     div.style.left = (m.fraction * 100) + '%';
-    div.title = eventWords(m);
+    div.title = eventWords(m) + (m.suppressedBy !== null ? ' (hidden: known object)' : '');
     div.addEventListener('click', (event) => {
       // The strip itself seeks to wherever it was clicked; a mark is more
       // specific than that, so it must not do both.
@@ -914,7 +1018,7 @@ function drawTiles(markers) {
   for (const m of markers) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = m.kind + (m.id === view.here ? ' here' : '');
+    b.className = m.kind + (m.suppressedBy !== null ? ' suppressed' : '') + (m.id === view.here ? ' here' : '');
     const thumbBox = document.createElement('span');
     thumbBox.className = 'thumbBox';
     const img = document.createElement('img');
@@ -934,7 +1038,7 @@ function drawTiles(markers) {
     when.textContent = localTime(m.atUtc);
     const what = document.createElement('span');
     what.className = 'what';
-    what.textContent = eventWords(m);
+    what.textContent = eventWords(m) + (m.suppressedBy !== null ? ' (hidden: known object)' : '');
     b.appendChild(thumbBox);
     b.appendChild(when);
     b.appendChild(what);
@@ -956,6 +1060,134 @@ function eventWords(m) {
     ? Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' s'
     : Math.max(seconds, 1) + ' s';
   return what + (m.plate ? ' ' + m.plate : '') + ', ' + localTime(m.atUtc) + ', ' + how;
+}
+
+/**
+ * This camera's known objects (KNOWN-OBJECTS-SPEC.md), refreshed alongside
+ * loadDay() rather than on its own timer — one fetch per redraw is enough for
+ * a list that changes on the order of hours, and it keeps this section from
+ * needing its own retry/staleness logic on top of the one loadDay() already
+ * has. Not windowed by day at all: GET /known-objects takes only `camera`.
+ */
+async function loadKnownObjects() {
+  const seq = ++view.knownSeq;
+  const q = new URLSearchParams({ camera: el.camera.value });
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/known-objects?' + q.toString());
+    body = await res.json();
+  } catch (e) {
+    reached = false;
+  }
+  if (seq !== view.knownSeq) return;
+  if (!reached || !body || typeof body !== 'object' || body.ok === false || !Array.isArray(body.objects)) {
+    // Unreadable is not the same as "none exist" (rule 5's spirit), but with
+    // nothing trustworthy to show, the safe thing on screen is nothing at
+    // all — the same choice /events makes for a recorder it cannot reach.
+    view.knownObjects = [];
+    renderKnownObjects();
+    return;
+  }
+  // Only what is actually hiding something right now: a lapsed object's
+  // notice is history, not a question for today (KNOWN-OBJECTS-SPEC.md D).
+  view.knownObjects = body.objects.filter((o) => o !== null && typeof o === 'object' && o.state === 'active');
+  renderKnownObjects();
+}
+
+/**
+ * One card per active known object: its sample crop, its measurement lines
+ * (localised), and either the two answer buttons or, once answered, the
+ * plain-words record of what was said. No verdict words of this page's own
+ * (rule 11) — only knownObjectNotice's own lines and answerSummary's own
+ * words ever appear here.
+ */
+function renderKnownObjects() {
+  el.knownObjectsList.textContent = '';
+  el.knownObjects.hidden = view.knownObjects.length === 0;
+  for (const o of view.knownObjects) {
+    const card = document.createElement('div');
+    card.className = 'knownCard';
+
+    const thumbBox = document.createElement('span');
+    thumbBox.className = 'thumbBox';
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.alt = '';
+    // Same reasoning as an event tile's thumbnail: hidden until it loads, so
+    // there is never a broken-image icon for a crop nobody asked to see yet.
+    img.hidden = true;
+    img.addEventListener('load', () => { img.hidden = false; });
+    img.addEventListener('error', () => { img.hidden = true; });
+    thumbBox.appendChild(img);
+    if (typeof o.sampleEventId === 'string' && o.sampleEventId !== '') {
+      img.src = '/event-crop?id=' + encodeURIComponent(o.sampleEventId);
+    }
+    card.appendChild(thumbBox);
+
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'knownBody';
+    const notice = document.createElement('div');
+    notice.className = 'knownNotice';
+    for (const line of localizeNoticeLines(Array.isArray(o.notice) ? o.notice : [])) {
+      const p = document.createElement('p');
+      p.textContent = line;
+      notice.appendChild(p);
+    }
+    bodyEl.appendChild(notice);
+
+    const already = answerSummary(o.answer);
+    if (already !== null) {
+      const answered = document.createElement('div');
+      answered.className = 'knownAnswer';
+      answered.textContent = already;
+      bodyEl.appendChild(answered);
+    } else {
+      const actions = document.createElement('div');
+      actions.className = 'knownActions';
+      const belongsBtn = document.createElement('button');
+      belongsBtn.type = 'button';
+      belongsBtn.textContent = 'It belongs there';
+      const shouldNotBtn = document.createElement('button');
+      shouldNotBtn.type = 'button';
+      shouldNotBtn.textContent = 'It should not be there';
+      const buttons = [belongsBtn, shouldNotBtn];
+      for (const [button, belongs] of [[belongsBtn, true], [shouldNotBtn, false]]) {
+        button.addEventListener('click', () => { sendKnownObjectAnswer(o.id, belongs, buttons); });
+      }
+      actions.appendChild(belongsBtn);
+      actions.appendChild(shouldNotBtn);
+      bodyEl.appendChild(actions);
+    }
+
+    card.appendChild(bodyEl);
+    el.knownObjectsList.appendChild(card);
+  }
+}
+
+/**
+ * Record the owner's answer (POST /known-objects/answer) and redraw from
+ * what the recorder actually stored, rather than trusting the click alone —
+ * a second browser tab, or camctl, may answer the same object first.
+ */
+async function sendKnownObjectAnswer(id, belongs, buttons) {
+  for (const b of buttons) b.disabled = true;
+  let ok = false;
+  try {
+    const res = await fetch('/known-objects/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, belongs }),
+    });
+    ok = res.ok;
+  } catch (e) {
+    ok = false;
+  }
+  if (ok) {
+    await loadKnownObjects();
+  } else {
+    for (const b of buttons) b.disabled = false;
+  }
 }
 
 /** The instant on screen: where the video is, or the start of the day. */
@@ -1358,6 +1590,17 @@ function wireEvents() {
       drawEvents();
     });
   }
+  // The hidden-events toggle (KNOWN-OBJECTS-SPEC.md): flips what /events is
+  // asked for and re-fetches, rather than filtering view.events locally --
+  // "include" is a different question to the recorder (hiddenCount, and the
+  // events themselves) and must be answered by asking it again, the same way
+  // a kind filter is answered locally only because every kind was already
+  // fetched (see loadEvents's own comment above).
+  el.hiddenToggle.addEventListener('click', () => {
+    view.hiddenMode = view.hiddenMode === 'exclude' ? 'include' : 'exclude';
+    view.here = null;
+    if (view.requested !== null) loadEvents(view.requested);
+  });
   el.video.addEventListener('ended', () => {
     if (view.playing !== null) {
       playAt(view.playing.segmentEndUtc);

@@ -1067,3 +1067,37 @@ AI**, then `camctl score`, are still the only way to put a number on that.
 **Recurring false alarms, now named:** the patio umbrella, the fence-post cap
 (both read as people), and the parked car across the street, which triggers
 again and again and splits into several events when the gate holds on it.
+
+## Bench log — 2026-09-23, known objects: hiding a recurring still false detection
+
+**Why.** The furled patio umbrella was stored as a person 17 times in 30
+minutes on 09-22 (0.50-0.79, the same box every time), after a spray bottle
+(77 in 13 h), a fence-post cap and a parked SUV recounted all night. Austin's
+calls: suppression applies on its own, no click (09-20); moving or covering
+the object is never the fix, because a real site cannot be tidied; the
+notification is the feature and its answer is the training label.
+
+**How it decides** (`contracts/knownObjects.ts`, on top of `fixtures.ts`):
+every event now records `travel`, how far its box centre got from where it
+was first seen, in first-box diagonals. A thing is learned from at least 3
+events over at least 2 hours, all on the same spot (IoU 0.8), none that
+travelled half a diagonal, sizes that agree (the doorway guard). A new event
+is hidden only on that spot, only if it did not travel, and only if it scored
+**0.85 or less**. Hidden events are flagged, never deleted, and shown behind
+a toggle on Review. An object lapses after a day unseen or a camera change.
+
+**The ceiling was measured into existence.** Austin first chose to build
+without one (09-22: no far person measured). The build then showed the cost:
+a still person at a fixed post - a cashier at a till - seen in separate events
+starts each one already standing, so travel cannot protect them, and they
+were learned. Real people on this bench scored 0.87-0.95, the false ones
+0.50-0.79; Austin set 0.85 (09-23). Still open: a still person scoring under
+0.85 at a known object's exact spot and size - staged far walk-bys test it.
+
+**Learning starts from events recorded after this install**: older rows have
+no travel, and unknown is never read as "did not move". The umbrella is
+learned after it recurs for two hours on the new build.
+
+**The bench view is lower than a typical install** (little headroom, lots of
+sky, backlit at dusk), because the cable does not reach a higher mount; that
+makes it a harder test for false alarms, not an easier one.

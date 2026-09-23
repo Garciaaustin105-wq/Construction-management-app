@@ -949,7 +949,8 @@ export const MARKER_LEAD_MS = 3000;
  * reads where the thing was, to the second.
  *
  * events: an array of { id, cameraId, kind, firstUtc, lastUtc, count,
- *   bestConfidence, bestBox, bestUtc, plate? }, as the route returns it.
+ *   bestConfidence, bestBox, bestUtc, plate?, suppressedBy? }, as the route
+ *   returns it.
  * startUtc / endUtc: the day's window as ISO strings. kinds: null / undefined
  *   means every kind; an array keeps only those kinds. Anything unusable — an
  *   unreadable or missing time, an end before its start, a kind that is not
@@ -959,12 +960,14 @@ export const MARKER_LEAD_MS = 3000;
  *
  * Returns { markers, dropped, badWindow }:
  * - markers: array of { id, cameraId, kind, atUtc, untilUtc, fraction,
- *   endFraction, clampedStart, clampedEnd, count, bestConfidence, bestUtc },
- *   plus plate only when the event had one.
+ *   endFraction, clampedStart, clampedEnd, count, bestConfidence, bestUtc,
+ *   suppressedBy }, plus plate only when the event had one.
  *   atUtc/untilUtc are the event's real times, unchanged. fraction/endFraction
  *   are 0..1 positions in the window, clamped when the event runs past either
  *   edge, with clampedStart/clampedEnd saying so. Sorted by time, ties broken
- *   by id.
+ *   by id. suppressedBy is the known object's id when a known object hid this
+ *   event (agent/known-objects.mjs), null otherwise — always present, unlike
+ *   plate, so the page can grey a mark without guessing from its absence.
  * - dropped: { outsideWindow, unreadable, filteredOut } — counts.
  * - badWindow: true when the window is not two readable instants with end
  *   after start; no markers are returned and all events go into dropped.
@@ -1080,6 +1083,9 @@ export function eventMarkers(events, startUtc, endUtc, kinds) {
       count: event.count,
       bestConfidence: event.bestConfidence,
       bestUtc: event.bestUtc,
+      // Always present (never left absent like plate): a caller that forgets
+      // to check it must see null, not undefined read as "not suppressed".
+      suppressedBy: typeof event.suppressedBy === "string" ? event.suppressedBy : null,
     };
 
     if (typeof event.plate === "string") {
@@ -1199,6 +1205,74 @@ export function markerSummary(markers) {
   }
 
   return { person, vehicle, plate, total: Array.isArray(markers) ? markers.length : 0 };
+}
+
+/**
+ * The "N hidden" line beside the day's events (D: REVIEW-UI-SPEC known
+ * objects). Pure wording only — the count itself comes from /events'
+ * hiddenCount, never recomputed here from the marks on screen, because the
+ * toggle can be off and the marks then would not include the hidden ones at
+ * all: recounting from what is drawn would read "0 hidden" the moment the
+ * thing it is reporting is working.
+ *
+ * null for anything that is not a whole number >= 0 (never "NaN hidden"), and
+ * for 0 (nothing to say — the row is left off the page rather than shown
+ * empty, so an operator scanning for this line only ever sees it when it
+ * means something).
+ */
+export function hiddenNote(hiddenCount) {
+  if (typeof hiddenCount !== "number" || !Number.isInteger(hiddenCount) || hiddenCount < 0) return null;
+  if (hiddenCount === 0) return null;
+  return `${hiddenCount} hidden - known object${hiddenCount === 1 ? "" : "s"}`;
+}
+
+/**
+ * knownObjectNotice's lines (contracts/knownObjects.ts) carry every instant as
+ * the stored ISO UTC string, verbatim, on purpose: the contract measures in
+ * UTC and never guesses a viewer's zone. This is the other half — finding
+ * each one and showing it in the zone the phone in Austin's hand is actually
+ * set to, the same way every other time on this page is local (localTime,
+ * above). Never a second measurement: only the instant already in the text is
+ * reformatted, so this can never disagree with what the contract measured.
+ *
+ * A line that is not a string, or that contains no ISO instant at all, is
+ * passed through unchanged (or becomes "" for a non-string) rather than
+ * refused: a notice is a list of independent lines, and one being odd must
+ * not blank the rest of what was measured.
+ */
+const NOTICE_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
+
+export function localizeNoticeLines(lines) {
+  if (!Array.isArray(lines)) return [];
+  return lines.map((line) => {
+    if (typeof line !== "string") return "";
+    return line.replace(NOTICE_INSTANT, (iso) => {
+      const ms = Date.parse(iso);
+      if (Number.isNaN(ms)) return iso;
+      const d = new Date(ms);
+      const hours24 = d.getHours();
+      const hours12 = ((hours24 + 11) % 12) + 1;
+      const ampm = hours24 < 12 ? "AM" : "PM";
+      const minutes = String(d.getMinutes()).padStart(2, "0");
+      return `${d.getMonth() + 1}/${d.getDate()}, ${hours12}:${minutes} ${ampm}`;
+    });
+  });
+}
+
+/**
+ * The line shown once a known object has an owner's answer, in place of the
+ * two buttons — plain words, never the verdict a click would have been
+ * (rule 11: the answer is a training label to keep, not something this page
+ * acts on). null when there is no answer yet, or it cannot be read, so the
+ * page's only decision is "show the buttons, or show this instead".
+ */
+export function answerSummary(answer) {
+  if (!isNonArrayObject(answer)) return null;
+  if (typeof answer.belongs !== "boolean") return null;
+  if (typeof answer.by !== "string" || answer.by === "") return null;
+  const [whenLocal] = localizeNoticeLines([answer.atUtc]);
+  if (typeof whenLocal !== "string" || whenLocal === "" || whenLocal === answer.atUtc) return null;
+  return `${answer.by} said it ${answer.belongs ? "belongs there" : "should not be there"}, ${whenLocal}.`;
 }
 
 /** How long a drawn day may go unrefreshed before it is asked for again.

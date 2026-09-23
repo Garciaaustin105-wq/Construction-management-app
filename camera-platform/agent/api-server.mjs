@@ -25,7 +25,9 @@ import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs
 // with no runtime identity).
 import { parseWindow, parseInstant, parseSegmentId, isCameraId } from '../dist/apiQuery.js';
 import { parseEventKinds, parseEventLimit } from '../dist/eventQuery.js';
-import { openEventsDb } from './events-db.mjs';
+import { openEventsDb, HIDDEN_MODES } from './events-db.mjs';
+import { createKnownObjectsStore } from './known-objects.mjs';
+import { knownObjectNotice, answerKnownObject } from '../dist/knownObjects.js';
 import { planByteRange, ByteRangeError } from '../dist/httpRange.js';
 import { coverageFromIndex, resolvePlayback, IndexCoverageError } from '../dist/indexCoverage.js';
 import { cameraView } from '../dist/cameraView.js';
@@ -70,6 +72,72 @@ const EVENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}:(?:0|[1-9][0-9]*):[1-9][0-9]*$/;
 
 function isEventId(raw) {
   return typeof raw === 'string' && EVENT_ID_PATTERN.test(raw);
+}
+
+/**
+ * The `hidden` param on GET /events: whether suppressed (known-object) events
+ * are excluded, included, or the only ones shown. Validated the same shape as
+ * parseEventKinds (contracts/eventQuery.ts) — a value this server does not
+ * recognise is refused, never silently read as one of the three, because
+ * "exclude" for an unrecognised mode would quietly hide events an operator
+ * asked to see, and "include" for one would un-hide events they asked to have
+ * filtered out. Blank or absent means "include", matching events-db.mjs's own
+ * default (inRange) so every caller written before suppression existed keeps
+ * seeing everything; the Review page passes "exclude" itself when it wants the
+ * quieter view (agent/ui/review.html).
+ */
+function parseHiddenMode(raw) {
+  if (raw === null || raw === undefined) return 'include';
+  if (typeof raw !== 'string') {
+    return { ok: false, status: 400, code: 'bad_hidden', message: `hidden must be a string, not a ${typeof raw}` };
+  }
+  const trimmed = raw.trim();
+  if (trimmed === '') return 'include';
+  if (!HIDDEN_MODES.includes(trimmed)) {
+    return { ok: false, status: 400, code: 'bad_hidden', message: `unknown hidden mode: ${JSON.stringify(trimmed)}; allowed: ${HIDDEN_MODES.join(', ')}` };
+  }
+  return trimmed;
+}
+
+const KNOWN_OBJECTS_BODY_BYTES = 16 * 1024;
+
+/**
+ * A JSON object body for POST /known-objects/answer, or a refusal already
+ * sent (returns null). The same shape as the other owners' body readers
+ * (agent/auth.mjs, agent/camera-settings.mjs) — this file duplicates it
+ * rather than importing theirs, matching how each of those already
+ * duplicates it rather than sharing one: one owner per file (rule 3), and a
+ * shared helper would give this route a dependency on a module it does not
+ * own.
+ */
+async function readKnownObjectsBody(req, res) {
+  if (!/^application\/json(;|$)/i.test(String(req.headers['content-type'] ?? ''))) {
+    sendError(res, 415, 'json_required', 'send application/json');
+    return null;
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > KNOWN_OBJECTS_BODY_BYTES) {
+      sendError(res, 413, 'body_too_large', 'request body too large');
+      req.destroy();
+      return null;
+    }
+    chunks.push(chunk);
+  }
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    sendError(res, 400, 'bad_json', 'the request body is not JSON');
+    return null;
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    sendError(res, 400, 'bad_json', 'the request body must be a JSON object');
+    return null;
+  }
+  return body;
 }
 
 // The UI routes → files under agent/ui. A map, not string handling of the
@@ -336,6 +404,16 @@ export function createApiServer({
   // header shape, refusal mapping) with a fake cutter, the same way spawnFn
   // above lets it prove live.mjs without a real ffmpeg.
   createEventCrops = defaultCreateEventCrops,
+  // The route policy (contracts/routeAccess.ts, compiled to decideRoute):
+  // real and unconditional in every deployment. Overridable ONLY so
+  // harness/knownObjectsApi.harness.mjs (this file's own suite) can prove
+  // GET /known-objects and POST /known-objects/answer end to end before
+  // routeAccess.ts carries a rule for them. Adding that rule is not a change
+  // to this file (build rule 3, one owner per file, and five agents share
+  // this checkout right now) — see the report. Passing anything here outside
+  // a test would turn off every other route's protection too, so nothing in
+  // this file ever does.
+  decideRouteImpl = decideRoute,
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -384,6 +462,14 @@ export function createApiServer({
     rootFor: (file, cameraId) => rootOf(index.get(file.path), cameraId, { config, driveAssignment }),
   });
 
+  // Known objects (agent/known-objects.mjs): the store the detector learns
+  // into and camctl resets by hand. This route's own writes are the owner's
+  // answer only — never a learn, a lapse or a match; those stay the
+  // detector's (Austin's 2026-09-20 decision applies to hiding, not to this).
+  // update() (not load-then-save) so a slow answer can never overwrite a
+  // count the detector wrote in between; see agent/known-objects.mjs.
+  const knownObjectsStore = createKnownObjectsStore({ stateDir });
+
   // /event-crop reads the SAME events handle /events reads — openEvents()
   // opens events.db lazily and at most once, and calling it here rather than
   // opening a second handle is the whole point. Not present (no detector was
@@ -411,7 +497,7 @@ export function createApiServer({
       // Default deny: routeAccess knows every route and what it needs. A route
       // added below without a line there is refused, not served.
       const principal = auth.principalOf(req);
-      const decision = decideRoute(principal, method, pathname);
+      const decision = decideRouteImpl(principal, method, pathname);
       if (decision.kind === 'redirect') {
         res.writeHead(302, { Location: decision.location, 'Cache-Control': 'no-store' });
         res.end();
@@ -442,6 +528,56 @@ export function createApiServer({
       if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
       if (await recordingSettings.handle(req, res, pathname, method, principal)) return;
       if (await clipLibrary.handle(req, res, pathname, method, principal)) return;
+
+      // ---------- POST /known-objects/answer ----------
+      // "Is it meant to be there?" (KNOWN-OBJECTS-SPEC.md). This never changes
+      // what is hidden (rule 11, and contracts/knownObjects.ts's own doc on
+      // answerKnownObject): it only keeps the training label. Nobody is asked
+      // before suppression applies (Austin, 2026-09-20); this is Austin
+      // answering AFTER the fact, on his own schedule, not a gate on it.
+      if (method === 'POST' && pathname === '/known-objects/answer') {
+        const body = await readKnownObjectsBody(req, res);
+        if (body === null) return;
+        if (typeof body.id !== 'string' || body.id === '') {
+          sendError(res, 400, 'bad_id', 'id is required');
+          return;
+        }
+        if (typeof body.belongs !== 'boolean') {
+          sendError(res, 400, 'bad_belongs', 'belongs must be true or false');
+          return;
+        }
+        // Only a signed-in user (installer or store) ever reaches this route:
+        // routeAccess.ts gates it on events.view, which no display carries
+        // (contracts/access.ts) — so principal.username is always a real name
+        // here, never null. Read fresh each attempt: update() may retry mutate
+        // against newer content if the detector wrote in between.
+        const by = principal.username;
+        const nowUtc = now().toISOString();
+        let answered = null;
+        const result = await knownObjectsStore.update((objects) => {
+          const target = objects.find((o) => o.id === body.id);
+          if (!target) return null; // nothing to write; reported as not-found below
+          answered = answerKnownObject(target, { belongs: body.belongs, by }, nowUtc);
+          return objects.map((o) => (o.id === body.id ? answered : o));
+        });
+        if (!result.ok) {
+          // unreadable: the file cannot be trusted right now (409 — try again
+          // once it is fixed). busy: another writer kept winning the race
+          // (503 — safe to retry). invalid/write_failed are this store or disk
+          // refusing what should always check out; 500 either way.
+          const status = result.code === 'unreadable' ? 409 : result.code === 'busy' ? 503 : 500;
+          sendError(res, status, result.code, result.problem);
+          return;
+        }
+        if (answered === null) {
+          sendError(res, 404, 'no_such_known_object', 'no known object with that id');
+          return;
+        }
+        auth.audit('known-object.answer', req, { actor: by, id: body.id, belongs: body.belongs });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: true, object: { ...answered, notice: knownObjectNotice(answered) } }));
+        return;
+      }
 
       // Every route past here reads; the table only lets GET through to them.
       if (method !== 'GET') {
@@ -606,6 +742,15 @@ export function createApiServer({
           sendError(res, limit.status, limit.code, limit.message);
           return;
         }
+        // Known objects (KNOWN-OBJECTS-SPEC.md, owner D): which suppressed
+        // events come back. "include" is the default so every caller written
+        // before suppression existed — this route's own harness among them —
+        // keeps seeing everything; the Review page asks for "exclude" itself.
+        const hidden = parseHiddenMode(parsedUrl.searchParams.get('hidden'));
+        if (isRefusal(hidden)) {
+          sendError(res, hidden.status, hidden.code, hidden.message);
+          return;
+        }
 
         const { effective } = windowResult;
         const db = openEvents();
@@ -613,15 +758,38 @@ export function createApiServer({
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             ok: true, cameraId: camera, effective, available: false,
-            events: [], truncated: false,
+            events: [], truncated: false, hiddenCount: 0,
           }));
           return;
         }
-        const found = db.inRange(camera, effective.startUtc, effective.endUtc, kinds, limit);
+        const found = db.inRange(camera, effective.startUtc, effective.endUtc, kinds, limit, null, { hidden });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           ok: true, cameraId: camera, effective, available: true,
-          events: found.events, truncated: found.truncated, limit,
+          events: found.events, truncated: found.truncated, hiddenCount: found.hiddenCount, limit,
+        }));
+        return;
+      }
+
+      // ---------- /known-objects ----------
+      // What has been learned at this site: measurements, never a verdict
+      // (rule 11) — knownObjectNotice says what a spot has done, and only the
+      // owner's own answer (POST .../answer) ever says what it IS. `camera` is
+      // optional: the Review page asks scoped to the camera on screen; camctl
+      // and a future dashboard can ask for every camera at once.
+      if (pathname === '/known-objects') {
+        const camera = parsedUrl.searchParams.get('camera');
+        if (camera !== null && !isCameraId(camera)) {
+          sendError(res, 400, 'bad_camera_id', 'Invalid camera id');
+          return;
+        }
+        const { objects, problem } = await knownObjectsStore.load();
+        const scoped = camera === null ? objects : objects.filter((o) => o.cameraId === camera);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({
+          ok: true,
+          objects: scoped.map((o) => ({ ...o, notice: knownObjectNotice(o) })),
+          problem,
         }));
         return;
       }

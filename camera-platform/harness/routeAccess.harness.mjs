@@ -153,4 +153,21 @@ check("event crops: the same reach as /events, because a crop IS an event's cont
   eq(d(installer, "GET", "/event-crop/").status, 404, "not a prefix — the id is a query param, not a path segment");
 });
 
+check("known objects: the same reach as /events, and a wall display may neither see nor answer them", () => {
+  // Added with the routes (2026-09-23). Found in review: until this check the
+  // only test of these two rules used a stand-in, so a typo or a looser
+  // permission here would have passed a green suite.
+  same(ruleFor("GET", "/known-objects"), { kind: "api", permission: "events.view" }, "what is hidden is event content");
+  same(ruleFor("POST", "/known-objects/answer"), { kind: "api", permission: "events.view" }, "a label, from whoever watches the events");
+  for (const [method, path] of [["GET", "/known-objects"], ["POST", "/known-objects/answer"]]) {
+    eq(d(store, method, path).kind, "allow", `${method} ${path}: the store`);
+    eq(d(installer, method, path).kind, "allow", `${method} ${path}: the installer`);
+    same(d(display, method, path), { kind: "refuse", status: 403, code: "forbidden",
+      message: "this account cannot do that (needs events.view)" }, `THE FEARED ONE: ${method} ${path}: a wall display`);
+    eq(d(nobody, method, path).status, 401, `${method} ${path}: signed out`);
+  }
+  eq(d(installer, "POST", "/known-objects").status, 404, "the list is GET only");
+  eq(d(installer, "GET", "/known-objects/answer").status, 404, "the answer is POST only");
+});
+
 report("route access");

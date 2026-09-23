@@ -4,6 +4,11 @@
  * Spawns one AI worker per camera, distributes detection results to events.db,
  * and tracks detector health. Never opens the recording index; never queues
  * frames (drops to stay live); never logs a password.
+ *
+ * Known objects (contracts/knownObjects.ts, agent/known-objects.mjs): every
+ * event stored is checked against the camera's known objects - a recurring,
+ * still false detection learned from its own history - and flagged hidden
+ * when it sits on one. Flagged, never deleted: the Review page can show it.
  */
 
 import { readFile, writeFile, rename } from "node:fs/promises";
@@ -14,9 +19,21 @@ import { parseWorkerLine, emptyFold, advanceFold, MAX_WORKER_LINE_BYTES } from "
 import { MERGE_GAP_MS } from "../dist/detection.js";
 import { planDetectSchedule } from "../dist/detectSchedule.js";
 import { buildRtspUrl, redactRtspUrl } from "../dist/rtsp.js";
+import { matchKnown, noteMatch, lapseKnownObjects, learnKnownObjects, LEARN_WINDOW_MS } from "../dist/knownObjects.js";
 import { loadConfig, resolveCameraUrl } from "./recorder-service.mjs";
 import { openEventsDb } from "./events-db.mjs";
+import { createKnownObjectsStore, cameraFingerprint } from "./known-objects.mjs";
 import { DEFAULT_PATHS } from "./config.mjs";
+
+/**
+ * The most finished events one learning pass reads (the newest are kept, and
+ * the pass says when it was cut). Learning looks back two days; a busy street
+ * camera can store thousands of walkers in that time, and every one of them
+ * is refused as "moved" long before grouping - but they still have to be read.
+ * This keeps one pass to a fraction of a second on the appliance, while two
+ * days of a still thing is a few hundred rows at most.
+ */
+const LEARN_EVENT_LIMIT = 20_000;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultLog = (level, msg, extra) =>
@@ -61,6 +78,13 @@ export async function startDetect(opts = {}) {
     python = "python3",
     workerPath = path.join(__dirname, "../detector/yolox_worker.py"),
     modelPath,
+    // Known objects: learn and lapse every 10 minutes; write match counts at
+    // most once a minute (and re-read the file then, so a reset by hand or an
+    // owner's answer is seen within a minute). A store can be passed in for a
+    // harness; otherwise it is <stateDir>/known-objects.json.
+    knownPassMs = 600_000,
+    knownFlushMs = 60_000,
+    knownObjectsStore = null,
   } = opts;
 
   // Read detect.json
@@ -163,6 +187,10 @@ export async function startDetect(opts = {}) {
       invalidLines: 0,
       fold: emptyFold(),
       gate: motionGate.enabled ? { lastWindow: null, sinceStart: null } : null,
+      // Finished events stored hidden behind a known object since the service
+      // started. Not reset when a worker respawns: it counts what this
+      // service hid, not what one worker saw.
+      hiddenSinceStart: 0,
     });
   }
 
@@ -178,10 +206,324 @@ export async function startDetect(opts = {}) {
         invalidLines: 0,
         fold: emptyFold(),
         gate: motionGate.enabled ? { lastWindow: null, sinceStart: null } : null,
+        hiddenSinceStart: 0,
       });
       return cameras.get(cameraId);
     }
     return cam;
+  }
+
+  // ---------------------------------------------------------------- known objects
+  //
+  // AUSTIN'S DECISION (2026-09-20) IS APPLIED HERE: hiding an event behind a
+  // known object happens automatically - no operator click gates it. That
+  // overrides build rule 13 (nothing auto-applies) for this one feature,
+  // because at 2,880 cameras nobody has the installer time to click each
+  // umbrella away. What stands in for the click is the contract's belts
+  // (contracts/knownObjects.ts) and three rules this service keeps:
+  // - a store that cannot be read hides NOTHING, is reported, and is never
+  //   overwritten;
+  // - hiding is a flag on a stored event (suppressedBy), never a delete;
+  // - every stored event is matched again on every update, so an event that
+  //   starts on the known spot and then walks off is shown again at once.
+
+  const knownStore = knownObjectsStore ?? createKnownObjectsStore({ stateDir });
+
+  // Each camera's fingerprint as the detector is actually watching it: from
+  // the config read at start, the one its worker's address was built from.
+  // Not re-read while running - a camera edited since keeps being watched at
+  // its old address until the service restarts, and its objects are still
+  // true of what it watches; the restart is when the view changes, and the
+  // first pass after it lapses them (belt 4). Only cameras this service
+  // watches are included: a camera absent from the fingerprints is left
+  // alone rather than called "unseen" by a detector that never looked.
+  const fingerprints = new Map();
+  for (const assignment of plan.assignments) {
+    const configCam = Array.isArray(config.cameras)
+      ? config.cameras.find((c) => c && c.cameraId === assignment.cameraId)
+      : undefined;
+    if (configCam === undefined) continue;
+    try {
+      fingerprints.set(assignment.cameraId, cameraFingerprint(configCam));
+    } catch {
+      // An entry that is not an object cannot be fingerprinted; left out, its
+      // objects are left alone and nothing new is learned for it.
+    }
+  }
+
+  const known = {
+    // Every object the store holds, as last read or written.
+    objects: [],
+    // The ones matchKnown may hide behind. Empty until the first pass has
+    // read the store, and whenever it cannot be trusted.
+    active: [],
+    // Why the store cannot be trusted, or null.
+    problem: null,
+    // Why the last learning pass could not learn, or null.
+    learnProblem: null,
+    // Why the last write of the store failed, or null.
+    saveProblem: null,
+    // The last learning pass that completed: when, how many finished events
+    // it considered, how many objects it learned, and how many events it
+    // could not use and why (build rule 16) - so "why was the umbrella not
+    // learned?" has an answer ("too_brief: 17"). null before the first.
+    lastPass: null,
+  };
+  // Finished events hidden since the last write: each is counted on its
+  // object (noteMatch) at the next write. One entry per finished event, so a
+  // match is counted once.
+  let pendingNotes = [];
+  // One pass or write at a time: both read and write the same file.
+  let knownChain = Promise.resolve();
+  const logged = new Map();
+
+  /**
+   * Log a message only when it is new for this key: a problem that lasts is
+   * said once. `same` says what counts as "the same problem" when the text
+   * can shift between passes (a row index, an error code) without anything
+   * new to say; by default it is the whole line.
+   */
+  function logOnce(key, level, msg, extra, same = `${msg}\u0000${JSON.stringify(extra ?? {})}`) {
+    if (logged.get(key) === same) return;
+    logged.set(key, same);
+    log(level, msg, extra);
+  }
+
+  /**
+   * Text from outside (the store file, a contract's error) made safe for a
+   * log line or detect-health.json: the site password blanked, and any
+   * address removed whole - user name and host with it - since none of this
+   * text has any business carrying one.
+   */
+  function scrub(text) {
+    return scrubLine(String(text), config.credentials?.password, null)
+      .replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, "[an address, removed]");
+  }
+
+  /**
+   * Store one event update, hidden or not. Every eventsDb.upsert goes through
+   * here - an open event on each sighting, and a finished one - so an event
+   * is matched again every time it changes: one that sat on the known spot
+   * and then walked away is passed suppressedBy null on its next update and
+   * shows again. matchKnown answers null for every doubt (unknown travel, a
+   * moved thing, a lapsed object, a loose overlap), and null is "show it".
+   */
+  function storeEvent(update, finished) {
+    let suppressedBy = null;
+    try {
+      suppressedBy = matchKnown(update.event, known.active);
+    } catch (err) {
+      // matchKnown throws only for a bad option, which this service never
+      // passes; if it ever does, the event is stored and shown, never lost.
+      logOnce("match-failed", "warn", "known objects: an event could not be matched, so it is shown", { error: scrub(err.message) });
+      suppressedBy = null;
+    }
+    eventsDb.upsert(update, finished, { suppressedBy });
+    if (finished && suppressedBy !== null) {
+      pendingNotes.push({ objectId: suppressedBy, event: update.event, atUtc: now().toISOString() });
+      const cam = cameras.get(update.event.cameraId);
+      if (cam) cam.hiddenSinceStart += 1;
+    }
+  }
+
+  /** Count each noted match on its object, if that object is still active. */
+  function applyNotes(objects, notes) {
+    if (notes.length === 0) return objects;
+    const next = [...objects];
+    const at = new Map(next.map((o, i) => [o.id, i]));
+    for (const note of notes) {
+      const i = at.get(note.objectId);
+      // Gone from the file, or lapsed (reset by hand since): nothing to count on.
+      if (i === undefined || next[i].state !== "active") continue;
+      try {
+        next[i] = noteMatch(next[i], note.event, note.atUtc);
+      } catch {
+        // Another camera or kind: matchKnown never pairs those, so skip it.
+      }
+    }
+    return next;
+  }
+
+  function syncKnown(opts) {
+    const run = knownChain.then(() => syncKnownNow(opts));
+    knownChain = run.catch(() => {});
+    return run;
+  }
+
+  /**
+   * Bring the store and this service's view of it together. Always: read the
+   * file (so a reset by hand or an owner's answer written by another process
+   * is seen) and count the noted matches. With `learn`: also lapse (belt 4)
+   * and learn new objects from the last two days of finished events, then
+   * hide each new object's member events. Never throws: a failure here must
+   * not stop detection, only known objects.
+   */
+  async function syncKnownNow({ learn }) {
+    try {
+      const nowUtc = now().toISOString();
+      const notes = pendingNotes;
+      pendingNotes = [];
+      let learned = [];
+      let lapsedHere = [];
+      let learnProblem = null;
+      let truncated = false;
+      let learning = null;
+      // The objects with notes counted and lapses applied, before anything is
+      // learned: kept so a write that fails can still stop hiding behind what
+      // lapsed (hiding less is the safe side), without hiding behind anything
+      // new that was never saved.
+      let withoutLearned = null;
+
+      const result = await knownStore.update((objects) => {
+        learned = [];
+        lapsedHere = [];
+        learnProblem = null;
+        truncated = false;
+        learning = null;
+        let next = applyNotes(objects, notes);
+        if (!learn) {
+          withoutLearned = next;
+          return notes.length > 0 ? next : null;
+        }
+        const lapsed = lapseKnownObjects(next, nowUtc, fingerprints);
+        lapsedHere = lapsed.filter((o, i) => o.state === "lapsed" && next[i].state === "active");
+        next = lapsed;
+        withoutLearned = next;
+        try {
+          const since = new Date(Date.parse(nowUtc) - LEARN_WINDOW_MS).toISOString();
+          const recent = eventsDb.recentFinished(since, LEARN_EVENT_LIMIT);
+          truncated = recent.truncated;
+          learning = learnKnownObjects({ events: recent.events, existing: next, nowUtc, fingerprints });
+          learned = learning.learned;
+          next = [...next, ...learned];
+        } catch (err) {
+          // One unreadable stored event stops learning for every camera
+          // (learnKnownObjects refuses rather than skip it). Said, and kept in
+          // detect-health.json; objects already known go on hiding.
+          learnProblem = `learning failed: ${scrub(err.message)}`;
+        }
+        return next;
+      });
+
+      if (!result.ok) {
+        if (result.code === "unreadable") {
+          // Nothing is hidden while the file cannot be trusted, and nothing
+          // is written over it. Matches noted meanwhile have nothing to be
+          // counted on, and are dropped.
+          known.objects = [];
+          known.active = [];
+          known.problem = scrub(result.problem);
+          logOnce("store", "warn", "known objects file cannot be trusted: nothing is hidden until it is fixed, and it will not be overwritten", { problem: known.problem });
+        } else {
+          // The file on disk is still what it was, and still readable. Keep
+          // the counts to write next time, stop hiding behind anything that
+          // lapsed, and do not hide behind anything learned but not saved.
+          pendingNotes = [...notes, ...pendingNotes];
+          known.objects = withoutLearned ?? result.objects;
+          known.active = known.objects.filter((o) => o.state === "active");
+          known.problem = null;
+          known.saveProblem = scrub(result.problem);
+          // Said once while it lasts, whatever the error code of each try.
+          logOnce("save", "warn", "known objects could not be saved; will try again", { problem: known.saveProblem }, "failing");
+        }
+        return;
+      }
+
+      if (known.problem !== null) {
+        log("info", "known objects file can be read again", {});
+        logged.delete("store");
+      }
+      known.problem = null;
+      if (known.saveProblem !== null) logged.delete("save");
+      known.saveProblem = null;
+
+      const before = new Map(known.objects.map((o) => [o.id, o]));
+      const after = new Map(result.objects.map((o) => [o.id, o]));
+      const lapsedIds = new Set(lapsedHere.map((o) => o.id));
+
+      for (const o of learned) {
+        if (!after.has(o.id)) continue;
+        // Saved first, then its members hidden. The other order could leave
+        // events hidden behind an object that never reached the file, where
+        // no reset by hand could find it.
+        let hidden = null;
+        try {
+          hidden = eventsDb.setSuppressed(o.memberEventIds, o.id);
+        } catch (err) {
+          logOnce(`hide-${o.id}`, "warn", "known object learned, but its events could not be marked hidden", { objectId: o.id, error: scrub(err.message) });
+        }
+        const round = (v) => Math.round(v * 1000) / 1000;
+        log("info", "known object learned: events on this spot are now hidden automatically", {
+          cameraId: o.cameraId,
+          kind: o.kind,
+          objectId: o.id,
+          box: { x: round(o.box.x), y: round(o.box.y), w: round(o.box.w), h: round(o.box.h) },
+          members: o.members,
+          firstSeenUtc: o.firstSeenUtc,
+          lastSeenUtc: o.lastSeenUtc,
+          spanMinutes: Math.round((Date.parse(o.lastSeenUtc) - Date.parse(o.firstSeenUtc)) / 60_000),
+          hidden,
+        });
+      }
+      for (const o of lapsedHere) {
+        if (after.get(o.id)?.state !== "lapsed") continue;
+        log("info", "known object lapsed: events on this spot are shown again", {
+          cameraId: o.cameraId, kind: o.kind, objectId: o.id, reason: o.lapseReason,
+        });
+      }
+      // Changes another process made: a reset by hand (camctl), or an object
+      // taken out of the file. camctl already showed their events again, but
+      // this service kept hiding new ones until it read the file - so show
+      // those too. Only for objects this service was hiding behind.
+      for (const [id, prev] of before) {
+        if (prev.state !== "active" || lapsedIds.has(id)) continue;
+        const cur = after.get(id);
+        if (cur !== undefined && cur.state === "active") continue;
+        if (cur !== undefined && cur.lapseReason !== "reset_by_hand") continue;
+        let shown = null;
+        try {
+          shown = eventsDb.clearSuppressed(id);
+        } catch (err) {
+          logOnce(`show-${id}`, "warn", "known object stopped, but its events could not be shown again", { objectId: id, error: scrub(err.message) });
+        }
+        log("info", cur === undefined
+          ? "known object is no longer in the file: its events are shown again"
+          : "known object reset by hand: its events are shown again", {
+          cameraId: prev.cameraId, kind: prev.kind, objectId: id, shown,
+        });
+      }
+
+      known.objects = result.objects;
+      known.active = result.objects.filter((o) => o.state === "active");
+      if (learn) {
+        // Events it could not use, counted by reason (each event sits in
+        // exactly one refusal). null counts when learning itself failed:
+        // nothing was considered, which is not the same as zero refused.
+        let rejected = null;
+        if (learning !== null) {
+          rejected = {};
+          for (const r of learning.rejected) rejected[r.reason] = (rejected[r.reason] ?? 0) + r.eventIds.length;
+        }
+        known.lastPass = {
+          atUtc: nowUtc,
+          considered: learning?.considered ?? null,
+          learned: learned.length,
+          rejected,
+          truncated,
+        };
+        known.learnProblem = learnProblem;
+        // Said once while it lasts: the message names a row by its place in
+        // the list, which moves as events arrive, with nothing new to say.
+        if (learnProblem !== null) logOnce("learn", "warn", "known objects: nothing could be learned this pass", { problem: learnProblem }, "failing");
+        else logged.delete("learn");
+        if (truncated) {
+          logOnce("truncated", "info", "known objects: learning read only the newest finished events", { limit: LEARN_EVENT_LIMIT });
+        }
+      }
+    } catch (err) {
+      // A bug here must not take detection down with it.
+      logOnce("sync", "warn", "known objects could not be brought up to date", { error: scrub(err.message) });
+    }
   }
 
   function spawnWorker(assignment) {
@@ -278,12 +620,12 @@ export async function startDetect(opts = {}) {
           // update.event / finished.event already carry species when
           // advanceFold set one (the best sighting's) - nothing here needs to
           // single it out, the same as plate: eventsDb.upsert stores whatever
-          // the event holds.
+          // the event holds. storeEvent adds only the known-object flag.
           for (const update of step.updated) {
-            eventsDb.upsert(update, false);
+            storeEvent(update, false);
           }
           for (const finished of step.finished) {
-            eventsDb.upsert(finished, true);
+            storeEvent(finished, true);
           }
         } else if (parsed.kind === "gate") {
           // Only kept when the gate is actually on for this camera: a worker
@@ -357,6 +699,12 @@ export async function startDetect(opts = {}) {
     });
   }
 
+  // Read the known objects (and learn) BEFORE the first worker starts, so the
+  // first frame is matched against them rather than slipping through while
+  // the file is still being read. syncKnown never throws: a store it cannot
+  // read leaves nothing hidden and detection starts all the same.
+  await syncKnown({ learn: true });
+
   // Spawn all workers
   for (const assignment of plan.assignments) {
     spawnWorker(assignment);
@@ -368,7 +716,7 @@ export async function startDetect(opts = {}) {
       const step = advanceFold(cam.fold, [], now().toISOString());
       cam.fold = step.state;
       for (const finished of step.finished) {
-        eventsDb.upsert(finished, true);
+        storeEvent(finished, true);
       }
     }
   }, tickMs);
@@ -377,6 +725,15 @@ export async function startDetect(opts = {}) {
   const healthTimer = setInterval(() => {
     writeHealth();
   }, healthMs);
+
+  // Known objects: learn and lapse, and separately write match counts (and
+  // re-read the file). Neither runs once stop() has begun.
+  const knownPassTimer = setInterval(() => {
+    if (!stopping) syncKnown({ learn: true });
+  }, knownPassMs);
+  const knownFlushTimer = setInterval(() => {
+    if (!stopping) syncKnown({ learn: false });
+  }, knownFlushMs);
 
   function getCameras() {
     return Array.from(cameras.values()).map((cam) => ({
@@ -398,6 +755,15 @@ export async function startDetect(opts = {}) {
       restarts: cam.restarts,
       invalidLines: cam.invalidLines,
       gate: cam.gate,
+      // active: the known objects hiding events on this camera now (0 while
+      // the store cannot be read - see the top-level problem). hiddenSinceStart:
+      // finished events stored hidden since the service started; the member
+      // events hidden when an object is learned are counted on the object
+      // (its `members`), not here.
+      knownObjects: {
+        active: known.active.filter((o) => o.cameraId === cam.cameraId).length,
+        hiddenSinceStart: cam.hiddenSinceStart,
+      },
     }));
   }
 
@@ -407,6 +773,19 @@ export async function startDetect(opts = {}) {
       capacityFps: plan.capacityFps,
       minConfidence,
       motionGate,
+      // problem: why known-objects.json cannot be trusted (nothing is hidden
+      // while it is set), or null. learnProblem / saveProblem: why the last
+      // learning pass or write failed, or null. lastPass: the last learning
+      // pass that completed - { atUtc, considered, learned, rejected (events
+      // per reason), truncated } - or null before the first.
+      knownObjects: {
+        active: known.active.length,
+        lapsed: known.objects.filter((o) => o.state === "lapsed").length,
+        problem: known.problem,
+        learnProblem: known.learnProblem,
+        saveProblem: known.saveProblem,
+        lastPass: known.lastPass,
+      },
       cameras: getCameras(),
     };
     const tmpFile = path.join(stateDir, "detect-health.json.tmp");
@@ -419,6 +798,8 @@ export async function startDetect(opts = {}) {
     stopping = true;
     clearInterval(tickTimer);
     clearInterval(healthTimer);
+    clearInterval(knownPassTimer);
+    clearInterval(knownFlushTimer);
 
     // Cancel pending restarts
     for (const timer of restartTimers.values()) {
@@ -457,9 +838,13 @@ export async function startDetect(opts = {}) {
       const step = advanceFold(cam.fold, [], nowUtc);
       cam.fold = step.state;
       for (const finished of step.finished) {
-        eventsDb.upsert(finished, true);
+        storeEvent(finished, true);
       }
     }
+
+    // Count the last matches before the database closes; a pass already
+    // running finishes first (the chain), and none starts after this.
+    await syncKnown({ learn: false });
 
     eventsDb.close();
   }
@@ -472,11 +857,14 @@ export async function startDetect(opts = {}) {
         const step = advanceFold(cam.fold, [], now().toISOString());
         cam.fold = step.state;
         for (const finished of step.finished) {
-          eventsDb.upsert(finished, true);
+          storeEvent(finished, true);
         }
       }
     },
     writeHealth,
+    // For a harness, as tick is: run what the timers run, now.
+    knownPass: () => syncKnown({ learn: true }),
+    knownFlush: () => syncKnown({ learn: false }),
   };
 }
 

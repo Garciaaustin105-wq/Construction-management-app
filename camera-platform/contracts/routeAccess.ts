@@ -71,6 +71,9 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // A crop of the frame at an event's most confident moment — the same reach
   // as /events, because a crop IS an event's content, not recorded footage.
   "/event-crop": { kind: "api", permission: "events.view" },
+  // The camera's known objects: recurring still false detections that are
+  // hidden from /events. What they are is event content, so the same reach.
+  "/known-objects": { kind: "api", permission: "events.view" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -87,6 +90,10 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/recording-settings": { kind: "api", permission: "storage.manage" },
   // Saving a test clip keeps footage past retention: the same reach as an export.
   "/clip-library": { kind: "api", permission: "export.create" },
+  // "It belongs there" / "It shouldn't be there": a label on a known object,
+  // asked of whoever watches the events. It keeps no footage and changes no
+  // setting, so the same reach as seeing the object.
+  "/known-objects/answer": { kind: "api", permission: "events.view" },
 });
 
 /**

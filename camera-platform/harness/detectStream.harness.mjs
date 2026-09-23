@@ -298,4 +298,167 @@ check("THE FEARED ONE: across mixed traffic, every event's count is exactly the 
   for (const [id, n] of perId) eq(finalById.get(id).count, n, `event ${id}: count matches its sightings`);
 });
 
+// ---------------- travel: did the thing walk in? ----------------
+// Known-object suppression never learns or hides anything that travelled, so
+// the service must store the same travel the batch fold (and so the scorer
+// and the gate check) computes - to the bit, not to a tolerance - and it must
+// never shrink while the event is still open.
+
+// Seeded traffic built to make travel matter: walkers crossing the frame at
+// different speeds, still things jittering in place, people who walk in and
+// stop, and people who walk out and come back - on two cameras.
+function travelTraffic(seed) {
+  let s = seed;
+  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const frames = [];
+  for (let ms = 0; ms < 180_000; ms += 200) {
+    const ds = [];
+    // Each 30 s a new cast: 16 s of traffic, then a quiet spell longer than
+    // MERGE_GAP_MS, so every cast's events finish and new ones open.
+    const t = ms % 30_000;
+    if (t < 16_000) {
+      const step = t / 200;
+      for (const cameraId of ["cam-1", "cam-2"]) {
+        if (rnd() < 0.1) continue;      // a missed frame now and then
+        // A walker crossing left to right at a speed that differs per cast.
+        const speed = 0.005 + ((Math.floor(ms / 30_000) * 7) % 5) * 0.002;
+        const wx = Math.min(0.85, 0.02 + step * speed);
+        ds.push({ cameraId, atUtc: at(ms), kind: "person", confidence: 0.4 + rnd() * 0.6, box: box(wx, 0.05 + rnd() * 0.005) });
+        // A still thing, jittering by the detector's noise, far below the walker.
+        ds.push({ cameraId, atUtc: at(ms), kind: "person", confidence: 0.5 + rnd() * 0.15,
+          box: { x: 0.69 + rnd() * 0.01, y: 0.56 + rnd() * 0.01, w: 0.08 + rnd() * 0.01, h: 0.41 + rnd() * 0.01 } });
+        // Out and back: walks right for 8 s, then returns.
+        const ob = step < 40 ? step : 80 - step;
+        if (ob >= 0) ds.push({ cameraId, atUtc: at(ms), kind: "vehicle", confidence: 0.3 + rnd() * 0.7, box: box(0.05 + ob * 0.01, 0.45, 0.12, 0.08) });
+      }
+    }
+    // Shuffled within the frame: same-moment sightings arrive in any order.
+    for (let i = ds.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [ds[i], ds[j]] = [ds[j], ds[i]];
+    }
+    frames.push({ ms, ds });
+  }
+  return { frames, rnd };
+}
+
+check("every streamed event carries exactly its keys, travel among them, and the open state carries the first box", () => {
+  const step = advanceFold(emptyFold(), [person(0, 0.1)], at(0));
+  eq(Object.keys(step.updated[0].event).sort(), ["bestBox", "bestConfidence", "bestUtc", "cameraId", "count", "firstUtc", "kind", "lastUtc", "travel"], "an update");
+  eq(Object.keys(step.state.open[0]).sort(), ["event", "firstBox", "id", "lastBox", "lastMs"], "an open event");
+  eq(step.state.open[0].firstBox, box(0.1, 0.2), "the first box is the opening sighting's");
+  const done = advanceFold(step.state, [], at(MERGE_GAP_MS + 1));
+  eq(Object.keys(done.finished[0].event).sort(), ["bestBox", "bestConfidence", "bestUtc", "cameraId", "count", "firstUtc", "kind", "lastUtc", "travel"], "a finished event");
+  eq(Object.is(done.finished[0].event.travel, 0), true, "one sighting: travel exactly 0");
+});
+
+check("THE FEARED ONE: the streaming and batch folds agree to the bit on travel, walkers and still things mixed", () => {
+  const { frames, rnd } = travelTraffic(2026_09_22);
+  const all = frames.flatMap((f) => f.ds);
+  const batch = foldDetections(all);
+  // Fed as the gate check feeds it: sometimes one frame per call, sometimes
+  // several, the clock at the last frame's moment - so the first box has to
+  // survive being copied from state to state.
+  let state = emptyFold();
+  const byId = new Map();
+  for (let i = 0; i < frames.length;) {
+    const n = 1 + Math.floor(rnd() * 3);
+    const group = frames.slice(i, i + n);
+    const step = advanceFold(state, group.flatMap((f) => f.ds), at(group[group.length - 1].ms));
+    state = step.state;
+    for (const u of [...step.updated, ...step.finished]) byId.set(u.id, u.event);
+    i += n;
+  }
+  for (const u of advanceFold(state, [], at(10 ** 9)).finished) byId.set(u.id, u.event);
+  const streamed = [...byId.values()].sort((a, b) => Date.parse(a.firstUtc) - Date.parse(b.firstUtc));
+  eq(streamed.length, batch.length, `same number of events (${batch.length})`);
+  for (let i = 0; i < batch.length; i++) {
+    if (!Object.is(streamed[i].travel, batch[i].travel)) {
+      throw new Error(`event ${i}: streamed travel ${streamed[i].travel} vs batch ${batch[i].travel}`);
+    }
+  }
+  eq(JSON.stringify(streamed), JSON.stringify(batch), "identical events, field for field");
+  // Not vacuous: the traffic really held walkers and still things.
+  const walked = batch.filter((e) => e.travel > 1).length;
+  const still = batch.filter((e) => e.count >= 20 && e.travel < 0.5).length;
+  if (walked < 10) throw new Error(`only ${walked} events travelled more than a diagonal: the check proves little`);
+  if (still < 10) throw new Error(`only ${still} long still events: the check proves little`);
+});
+
+check("THE FEARED ONE: an event's travel never decreases from one update to the next", () => {
+  const { frames } = travelTraffic(777);
+  let state = emptyFold();
+  const lastTravel = new Map();
+  let updates = 0;
+  let grew = 0;
+  for (const f of frames) {
+    const step = advanceFold(state, f.ds, at(f.ms));
+    state = step.state;
+    for (const u of [...step.updated, ...step.finished]) {
+      const prev = lastTravel.get(u.id);
+      if (prev !== undefined && u.event.travel < prev) {
+        throw new Error(`event ${u.id}: travel fell from ${prev} to ${u.event.travel} at ${f.ms} ms`);
+      }
+      if (prev !== undefined && u.event.travel > prev) grew++;
+      lastTravel.set(u.id, u.event.travel);
+      updates++;
+    }
+  }
+  if (grew < 100) throw new Error(`travel grew only ${grew} times in ${updates} updates: the check proves little`);
+});
+
+check("THE FEARED ONE: through the real worker path, a walker reads far above 1 and a still thing well under 0.5", () => {
+  let state = emptyFold();
+  const seen = new Map();
+  for (let i = 0; i <= 40; i++) {
+    const r = parseWorkerLine(frameLine(i * 200, [
+      { kind: "person", confidence: 0.8, box: box(0.05 + i * 0.02, 0.05) },                         // crossing the frame
+      { kind: "person", confidence: 0.6, box: { x: 0.697 + (i % 3) * 0.001, y: 0.563, w: 0.088, h: 0.42 - (i % 2) * 0.005 } }, // the umbrella's spot
+    ]), "cam-1");
+    const step = advanceFold(state, r.detections, at(i * 200));
+    state = step.state;
+    for (const u of step.updated) seen.set(u.id, u.event);
+  }
+  const events = [...seen.values()];
+  eq(events.length, 2, "two events");
+  const walker = events.find((e) => e.bestBox.y < 0.1);
+  const still = events.find((e) => e.bestBox.y > 0.5);
+  if (!(walker.travel > 2)) throw new Error(`walker travel ${walker.travel}`);
+  if (!(still.travel < 0.1)) throw new Error(`still travel ${still.travel}`);
+});
+
+check("THE FEARED ONE: the streaming fold refuses a box with no diagonal just as the batch fold does, and keeps the caller's state", () => {
+  // Checked detections cannot carry one; an unchecked caller must be stopped
+  // rather than store Infinity or NaN as a travel that reads "did not move".
+  const zero = { cameraId: "cam-1", atUtc: at(0), kind: "person", confidence: 0.9, box: { x: 0.1, y: 0.1, w: 0, h: 0 } };
+  const refused = (fn, word, what) => {
+    let err = null;
+    try { fn(); } catch (e) { err = e; }
+    if (!(err instanceof RangeError) || !err.message.includes(word)) throw new Error(`${what}: expected the "${word}" RangeError, got ${err}`);
+  };
+  refused(() => advanceFold(emptyFold(), [zero], at(0)), "no diagonal", "a one-sighting event");
+  const r1 = advanceFold(emptyFold(), [person(0, 0.1)], at(0));
+  const snapshot = JSON.stringify(r1.state);
+  refused(() => advanceFold(r1.state, [{ ...person(200, 0.1), box: { x: 0.1, y: NaN, w: 0.1, h: 0.3 } }], at(200)), "could not be read", "an unreadable later box");
+  eq(JSON.stringify(r1.state), snapshot, "the state handed in is untouched by the refusal");
+  // A plate joins on its text whatever its box: the path by which an
+  // unreadable box would reach an OPEN event's travel.
+  const plateAt = (ms, b) => ({ cameraId: "gate", atUtc: at(ms), kind: "plate", confidence: 0.9, box: b, plate: "ABC123" });
+  const p1 = advanceFold(emptyFold(), [plateAt(0, box(0.1, 0.6, 0.1, 0.05))], at(0));
+  const pSnap = JSON.stringify(p1.state);
+  refused(() => advanceFold(p1.state, [plateAt(400, { x: NaN, y: 0.6, w: 0.1, h: 0.05 })], at(400)), "could not be read", "an unreadable box joining an open plate");
+  eq(JSON.stringify(p1.state), pSnap, "and that state is untouched too");
+});
+
+check("advanceFold never mutates the first box or the travel of the state it was given", () => {
+  const r1 = advanceFold(emptyFold(), [person(0, 0.1)], at(0));
+  const snapshot = JSON.stringify(r1.state);
+  const r2 = advanceFold(r1.state, [person(200, 0.12), person(400, 0.14)], at(400));
+  eq(JSON.stringify(r1.state), snapshot, "the earlier state is as it was");
+  eq(r1.state.open[0].event.travel, 0, "its travel still 0");
+  if (!(r2.state.open[0].event.travel > 0)) throw new Error("the new state did move");
+  if (r2.state.open[0].firstBox === r1.state.open[0].firstBox) throw new Error("the first box is shared between states, not copied");
+  eq(r2.state.open[0].firstBox, box(0.1, 0.2), "and it is still the opening sighting's box");
+});
+
 report("detect stream");

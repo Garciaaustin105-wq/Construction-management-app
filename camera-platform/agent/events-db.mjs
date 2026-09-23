@@ -3,6 +3,13 @@
  *
  * Stores detection events with streaming updates from the detector service.
  * Uses node:sqlite for persistence without external dependencies.
+ *
+ * Two columns serve known objects (contracts/knownObjects.ts): `travel`, how
+ * far an event's box got from where it started, and `suppressed_by`, the id
+ * of the known object an event is hidden behind. Suppression is a FLAG on a
+ * row that is still stored, never a delete: a hidden event can always be
+ * shown again (inRange's `hidden` option), and a reset by hand clears the
+ * flag (clearSuppressed) rather than having to bring anything back.
  */
 
 import { DatabaseSync } from "node:sqlite";
@@ -23,31 +30,90 @@ CREATE TABLE IF NOT EXISTS events (
   best_ms INTEGER NOT NULL,
   plate TEXT,
   species TEXT,
+  travel REAL,
+  suppressed_by TEXT,
   finished INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_events_camera_first ON events(camera_id, first_ms);
+-- recentFinished, the known-objects learning pass every 10 minutes, asks for
+-- finished events of EVERY camera that ended in the last two days. Found in
+-- review (2026-09-23): with only the camera index it scanned and sorted the
+-- whole table each pass, and nothing prunes this table, so it slowed every
+-- day. One more b-tree update per upsert is the price.
+CREATE INDEX IF NOT EXISTS idx_events_finished_last ON events(finished, last_ms);
 `;
+
+/**
+ * What `inRange` can be asked to do with suppressed events. "include" is the
+ * default so every caller written before suppression existed keeps seeing
+ * everything it saw before; the page asks for "exclude" on purpose.
+ */
+export const HIDDEN_MODES = ["include", "exclude", "only"];
 
 const toIso = (ms) => new Date(ms).toISOString();
 const fromIso = (iso) => Date.parse(iso);
 
 /**
- * Add the `species` column to a database that predates it.
+ * Columns added after the table first shipped, in the order they arrived.
+ *
+ * None has a DEFAULT, on purpose: ALTER TABLE ADD COLUMN without one leaves
+ * every existing row a real NULL, and NULL is the only honest value for a
+ * row stored before anyone measured the thing. For `travel` this is the one
+ * that matters (build rule 5): a zero would read as "never moved", which is
+ * exactly the value that lets an event be learned as a known object and
+ * hidden. An old row's travel is UNKNOWN, and unknown is never "did not move".
+ */
+const ADDED_COLUMNS = [
+  { name: "species", type: "TEXT" },
+  { name: "travel", type: "REAL" },
+  { name: "suppressed_by", type: "TEXT" },
+];
+
+/**
+ * Add the columns a database that predates them is missing.
  *
  * `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists,
- * so on the live appliance - thousands of rows, no `species` column - the
- * schema string above is silently skipped and every upsert naming `species`
- * would fail. PRAGMA table_info is the only way to ask sqlite what columns a
- * table actually has; ALTER TABLE ADD COLUMN is run once, only when it is
- * missing, and only adds - it never touches an existing row, which keeps
- * their `species` a real NULL (absent, not the string "null").
+ * so on the live appliance - thousands of rows, none of these columns - the
+ * schema string above is silently skipped and every upsert naming them would
+ * fail. PRAGMA table_info is the only way to ask sqlite what columns a table
+ * actually has; ALTER TABLE ADD COLUMN is run once per column, only when it
+ * is missing, and only adds - it never touches an existing row, which keeps
+ * their values a real NULL (absent, not the string "null", not 0).
  */
-function ensureSpeciesColumn(db) {
-  const columns = db.prepare("PRAGMA table_info(events)").all();
-  const hasSpecies = columns.some((c) => c.name === "species");
-  if (!hasSpecies) {
-    db.exec("ALTER TABLE events ADD COLUMN species TEXT");
+function ensureAddedColumns(db) {
+  const columnNames = () => new Set(db.prepare("PRAGMA table_info(events)").all().map((c) => c.name));
+  let present = columnNames();
+  for (const { name, type } of ADDED_COLUMNS) {
+    if (present.has(name)) continue;
+    try {
+      db.exec(`ALTER TABLE events ADD COLUMN ${name} ${type}`);
+    } catch (err) {
+      // The detector service and the API server both open this file, and
+      // after an upgrade they start together: both can see a column missing,
+      // and the second ALTER then fails with "duplicate column name". That is
+      // the job already done by the other process, not a failure - so look
+      // again, and only a column that is STILL missing is a real error.
+      present = columnNames();
+      if (!present.has(name)) throw err;
+    }
   }
+}
+
+/**
+ * A travel we can trust, or null. Travel is a distance (contracts/detection.ts:
+ * how far the box centre got, in the first box's diagonals), so anything not
+ * a finite number >= 0 is not a measurement - and storing it would risk the
+ * one wrong answer that looks plausible: a garbage value read as "did not
+ * move". NULL means unknown, and unknown is never learned from or hidden.
+ */
+function travelOf(event) {
+  const t = event.travel;
+  return typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : null;
+}
+
+/** An object id to hide events behind: a non-empty string, nothing else. */
+function isObjectId(value) {
+  return typeof value === "string" && value.length > 0;
 }
 
 function rowToEvent(row) {
@@ -67,6 +133,13 @@ function rowToEvent(row) {
     },
     bestUtc: toIso(row.best_ms),
     finished: row.finished === 1,
+    // Unlike species below, these two are always PRESENT, and null when the
+    // column is NULL. The known-objects contract reads `travel: number | null`
+    // and treats null as "unknown - never learn from it, never hide it"; an
+    // absent field would reach it as undefined, which is neither. And never
+    // 0 for an old row: that would be "did not move", a claim nobody measured.
+    travel: row.travel ?? null,
+    suppressedBy: row.suppressed_by ?? null,
   };
   if (row.plate !== null) {
     event.plate = row.plate;
@@ -80,18 +153,18 @@ function rowToEvent(row) {
   return event;
 }
 
-export function openEventsDb(file) {
-  const db = new DatabaseSync(file);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
-  db.exec("PRAGMA busy_timeout = 5000");
-  db.exec(SCHEMA);
-  ensureSpeciesColumn(db);
-
-  const stmts = {
-    upsert: db.prepare(`
-      INSERT INTO events (id, camera_id, kind, first_ms, last_ms, count, best_confidence, best_x, best_y, best_w, best_h, best_ms, plate, species, finished)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+/**
+ * The upsert, in two forms that differ only in whether an update touches
+ * `suppressed_by`. A caller that says nothing about suppression (every call
+ * written before it existed) must leave the flag exactly as it is - so that
+ * form does not name the column in its UPDATE at all, rather than trying to
+ * reconstruct "as it was" from a value it was never given. A brand-new row
+ * starts unsuppressed either way unless a string was given.
+ */
+function upsertSql(setsSuppression) {
+  return `
+      INSERT INTO events (id, camera_id, kind, first_ms, last_ms, count, best_confidence, best_x, best_y, best_w, best_h, best_ms, plate, species, travel, suppressed_by, finished)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         last_ms=excluded.last_ms,
         count=excluded.count,
@@ -103,38 +176,97 @@ export function openEventsDb(file) {
         best_ms=excluded.best_ms,
         plate=excluded.plate,
         species=excluded.species,
+        travel=excluded.travel,${setsSuppression ? "\n        suppressed_by=excluded.suppressed_by," : ""}
         finished=MAX(finished, excluded.finished)
-    `),
+    `;
+}
+
+export function openEventsDb(file) {
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA synchronous = NORMAL");
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec(SCHEMA);
+  ensureAddedColumns(db);
+
+  const stmts = {
+    upsertKeepingSuppression: db.prepare(upsertSql(false)),
+    upsertSettingSuppression: db.prepare(upsertSql(true)),
     all: db.prepare("SELECT * FROM events ORDER BY first_ms, id"),
     byId: db.prepare("SELECT * FROM events WHERE id = ?"),
+    // Newest first so the LIMIT keeps the newest; recentFinished turns the
+    // page back round to oldest first before handing it over.
+    recentFinished: db.prepare(`
+      SELECT * FROM events
+      WHERE finished = 1 AND last_ms >= ?
+      ORDER BY first_ms DESC, id DESC
+      LIMIT ?
+    `),
+    // `IS NOT ?` rather than `!= ?`: it is sqlite's NULL-safe comparison, so
+    // a row that is not hidden at all (NULL) is still "different", and a row
+    // already hidden behind this very object is left alone and not counted -
+    // the count is of rows that actually changed.
+    setSuppressed: db.prepare("UPDATE events SET suppressed_by = ? WHERE id = ? AND suppressed_by IS NOT ?"),
+    clearSuppressed: db.prepare("UPDATE events SET suppressed_by = NULL WHERE suppressed_by = ?"),
   };
 
   /**
-   * One prepared statement per (kinds, species) pair asked for, made once and
-   * kept. There are only eight possible kind sets and species sets are rare
-   * and small in practice, so caching by the pair costs nothing.
+   * Run several statements as one: reads see one snapshot, writes land all
+   * together or not at all. IMMEDIATE for writes takes the write lock up
+   * front, so busy_timeout waits for it instead of failing half way.
+   */
+  function together(fn, { write }) {
+    db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      // sqlite rolls some failures back on its own (a full disk, for one),
+      // and a ROLLBACK with nothing open throws - which would bury the error
+      // that actually happened under one about the clean-up.
+      try { db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+      throw err;
+    }
+  }
+
+  /** The WHERE clause shared by an inRange page and its hidden count. */
+  function windowWhere(kinds, species) {
+    // Overlap, not containment: someone who walked in at 23:59 and left at
+    // 00:01 belongs to both days.
+    const kindFilter = kinds === null ? "" : ` AND kind IN (${kinds.map(() => "?").join(", ")})`;
+    const speciesFilter = species === null ? "" : ` AND species IN (${species.map(() => "?").join(", ")})`;
+    return `camera_id = ? AND last_ms >= ? AND first_ms <= ?${kindFilter}${speciesFilter}`;
+  }
+
+  /**
+   * One prepared statement per (kinds, species, hidden) asked for, made once
+   * and kept. There are only eight possible kind sets, species sets are rare
+   * and small in practice, and there are three hidden modes, so caching by
+   * the triple costs nothing.
    *
-   * Both filters MUST be inside the query. Filtering the rows afterwards
+   * Every filter MUST be inside the query. Filtering the rows afterwards
    * means a day with six hundred cars and one person answers "no person" -
    * and species has exactly the same trap: a day with six hundred cars and
    * one truck would answer "no truck" if the limit were spent on cars first
-   * and the truck filtered out only after. The limit is spent on rows that
-   * are then thrown away, and the one sighting that mattered never comes back.
+   * and the truck filtered out only after. So does suppression: an umbrella
+   * hidden six hundred times would spend the limit on rows the page then
+   * drops, and the one real person that evening would never come back.
    */
   const inRangeStmts = new Map();
-  function inRangeStmt(kinds, species) {
-    const key = `${kinds === null ? "*" : kinds.join(",")}|${species === null ? "*" : species.join(",")}`;
+  function inRangeStmt(kinds, species, hidden) {
+    const key = `${kinds === null ? "*" : kinds.join(",")}|${species === null ? "*" : species.join(",")}|${hidden}`;
     let stmt = inRangeStmts.get(key);
     if (stmt === undefined) {
-      // Overlap, not containment: someone who walked in at 23:59 and left at
-      // 00:01 belongs to both days. Ordered by time so the same question gives
-      // the same answer twice, and asked for one row more than the caller
-      // wants, so "that is all of them" can be told from "there are more".
-      const kindFilter = kinds === null ? "" : ` AND kind IN (${kinds.map(() => "?").join(", ")})`;
-      const speciesFilter = species === null ? "" : ` AND species IN (${species.map(() => "?").join(", ")})`;
+      // Ordered by time so the same question gives the same answer twice,
+      // and asked for one row more than the caller wants, so "that is all of
+      // them" can be told from "there are more".
+      const hiddenFilter = hidden === "exclude" ? " AND suppressed_by IS NULL"
+        : hidden === "only" ? " AND suppressed_by IS NOT NULL"
+        : "";
       stmt = db.prepare(`
         SELECT * FROM events
-        WHERE camera_id = ? AND last_ms >= ? AND first_ms <= ?${kindFilter}${speciesFilter}
+        WHERE ${windowWhere(kinds, species)}${hiddenFilter}
         ORDER BY first_ms, id
         LIMIT ?
       `);
@@ -143,10 +275,39 @@ export function openEventsDb(file) {
     return stmt;
   }
 
+  /** The hidden count for the same window and filters, cached the same way. */
+  const hiddenCountStmts = new Map();
+  function hiddenCountStmt(kinds, species) {
+    const key = `${kinds === null ? "*" : kinds.join(",")}|${species === null ? "*" : species.join(",")}`;
+    let stmt = hiddenCountStmts.get(key);
+    if (stmt === undefined) {
+      stmt = db.prepare(`
+        SELECT COUNT(*) AS n FROM events
+        WHERE ${windowWhere(kinds, species)} AND suppressed_by IS NOT NULL
+      `);
+      hiddenCountStmts.set(key, stmt);
+    }
+    return stmt;
+  }
+
   return {
-    upsert(updateObj, finished) {
+    /**
+     * Store one event, new or updated. `opts.suppressedBy` says what to do
+     * with the known-object flag: leave it out (undefined) and the flag stays
+     * exactly as it is - every call written before suppression existed;
+     * `null` clears it (an event that has since travelled is no longer the
+     * known object, and shows again on its next update); a string hides the
+     * event behind that object. Anything else is refused before anything is
+     * written: an empty string would count as hidden while naming nothing.
+     */
+    upsert(updateObj, finished, opts = {}) {
+      const suppressedBy = opts?.suppressedBy;
+      if (suppressedBy !== undefined && suppressedBy !== null && !isObjectId(suppressedBy)) {
+        throw new TypeError(`suppressedBy must be undefined, null or a non-empty string, not ${JSON.stringify(suppressedBy)}`);
+      }
       const event = updateObj.event;
-      stmts.upsert.run(
+      const stmt = suppressedBy === undefined ? stmts.upsertKeepingSuppression : stmts.upsertSettingSuppression;
+      stmt.run(
         updateObj.id,
         event.cameraId,
         event.kind,
@@ -161,6 +322,8 @@ export function openEventsDb(file) {
         fromIso(event.bestUtc),
         event.plate ?? null,
         event.species ?? null,
+        travelOf(event),
+        suppressedBy ?? null,
         finished ? 1 : 0,
       );
     },
@@ -183,19 +346,97 @@ export function openEventsDb(file) {
      * (null/undefined) for all of them. `species` is optional and works the
      * same way, one level finer - "show me all the events of a white truck"
      * needs `species: ["truck"]`, not just `kinds: ["vehicle"]`. Both filters
-     * apply together (AND). Returns `{ events, truncated }`: `truncated` is
-     * true when the limit cut the answer short, so the page can say so instead
-     * of showing a quiet half of a busy day as if it were the whole of it.
+     * apply together (AND). `opts.hidden` is one of HIDDEN_MODES: "include"
+     * (the default - suppressed events come back like any other), "exclude"
+     * or "only".
+     *
+     * Returns `{ events, truncated, hiddenCount }`: `truncated` is true when
+     * the limit cut the answer short, so the page can say so instead of
+     * showing a quiet half of a busy day as if it were the whole of it.
+     * `hiddenCount` is how many suppressed events match the same window,
+     * kinds and species, whatever `hidden` was and however many the limit let
+     * through - so the page can say "3 hidden" even while it is hiding them,
+     * and the toggle that shows them reveals exactly that many.
      */
-    inRange(cameraId, startUtc, endUtc, kinds, limit, species) {
+    inRange(cameraId, startUtc, endUtc, kinds, limit, species, opts = {}) {
+      const hidden = opts?.hidden ?? "include";
+      if (!HIDDEN_MODES.includes(hidden)) {
+        throw new TypeError(`hidden must be one of ${HIDDEN_MODES.join(", ")}, not ${JSON.stringify(hidden)}`);
+      }
       const wanted = Array.isArray(kinds) ? [...new Set(kinds)].sort() : null;
-      if (wanted !== null && wanted.length === 0) return { events: [], truncated: false };
+      if (wanted !== null && wanted.length === 0) return { events: [], truncated: false, hiddenCount: 0 };
       const wantedSpecies = Array.isArray(species) ? [...new Set(species)].sort() : null;
-      if (wantedSpecies !== null && wantedSpecies.length === 0) return { events: [], truncated: false };
-      const rows = inRangeStmt(wanted, wantedSpecies).all(
-        cameraId, fromIso(startUtc), fromIso(endUtc), ...(wanted ?? []), ...(wantedSpecies ?? []), limit + 1,
-      );
-      return { events: rows.slice(0, limit).map(rowToEvent), truncated: rows.length > limit };
+      if (wantedSpecies !== null && wantedSpecies.length === 0) return { events: [], truncated: false, hiddenCount: 0 };
+      const args = [cameraId, fromIso(startUtc), fromIso(endUtc), ...(wanted ?? []), ...(wantedSpecies ?? [])];
+      // One snapshot for both reads, so the detector hiding a batch of events
+      // between them cannot make the count disagree with the page.
+      return together(() => {
+        const rows = inRangeStmt(wanted, wantedSpecies, hidden).all(...args, limit + 1);
+        const { n } = hiddenCountStmt(wanted, wantedSpecies).get(...args);
+        return { events: rows.slice(0, limit).map(rowToEvent), truncated: rows.length > limit, hiddenCount: Number(n) };
+      }, { write: false });
+    },
+
+    /**
+     * Finished events of every camera that ended at or after `sinceUtc`,
+     * oldest first: what learning known objects reads. Hidden ones are
+     * included - the learner has to see what is already known to match it
+     * rather than learn it twice.
+     *
+     * Returns `{ events, truncated }`. When there are more than `limit`, the
+     * NEWEST `limit` are the ones kept (and `truncated` says some were left
+     * out): learning is about what is in view now, and keeping the oldest
+     * would leave something that appeared this afternoon unlearned until the
+     * morning's events aged out of the window.
+     *
+     * Refuses (throws) an instant that does not parse or a limit that is not
+     * a positive integer, rather than answering a question nobody asked: a
+     * NaN bound would quietly match nothing, and "nothing finished" reads as
+     * a real answer.
+     */
+    recentFinished(sinceUtc, limit) {
+      const sinceMs = typeof sinceUtc === "string" ? fromIso(sinceUtc) : NaN;
+      if (!Number.isFinite(sinceMs)) {
+        throw new TypeError(`recentFinished needs an ISO instant, not ${JSON.stringify(sinceUtc)}`);
+      }
+      if (!Number.isInteger(limit) || limit < 1) {
+        throw new RangeError(`recentFinished needs a positive whole-number limit, not ${JSON.stringify(limit)}`);
+      }
+      const rows = stmts.recentFinished.all(sinceMs, limit + 1);
+      return { events: rows.slice(0, limit).reverse().map(rowToEvent), truncated: rows.length > limit };
+    },
+
+    /**
+     * Hide these events behind a known object (the members that taught it).
+     * Returns how many rows actually changed: an id that is not stored, or
+     * one already hidden behind this same object, is not counted. All of
+     * them or none of them - a learned object is never left half applied.
+     */
+    setSuppressed(ids, objectId) {
+      if (!isObjectId(objectId)) {
+        throw new TypeError(`setSuppressed needs an object id, not ${JSON.stringify(objectId)}`);
+      }
+      if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
+        throw new TypeError("setSuppressed needs a list of event ids");
+      }
+      if (ids.length === 0) return 0;
+      return together(() => {
+        let changed = 0;
+        for (const id of ids) changed += Number(stmts.setSuppressed.run(objectId, id, objectId).changes);
+        return changed;
+      }, { write: true });
+    },
+
+    /**
+     * Show again every event hidden behind one known object - a reset by
+     * hand. Only that object's events: another object's stay hidden. Returns
+     * how many rows changed.
+     */
+    clearSuppressed(objectId) {
+      if (!isObjectId(objectId)) {
+        throw new TypeError(`clearSuppressed needs an object id, not ${JSON.stringify(objectId)}`);
+      }
+      return Number(stmts.clearSuppressed.run(objectId).changes);
     },
 
     close() {

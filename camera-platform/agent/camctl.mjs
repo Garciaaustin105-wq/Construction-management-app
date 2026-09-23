@@ -17,7 +17,11 @@ import { runScore } from "./score-clips.mjs";
 import { runGateCheck, DEFAULT_THREADS, MAX_HOURS, MAX_THREADS } from "./gate-check.mjs";
 import { fileURLToPath } from "node:url";
 import { writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { openEventsDb } from "./events-db.mjs";
+import { createKnownObjectsStore } from "./known-objects.mjs";
+import { resetKnownObject, knownObjectNotice } from "../dist/knownObjects.js";
 import { sweep } from "./sweep.mjs";
 import { discoverSadp } from "./sadp.mjs";
 import { discoverOnvif } from "./wsdiscovery.mjs";
@@ -549,7 +553,104 @@ async function cmdGateCheck() {
   }
 }
 
-const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget };
+// Known objects (KNOWN-OBJECTS-SPEC.md): a recurring detection at one spot,
+// suppressed automatically once it is learned — nobody clicks before it
+// applies (Austin, 2026-09-20; overrides build rule 13 for this one feature).
+// This command lists what has been learned, in the same measurement words
+// the Review page shows (never a verdict — rule 11), and is the human
+// override for the case a belt got wrong: --reset lapses an object by hand
+// (reason "reset_by_hand") and un-hides the events it was hiding, the same
+// way a re-aimed camera or 24 h of silence would on their own.
+async function cmdKnownObjects() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  const camera = flag("camera");
+  const id = flag("id");
+  const reset = args.includes("--reset");
+  if (reset && id === null && camera === null) {
+    console.error("usage: camctl known-objects --reset --id ID [--state-dir D]\n" +
+      "       camctl known-objects --camera ID --reset [--state-dir D]");
+    process.exitCode = 2;
+    return;
+  }
+
+  const store = createKnownObjectsStore({ stateDir });
+  const { objects, problem } = await store.load();
+  if (problem !== null) {
+    // A store that cannot be trusted is refused cleanly, the same as the API
+    // route: neither one guesses at what a half-read file might have meant.
+    console.log(`Refused: ${problem}`);
+    process.exitCode = 1;
+    return;
+  }
+  const inScope = camera === null ? objects : objects.filter((o) => o.cameraId === camera);
+
+  if (!reset) {
+    if (inScope.length === 0) {
+      console.log(camera === null ? "no known objects" : `no known objects for ${camera}`);
+      return;
+    }
+    for (const o of inScope) {
+      console.log(`${o.id}  ${o.cameraId}  ${o.kind}  ${o.state}${o.state === "lapsed" ? ` (${o.lapseReason})` : ""}`);
+      for (const line of knownObjectNotice(o)) console.log(`  ${line}`);
+      console.log("");
+    }
+    return;
+  }
+
+  // --reset: one object by id, or every object of the given camera. Named
+  // by id, it must exist at all (refused below if not); named by camera, an
+  // empty scope is not an error, just nothing to do.
+  const targets = id !== null ? inScope.filter((o) => o.id === id) : inScope;
+  if (id !== null && targets.length === 0) {
+    console.log(`Refused: no known object with id ${id}${camera !== null ? ` on camera ${camera}` : ""}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Only the ACTIVE ones actually change: resetKnownObject leaves an
+  // already-lapsed object exactly as it is (its first reason is the true
+  // one), so a second reset of the same id is a fact worth saying, not an
+  // error and not a claim that something just happened.
+  const toReset = targets.filter((o) => o.state === "active");
+  if (toReset.length === 0) {
+    if (id !== null) {
+      console.log(`${id} is already lapsed (${targets[0].lapseReason}); nothing to reset`);
+    } else {
+      console.log(camera === null ? "no active known objects to reset" : `no active known objects for ${camera} to reset`);
+    }
+    return;
+  }
+
+  const nowUtc = new Date().toISOString();
+  const resetIds = new Set(toReset.map((o) => o.id));
+  const result = await store.update((current) => current.map((o) => (resetIds.has(o.id) ? resetKnownObject(o, nowUtc) : o)));
+  if (!result.ok) {
+    console.log(`Refused: ${result.problem}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Un-hide their events too: a reset that left the flag on would look
+  // undone the moment the detector's next pass re-reads a store it never
+  // itself rewrote (agent/known-objects.mjs's own note for this command).
+  const eventsFile = path.join(stateDir, "events.db");
+  const haveEvents = existsSync(eventsFile);
+  let cleared = 0;
+  if (haveEvents) {
+    const db = openEventsDb(eventsFile);
+    try {
+      for (const objId of resetIds) cleared += db.clearSuppressed(objId);
+    } finally {
+      db.close();
+    }
+  }
+
+  for (const o of toReset) console.log(`reset  ${o.id}  ${o.cameraId}  ${o.kind}`);
+  console.log(`\n${toReset.length} known object(s) reset` +
+    (haveEvents ? `; ${cleared} event(s) shown again` : "; no events database here — nothing to un-hide"));
+}
+
+const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -577,6 +678,9 @@ if (!handler) {
              [--footage-camera ID]  replay this recording instead (labelled: not the live stream)
   bench [options]              concurrent write throughput of a recording drive
   load --source FILE [options]  N recorders playing a file at once: CPU, write rate, who fell behind
+  known-objects [--state-dir D] [--camera ID]  list what has been learned, with its measurements
+                --reset --id ID               lapse one object by hand and show its events again
+                --camera ID --reset           lapse every active object of that camera
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS

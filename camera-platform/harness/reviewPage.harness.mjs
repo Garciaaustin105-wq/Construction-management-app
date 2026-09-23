@@ -184,7 +184,9 @@ function freshDom() {
     ["clipStatus", "div"],
     ["events", "div"], ["prevEvent", "button"], ["nextEvent", "button"],
     ["filterPerson", "button"], ["filterVehicle", "button"], ["filterPlate", "button"],
-    ["eventTiles", "div"], ["eventNote", "div"]]) {
+    ["eventTiles", "div"], ["eventNote", "div"],
+    ["hiddenRow", "div"], ["hiddenNote", "span"], ["hiddenToggle", "button"],
+    ["knownObjects", "div"], ["knownObjectsList", "div"]]) {
     byId[id] = new FakeEl(tag, id);
     byId[id].disabled = false;
   }
@@ -201,6 +203,8 @@ function freshDom() {
   byId.teachFields.hidden = true;
   byId.events.hidden = true;
   byId.filterPlate.hidden = true;
+  byId.hiddenRow.hidden = true;
+  byId.knownObjects.hidden = true;
   byId.strip.appendChild(byId.playhead);
   byId.strip.getBoundingClientRect = () => ({ left: 100, width: 1000, top: 0, height: 36 });
   return byId;
@@ -259,7 +263,8 @@ const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", 
   "closeSheet", "drawLengthChips", "pickLength", "sheetGo", "showCounts", "bumpCount", "tapNobody",
   "loadTeachProgress", "wireFriendly",
   "loadEvents", "drawEvents", "drawMarks", "drawTiles", "eventWords", "currentMomentUtc",
-  "goToEvent", "updateStepButtons", "stepEvent", "refreshTick", "wireRefresh", "localDayValue", "chooseDay"];
+  "goToEvent", "updateStepButtons", "stepEvent", "refreshTick", "wireRefresh", "localDayValue", "chooseDay",
+  "loadKnownObjects", "renderKnownObjects", "sendKnownObjectAnswer"];
 // The handle goes in just before the two startup calls, so a throw while the
 // page starts up is one failed check rather than a crashed suite.
 const START = "\nwireFriendly();\nwireEvents();\nloadCameras();\n";
@@ -1426,6 +1431,127 @@ await check("THE STALE ONE: stepping away and back after midnight is a choice, n
   page.el.day.value = was;
   await page.loadDay();
   await settle();
+});
+
+/* ── known objects (D: KNOWN-OBJECTS-SPEC.md) ─────────────────────────────
+ * Two different failures feared, tested two different ways:
+ * - the hidden-events toggle and the greyed mark it reveals go through the
+ *   REAL /events route (it already has a routeAccess.ts rule), so this is a
+ *   real round trip, exactly like every other events check above.
+ * - the Known Objects section talks to GET /known-objects and POST
+ *   /known-objects/answer, which routeAccess.ts has no rule for yet (see the
+ *   report: that file is not this feature's to add, and five agents share
+ *   this checkout right now). So THIS page's own logic is proven the same
+ *   way "a recorder with no detector" is proven above: by answering those two
+ *   fetches directly, real server or not. harness/knownObjectsApi.harness.mjs
+ *   proves the routes themselves, with routing turned on for that suite only. */
+
+await check("known objects: a suppressed event is counted, greyed, and only drawn once asked for", async () => {
+  {
+    const { openEventsDb } = await import("../agent/events-db.mjs");
+    const db = openEventsDb(join(stateDir, "events.db"));
+    db.upsert({ id: "e-hidden-1", event: {
+      id: "e-hidden-1", cameraId: "cam-1", kind: "person",
+      firstUtc: "2026-09-11T10:03:00.000Z", lastUtc: "2026-09-11T10:03:04.000Z",
+      count: 34, bestConfidence: 0.8,
+      bestBox: { x: 0.3, y: 0.2, w: 0.1, h: 0.42 },
+      bestUtc: "2026-09-11T10:03:00.000Z",
+    } }, true, { suppressedBy: "cam-1:person:1758000000000" });
+    db.close();
+  }
+  await loadDayWithEvents("2026-09-11");
+  eq(marksOf().length, 3, "THE FEARED ONE: hidden by default, not counted as a fourth event");
+  eq(dom.hiddenRow.hidden, false, "but its own row appears now that something is hidden");
+  eq(dom.hiddenNote.textContent, "1 hidden - known object", "singular, and the right count");
+  eq(dom.hiddenToggle.getAttribute("aria-pressed"), "false", "not showing them");
+  eq(dom.hiddenToggle.textContent, "Show hidden", "says what tapping it would do");
+
+  dom.hiddenToggle.fire("click");
+  await until(() => marksOf().length === 4, "the hidden mark to be asked for and drawn");
+  eq(dom.hiddenToggle.getAttribute("aria-pressed"), "true", "now showing");
+  eq(dom.hiddenToggle.textContent, "Hide known objects", "and says the opposite");
+  const greyed = marksOf().filter((m) => m.className.includes("suppressed"));
+  eq(greyed.length, 1, "exactly the one hidden event, drawn differently from the rest");
+  eq(greyed[0].title.endsWith("(hidden: known object)"), true, `plain words on the mark itself: ${greyed[0].title}`);
+  const greyedTile = tilesOf().find((t) => t.className.includes("suppressed"));
+  eq(Boolean(greyedTile), true, "the tile row shows it too");
+  eq(greyedTile.textContent.includes("(hidden: known object)"), true, "in its own words, not just its colour");
+
+  dom.hiddenToggle.fire("click");
+  await until(() => marksOf().length === 3, "back to the default view");
+  eq(dom.hiddenRow.hidden, false, "still says how many are hidden, even while hiding them again");
+});
+
+await check("known objects: the section shows the measurement, localised, and the two answers", async () => {
+  const KNOWN_OBJECT = {
+    id: "cam-1:person:1758000000000", cameraId: "cam-1", kind: "person",
+    box: { x: 0.3, y: 0.2, w: 0.1, h: 0.42 }, state: "active",
+    lapsedAtUtc: null, lapseReason: null, learnedAtUtc: "2026-09-11T09:00:00.000Z",
+    firstSeenUtc: "2026-09-11T05:55:00.000Z", lastSeenUtc: "2026-09-11T08:10:00.000Z",
+    lastMatchedUtc: "2026-09-11T08:10:00.000Z", members: 34, matched: 4,
+    confidenceMax: 0.8, sampleEventId: "e-hidden-1", memberEventIds: ["e-hidden-1"],
+    cameraFingerprint: "abc123def4567890", answer: null,
+    notice: [
+      "Seen as a person 34 times at the same spot, never moving, from 2026-09-11T05:55:00.000Z to 2026-09-11T08:10:00.000Z.",
+      "Highest score as a person: 0.80.",
+      "No answer recorded yet.",
+    ],
+  };
+  let stored = KNOWN_OBJECT;
+  const pageFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => {
+    const u = String(url);
+    if (u.startsWith("/known-objects?")) {
+      if (!u.includes("camera=cam-1")) throw new Error(`scoped to the wrong camera: ${u}`);
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, problem: null, objects: [stored] }) });
+    }
+    if (u === "/known-objects/answer" && opts && opts.method === "POST") {
+      const body = JSON.parse(opts.body);
+      eq(body, { id: KNOWN_OBJECT.id, belongs: false }, "posts exactly the id and the answer, nothing else");
+      stored = { ...KNOWN_OBJECT, answer: { belongs: false, atUtc: "2026-09-11T10:30:00.000Z", by: "tech" },
+        notice: [...KNOWN_OBJECT.notice.slice(0, 2), "tech said it should not be there."] };
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, object: stored }) });
+    }
+    return pageFetch(url, opts);
+  };
+  try {
+    await page.loadKnownObjects();
+    eq(dom.knownObjects.hidden, false, "the section appears");
+    eq(dom.knownObjectsList.children.length, 1, "one card for the one active object");
+    const img = findDescendant(dom.knownObjectsList, (c) => c.tagName === "IMG");
+    eq(img.src, "/event-crop?id=e-hidden-1", "the sample event's crop, the same route event tiles use");
+    const notice = findDescendant(dom.knownObjectsList, (c) => c.tagName === "P" && c.textContent.startsWith("Seen as"));
+    eq(notice.textContent, "Seen as a person 34 times at the same spot, never moving, from 9/11, 1:55 AM to 9/11, 4:10 AM.",
+      `the UTC instant became local time: ${notice.textContent}`);
+    const belongsBtn = findDescendant(dom.knownObjectsList, (c) => c.tagName === "BUTTON" && c.textContent === "It belongs there");
+    const shouldNotBtn = findDescendant(dom.knownObjectsList, (c) => c.tagName === "BUTTON" && c.textContent === "It should not be there");
+    eq(Boolean(belongsBtn && shouldNotBtn), true, "both answers offered before anyone has answered");
+
+    shouldNotBtn.fire("click");
+    await until(() => findDescendant(dom.knownObjectsList, (c) => c.className === "knownAnswer") !== undefined,
+      "the answer to land and the section to redraw from it");
+    const answerLine = findDescendant(dom.knownObjectsList, (c) => c.className === "knownAnswer");
+    eq(answerLine.textContent, "tech said it should not be there, 9/11, 6:30 AM.", answerLine.textContent);
+    eq(findDescendant(dom.knownObjectsList, (c) => c.tagName === "BUTTON"), undefined,
+      "THE FEARED ONE: once answered, no button is left offering to answer again as if nothing happened");
+  } finally {
+    globalThis.fetch = pageFetch;
+  }
+});
+
+await check("known objects: nothing readable from the recorder means nothing shown, not a broken section", async () => {
+  const pageFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => {
+    if (String(url).startsWith("/known-objects?")) return Promise.resolve({ ok: false, status: 404, json: async () => ({ ok: false, code: "no_such_route" }) });
+    return pageFetch(url, opts);
+  };
+  try {
+    await page.loadKnownObjects();
+    eq(dom.knownObjects.hidden, true, "no section, not an empty-looking one");
+    eq(dom.knownObjectsList.children.length, 0, "and nothing left over from the previous check");
+  } finally {
+    globalThis.fetch = pageFetch;
+  }
 });
 
 globalThis.fetch = realFetch;

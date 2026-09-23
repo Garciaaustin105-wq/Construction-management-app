@@ -89,6 +89,28 @@ export interface DetectionEvent {
   bestBox: Box;
   /** The time of the most confident detection: the crop Review shows. */
   bestUtc: string;
+  /**
+   * How far the thing got from where it was first seen: the farthest any
+   * sighting's box centre came from the FIRST sighting's box centre, as a
+   * fraction of that first box's diagonal (travelFrom). 0 for a one-sighting
+   * event, and it never goes down as the event grows - it is the farthest,
+   * not where the thing ended up.
+   *
+   * WHY: a furled umbrella was stored as a person 17 times in 30 minutes on
+   * 2026-09-22, the same box every time. A person arriving covers many box
+   * diagonals; a static object's box never leaves itself. This is not wobble
+   * (boxJitter.ts, commit 5b751c7, measured that small wobble does NOT
+   * separate a still person from an object) - it is whether the thing walked
+   * in. Measured in the box's own size, like boxJitter, so near and far read
+   * the same.
+   *
+   * A MEASUREMENT, NOT A VERDICT (build rule 11): the number that counts as
+   * "moved" lives with whoever decides (knownObjects.ts), not here. Events
+   * stored before this field existed have no travel; a reader must treat that
+   * as unknown, never as 0 (build rule 5) - "we did not measure it" is not
+   * "it did not move".
+   */
+  travel: number;
   plate?: string;
   /**
    * The species of the MOST CONFIDENT sighting - the same one bestBox and
@@ -264,6 +286,37 @@ export function matchScore(last: Box, next: Box): number | null {
 }
 
 /**
+ * How far `box`'s centre is from `first`'s centre, as a fraction of `first`'s
+ * diagonal: one sighting's contribution to DetectionEvent.travel. The one
+ * measurement both folds use (foldDetections here, advanceFold in
+ * detectStream.ts), so the stored travel and the scored travel agree to the
+ * bit rather than to a tolerance.
+ *
+ * 1. diagonal = hypot(first.w, first.h). If it is not a finite number above 0,
+ *    THROW. Checked boxes cannot have one (checkDetection demands w, h > 0),
+ *    so reaching here means a caller skipped the check; dividing by it would
+ *    produce Infinity or NaN dressed up as a measurement, and NaN in
+ *    particular loses every "is it farther?" comparison - it would read as
+ *    "did not move", the one wrong answer this number exists to prevent.
+ * 2. Return hypot(centre(box) - centre(first)) / diagonal. If that is not
+ *    finite (a later box that cannot be read), THROW, for the same reason: a
+ *    box that cannot be read is not a box that stayed put.
+ */
+export function travelFrom(first: Box, box: Box): number {
+  const diagonal = Math.hypot(first.w, first.h);
+  if (!Number.isFinite(diagonal) || diagonal <= 0) {
+    throw new RangeError("travelFrom: the first box has no diagonal to measure against (unchecked detection)");
+  }
+  const dx = (box.x + box.w / 2) - (first.x + first.w / 2);
+  const dy = (box.y + box.h / 2) - (first.y + first.h / 2);
+  const travel = Math.hypot(dx, dy) / diagonal;
+  if (!Number.isFinite(travel)) {
+    throw new RangeError("travelFrom: a sighting's box could not be read (unchecked detection)");
+  }
+  return travel;
+}
+
+/**
  * Fold checked detections into events.
  *
  * 1. Copy `detections` and sort the copy by parseUtc(atUtc) ascending; ties
@@ -275,21 +328,26 @@ export function matchScore(last: Box, next: Box): number | null {
  *       (the box does not matter: a car moves).
  *       For other kinds: a candidate matches when iou(candidate's LAST box,
  *       d.box) >= MERGE_MIN_IOU. Track each event's last box internally; it is
- *       not part of DetectionEvent.
+ *       not part of DetectionEvent. Track its FIRST box too, for travel.
  *    c. Among matches take the one with the highest match score (plate: 1;
  *       others: the iou), first in open order on a tie.
  *    d. If there is a match: lastUtc = d.atUtc, count += 1, last box = d.box;
+ *       travel = the larger of travel and travelFrom(first box, d.box);
  *       if d.confidence > bestConfidence (strictly), set bestConfidence,
  *       bestBox and bestUtc from d.
  *    e. Otherwise open a new event: firstUtc = lastUtc = bestUtc = d.atUtc,
- *       count 1, bestConfidence d.confidence, bestBox d.box, plate only for
- *       the plate kind.
+ *       count 1, bestConfidence d.confidence, bestBox d.box, first box d.box,
+ *       travel travelFrom(d.box, d.box) (0: the first sighting is where it
+ *       started, and the call refuses a box with no diagonal up front), plate
+ *       only for the plate kind. Plates get travel too: harmless, and one rule
+ *       for every kind is one fewer place for the two folds to drift.
  * 3. Return all events (none are dropped) sorted by firstUtc ascending, ties
  *    in the order they were opened. Each has exactly the DetectionEvent keys
  *    (plate only for plates), with times copied as the original atUtc strings.
  */
 export function foldDetections(detections: readonly Detection[]): DetectionEvent[] {
-  type Open = { event: DetectionEvent; lastBox: Box; lastMs: number };
+  // firstBox is what travel is measured from; it never changes once opened.
+  type Open = { event: DetectionEvent; firstBox: Box; lastBox: Box; lastMs: number };
   // Each atUtc is parsed once, into a sorted copy; the input is never mutated.
   const timed = detections.map((d) => ({ d, atMs: parseUtc(d.atUtc) }));
   timed.sort((a, b) => a.atMs - b.atMs);
@@ -333,6 +391,7 @@ export function foldDetections(detections: readonly Detection[]): DetectionEvent
         bestConfidence: d.confidence,
         bestBox: { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h },
         bestUtc: d.atUtc,
+        travel: travelFrom(d.box, d.box),
       };
       if (d.kind === "plate") {
         event.plate = d.plate;
@@ -340,13 +399,19 @@ export function foldDetections(detections: readonly Detection[]): DetectionEvent
       if (d.species !== undefined) {
         event.species = d.species;
       }
-      open.push({ event, lastBox: d.box, lastMs: atMs });
+      open.push({ event, firstBox: d.box, lastBox: d.box, lastMs: atMs });
     } else {
       const ev = match.event;
       ev.lastUtc = d.atUtc;
       ev.count += 1;
       match.lastBox = d.box;
       match.lastMs = atMs;
+      // The farthest it has been, not where it is now: a thing that walked
+      // in and walked back out still walked.
+      const travel = travelFrom(match.firstBox, d.box);
+      if (travel > ev.travel) {
+        ev.travel = travel;
+      }
       if (d.confidence > ev.bestConfidence) {
         ev.bestConfidence = d.confidence;
         ev.bestBox = { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h };
