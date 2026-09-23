@@ -117,6 +117,7 @@ and a fresh thread rather than let it limp along degraded.
 """
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
@@ -378,18 +379,37 @@ def _drain_stderr(pipe, stamps):
             pass
 
 
-def resolve_time_source(arrival_s, is_duplicate):
+# How far an arrival stamp may sit from the moment its frame was read before
+# it is refused as implausible. Arrival comes first, so the stamp may be
+# EARLIER than the read by the pipeline's lag - measured at a 1.18 s median on
+# the bench, so a minute is far past any lag this worker would still be
+# running live through - and later only by a clock step between the two
+# readings of the same box clock.
+MAX_ARRIVAL_LAG_S = 60.0
+MAX_ARRIVAL_LEAD_S = 2.0
+
+
+def resolve_time_source(arrival_s, is_duplicate, read_s):
     """"arrival" or "read" - the one decision that must never call a
     manufactured or duplicated time "arrival": given what
     ArrivalStamps.wait_for() returned for a frame, "arrival" only when a
-    pairing was actually found (arrival_s is not None) AND it was not
-    flagged a duplicate; "read" for either failure alone - no pairing at
-    all, or a pairing that IS there but repeats the frame before it (see
-    PtsPairer.offer). Pulled out of main()'s loop as its own pure function
-    (rule 2: split I/O from maths) specifically so this exact decision -
-    the one the HIGH finding was about - is unit-tested directly rather
-    than only through main(), which cannot run without a real ffmpeg."""
-    return "arrival" if arrival_s is not None and not is_duplicate else "read"
+    pairing was actually found (arrival_s is not None), it was not flagged a
+    duplicate, AND it is plausible against read_s, the wall-clock second the
+    frame was read; "read" for any failure alone - no pairing at all, a
+    pairing that repeats the frame before it (see PtsPairer.offer), or a
+    stamp outside [read_s - MAX_ARRIVAL_LAG_S, read_s + MAX_ARRIVAL_LEAD_S].
+    Found 2026-09-23 on the bench: the first frame after a restart paired
+    with pts 0 and was stored as an event at 1970-01-01. Pulled out of
+    main()'s loop as its own pure function (rule 2: split I/O from maths) so
+    this exact decision is unit-tested directly rather than only through
+    main(), which cannot run without a real ffmpeg."""
+    if arrival_s is None or is_duplicate:
+        return "read"
+    if not math.isfinite(arrival_s):
+        return "read"
+    if arrival_s < read_s - MAX_ARRIVAL_LAG_S or arrival_s > read_s + MAX_ARRIVAL_LEAD_S:
+        return "read"
+    return "arrival"
 
 
 def stderr_reader_dead(stderr_thread, ffmpeg_proc):
@@ -676,8 +696,10 @@ def main():
                 # should mean that never happens any more, but if it ever
                 # does by some other path resolve_time_source() refuses to
                 # call it "arrival" - see the module docstring's NO
-                # MANUFACTURED FRAMES section.
-                time_source = resolve_time_source(arrival_s, is_duplicate)
+                # MANUFACTURED FRAMES section. read_at is the plausibility
+                # anchor: a stamp far from it (pts 0 on the first frame after
+                # a restart became 1970) is refused the same way.
+                time_source = resolve_time_source(arrival_s, is_duplicate, read_at.timestamp())
                 at = _iso(datetime.fromtimestamp(arrival_s, tz=timezone.utc)) if time_source == "arrival" else _iso(read_at)
                 say({"type": "frame", "atUtc": at, "timeSource": time_source, "detections": detections})
             if gate is not None:

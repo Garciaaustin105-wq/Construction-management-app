@@ -456,17 +456,32 @@ check("offer_line() end to end: a real repeated checksum is flagged all the way 
 
 # ---------------- resolve_time_source: the exact HIGH-finding decision ----------------
 
+READ_S = 1790187352.8  # 2026-09-23T18:15:52.8Z, the first good frame after the bench restart
+
 check("THE FEARED ONE: a real pairing that is ALSO flagged a duplicate is refused as \"arrival\" - this is the exact decision the HIGH finding was about", lambda: (
-    eq(w.resolve_time_source(100.0, True), "read", "a duplicate must never win \"arrival\", however clean its pairing"),
+    eq(w.resolve_time_source(READ_S - 1.0, True, READ_S), "read", "a duplicate must never win \"arrival\", however clean its pairing"),
 ))
 
 check("a real, non-duplicate pairing is \"arrival\"", lambda: (
-    eq(w.resolve_time_source(100.0, False), "arrival", "the ordinary, correct case"),
+    eq(w.resolve_time_source(READ_S - 1.18, False, READ_S), "arrival", "the ordinary, correct case: arrival a measured lag before the read"),
 ))
 
 check("no pairing at all is \"read\", regardless of the duplicate flag (which is meaningless without a pairing)", lambda: (
-    eq(w.resolve_time_source(None, False), "read", "nothing arrived in time"),
-    eq(w.resolve_time_source(None, True), "read", "nothing arrived in time, and duplicate is moot - still \"read\", not an error"),
+    eq(w.resolve_time_source(None, False, READ_S), "read", "nothing arrived in time"),
+    eq(w.resolve_time_source(None, True, READ_S), "read", "nothing arrived in time, and duplicate is moot - still \"read\", not an error"),
+))
+
+check("FOUND ON THE BENCH 2026-09-23: pts 0 on the first frame after a restart is refused, not stored as 1970", lambda: (
+    eq(w.resolve_time_source(0.0, False, READ_S), "read", "arrival 0 is the epoch, not a frame that arrived"),
+    eq(w.resolve_time_source(float("nan"), False, READ_S), "read", "NaN is not a time"),
+    eq(w.resolve_time_source(float("inf"), False, READ_S), "read", "infinity is not a time"),
+))
+
+check("the plausibility window's edges: up to a minute of lag, up to 2 s of clock step the other way", lambda: (
+    eq(w.resolve_time_source(READ_S - w.MAX_ARRIVAL_LAG_S, False, READ_S), "arrival", "exactly a minute of lag is still believed"),
+    eq(w.resolve_time_source(READ_S - w.MAX_ARRIVAL_LAG_S - 0.001, False, READ_S), "read", "past a minute of lag is refused"),
+    eq(w.resolve_time_source(READ_S + w.MAX_ARRIVAL_LEAD_S, False, READ_S), "arrival", "a 2 s clock step is tolerated"),
+    eq(w.resolve_time_source(READ_S + w.MAX_ARRIVAL_LEAD_S + 0.001, False, READ_S), "read", "arriving after it was read, by more than a clock step, is refused"),
 ))
 
 
