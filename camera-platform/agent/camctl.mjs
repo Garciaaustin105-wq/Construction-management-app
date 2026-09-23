@@ -15,6 +15,8 @@ import { defaultThresholds } from "../dist/alerts.js";
 import { DEFAULT_PATHS } from "./config.mjs";
 import { runScore } from "./score-clips.mjs";
 import { runGateCheck, DEFAULT_THREADS, MAX_HOURS, MAX_THREADS } from "./gate-check.mjs";
+import { loadOrCreateIdentity } from "./device-identity.mjs";
+import { composeCheckin, readCheckinState } from "./checkin.mjs";
 import { fileURLToPath } from "node:url";
 import { writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -650,7 +652,51 @@ async function cmdKnownObjects() {
     (haveEvents ? `; ${cleared} event(s) shown again` : "; no events database here — nothing to un-hide"));
 }
 
-const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects };
+// B1 phase-1 brief, piece 4. Shows the box's own cloud-checkin identity
+// (agent/device-identity.mjs), creating it on first use -- never the
+// private key, which that module never even returns to this function.
+async function cmdIdentity() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  const identity = await loadOrCreateIdentity(stateDir);
+  if (identity.created) {
+    console.log(`created a new device identity in ${stateDir}`);
+    console.log();
+  }
+  console.log(`deviceId:     ${identity.deviceId}`);
+  console.log(`createdAtUtc: ${identity.createdAtUtc}`);
+  console.log(`publicKeyPem:`);
+  console.log(identity.publicKeyPem.trim());
+}
+
+// B1 phase-1 brief, piece 4. --dry-run is the only mode this brief builds:
+// it prints exactly the payload sendCheckin() would send next, and its
+// signature, and sends nothing -- composeCheckin() itself does no network
+// I/O, so there is nothing here that could accidentally send for real.
+async function cmdCheckin() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  if (!args.includes("--dry-run")) {
+    console.error("usage: camctl checkin --dry-run [--state-dir D]\n" +
+      "(only --dry-run is implemented here -- camctl never sends a check-in itself)");
+    process.exitCode = 2;
+    return;
+  }
+  const state = await readCheckinState(stateDir);
+  if (state.kind === "corrupt") {
+    console.log(`Refused: ${state.reason}`);
+    process.exitCode = 1;
+    return;
+  }
+  const seq = state.seq + 1;
+  const composed = await composeCheckin({ stateDir, now: () => new Date(), seq });
+  console.log(`dry run -- nothing sent. This is exactly what sendCheckin() would POST next (seq ${seq}):`);
+  console.log();
+  console.log(composed.canonicalText);
+  console.log();
+  console.log(`signature (base64): ${composed.signature}`);
+  console.log(`deviceId:           ${composed.deviceId}`);
+}
+
+const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects, identity: cmdIdentity, checkin: cmdCheckin };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -681,6 +727,8 @@ if (!handler) {
   known-objects [--state-dir D] [--camera ID]  list what has been learned, with its measurements
                 --reset --id ID               lapse one object by hand and show its events again
                 --camera ID --reset           lapse every active object of that camera
+  identity [--state-dir D]      show this box's cloud check-in deviceId and public key (creating it on first use); never the private key
+  checkin --dry-run [--state-dir D]  print the next signed check-in payload and its signature; sends nothing
 
 probe options:
   --user U --pass P             or CAMPLAT_USER / CAMPLAT_PASS

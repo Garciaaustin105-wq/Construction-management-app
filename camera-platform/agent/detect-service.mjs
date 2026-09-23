@@ -11,7 +11,7 @@
  * when it sits on one. Flagged, never deleted: the Review page can show it.
  */
 
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, appendFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,21 @@ import { DEFAULT_PATHS } from "./config.mjs";
  * days of a still thing is a few hundred rows at most.
  */
 const LEARN_EVENT_LIMIT = 20_000;
+
+/**
+ * Teach list, piece 1 (TEACH-LIST-SPEC.md): the gate's own minute-by-minute
+ * bookkeeping, kept so the teach list can find a minute where the gate saw
+ * motion but nothing was stored - a miss leaves no event, so motion is the
+ * only thing that can point at one. One line per camera per minute, in
+ * `<stateDir>/gate-windows/<YYYY-MM-DD>.jsonl` (UTC day - the same day a
+ * GET /teach-moments?day= names). contracts/teachCandidates.ts's GateWindow
+ * type and agent/api-server.mjs's readGateWindowsForDay read exactly this
+ * shape back; this file owns the writing and the housekeeping, they own the
+ * reading, and neither copies the other's code (build rule 3).
+ */
+const GATE_WINDOWS_DIR_NAME = "gate-windows";
+const GATE_WINDOWS_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
+const GATE_WINDOWS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultLog = (level, msg, extra) =>
@@ -85,6 +100,10 @@ export async function startDetect(opts = {}) {
     knownPassMs = 600_000,
     knownFlushMs = 60_000,
     knownObjectsStore = null,
+    // Teach list, piece 1: how often the once-a-day sweep of old gate-window
+    // files runs. A day in production; a harness passes something small so a
+    // check does not have to wait a real day to see it happen again.
+    gateRetentionCheckMs = 24 * 60 * 60 * 1000,
   } = opts;
 
   // Read detect.json
@@ -526,6 +545,70 @@ export async function startDetect(opts = {}) {
     }
   }
 
+  // ---------------------------------------------------------------- gate windows (teach list, piece 1)
+  //
+  // Append-only, and never on the critical path: a gate line arrives inside
+  // the worker's stdout handler (synchronous, one line at a time), so the
+  // write is fired without an await and its own errors are caught inside it -
+  // detection must never wait on a disk write, and a bad state dir must never
+  // slow or stop it. Every append is chained onto the one before it (the same
+  // shape as knownChain above) so two cameras finishing their minute in the
+  // same tick cannot interleave two half-written lines into one file.
+  const gateWindowsDir = path.join(stateDir, GATE_WINDOWS_DIR_NAME);
+  let gateWriteChain = Promise.resolve();
+
+  /** Append one gate window - exactly the six fields TEACH-LIST-SPEC.md
+   *  names, nothing more - to its UTC day's file. Never throws: a failure is
+   *  logged once (logOnce, the same dedupe every other problem in this
+   *  service uses) and that one line is simply lost; the next minute's is
+   *  still worth having. */
+  function appendGateWindow(window) {
+    const line = `${JSON.stringify(window)}\n`;
+    const file = path.join(gateWindowsDir, `${window.atUtc.slice(0, 10)}.jsonl`);
+    gateWriteChain = gateWriteChain
+      .then(() => mkdir(gateWindowsDir, { recursive: true }))
+      .then(() => appendFile(file, line, "utf8"))
+      .catch((err) => {
+        logOnce("gate-windows-write", "warn", "teach list: a gate window could not be saved; detection keeps running", { error: scrub(err.message) });
+      });
+  }
+
+  /**
+   * Delete this directory's OWN files older than 7 days - only a name that is
+   * exactly YYYY-MM-DD.jsonl is ever touched, so anything else found here (or
+   * anywhere else in stateDir - this never reads outside gateWindowsDir) is
+   * left alone. Runs once at start and once a day after that. A directory
+   * that does not exist yet (the gate has never run) is not a problem, just
+   * nothing to do; a directory that cannot be listed or a file that cannot be
+   * deleted is said once and otherwise ignored - a stale file left a little
+   * longer is not worth risking detection over.
+   */
+  async function pruneGateWindows() {
+    let entries;
+    try {
+      entries = await readdir(gateWindowsDir);
+    } catch (err) {
+      if (err.code === "ENOENT") return;
+      logOnce("gate-windows-prune-list", "warn", "teach list: the gate-windows directory could not be listed; nothing pruned this pass", { error: scrub(err.message) });
+      return;
+    }
+    // A file's day is kept once its calendar day is within the last 7 days of
+    // now; anything older is deleted. String comparison sorts YYYY-MM-DD
+    // exactly the way it sorts in time, so no date parsing is needed here.
+    const cutoffDayKey = new Date(now().getTime() - GATE_WINDOWS_RETENTION_MS).toISOString().slice(0, 10);
+    for (const name of entries) {
+      if (!GATE_WINDOWS_FILE_PATTERN.test(name)) continue;
+      if (name.slice(0, 10) >= cutoffDayKey) continue;
+      try {
+        await unlink(path.join(gateWindowsDir, name));
+      } catch (err) {
+        if (err.code !== "ENOENT") {
+          logOnce(`gate-windows-prune-${name}`, "warn", "teach list: an old gate-windows file could not be deleted", { file: name, error: scrub(err.message) });
+        }
+      }
+    }
+  }
+
   function spawnWorker(assignment) {
     const cameraId = assignment.cameraId;
     const cam = getCameraState(cameraId);
@@ -668,6 +751,17 @@ export async function startDetect(opts = {}) {
               lastWindow,
               sinceStart: { frames: totalFrames, looked: totalLooked, share: totalFrames > 0 ? totalLooked / totalFrames : null },
             };
+            // Teach list, piece 1: kept for the whole day, not just the last
+            // window in memory. Only the six fields the spec names - `share`
+            // above is this service's own figure, never written to disk.
+            appendGateWindow({
+              cameraId,
+              atUtc: lastWindow.atUtc,
+              windowS: lastWindow.windowS,
+              frames: lastWindow.frames,
+              looked: lastWindow.looked,
+              reasons: lastWindow.reasons,
+            });
           }
         }
       }
@@ -724,6 +818,13 @@ export async function startDetect(opts = {}) {
   // read leaves nothing hidden and detection starts all the same.
   await syncKnown({ learn: true });
 
+  // Teach list, piece 1: drop this directory's own files older than 7 days
+  // before the first new one can be written, same as the known-objects read
+  // above - once at start, and the timer below repeats it once a day.
+  // pruneGateWindows never throws, so a bad state dir cannot stop detection
+  // from starting.
+  await pruneGateWindows();
+
   // Spawn all workers
   for (const assignment of plan.assignments) {
     spawnWorker(assignment);
@@ -753,6 +854,13 @@ export async function startDetect(opts = {}) {
   const knownFlushTimer = setInterval(() => {
     if (!stopping) syncKnown({ learn: false });
   }, knownFlushMs);
+
+  // Teach list, piece 1: the once-a-day sweep. pruneGateWindows never throws
+  // (its own failures are logged and swallowed), so nothing here needs to
+  // catch it either.
+  const gateRetentionTimer = setInterval(() => {
+    if (!stopping) pruneGateWindows();
+  }, gateRetentionCheckMs);
 
   function getCameras() {
     return Array.from(cameras.values()).map((cam) => ({
@@ -819,6 +927,7 @@ export async function startDetect(opts = {}) {
     clearInterval(healthTimer);
     clearInterval(knownPassTimer);
     clearInterval(knownFlushTimer);
+    clearInterval(gateRetentionTimer);
 
     // Cancel pending restarts
     for (const timer of restartTimers.values()) {
@@ -884,6 +993,8 @@ export async function startDetect(opts = {}) {
     // For a harness, as tick is: run what the timers run, now.
     knownPass: () => syncKnown({ learn: true }),
     knownFlush: () => syncKnown({ learn: false }),
+    // For a harness, as knownPass/knownFlush are: run the once-a-day sweep now.
+    pruneGateWindows: () => pruneGateWindows(),
   };
 }
 

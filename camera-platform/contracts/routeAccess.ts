@@ -29,6 +29,9 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
 
   "/": { kind: "page", permission: "live.view" },
   "/review": { kind: "page", permission: "playback.view" },
+  // The teach list (TEACH-LIST-SPEC.md piece 4): moments to label, from the
+  // same footage /review and /clip-library already reach.
+  "/teach": { kind: "page", permission: "playback.view" },
   "/system": { kind: "page", permission: "live.view" },
   "/accounts-page": { kind: "page", permission: "account.manage" },
   "/cameras-page": { kind: "page", permission: "camera.manage" },
@@ -38,6 +41,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
   "/ui/live-client.js": { kind: "api", permission: "live.view" },
   "/ui/review-client.js": { kind: "api", permission: "playback.view" },
+  "/ui/teach-client.js": { kind: "api", permission: "playback.view" },
   "/ui/alert-banner.js": { kind: "api", permission: "live.view" },
   "/ui/system-client.js": { kind: "api", permission: "live.view" },
   "/ui/wall-client.js": { kind: "api", permission: "live.view" },
@@ -66,6 +70,11 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/recording-settings": { kind: "api", permission: "storage.manage" },
   // The AI answer key: what someone watching the footage says is in it.
   "/clip-library": { kind: "api", permission: "playback.view" },
+  // Candidate moments to label for the answer key (TEACH-LIST-SPEC.md), and
+  // the still that illustrates each one: both are about footage, the same
+  // reach as /clip-library and /playback, not a new permission of their own.
+  "/teach-moments": { kind: "api", permission: "playback.view" },
+  "/still": { kind: "api", permission: "playback.view" },
   // What the detector thinks it saw. Not playback.view: see access.ts.
   "/events": { kind: "api", permission: "events.view" },
   // A crop of the frame at an event's most confident moment — the same reach

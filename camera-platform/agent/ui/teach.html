@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<!-- Teach list (TEACH-LIST-SPEC.md piece 4): moments worth a tap for the
+     answer key camctl score needs. Plain page, no framework, phone-first
+     (Austin uses an Android phone). Every decision that can be wrong without
+     looking wrong -- what a card's measurement says, what a tap posts, the
+     "empty" vs "person"/"vehicle" scenes split -- lives in
+     /ui/teach-client.js and is harness-tested; this file only fetches, draws
+     and answers taps. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teach</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    padding: 12px;
+    max-width: 480px;
+    background: #14161a;
+    color: #e8eaed;
+    font: 15px/1.4 system-ui, sans-serif;
+  }
+  a { color: #8ab4f8; }
+  header { display: flex; align-items: baseline; gap: 14px; margin: 0 0 10px; }
+  header h1 { margin: 0; font-size: 18px; }
+  #camera { display: none; }
+  .cameras { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+  .camTile {
+    flex: 1 1 110px;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 6px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .camTile.chosen { border-color: #8ab4f8; background: #33415c; }
+  .daybar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+  .daybar input {
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+  }
+  .dayNote { color: #9aa0a6; font-size: 12px; }
+  .pageError {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #3a1d1d;
+    color: #ffb4b4;
+  }
+  .progress { margin: 0 0 14px; padding: 8px 10px; border-radius: 6px; background: #1b1d22; color: #b6bcc4; }
+  .emptyNote { color: #9aa0a6; margin: 0 0 12px; }
+  .notes {
+    margin: 0 0 14px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #2c2a1d;
+    color: #f1e3a0;
+    font-size: 13px;
+  }
+  .notes ul { margin: 4px 0 0; padding-left: 18px; }
+  .cards { display: flex; flex-direction: column; gap: 14px; }
+  .card { border: 1px solid #2c2f36; border-radius: 8px; overflow: hidden; background: #1b1d22; }
+  .still { display: block; width: 100%; height: auto; background: #000; }
+  .cardBody { padding: 10px 12px 12px; }
+  .cardTitle { font-weight: 600; }
+  .cardTime { color: #9aa0a6; font-size: 13px; margin: 2px 0 6px; }
+  .cardText { margin: 0 0 6px; }
+  .cardQuestion { font-weight: 600; margin: 8px 0 8px; }
+  .watch { display: inline-block; margin: 0 0 10px; }
+  .answers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .answers button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 8px 14px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .answers button:disabled { opacity: 0.5; cursor: default; }
+  .carToggle { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px; }
+  .carToggle input { width: 20px; height: 20px; }
+  .exactRow { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; }
+  /* Found in review (2026-09-23): an author rule like .exactRow's display:
+     flex beats the browser's own [hidden] rule, so the exact-count row showed
+     before 3+ was tapped. Hidden must always win on this page. */
+  [hidden] { display: none !important; }
+  .exactRow input {
+    width: 70px;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+  }
+  .exactRow button {
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 1px solid #4a4f58;
+    border-radius: 5px;
+    background: #2c2f36;
+    color: #e8eaed;
+    font: inherit;
+    cursor: pointer;
+  }
+  .cardStatus { margin: 8px 0 0; min-height: 1.2em; }
+  .cardStatus.problem { color: #ffb4b4; }
+  .cardStatus.saved { color: #8fd694; }
+</style>
+</head>
+<body>
+<header><a href="/review">Review</a><h1>Teach</h1></header>
+
+<!-- Pick a camera by tapping it; the select is the page's single answer to
+     "which camera", kept out of sight rather than removed (same pattern as
+     review.html's camera tiles). -->
+<div class="cameras" id="cameraTiles"></div>
+<select id="camera" aria-label="Camera"></select>
+
+<!-- A day is a UTC calendar day here, the same day proposeTeachMoments and
+     the gate-windows file layout both use -- not the visitor's local day, so
+     there is no local/UTC boundary to get wrong. -->
+<div class="daybar">
+  <input id="day" type="date" aria-label="Day">
+  <span class="dayNote">UTC day</span>
+</div>
+
+<div class="pageError" id="pageError" hidden></div>
+<div class="progress" id="progress"></div>
+<div class="emptyNote" id="emptyNote" hidden>No moments to label for this camera and day.</div>
+<div class="notes" id="notesBox" hidden></div>
+<div class="cards" id="cards"></div>
+
+<script type="module">
+import {
+  progressLine, localTime, momentTitle, momentText, stillUrl, watchUrl, saveBody, isExactCount, friendlyTeachProblem,
+} from '/ui/teach-client.js';
+
+const el = {
+  cameraTiles: document.getElementById('cameraTiles'),
+  camera: document.getElementById('camera'),
+  day: document.getElementById('day'),
+  pageError: document.getElementById('pageError'),
+  progress: document.getElementById('progress'),
+  emptyNote: document.getElementById('emptyNote'),
+  notesBox: document.getElementById('notesBox'),
+  cards: document.getElementById('cards'),
+};
+
+const view = { loadSeq: 0 };
+
+/** Show a whole-page problem (null hides it). */
+function showPageError(message) {
+  el.pageError.hidden = message === null;
+  el.pageError.textContent = message ?? '';
+}
+
+/** Today, as a UTC "YYYY-MM-DD" -- the day input's own starting value. */
+function todayUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Fill the camera <select> from GET /cameras, then load the day.
+ * Same shape and same refusals as review.html's loadCameras(): the fetch
+ * fails, the body is not JSON, or it is not an array -> a page error and
+ * stop; an empty array -> a different page error and stop; otherwise draw
+ * the tiles, clear any page error, default the day to today (UTC) the first
+ * time, and load it.
+ */
+async function loadCameras() {
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/cameras');
+    body = await res.json();
+  } catch {
+    reached = false;
+  }
+  if (!reached || !Array.isArray(body)) {
+    showPageError('Cannot reach the recorder (' + location.host + ')');
+    return;
+  }
+  if (body.length === 0) {
+    showPageError('This recorder has no cameras configured');
+    return;
+  }
+  for (const c of Array.from(el.camera.childNodes)) el.camera.removeChild(c);
+  let firstValue = null;
+  for (const cam of body) {
+    if (typeof cam !== 'object' || cam === null || typeof cam.cameraId !== 'string') continue;
+    const o = document.createElement('option');
+    o.value = cam.cameraId;
+    o.textContent = (typeof cam.name === 'string' && cam.name !== '') ? cam.name : cam.cameraId;
+    el.camera.appendChild(o);
+    if (firstValue === null) firstValue = o.value;
+  }
+  if (firstValue !== null) el.camera.value = firstValue;
+  drawCameraTiles();
+  showPageError(null);
+  if (!el.day.value) el.day.value = todayUtc();
+  await loadDay();
+}
+
+/** One tile per camera; tapping one is choosing it. */
+function drawCameraTiles() {
+  const tiles = [];
+  for (const opt of Array.from(el.camera.childNodes)) {
+    const tile = document.createElement('button');
+    tile.setAttribute('type', 'button');
+    tile.className = opt.value === el.camera.value ? 'camTile chosen' : 'camTile';
+    tile.textContent = opt.textContent;
+    tile.addEventListener('click', () => { chooseCamera(opt.value); });
+    tiles.push(tile);
+  }
+  el.cameraTiles.replaceChildren(...tiles);
+}
+
+/** Tapping a tile is choosing in the select: same event, same consequences. */
+function chooseCamera(cameraId) {
+  if (el.camera.value === cameraId) return;
+  el.camera.value = cameraId;
+  drawCameraTiles();
+  loadDay();
+}
+
+/**
+ * Load and draw GET /teach-moments for the chosen camera and day.
+ * A later call superseding an earlier one (camera or day changed again
+ * before the fetch returned) is decided by view.loadSeq, the same pattern
+ * review.html's loadDay() uses: the stale response is simply never drawn.
+ */
+async function loadDay() {
+  const seq = ++view.loadSeq;
+  const camera = el.camera.value;
+  const day = el.day.value;
+  if (!camera || !day) return;
+  showPageError(null);
+  el.cards.replaceChildren();
+  el.emptyNote.hidden = true;
+  el.notesBox.hidden = true;
+  el.progress.textContent = 'Loading...';
+  const q = new URLSearchParams({ camera, day });
+  let body;
+  let reached = true;
+  try {
+    const res = await fetch('/teach-moments?' + q.toString());
+    body = await res.json();
+  } catch {
+    reached = false;
+  }
+  if (seq !== view.loadSeq) return;
+  if (!reached) {
+    el.progress.textContent = '';
+    showPageError('Cannot reach the recorder (' + location.host + ')');
+    return;
+  }
+  if (!body || body.ok !== true) {
+    el.progress.textContent = '';
+    showPageError(friendlyTeachProblem(body && body.code));
+    return;
+  }
+  drawDay(body);
+}
+
+/** Draw one GET /teach-moments response: the progress line, the notes, one card per moment. */
+function drawDay(body) {
+  const line = progressLine(body.library);
+  el.progress.textContent = line ?? '';
+
+  const moments = Array.isArray(body.moments) ? body.moments : [];
+  el.cards.replaceChildren(...moments.map(buildCard));
+  el.emptyNote.hidden = moments.length > 0;
+
+  const notes = Array.isArray(body.notes) ? body.notes : [];
+  if (notes.length > 0) {
+    const list = document.createElement('ul');
+    for (const n of notes) {
+      const li = document.createElement('li');
+      li.textContent = n;
+      list.appendChild(li);
+    }
+    el.notesBox.replaceChildren(list);
+    el.notesBox.hidden = false;
+  } else {
+    el.notesBox.hidden = true;
+  }
+}
+
+/**
+ * Re-read only the progress line after a save, without touching the cards
+ * already on screen (rule 13: nothing auto-applies, and a card a person is
+ * still looking at must not reshuffle under them). Best effort: a failure
+ * here just leaves the line as it was.
+ */
+async function refreshProgress() {
+  const camera = el.camera.value;
+  const day = el.day.value;
+  if (!camera || !day) return;
+  const q = new URLSearchParams({ camera, day });
+  try {
+    const res = await fetch('/teach-moments?' + q.toString());
+    const body = await res.json();
+    if (body && body.ok === true) {
+      const line = progressLine(body.library);
+      if (line !== null) el.progress.textContent = line;
+    }
+  } catch {
+    // best effort only
+  }
+}
+
+/**
+ * One moment's card: its still, the plain measurement, a Watch link, and the
+ * answer controls. Nothing here posts by itself -- every path to save() is a
+ * tap (rule 13): Nobody/1/2 tap straight through; 3+ only reveals the exact-
+ * count row, and THAT row's own Save button is the tap that posts. Skip
+ * never posts at all -- it only removes the card from view.
+ */
+function buildCard(moment) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const img = document.createElement('img');
+  img.className = 'still';
+  img.alt = '';
+  img.loading = 'lazy';
+  img.src = stillUrl(moment.cameraId, moment.stillAtUtc);
+  card.appendChild(img);
+
+  const cardBody = document.createElement('div');
+  cardBody.className = 'cardBody';
+
+  const title = document.createElement('div');
+  title.className = 'cardTitle';
+  title.textContent = momentTitle(moment.kind);
+  cardBody.appendChild(title);
+
+  const time = document.createElement('div');
+  time.className = 'cardTime';
+  time.textContent = localTime(moment.stillAtUtc);
+  cardBody.appendChild(time);
+
+  const text = document.createElement('div');
+  text.className = 'cardText';
+  text.textContent = momentText(moment);
+  cardBody.appendChild(text);
+
+  // The question is about the WHOLE span, never just the still's instant:
+  // the answer key counts the whole clip (TEACH-LIST-SPEC.md piece 4).
+  const question = document.createElement('div');
+  question.className = 'cardQuestion';
+  question.textContent = 'How many people in this clip?';
+  cardBody.appendChild(question);
+
+  const watch = document.createElement('a');
+  watch.className = 'watch';
+  watch.href = watchUrl(moment.cameraId, moment.stillAtUtc);
+  watch.textContent = 'Watch';
+  cardBody.appendChild(watch);
+
+  const answers = document.createElement('div');
+  answers.className = 'answers';
+
+  const carLabel = document.createElement('label');
+  carLabel.className = 'carToggle';
+  const carBox = document.createElement('input');
+  carBox.type = 'checkbox';
+  carLabel.appendChild(carBox);
+  carLabel.appendChild(document.createTextNode('Car'));
+
+  const exactRow = document.createElement('div');
+  exactRow.className = 'exactRow';
+  exactRow.hidden = true;
+  const exactInput = document.createElement('input');
+  exactInput.type = 'number';
+  exactInput.min = '3';
+  exactInput.max = '20';
+  exactInput.setAttribute('aria-label', 'Exact number of people');
+  const exactSave = document.createElement('button');
+  exactSave.setAttribute('type', 'button');
+  exactSave.textContent = 'Save';
+  exactRow.appendChild(exactInput);
+  exactRow.appendChild(exactSave);
+
+  const status = document.createElement('div');
+  status.className = 'cardStatus';
+
+  let busy = false;
+  let saved = false;
+  const allButtons = [];
+  const setDisabled = (disabled) => { for (const b of allButtons) b.disabled = disabled; };
+
+  const answerButton = (label, onClick) => {
+    const b = document.createElement('button');
+    b.setAttribute('type', 'button');
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    allButtons.push(b);
+    return b;
+  };
+
+  async function save(people) {
+    if (busy || saved) return;
+    busy = true;
+    setDisabled(true);
+    status.className = 'cardStatus';
+    status.textContent = 'Saving...';
+    const payload = saveBody(moment, people, carBox.checked);
+    let res, resBody;
+    let reached = true;
+    try {
+      res = await fetch('/clip-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      resBody = await res.json();
+    } catch {
+      reached = false;
+    }
+    busy = false;
+    if (!reached) {
+      status.className = 'cardStatus problem';
+      status.textContent = 'Cannot reach the recorder (' + location.host + ')';
+      setDisabled(false);
+      return;
+    }
+    if (!resBody || resBody.ok !== true) {
+      const message = resBody && typeof resBody.message === 'string' ? resBody.message : 'not saved';
+      status.className = 'cardStatus problem';
+      status.textContent = 'Not saved: ' + message;
+      setDisabled(false);
+      return;
+    }
+    saved = true;
+    exactRow.hidden = true;
+    status.className = 'cardStatus saved';
+    status.textContent = 'Saved.';
+    refreshProgress();
+  }
+
+  const nobodyBtn = answerButton('Nobody', () => save(0));
+  const oneBtn = answerButton('1', () => save(1));
+  const twoBtn = answerButton('2', () => save(2));
+  const threeBtn = answerButton('3+', () => { exactRow.hidden = false; });
+  const skipBtn = answerButton('Skip', () => { card.hidden = true; });
+
+  exactSave.addEventListener('click', () => {
+    const n = Number(exactInput.value);
+    if (!isExactCount(n)) {
+      status.className = 'cardStatus problem';
+      status.textContent = 'Enter a whole number, 3 or more';
+      return;
+    }
+    save(n);
+  });
+
+  answers.appendChild(nobodyBtn);
+  answers.appendChild(oneBtn);
+  answers.appendChild(twoBtn);
+  answers.appendChild(threeBtn);
+  answers.appendChild(carLabel);
+  answers.appendChild(skipBtn);
+
+  cardBody.appendChild(answers);
+  cardBody.appendChild(exactRow);
+  cardBody.appendChild(status);
+  card.appendChild(cardBody);
+  return card;
+}
+
+function wireEvents() {
+  el.camera.addEventListener('change', () => { drawCameraTiles(); loadDay(); });
+  el.day.addEventListener('change', () => { loadDay(); });
+}
+
+wireEvents();
+loadCameras();
+</script>
+</body>
+</html>

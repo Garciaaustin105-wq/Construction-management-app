@@ -8,10 +8,11 @@
 // generic server_error envelope.  No stack traces are sent to the client.
 
 import { createServer } from 'node:http';
-import { stat, readFile } from 'node:fs/promises';
+import { stat, readFile, mkdir, rename, rm, readdir } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
+import os from 'node:os';
 
 import { loadConfig, resolveCameraUrl } from './recorder-service.mjs';
 import { attachLive, closeAll } from './live.mjs';
@@ -24,7 +25,7 @@ import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs
 // exceptions — detect them by shape, never by instanceof (they are interfaces,
 // with no runtime identity).
 import { parseWindow, parseInstant, parseSegmentId, isCameraId } from '../dist/apiQuery.js';
-import { parseEventKinds, parseEventLimit } from '../dist/eventQuery.js';
+import { parseEventKinds, parseEventLimit, EVENT_LIMIT_MAX } from '../dist/eventQuery.js';
 import { openEventsDb, HIDDEN_MODES } from './events-db.mjs';
 import { createKnownObjectsStore } from './known-objects.mjs';
 import { knownObjectNotice, answerKnownObject } from '../dist/knownObjects.js';
@@ -39,8 +40,16 @@ import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
 import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
-import { createClipLibrary } from './clip-library.mjs';
+import { createClipLibrary, LIBRARY_FILE } from './clip-library.mjs';
 import { createListeners } from './listeners.mjs';
+import { checkLibrary } from '../dist/clipLibrary.js';
+import { THUMB_WIDTH } from '../dist/eventThumb.js';
+import { proposeTeachMoments, parseDay } from '../dist/teachCandidates.js';
+// clipProgress is agent/ui/review-client.mjs's own pure export (zero imports,
+// same file the Review page and its harness already load) -- reused as-is
+// for GET /teach-moments' `library` totals rather than re-summing the answer
+// key a second way.
+import { clipProgress } from './ui/review-client.mjs';
 
 // event-crop.mjs cuts the JPEG /event-crop serves (see contracts/eventThumb.ts
 // for where the rectangle comes from). It is a sibling file another agent
@@ -147,6 +156,8 @@ const UI_FILES = {
   '/ui/live-client.js': 'live-client.mjs',
   '/review': 'review.html',
   '/ui/review-client.js': 'review-client.mjs',
+  '/teach': 'teach.html',
+  '/ui/teach-client.js': 'teach-client.mjs',
   '/ui/alert-banner.js': 'alert-banner.mjs',
   '/system': 'system.html',
   '/ui/system-client.js': 'system-client.mjs',
@@ -289,6 +300,185 @@ function prepareExport(parsedUrl, ctx) {
 function rootOf(segment, cameraId, ctx) {
   if (typeof segment?.root === 'string' && ctx.config.storeRoots.includes(segment.root)) return segment.root;
   return ctx.config.storeRoots[ctx.driveAssignment.get(cameraId) ?? 0];
+}
+
+/* ================= the teach list (TEACH-LIST-SPEC.md, pieces 2-3) ================= */
+
+async function pathExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * This day's gate windows (agent/detect-service.mjs, piece 1), this camera
+ * only. One file holds every camera's minutes, so this filters on read
+ * rather than needing a per-camera file. Missing entirely -- the gate has
+ * never run, or is off, or piece 1 is not installed on this checkout yet --
+ * reads as a day with no gate data at all: proposeTeachMoments already says
+ * so in `notes`, so this never turns a missing file into a 500. A torn last
+ * line (an append caught mid-write by a crash) is skipped, not fatal either.
+ */
+async function readGateWindowsForDay(stateDir, dayStartUtc, cameraId) {
+  const dayKey = dayStartUtc.slice(0, 10);
+  const file = join(stateDir, 'gate-windows', `${dayKey}.jsonl`);
+  let text;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const windows = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (obj !== null && typeof obj === 'object' && obj.cameraId === cameraId) windows.push(obj);
+  }
+  return windows;
+}
+
+/**
+ * The read-only half of clip-library.mjs's own `load()` (that function is
+ * private to its module -- one owner per file, rule 3 -- and clip-library.mjs
+ * is not this route's to edit). A library that cannot be read or does not
+ * check out answers as empty rather than throwing: exactly what
+ * proposeTeachMoments treats "no answer key yet" as, and never something this
+ * route should turn into a 500 for what is, on a fresh box, the normal case.
+ */
+async function loadClipLibraryForRead(stateDir) {
+  const empty = { version: 1, clips: [] };
+  let text;
+  try {
+    text = await readFile(join(stateDir, LIBRARY_FILE), 'utf8');
+  } catch {
+    return empty;
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return empty;
+  }
+  const checked = checkLibrary(raw);
+  return checked.ok ? checked.library : empty;
+}
+
+/**
+ * This camera's recorded spans that still exist, merged: consecutive or
+ * overlapping sealed segments join into one span so a moment spanning a
+ * segment boundary is not wrongly refused as "partly gone". An open segment
+ * (still being written) never counts as footage that "still exists" here --
+ * /still refuses it the same way /segments/:id does, as not yet sealed.
+ */
+function footageSpansFor(segments) {
+  const sealed = segments
+    .filter((s) => s.state !== 'open' && s.endUtc !== null)
+    .map((s) => ({ startMs: Date.parse(s.startUtc), endMs: Date.parse(s.endUtc) }))
+    .filter((s) => Number.isFinite(s.startMs) && Number.isFinite(s.endMs) && s.endMs > s.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+  const spans = [];
+  for (const seg of sealed) {
+    const last = spans[spans.length - 1];
+    if (last !== undefined && seg.startMs <= last.endMs) {
+      if (seg.endMs > last.endMs) last.endMs = seg.endMs;
+    } else {
+      spans.push({ startMs: seg.startMs, endMs: seg.endMs });
+    }
+  }
+  return spans.map((s) => ({ startUtc: new Date(s.startMs).toISOString(), endUtc: new Date(s.endMs).toISOString() }));
+}
+
+const STILL_MESSAGES = {
+  footage_gone: 'the recording for that moment is no longer on this recorder',
+  segment_open: 'the recording for that moment is still being written',
+  still_in_future: 'that moment has not happened yet',
+  crop_failed: 'the still could not be cut',
+  busy: 'too many stills are already being cut; try again shortly',
+};
+
+function refuseStill(status, code, message = STILL_MESSAGES[code] ?? code) {
+  return { ok: false, status, code, message };
+}
+
+/**
+ * Which physical device `camera` belongs to, and the OTHER stream on that
+ * device configured as the main stream, if any -- reusing cameraGroups.ts's
+ * own device grouping (host + channel) rather than a second way to tell two
+ * streams of one camera apart. Null when `camera` is unknown, stands alone,
+ * or has no main-stream sibling.
+ */
+function mainStreamSiblingId(camera, config) {
+  if (!config.cameras.some((c) => c.cameraId === camera)) return null;
+  const views = config.cameras.map((cam) => cameraView(cam, resolveCameraUrl(cam, config.credentials), null));
+  const device = groupCamerasByDevice(views).find((d) => d.streams.some((s) => s.cameraId === camera));
+  if (device === undefined) return null;
+  const mainStream = device.streams.find((s) => {
+    if (s.cameraId === camera) return false;
+    const cfg = config.cameras.find((c) => c.cameraId === s.cameraId);
+    return cfg !== undefined && (cfg.stream ?? 'main') === 'main';
+  });
+  return mainStream === undefined ? null : mainStream.cameraId;
+}
+
+/**
+ * Which camera's footage to cut the still from, and where: the main stream
+ * of the same device when IT has a SEALED segment at this instant ("main
+ * stream if recorded" -- TEACH-LIST-SPEC.md piece 3), else the camera
+ * actually asked for. resolvePlayback's `segment` kind already means sealed
+ * (an open segment resolves to `recording`, never `segment`), so nothing
+ * further needs to check the row's state here.
+ */
+function resolveStillSource(camera, atUtc, nowUtc, ctx) {
+  const resolveFor = (id) => resolvePlayback(id, ctx.index.forCamera(id), ctx.index.gapsFor(id), atUtc, nowUtc);
+  const mainId = mainStreamSiblingId(camera, ctx.config);
+  if (mainId !== null) {
+    const mainResolution = resolveFor(mainId);
+    if (mainResolution.kind === 'segment') return { cameraId: mainId, resolution: mainResolution };
+  }
+  return { cameraId: camera, resolution: resolveFor(camera) };
+}
+
+/**
+ * Cut one frame at `offsetSeconds` into `absPath`, scaled to THUMB_WIDTH, no
+ * box (a still is the raw recording, not a detection marker -- contrast
+ * event-crop.mjs's drawbox), into `tmpPath`. True only on a zero exit AND a
+ * file actually written, the same discipline event-crop.mjs's cutFrame uses:
+ * ffmpeg exiting 0 with nothing written is a failure, not an empty "still".
+ */
+async function cutStillFrame(spawnFn, { absPath, offsetSeconds, tmpPath }) {
+  const args = [
+    '-ss', String(offsetSeconds),
+    '-i', absPath,
+    '-frames:v', '1',
+    '-vf', `scale=${THUMB_WIDTH}:-2`,
+    '-q:v', '5',
+    '-f', 'image2',
+    '-update', '1',
+    '-y', tmpPath,
+  ];
+  let child;
+  const donePromise = new Promise((resolvePromise) => {
+    child = spawnFn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.once('error', () => resolvePromise(false));
+    child.once('close', (code) => resolvePromise(code === 0));
+  });
+  // Best effort, same as event-crop.mjs: a still cut competing with recording
+  // and detection for CPU should lose that fight; not every platform grants
+  // this, so a refusal here is silently ignored rather than failing the cut.
+  try {
+    if (child?.pid !== undefined) os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW);
+  } catch { /* niceness is not available everywhere */ }
+  const exitedClean = await donePromise;
+  return exitedClean && (await pathExists(tmpPath));
 }
 
 async function serveExport(res, parsedUrl, ctx) {
@@ -486,6 +676,108 @@ export function createApiServer({
         }),
         close() {},
       };
+
+  // GET /still's cache and concurrency bound (TEACH-LIST-SPEC.md piece 3).
+  // Bounded the same way event-crop.mjs bounds its own cutter, but never
+  // pruned by file count: a still is keyed by camera + instant, and the
+  // teach page can only ever ask for the still of a moment it was shown, so
+  // the cache's size is bounded by MAX_MOMENTS moments a day, not by every
+  // event a busy camera ever stores.
+  const stillsDir = join(stateDir, 'stills');
+  let stillsDirReady = null;
+  const ensureStillsDir = () => {
+    if (stillsDirReady === null) stillsDirReady = mkdir(stillsDir, { recursive: true });
+    return stillsDirReady;
+  };
+
+  // The comment above says this cache is never pruned by file count -- it is
+  // never pruned by anything else either, so a box left running grows one
+  // file here per moment the teach page was ever shown. Age it out instead,
+  // the same 7 days agent/detect-service.mjs keeps gate-windows for. A
+  // missing directory (nothing cut yet) and a file that disappears mid-sweep
+  // (another request's tmp-then-rename, or a previous sweep) are both fine,
+  // never an error; one bad stat/rm must not stop the rest of the sweep.
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const STILLS_MAX_AGE_MS = 7 * ONE_DAY_MS;
+  async function cleanOldStills() {
+    const cutoffMs = now().getTime() - STILLS_MAX_AGE_MS;
+    let names;
+    try {
+      names = await readdir(stillsDir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = join(stillsDir, name);
+      try {
+        const st = await stat(path);
+        if (st.mtimeMs < cutoffMs) await rm(path, { force: true });
+      } catch {
+        // best effort: a concurrent writer or a previous sweep already
+        // touched this file; either way there is nothing left to do here
+      }
+    }
+  }
+  // Once at startup, then once a day. unref()'d so a harness (or any short
+  // script) that never calls closeStillsCleanup below does not hang waiting
+  // on this timer -- the same reasoning as the live watchdog in live.mjs.
+  cleanOldStills().catch(() => {});
+  const stillsCleanupTimer = setInterval(() => { cleanOldStills().catch(() => {}); }, ONE_DAY_MS);
+  stillsCleanupTimer.unref?.();
+
+  const STILLS_MAX_CONCURRENT = 2;
+  const STILLS_MAX_QUEUE = 32;
+  let stillsActive = 0;
+  let stillsTmpSeq = 0;
+  const stillsQueue = [];
+  function scheduleStill(task) {
+    return new Promise((resolvePromise) => {
+      const start = () => {
+        stillsActive += 1;
+        task().then(resolvePromise, () => resolvePromise(refuseStill(500, 'crop_failed')))
+          .finally(() => {
+            stillsActive -= 1;
+            const next = stillsQueue.shift();
+            if (next) next();
+          });
+      };
+      if (stillsActive < STILLS_MAX_CONCURRENT) {
+        start();
+      } else if (stillsQueue.length < STILLS_MAX_QUEUE) {
+        stillsQueue.push(start);
+      } else {
+        resolvePromise(refuseStill(503, 'busy'));
+      }
+    });
+  }
+
+  async function cutStill(camera, atUtc, nowUtc, cacheName) {
+    const source = resolveStillSource(camera, atUtc, nowUtc, { index, config, driveAssignment });
+    const resolution = source.resolution;
+    if (resolution.kind === 'future') return refuseStill(404, 'still_in_future');
+    if (resolution.kind === 'recording') return refuseStill(404, 'segment_open');
+    if (resolution.kind === 'gap') return refuseStill(404, 'footage_gone');
+    const row = index.getByKey(source.cameraId, Date.parse(resolution.segmentStartUtc));
+    if (!row) return refuseStill(404, 'footage_gone');
+    // resolution.kind === 'segment' means sealed as of the forCamera()/gapsFor()
+    // snapshot resolveStillSource read a moment ago; row is a fresh re-fetch by
+    // key, the same two-step event-crop.mjs's cutCrop uses (and for the same
+    // reason -- resolvePlayback's return carries no root, only a path relative
+    // to one). Re-checking state here, not trusting the snapshot's kind, is
+    // what event-crop.mjs and the /segments/:id route both do; this mirrors it.
+    if (row.state === 'open') return refuseStill(404, 'segment_open');
+    const absPath = join(rootOf(row, source.cameraId, { config, driveAssignment }), row.path);
+    await ensureStillsDir();
+    const finalPath = join(stillsDir, cacheName);
+    const tmpPath = join(stillsDir, `${cacheName}.${process.pid}.${stillsTmpSeq++}.tmp`);
+    const cut = await cutStillFrame(spawnFn, { absPath, offsetSeconds: resolution.offsetSeconds, tmpPath });
+    if (!cut) {
+      await rm(tmpPath, { force: true }).catch(() => {});
+      return refuseStill(500, 'crop_failed');
+    }
+    await rename(tmpPath, finalPath);
+    return { ok: true, file: finalPath };
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -875,6 +1167,116 @@ export function createApiServer({
         return;
       }
 
+      // ---------- /teach-moments ----------
+      // Candidate moments worth a tap (TEACH-LIST-SPEC.md): the answer key
+      // camctl score needs stays empty otherwise, since scrubbing a day of
+      // footage by hand to find them is slow. Read-only -- nothing here ever
+      // writes a clip; a tap on the page this route feeds saves one through
+      // the existing POST /clip-library.
+      if (pathname === '/teach-moments') {
+        const camera = parsedUrl.searchParams.get('camera');
+        if (!isCameraId(camera)) {
+          sendError(res, 400, 'bad_camera_id', 'Invalid camera id');
+          return;
+        }
+        const dayResult = parseDay(parsedUrl.searchParams.get('day'));
+        if (isRefusal(dayResult)) {
+          sendError(res, dayResult.status, dayResult.code, dayResult.message);
+          return;
+        }
+
+        const gateWindows = await readGateWindowsForDay(stateDir, dayResult.dayStartUtc, camera);
+        const db = openEvents();
+        // Every kind, hidden included: a hidden (known-object) event still
+        // counts as stored for excluding a moved_nothing_stored minute, and a
+        // hidden PERSON event is itself proposed, flagged, in the contract.
+        const eventsResult = db === null
+          ? { events: [], truncated: false }
+          : db.inRange(camera, dayResult.dayStartUtc, dayResult.dayEndUtc, null, EVENT_LIMIT_MAX, null, { hidden: 'include' });
+        const events = eventsResult.events.map((e) => ({
+          id: e.id, cameraId: e.cameraId, kind: e.kind, firstUtc: e.firstUtc, lastUtc: e.lastUtc,
+          count: e.count, bestConfidence: e.bestConfidence, bestUtc: e.bestUtc, suppressedBy: e.suppressedBy,
+        }));
+
+        const footage = footageSpansFor(index.forCamera(camera));
+        const library = await loadClipLibraryForRead(stateDir);
+
+        const proposed = proposeTeachMoments({
+          cameraId: camera,
+          dayStartUtc: dayResult.dayStartUtc,
+          dayEndUtc: dayResult.dayEndUtc,
+          nowUtc: now().toISOString(),
+          gateWindows,
+          events,
+          library,
+          footage,
+        });
+        const notes = eventsResult.truncated
+          ? [...proposed.notes, `more than ${EVENT_LIMIT_MAX} stored events exist for this day; some may be missing from the proposal`]
+          : proposed.notes;
+
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({
+          ok: true,
+          cameraId: camera,
+          dayStartUtc: dayResult.dayStartUtc,
+          dayEndUtc: dayResult.dayEndUtc,
+          moments: proposed.moments,
+          omitted: proposed.omitted,
+          notes,
+          library: clipProgress(library),
+        }));
+        return;
+      }
+
+      // ---------- /still ----------
+      // A JPEG of the recorded frame at one instant, no box drawn -- the
+      // teach list's illustration for a moment, as opposed to /event-crop's
+      // marked-up thumbnail for a stored detection. Cached by camera + instant
+      // (a past moment's footage never changes once cut), niced the same as
+      // event-crop.mjs's cutter, refusing a moment with no SEALED footage.
+      if (pathname === '/still') {
+        const camera = parsedUrl.searchParams.get('camera');
+        if (!isCameraId(camera)) {
+          sendError(res, 400, 'bad_camera_id', 'Invalid camera id');
+          return;
+        }
+        const atResult = parseInstant(parsedUrl.searchParams.get('at'), 'at');
+        if (isRefusal(atResult)) {
+          sendError(res, atResult.status, atResult.code, atResult.message);
+          return;
+        }
+
+        const cacheName = `${camera}__${atResult.ms}.jpg`;
+        const cachePath = join(stillsDir, cacheName);
+        let file;
+        if (await pathExists(cachePath)) {
+          file = cachePath;
+        } else {
+          const nowUtc = now().toISOString();
+          const result = await scheduleStill(() => cutStill(camera, atResult.utc, nowUtc, cacheName));
+          if (!result.ok) {
+            sendError(res, result.status, result.code, result.message);
+            return;
+          }
+          file = result.file;
+        }
+
+        const fileStat = await stat(file);
+        res.writeHead(200, {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': fileStat.size,
+          // A recorded moment's still never changes once cut.
+          'Cache-Control': 'private, max-age=86400',
+        });
+        const stream = createReadStream(file);
+        stream.on('error', () => {
+          res.destroy();
+        });
+        stream.pipe(res);
+        return;
+      }
+
       // ---------- /segments/:id ----------
       if (pathname.startsWith('/segments/')) {
         const id = pathname.slice('/segments/'.length);
@@ -1081,6 +1483,14 @@ export function createApiServer({
     eventCrops.close();
   };
 
+  // Same reasoning again: the daily stills sweep is this server's timer.
+  // unref() above already keeps it from holding a process open by itself,
+  // but shutdown still lets go of it explicitly rather than leaving a timer
+  // referencing a closed server's stateDir running until the process exits.
+  server.closeStillsCleanup = () => {
+    clearInterval(stillsCleanupTimer);
+  };
+
   return server;
 }
 
@@ -1135,6 +1545,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
         index.close();
         server.closeEvents();
         server.closeEventCrops();
+        server.closeStillsCleanup();
         process.exit(0);
       });
     });

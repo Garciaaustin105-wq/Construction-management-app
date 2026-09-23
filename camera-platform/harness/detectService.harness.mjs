@@ -19,16 +19,29 @@
  * undone by the detector; a box with no known objects behaving any
  * differently than before; a camera address, user or password in a log line
  * or a file.
+ *
+ * GATE WINDOWS (TEACH-LIST-SPEC.md piece 1, the third section below): every
+ * gate minute lands in the right day's file, in the day it happened rather
+ * than the day the service started; an unwritable gate-windows directory
+ * never stops or slows detection, and says so once, not once a minute; the
+ * once-a-day sweep removes only this directory's own files once they are
+ * over 7 days old, leaves everything else alone (in that directory AND
+ * elsewhere in stateDir), and runs at start as well as on its own timer; and
+ * what lands on disk is exactly what GET /teach-moments (agent/api-server.mjs,
+ * built alongside this piece) reads back - proved through the real route, not
+ * a second copy of its reader.
  */
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { mkdtemp, writeFile, readFile, stat, rename } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, readdir, mkdir, stat, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { startDetect } from "../agent/detect-service.mjs";
 import { openEventsDb } from "../agent/events-db.mjs";
 import { createKnownObjectsStore, cameraFingerprint } from "../agent/known-objects.mjs";
+import { createApiServer } from "../agent/api-server.mjs";
+import { openIndex } from "../agent/segindex.mjs";
 import { MERGE_GAP_MS } from "../dist/detection.js";
 import { resetKnownObject, answerKnownObject } from "../dist/knownObjects.js";
 import { check, eq, close, report } from "./_assert.mjs";
@@ -574,6 +587,161 @@ await check("THE FEARED ONE: the daemon stays up while its only camera is down, 
   // Linux (the appliance) can show the clean exit 0 the shutdown handler gives.
   if (process.platform !== "win32") eq(exited, 0, "SIGTERM: stopped cleanly");
   else eq(signal, "SIGTERM", "SIGTERM: terminated (Windows cannot show a clean exit)");
+});
+
+// ---------------- gate windows (TEACH-LIST-SPEC.md piece 1) ----------------
+
+await check("gate windows land in the right day file: the exact six fields, one line per minute, and a UTC day boundary starts a new file", async () => {
+  const { stateDir, workers, svc, setClock } = await run({
+    detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } },
+  });
+  try {
+    const w = workers[0];
+    const minute1 = Date.parse("2026-09-20T23:59:00.000Z");
+    setClock(minute1 - T0);
+    w.say({ type: "gate", windowS: 60, frames: 60, looked: 12, reasons: { motion: 12 } });
+    await settle();
+    const minute2 = Date.parse("2026-09-21T00:01:00.000Z"); // two minutes later, the next UTC day
+    setClock(minute2 - T0);
+    w.say({ type: "gate", windowS: 60, frames: 60, looked: 0, reasons: {} });
+    await settle();
+
+    const readDay = async (day) => {
+      const text = await readFile(path.join(stateDir, "gate-windows", `${day}.jsonl`), "utf8");
+      return text.trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l));
+    };
+    eq(await readDay("2026-09-20"), [
+      { cameraId: "cam-1", atUtc: "2026-09-20T23:59:00.000Z", windowS: 60, frames: 60, looked: 12, reasons: { motion: 12 } },
+    ], "the first minute, filed under the day it happened");
+    eq(await readDay("2026-09-21"), [
+      { cameraId: "cam-1", atUtc: "2026-09-21T00:01:00.000Z", windowS: 60, frames: 60, looked: 0, reasons: {} },
+    ], "the next minute, in the NEXT day's file - exactly the six fields TEACH-LIST-SPEC.md names, no `share`");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("THE FEARED ONE: an unwritable gate-windows directory never stops or slows detection, and the failure is said once, not once a minute", async () => {
+  const stateDir = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } } });
+  // A plain file sits where the directory needs to go, so every mkdir/append fails.
+  await writeFile(path.join(stateDir, "gate-windows"), "not a directory");
+  const { workers, spawnFn } = fakeWorkers();
+  const logs = [];
+  let clock = T0;
+  const svc = await startDetect({
+    stateDir, spawnFn, now: () => new Date(clock), tickMs: 1_000_000, healthMs: 1_000_000,
+    restartMs: { first: 40, max: 200 }, killAfterMs: 100,
+    log: (level, msg, extra) => logs.push(JSON.stringify({ level, msg, ...extra })),
+  });
+  try {
+    const w = workers[0];
+    for (let i = 0; i < 3; i += 1) {
+      clock = T0 + i * 60_000;
+      w.say({ type: "gate", windowS: 60, frames: 60, looked: 10, reasons: { motion: 10 } });
+      await settle();
+    }
+    // Detection itself is unaffected by the write failures.
+    w.say({ type: "frame", atUtc: at(200_000), detections: [{ kind: "person", confidence: 0.9, box: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } }] });
+    await settle();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 1, "still detecting, despite three failed gate-window writes");
+    db.close();
+    eq(svc.cameras()[0].invalidLines, 0, "the gate lines themselves were well-formed; the DISK write is what failed, not the parse");
+    const failures = logs.filter((l) => l.includes("gate window could not be saved"));
+    eq(failures.length, 1, "said once, not once per gate line");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("the once-a-day sweep deletes this directory's OWN files once their day is more than 7 days old; newer files, wrongly-named files, and anything elsewhere in stateDir are left alone; it runs at start and again on demand (what the daily timer calls)", async () => {
+  const stateDir = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } } });
+  const gateDir = path.join(stateDir, "gate-windows");
+  await mkdir(gateDir, { recursive: true });
+  const NOW = Date.parse("2026-09-23T12:00:00.000Z");
+  const oldDay = "2026-09-15"; // 8 days before NOW's calendar day: older than 7 days, goes
+  const edgeDay = "2026-09-16"; // exactly 7 days before NOW: within the last 7 days, stays
+  const freshDay = "2026-09-22"; // yesterday: stays
+  const line = (day) => `${JSON.stringify({ cameraId: "cam-1", atUtc: `${day}T00:00:00.000Z`, windowS: 60, frames: 1, looked: 0, reasons: {} })}\n`;
+  for (const day of [oldDay, edgeDay, freshDay]) {
+    await writeFile(path.join(gateDir, `${day}.jsonl`), line(day));
+  }
+  await writeFile(path.join(gateDir, "notes.txt"), "not ours - wrong name, never deleted");
+  // Looks old by its leading 10 characters (a naive date-slice would treat it
+  // as ancient), but is NOT a day file - the exact-name pattern must be what
+  // decides this, not just the date comparison.
+  await writeFile(path.join(gateDir, "2020-01-01.txt"), "not ours either - a day-like prefix, wrong extension");
+  await writeFile(path.join(stateDir, "config.json.bak"), "not gate-windows' to touch at all");
+
+  const { workers, spawnFn } = fakeWorkers();
+  let clock = NOW;
+  const svc = await startDetect({
+    stateDir, spawnFn, now: () => new Date(clock), tickMs: 1_000_000, healthMs: 1_000_000,
+    restartMs: { first: 40, max: 200 }, killAfterMs: 100, log: () => {},
+  });
+  try {
+    // The sweep already ran once, before startDetect even returned.
+    const expectedSurvivors = [edgeDay, freshDay, "notes.txt", "2020-01-01.txt"]
+      .map((n) => (n.endsWith(".txt") ? n : `${n}.jsonl`)).sort();
+    const names = async () => (await readdir(gateDir)).sort();
+    eq(await names(), expectedSurvivors,
+      "the 8-day-old file is gone after start; the 7-day-old one, the fresh one, and both wrongly-named files (one with an old-looking date prefix) all survive");
+    eq(await readFile(path.join(stateDir, "config.json.bak"), "utf8"), "not gate-windows' to touch at all", "nothing outside gate-windows was ever looked at");
+
+    // A fresh old file, then the same sweep the daily timer runs, triggered
+    // by hand (as a harness must, rather than waiting a real day).
+    await writeFile(path.join(gateDir, `${oldDay}.jsonl`), line(oldDay));
+    await svc.pruneGateWindows();
+    eq(await names(), expectedSurvivors, "removed again, on demand - the same call the once-a-day timer makes");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("the shape this service writes is exactly what GET /teach-moments reads back - proved against the REAL route (agent/api-server.mjs), not a copy of its reader", async () => {
+  const stateDir = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } } });
+  const DAY = "2026-09-21";
+  const minuteUtc = `${DAY}T00:00:00.000Z`;
+  const { workers, spawnFn } = fakeWorkers();
+  let clock = Date.parse(minuteUtc);
+  const svc = await startDetect({
+    stateDir, spawnFn, now: () => new Date(clock), tickMs: 1_000_000, healthMs: 1_000_000,
+    restartMs: { first: 40, max: 200 }, killAfterMs: 100, log: () => {},
+  });
+  try {
+    // One minute of real motion, nothing stored: exactly moved_nothing_stored's evidence.
+    workers[0].say({ type: "gate", windowS: 60, frames: 60, looked: 12, reasons: { motion: 12 } });
+    await settle();
+  } finally {
+    await svc.stop();
+  }
+
+  // Footage covering the minute, so the moment is not excluded as "gone" -
+  // proposeTeachMoments' own concern, not this service's, but /teach-moments
+  // needs it to answer with anything at all.
+  const index = openIndex(path.join(stateDir, "index.db"));
+  index.put({
+    cameraId: "cam-1", startUtc: minuteUtc, endUtc: `${DAY}T00:01:00.000Z`,
+    path: "cam-1/a.mp4", bytes: 100, state: "sealed", hold: false, pendingUpload: false, bitrateKbps: null,
+  });
+  const config = JSON.parse(await readFile(path.join(stateDir, "config.json"), "utf8"));
+  const auth = {
+    principalOf: () => ({ kind: "user", username: "t", role: "installer" }),
+    handle: async () => false,
+    audit: () => {},
+  };
+  const server = createApiServer({ stateDir, config, index, now: () => new Date(`${DAY}T01:00:00.000Z`), auth });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/teach-moments?camera=cam-1&day=${DAY}`);
+    const body = await res.json();
+    eq(res.status, 200, "the real route accepted the file this service wrote");
+    const moment = (body.moments ?? []).find((m) => m.kind === "moved_nothing_stored");
+    if (!moment) throw new Error(`expected a moved_nothing_stored moment from the gate window this service wrote: ${JSON.stringify(body)}`);
+    eq([moment.cameraId, moment.startUtc, moment.endUtc], ["cam-1", minuteUtc, `${DAY}T00:01:00.000Z`], "the exact minute this service recorded, read back through the real reader");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 // ---------------- known objects ----------------

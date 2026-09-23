@@ -170,4 +170,33 @@ check("known objects: the same reach as /events, and a wall display may neither 
   eq(d(installer, "GET", "/known-objects/answer").status, 404, "the answer is POST only");
 });
 
+check("the teach list: the same reach as /clip-library and /playback, because both are about footage, not a new permission", () => {
+  same(ruleFor("GET", "/teach-moments"), { kind: "api", permission: "playback.view" }, "same permission as /clip-library and /playback");
+  same(ruleFor("GET", "/still"), { kind: "api", permission: "playback.view" }, "same permission as /clip-library and /playback");
+  for (const path of ["/teach-moments", "/still"]) {
+    eq(d(store, "GET", path).kind, "allow", `${path}: the store watches this footage too`);
+    eq(d(installer, "GET", path).kind, "allow", `${path}: and the installer`);
+    eq(d(display, "GET", path).kind, "allow", `${path}: THE SAME LINE AS /playback -- a wall display may scrub back, so it may look at a candidate moment too`);
+    eq(d(nobody, "GET", path).status, 401, `${path}: signed out`);
+    eq(d(installer, "POST", path).status, 404, `${path}: GET only`);
+    eq(d(installer, "GET", path + "/").status, 404, `${path}: not a prefix`);
+  }
+});
+
+check("the teach page: the same reach as Review (playback.view), and a wall display may look but never save a label", () => {
+  same(ruleFor("GET", "/teach"), { kind: "page", permission: "playback.view" }, "the page");
+  same(ruleFor("GET", "/ui/teach-client.js"), { kind: "api", permission: "playback.view" }, "its script");
+  for (const path of ["/teach", "/ui/teach-client.js"]) {
+    eq(d(store, "GET", path).kind, "allow", `${path}: the store`);
+    eq(d(installer, "GET", path).kind, "allow", `${path}: the installer`);
+    // A display "watches live and looks back" (see the check above), so it
+    // may open this like /review.
+    eq(d(display, "GET", path).kind, "allow", `${path}: a wall display may look, as at /review`);
+  }
+  // THE FEARED ONE: a label keeps footage past retention, so saving one is
+  // signed for; a device on a wall may not write the answer key.
+  eq(d(display, "POST", "/clip-library").kind, "refuse", "a wall display cannot save a label");
+  eq(d(nobody, "GET", "/teach").kind === "allow", false, "signed out: not let in");
+});
+
 report("route access");
