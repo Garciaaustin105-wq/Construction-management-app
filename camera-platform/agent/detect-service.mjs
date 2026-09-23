@@ -80,6 +80,58 @@ function extractUrlPassword(url) {
   }
 }
 
+/**
+ * Fresh time-source counters. arrival/read start at null, not 0 (build rule
+ * 5 - a blank is not a zero): until this worker has sent a single FRAME line
+ * carrying a timeSource, we have not observed either one, so we cannot say
+ * "0 arrival frames" without pretending we looked and found none. unknown
+ * starts at 0: whether a frame carries the field at all is answered the
+ * instant it arrives, with none of that same ambiguity - it is a fact about
+ * the line itself, not a guess about a clock we have not seen yet.
+ */
+function emptyTimeSourceCounts() {
+  return { arrival: null, read: null, unknown: 0 };
+}
+
+/**
+ * Record one frame's timeSource into a counts bucket, in place. `source` is
+ * exactly what contracts/detectStream.ts's parseWorkerLine handed back for a
+ * "frame" line: "arrival", "read", or undefined for an older worker that has
+ * never heard of the field - never defaulted to either name here, same as
+ * that parser refuses to invent one.
+ */
+function bumpTimeSourceCounts(counts, source) {
+  if (source === "arrival" || source === "read") {
+    // The FIRST typed frame this bucket has ever seen flips BOTH fields from
+    // null to a real count together: once timeSource is flowing at all, "0
+    // arrival frames so far" is a fact worth showing, not a guess - and
+    // showing it is exactly what makes a camera stuck on "read" only visible
+    // as such, instead of reading as two unknowns.
+    if (counts.arrival === null) counts.arrival = 0;
+    if (counts.read === null) counts.read = 0;
+    counts[source] += 1;
+  } else {
+    // No field at all: an older worker. Counted on its own, never folded into
+    // arrival or read - a mix of old and new workers behind one camera (a
+    // mid-fleet upgrade) must stay visibly split, not average out into a
+    // number that looks like a clock decision nobody made.
+    counts.unknown += 1;
+  }
+}
+
+/**
+ * Close out a camera's current time-source window: whatever counts built up
+ * become the reported lastWindow, and a fresh, empty window starts counting
+ * from here. Called on the same boundary the gate feature already uses (a
+ * "gate" line, once per windowS) when the gate is on, or on this service's
+ * own timeSourceWindowMs timer when it is off - see that option's comment
+ * for why the two do not share one mechanism.
+ */
+function closeTimeSourceWindow(cam) {
+  cam.timeSource.lastWindow = cam.timeSourceOpenWindow;
+  cam.timeSourceOpenWindow = emptyTimeSourceCounts();
+}
+
 export async function startDetect(opts = {}) {
   const {
     stateDir,
@@ -104,6 +156,18 @@ export async function startDetect(opts = {}) {
     // files runs. A day in production; a harness passes something small so a
     // check does not have to wait a real day to see it happen again.
     gateRetentionCheckMs = 24 * 60 * 60 * 1000,
+    // How often a camera's timeSource lastWindow closes and starts fresh,
+    // WHEN THE GATE IS OFF. The worker never sends a periodic timeSource
+    // rollup the way it does for the gate (every frame line carries its own
+    // stamp, one at a time) - so with no gate line to close a window on,
+    // this is the only boundary there is. Default 60 s matches
+    // detector/yolox_worker.py's own gate windowS default, so
+    // detect-health.json reads on a comparable "per minute" basis whether or
+    // not motionGate is configured. With the gate ON, its own "gate" line
+    // closes the window instead (see closeTimeSourceWindow's other call
+    // site) and this timer is not created at all - running both would slice
+    // the same frames on two independently-timed clocks.
+    timeSourceWindowMs = 60_000,
   } = opts;
 
   // Read detect.json
@@ -206,6 +270,16 @@ export async function startDetect(opts = {}) {
       invalidLines: 0,
       fold: emptyFold(),
       gate: motionGate.enabled ? { lastWindow: null, sinceStart: null } : null,
+      // Unlike gate, tracked for every camera regardless of motionGate - a
+      // silently failed arrival stamp is exactly as real a problem with the
+      // gate off as with it on. sinceStart/lastWindow are always present
+      // objects (never null themselves); only the arrival/read counts inside
+      // them start null, per emptyTimeSourceCounts's own comment.
+      timeSource: { sinceStart: emptyTimeSourceCounts(), lastWindow: emptyTimeSourceCounts() },
+      // The window currently being counted, not yet closed out to
+      // timeSource.lastWindow - internal bookkeeping only, never read back by
+      // getCameras()/detect-health.json directly.
+      timeSourceOpenWindow: emptyTimeSourceCounts(),
       // Finished events stored hidden behind a known object since the service
       // started. Not reset when a worker respawns: it counts what this
       // service hid, not what one worker saw.
@@ -225,6 +299,8 @@ export async function startDetect(opts = {}) {
         invalidLines: 0,
         fold: emptyFold(),
         gate: motionGate.enabled ? { lastWindow: null, sinceStart: null } : null,
+        timeSource: { sinceStart: emptyTimeSourceCounts(), lastWindow: emptyTimeSourceCounts() },
+        timeSourceOpenWindow: emptyTimeSourceCounts(),
         hiddenSinceStart: 0,
       });
       return cameras.get(cameraId);
@@ -691,6 +767,13 @@ export async function startDetect(opts = {}) {
     // Reset with the worker: a respawned worker starts its own duty cycle
     // over, and yesterday's totals must not bleed into it.
     cam.gate = motionGate.enabled ? { lastWindow: null, sinceStart: null } : null;
+    // Same reasoning for timeSource: a new worker process (a restart, a
+    // deploy) is a fresh clock, and a run of "arrival" from the old worker
+    // must never blend with "read" from a new one that just started falling
+    // back - that blend is exactly the silent failure this feature exists to
+    // surface.
+    cam.timeSource = { sinceStart: emptyTimeSourceCounts(), lastWindow: emptyTimeSourceCounts() };
+    cam.timeSourceOpenWindow = emptyTimeSourceCounts();
 
     // Handle stdout
     let pendingLine = "";
@@ -716,6 +799,12 @@ export async function startDetect(opts = {}) {
           log("warn", "detect worker error", { cameraId, message: scrubbed });
         } else if (parsed.kind === "frame") {
           cam.lastFrameUtc = parsed.atUtc;
+          // Every frame line counts toward timeSource, gate on or off, and
+          // regardless of whether any detection survives minConfidence below
+          // - this is about whether the CLOCK the detector is trusting is
+          // real, not about what it saw.
+          bumpTimeSourceCounts(cam.timeSource.sinceStart, parsed.timeSource);
+          bumpTimeSourceCounts(cam.timeSourceOpenWindow, parsed.timeSource);
           const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
           const step = advanceFold(cam.fold, kept, now().toISOString());
           cam.fold = step.state;
@@ -762,6 +851,11 @@ export async function startDetect(opts = {}) {
               looked: lastWindow.looked,
               reasons: lastWindow.reasons,
             });
+            // This gate line IS the boundary: it reports on exactly the
+            // windowS seconds of frames that just went by, so this is where
+            // timeSource's own lastWindow closes too - the two figures then
+            // describe the same span, not two clocks drifting apart.
+            closeTimeSourceWindow(cam);
           }
         }
       }
@@ -862,6 +956,18 @@ export async function startDetect(opts = {}) {
     if (!stopping) pruneGateWindows();
   }, gateRetentionCheckMs);
 
+  // timeSource window, gate-off fallback ONLY: see timeSourceWindowMs's own
+  // comment for why this does not run, and is not needed, when the gate is
+  // on - that path closes the window itself, on its own "gate" line.
+  const timeSourceWindowTimer = motionGate.enabled
+    ? null
+    : setInterval(() => {
+        if (stopping) return;
+        for (const cam of cameras.values()) {
+          closeTimeSourceWindow(cam);
+        }
+      }, timeSourceWindowMs);
+
   function getCameras() {
     return Array.from(cameras.values()).map((cam) => ({
       cameraId: cam.cameraId,
@@ -882,6 +988,7 @@ export async function startDetect(opts = {}) {
       restarts: cam.restarts,
       invalidLines: cam.invalidLines,
       gate: cam.gate,
+      timeSource: cam.timeSource,
       // active: the known objects hiding events on this camera now (0 while
       // the store cannot be read - see the top-level problem). hiddenSinceStart:
       // finished events stored hidden since the service started; the member
@@ -928,6 +1035,7 @@ export async function startDetect(opts = {}) {
     clearInterval(knownPassTimer);
     clearInterval(knownFlushTimer);
     clearInterval(gateRetentionTimer);
+    if (timeSourceWindowTimer) clearInterval(timeSourceWindowTimer);
 
     // Cancel pending restarts
     for (const timer of restartTimers.values()) {
@@ -995,6 +1103,16 @@ export async function startDetect(opts = {}) {
     knownFlush: () => syncKnown({ learn: false }),
     // For a harness, as knownPass/knownFlush are: run the once-a-day sweep now.
     pruneGateWindows: () => pruneGateWindows(),
+    // For a harness, as tick/pruneGateWindows are: close every camera's
+    // timeSource window now, exactly as the gate-off timer would, without a
+    // real wait. Exposed unconditionally - closing a window by hand is always
+    // meaningful, even with the gate on (that path just also gets its own
+    // close from each "gate" line).
+    closeTimeSourceWindows: () => {
+      for (const cam of cameras.values()) {
+        closeTimeSourceWindow(cam);
+      }
+    },
   };
 }
 

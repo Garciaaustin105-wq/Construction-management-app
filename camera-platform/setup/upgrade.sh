@@ -63,6 +63,13 @@ rm -rf "$APP_DIR.old"
 mv "$APP_DIR" "$APP_DIR.old"
 mv "$APP_DIR.new" "$APP_DIR"
 
+# A changed unit file is not picked up by a plain restart -- systemd keeps
+# running against the copy it already loaded until something reloads it.
+# Found today: a unit file install.sh had rewritten was not applied on an
+# upgrade's restart for exactly this reason. Cheap and always safe to run
+# even when no unit changed, so it runs on every upgrade, not just when one is
+# known to have.
+systemctl daemon-reload
 systemctl restart camplat-recorder camplat-api
 sleep 3
 systemctl --no-pager --lines=0 status camplat-recorder camplat-api | grep -E "^\S|Active:" || true

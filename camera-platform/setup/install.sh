@@ -313,6 +313,20 @@ else
   warn "no /dev/watchdog — enable the iTCO watchdog in BIOS, else a hung box stays hung"
 fi
 
+say "Process visibility (hidepid)"
+# Stops any local login from reading the camera password off a running
+# ffmpeg's command line -- measured on the bench 2026-09-23: /proc is
+# world-readable by default, and a command line is not a secret file, it is
+# a directory listing. CAMPLAT_HARDEN_PROC=0 skips this; the default is ON,
+# but this exact path has NOT yet been run on real hardware (bench-tested
+# only, against a scoped temp fstab -- see harness/hardenProc.harness.mjs).
+# Austin approves flipping it on for real boxes after that.
+if [[ "${CAMPLAT_HARDEN_PROC:-1}" == "0" ]]; then
+  warn "CAMPLAT_HARDEN_PROC=0: skipping /proc hidepid hardening"
+else
+  bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harden-proc.sh"
+fi
+
 say "Checks that need a human"
 cat <<'MANUAL'
   BIOS, and the first one is the one people forget:

@@ -351,11 +351,21 @@ await check("closeAll kills every child and empties the registry", async () => {
   const w1 = await wsOpen("/live/cam-1");
   const w2 = await wsOpen("/live/cam-1");
   const kids = spawnCalls.slice(-2);
+  // Arm the close listeners BEFORE closeAll() destroys the sockets. closeAll()
+  // calls socket.destroy() synchronously, and on localhost the client sees the
+  // close well inside this tick's follow-up microtasks/100ms wait below — so a
+  // nextClose() called AFTER that wait is registering a `once` listener for an
+  // event that already fired, and always falls through to its 3s timeout
+  // fallback (this was costing ~6s: two misses, one per socket). Capturing the
+  // promises first means the listener is in place before the event exists.
+  const closed1 = nextClose(w1);
+  const closed2 = nextClose(w2);
   closeAll();
   same(liveRegistry().size, 0, "registry empty");
   await new Promise((r) => setTimeout(r, 100));
   same(kids.every((k) => k.killed), true, "children killed");
-  for (const w of [w1, w2]) await nextClose(w);
+  same(await closed1, "closed", "w1 saw a real close, not the fallback timeout");
+  same(await closed2, "closed", "w2 saw a real close, not the fallback timeout");
 });
 
 // A separate server + config: this camera's site login has NO username, which

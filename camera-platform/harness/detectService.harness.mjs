@@ -44,7 +44,7 @@ import { createApiServer } from "../agent/api-server.mjs";
 import { openIndex } from "../agent/segindex.mjs";
 import { MERGE_GAP_MS } from "../dist/detection.js";
 import { resetKnownObject, answerKnownObject } from "../dist/knownObjects.js";
-import { check, eq, close, report } from "./_assert.mjs";
+import { check, eq, same, close, report } from "./_assert.mjs";
 
 console.log("detect service");
 
@@ -587,6 +587,282 @@ await check("THE FEARED ONE: the daemon stays up while its only camera is down, 
   // Linux (the appliance) can show the clean exit 0 the shutdown handler gives.
   if (process.platform !== "win32") eq(exited, 0, "SIGTERM: stopped cleanly");
   else eq(signal, "SIGTERM", "SIGTERM: terminated (Windows cannot show a clean exit)");
+});
+
+// ---------------- worker timeSource: arrival vs read ----------------
+//
+// THE FEARED FAILURE: yolox_worker.py tags every frame line "arrival" (its
+// wall-clock stamp came from ffmpeg's showinfo, paired to the frame that just
+// arrived) or "read" (a fallback stamp taken when the frame was read off the
+// pipe instead - today's only behaviour if arrival stamping cannot run). A
+// camera silently stuck on "read" would look exactly as watched as one still
+// stamped at arrival: lastFrameUtc keeps moving, invalidLines stays 0, state
+// stays "watching". These counts, and only these, make that fallback visible.
+
+await check("before any frame line: timeSource is null fields, not zeros pretending to know a split that was never observed", async () => {
+  const { stateDir, svc } = await run();
+  try {
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource, {
+      sinceStart: { arrival: null, read: null, unknown: 0 },
+      lastWindow: { arrival: null, read: null, unknown: 0 },
+    }, "no frame line has arrived yet");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("counts land: arrival and read are tallied separately, and sinceStart accumulates them", async () => {
+  const { stateDir, workers, svc } = await run();
+  try {
+    const w = workers[0];
+    w.say({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [] });
+    w.say({ type: "frame", atUtc: at(200), timeSource: "arrival", detections: [] });
+    w.say({ type: "frame", atUtc: at(400), timeSource: "read", detections: [] });
+    await settle();
+    await svc.writeHealth();
+    let health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    let c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.sinceStart, { arrival: 2, read: 1, unknown: 0 }, "two arrival, one read, zero unknown");
+    // lastWindow is a FROZEN snapshot of the last CLOSED window, same as
+    // gate.lastWindow - so before any window has closed (no gate line here,
+    // and the gate-off timer has not fired yet), it still reads the initial
+    // null state, not a live, still-growing count.
+    same(c1.timeSource.lastWindow, { arrival: null, read: null, unknown: 0 }, "no window has closed yet");
+
+    svc.closeTimeSourceWindows();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 2, read: 1, unknown: 0 }, "closing the window freezes exactly what had built up - this being the first window, it matches sinceStart");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a camera with only read frames is visible AS SUCH: read climbs, arrival is a real 0 once typed frames are flowing, not null forever", async () => {
+  const { stateDir, workers, svc } = await run();
+  try {
+    const w = workers[0];
+    for (let i = 0; i < 5; i += 1) w.say({ type: "frame", atUtc: at(i * 200), timeSource: "read", detections: [] });
+    await settle();
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.sinceStart, { arrival: 0, read: 5, unknown: 0 }, "arrival stamping has silently failed on this camera - and it shows, instead of hiding behind two nulls");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a frame with no timeSource field at all (an older worker) counts as unknown, never folded into arrival or read", async () => {
+  const { stateDir, workers, svc } = await run();
+  try {
+    const w = workers[0];
+    w.say({ type: "frame", atUtc: at(0), detections: [] }); // no timeSource key: an older worker
+    w.say({ type: "frame", atUtc: at(200), detections: [] });
+    await settle();
+    await svc.writeHealth();
+    let health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    let c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.sinceStart, { arrival: null, read: null, unknown: 2 }, "still null - no TYPED frame line has arrived, only old-worker ones");
+
+    // The same worker then starts sending typed frames too (a mid-fleet
+    // upgrade, or the field's own rollout mid-run): the split becomes visible
+    // without the earlier unknowns ever being folded into either count.
+    w.say({ type: "frame", atUtc: at(400), timeSource: "arrival", detections: [] });
+    await settle();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.sinceStart, { arrival: 1, read: 0, unknown: 2 }, "the two unknowns stay unknown; only the new typed frame counts as arrival");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("timeSource's window closes on the SAME boundary as the gate's own lastWindow, when the gate is on", async () => {
+  const { stateDir, workers, svc, setClock } = await run({
+    detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } },
+  });
+  try {
+    const w = workers[0];
+    setClock(0);
+    w.say({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [] });
+    w.say({ type: "frame", atUtc: at(100), timeSource: "read", detections: [] });
+    await settle();
+    setClock(60_000);
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 9, reasons: { motion: 9 } });
+    await settle();
+    await svc.writeHealth();
+    let health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    let c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 1, read: 1, unknown: 0 }, "the window this gate line just closed");
+    same(c1.timeSource.sinceStart, { arrival: 1, read: 1, unknown: 0 }, "and sinceStart keeps it too");
+
+    // A frame after the gate line belongs to the NEXT window - lastWindow
+    // stays frozen at the PREVIOUS window's total until that new window
+    // closes too (its own gate line), same as gate.lastWindow would.
+    setClock(61_000);
+    w.say({ type: "frame", atUtc: at(61_000), timeSource: "arrival", detections: [] });
+    await settle();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 1, read: 1, unknown: 0 }, "still the previous window - this one has not closed yet");
+    same(c1.timeSource.sinceStart, { arrival: 2, read: 1, unknown: 0 }, "sinceStart already has the new frame though");
+
+    // The second gate line closes THIS window: lastWindow now shows only
+    // what happened since the first gate line - the earlier, closed window
+    // is not carried forward into it.
+    setClock(120_000);
+    w.say({ type: "gate", windowS: 60, frames: 300, looked: 3, reasons: { motion: 3 } });
+    await settle();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 1, read: 0, unknown: 0 }, "a fresh window: the earlier one is not carried forward");
+    same(c1.timeSource.sinceStart, { arrival: 2, read: 1, unknown: 0 }, "sinceStart is cumulative across windows");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("with the gate OFF, svc.closeTimeSourceWindows() closes the window exactly as the gate-off timer would - no gate line needed", async () => {
+  const { stateDir, workers, svc } = await run(); // no motionGate: the gate is off
+  try {
+    const w = workers[0];
+    w.say({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [] });
+    await settle();
+    svc.closeTimeSourceWindows();
+    await svc.writeHealth();
+    let health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    let c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 1, read: 0, unknown: 0 }, "the first window closed with one arrival frame in it");
+
+    w.say({ type: "frame", atUtc: at(200), timeSource: "read", detections: [] });
+    await settle();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 1, read: 0, unknown: 0 }, "still the first window - the second has not closed yet");
+
+    svc.closeTimeSourceWindows();
+    await svc.writeHealth();
+    health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    same(c1.timeSource.lastWindow, { arrival: 0, read: 1, unknown: 0 }, "closing again: the read frame's own window - the earlier arrival is not carried forward");
+    same(c1.timeSource.sinceStart, { arrival: 1, read: 1, unknown: 0 }, "sinceStart still holds both, windows or no windows");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("THE FEARED ONE: with the gate off, the real timeSourceWindowMs timer actually closes windows on its own, with no manual trigger", async () => {
+  const stateDir = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }] } }); // no motionGate
+  const { workers, spawnFn } = fakeWorkers();
+  const svc = await startDetect({
+    stateDir, spawnFn, tickMs: 1_000_000, healthMs: 1_000_000,
+    timeSourceWindowMs: 40, // real wall-clock ms, small so this check does not wait a real minute
+    log: () => {},
+  });
+  try {
+    const w = workers[0];
+    // Frames arrive far more often than a 40 ms window closes, so whichever
+    // window the real timer most recently closed is virtually certain to
+    // hold some of them - this is a smoke test that the timer fires AT ALL;
+    // svc.closeTimeSourceWindows() above already covers exact counts on a
+    // deterministic boundary. An idle window closing to null is CORRECT
+    // (a window with no frames really did see none), so this test never lets
+    // the feed go idle - a gap would make lastWindow legitimately, but
+    // unhelpfully for this check, come back null.
+    let sent = 0;
+    const feeder = setInterval(() => {
+      w.say({ type: "frame", atUtc: at(sent), timeSource: "arrival", detections: [] });
+      sent += 1;
+    }, 10);
+    await settle(300);
+    clearInterval(feeder);
+    await settle();
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    if (sent < 5) throw new Error(`too few frames fed to trust this check: ${sent}`);
+    eq(c1.timeSource.sinceStart.arrival, sent, "sinceStart counts every frame regardless of any window closing");
+    if (c1.timeSource.lastWindow.arrival === null) {
+      throw new Error(`lastWindow is still null after 300ms of a 40ms window timer with constant frames - the real timer never closed a window (sent ${sent})`);
+    }
+    if (c1.timeSource.lastWindow.arrival >= sent) {
+      throw new Error(`lastWindow.arrival (${c1.timeSource.lastWindow.arrival}) should be a PARTIAL count from the one most recently closed window, not all ${sent} frames sent - the timer does not appear to be closing more than once`);
+    }
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("with the gate ON, the gate-off timer never runs: motionGate.enabled means only the gate line closes the window", async () => {
+  const stateDir = await site({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }], motionGate: { enabled: true } } });
+  const { workers, spawnFn } = fakeWorkers();
+  const svc = await startDetect({
+    stateDir, spawnFn, tickMs: 1_000_000, healthMs: 1_000_000,
+    timeSourceWindowMs: 40, // would close the window on its own within this check's runtime, if it ran at all
+    log: () => {},
+  });
+  try {
+    const w = workers[0];
+    w.say({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [] });
+    await settle();
+    await settle(300); // well past several 40 ms periods, if the timer existed
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    // No gate line has arrived, and (what is under test) no stray gate-off
+    // timer exists to close it behind the gate's back - so the window is
+    // still in its initial, never-closed state, same as before any frame at
+    // all: frozen null, not a live count of the one frame that did arrive.
+    same(c1.timeSource.lastWindow, { arrival: null, read: null, unknown: 0 }, "still never closed");
+    same(c1.timeSource.sinceStart, { arrival: 1, read: 0, unknown: 0 }, "sinceStart, unaffected by windows either way, does have the frame");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a respawned worker starts its timeSource figures over too, not carried from the one before it (same as gate's own figures)", async () => {
+  const { workers, svc } = await run({ detect: { capacityFps: 10, cameras: [{ cameraId: "cam-1" }] } });
+  try {
+    workers[0].say({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [] });
+    await settle();
+    eq(svc.cameras().find((c) => c.cameraId === "cam-1").timeSource.sinceStart.arrival, 1, "counted before the restart");
+    workers[0].emit("exit", 1);
+    await settle(80);
+    eq(workers.length, 2, "restarted");
+    same(svc.cameras().find((c) => c.cameraId === "cam-1").timeSource, {
+      sinceStart: { arrival: null, read: null, unknown: 0 },
+      lastWindow: { arrival: null, read: null, unknown: 0 },
+    }, "the new worker's timeSource figures start clean");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("timeSource disturbs nothing else: an invalid line still counts as invalid and adds nothing to timeSource; detection storage is unaffected", async () => {
+  const { stateDir, workers, svc } = await run();
+  try {
+    const w = workers[0];
+    w.say({ type: "frame", atUtc: at(0), timeSource: "arrival", detections: [{ kind: "person", confidence: 0.9, box: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 } }] });
+    w.say({ type: "frame", atUtc: at(200) }); // malformed: no detections array at all -> invalid
+    await settle();
+    const c1 = svc.cameras().find((c) => c.cameraId === "cam-1");
+    eq(c1.invalidLines, 1, "the malformed line still counts as invalid, same as before this feature");
+    same(c1.timeSource.sinceStart, { arrival: 1, read: 0, unknown: 0 }, "the invalid line added nothing here");
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 1, "detection storage is unaffected");
+    db.close();
+  } finally {
+    await svc.stop();
+  }
 });
 
 // ---------------- gate windows (TEACH-LIST-SPEC.md piece 1) ----------------
