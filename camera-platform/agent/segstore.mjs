@@ -108,22 +108,38 @@ export async function sealSegment(root, cameraId, wipFilename) {
   return { path: relative, bytes: info.size, startMs };
 }
 
-/** Delete the files an eviction plan chose. Reports what was actually freed —
- *  a file already gone is not an error, but it is not freed space either. */
-export async function applyEviction(root, plan) {
+/**
+ * Delete the files an eviction plan chose. Reports what was actually freed —
+ * a file already gone is not an error, but it is not freed space either.
+ *
+ * A file that fails to unlink for any OTHER reason (EACCES, EBUSY, EIO,
+ * EPERM...) is recorded in `failed` and the loop CONTINUES: one bad file used
+ * to re-throw and abort the rest of the plan mid-way, which lost even the
+ * files already deleted earlier in this same call from the returned list.
+ * The caller must remove index rows only for `deleted` (see EVENTS-RETENTION-
+ * SPEC.md) — a `failed` file keeps its row so the next pass retries it.
+ *
+ * `unlink` is overridable so a harness can inject a failure for one path
+ * without touching the real filesystem for the rest of the plan.
+ */
+export async function applyEviction(root, plan, { unlink: unlinkFn = unlink } = {}) {
   const deleted = [];
+  const failed = [];
   let bytesFreed = 0;
   for (const candidate of plan.evict) {
     try {
-      await unlink(path.join(root, candidate.segment.path));
+      await unlinkFn(path.join(root, candidate.segment.path));
       deleted.push(candidate.segment.path);
       bytesFreed += candidate.bytes;
     } catch (err) {
-      if (err.code !== "ENOENT") throw err;
-      deleted.push(candidate.segment.path);   // index must still drop it
+      if (err.code === "ENOENT") {
+        deleted.push(candidate.segment.path);   // index must still drop it
+        continue;
+      }
+      failed.push({ path: candidate.segment.path, code: err.code ?? String(err?.message ?? err) });
     }
   }
-  return { deleted, bytesFreed };
+  return { deleted, failed, bytesFreed };
 }
 
 /**

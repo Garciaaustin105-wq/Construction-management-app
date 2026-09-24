@@ -117,7 +117,8 @@ An event E of camera C is deleted when, and only when:
 
 - Gate-window day files and the `/still` cache keep their fixed 7 days. Both
   already refuse moments whose footage is gone.
-- The eviction loop aborting a whole pass on one non-ENOENT unlink error
-  (`agent/segstore.mjs` `applyEviction`, no per-root try/catch in
-  `runEviction`) is pre-existing. For this feature it errs toward keeping.
+- ~~One non-ENOENT unlink error aborting a whole eviction pass.~~ Fixed
+  2026-09-23. `applyEviction` now records each failure and continues. Both
+  eviction loops run each drive on its own. A failed file keeps its index
+  row, so this rule still never sees video as gone while it exists.
 - The `hold` / `pending_upload` flags are never set by production code today.

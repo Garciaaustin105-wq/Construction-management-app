@@ -213,8 +213,20 @@ const AGE_PAGE = 500;
  * Delete footage past the Recording page's age limit (recording.json), read
  * fresh each pass so a change applies without a restart. A file that is not
  * valid is no limit: it is logged and deletes nothing.
+ *
+ * Each store root is independent (`try`/`catch` per root): a root that throws
+ * — or an unlink that fails for a reason other than ENOENT, which
+ * `applyEviction` now reports in `failed` instead of throwing — must not skip
+ * the age pass on every later drive this cycle. A failed file keeps its index
+ * row (removed only for `applied.deleted`) so the next pass retries exactly
+ * that file; see EVENTS-RETENTION-SPEC.md on why the row must never go first.
+ *
+ * `pageSize` and `unlink` are overridable for harnesses only; production
+ * always gets the real AGE_PAGE and the real fs unlink.
  */
-export async function runAgeEviction(index, storeRoots, stateDir, { now = () => new Date(), log: log_ = log } = {}) {
+export async function runAgeEviction(index, storeRoots, stateDir, {
+  now = () => new Date(), log: log_ = log, pageSize = AGE_PAGE, unlink: unlinkFn,
+} = {}) {
   let text;
   try {
     text = await readFile(path.join(stateDir, RECORDING_FILE), "utf8");
@@ -227,42 +239,69 @@ export async function runAgeEviction(index, storeRoots, stateDir, { now = () => 
   const result = { segments: 0, bytesFreed: 0 };
   if (cutoff === null) return result;
   for (const root of storeRoots) {
-    for (;;) {
-      const segments = index.olderThan(cutoff, root, AGE_PAGE);
-      if (segments.length === 0) break;
-      const plan = { evict: segments.map((segment) => ({ segment, bytes: segment.bytes ?? 0 })) };
-      const applied = await applyEviction(root, plan);
-      index.removeMany(applied.deleted);
-      result.segments += applied.deleted.length;
-      result.bytesFreed += applied.bytesFreed;
-      if (segments.length < AGE_PAGE) break;
+    try {
+      for (;;) {
+        const segments = index.olderThan(cutoff, root, pageSize);
+        if (segments.length === 0) break;
+        const plan = { evict: segments.map((segment) => ({ segment, bytes: segment.bytes ?? 0 })) };
+        const applied = await applyEviction(root, plan, { unlink: unlinkFn });
+        index.removeMany(applied.deleted);
+        result.segments += applied.deleted.length;
+        result.bytesFreed += applied.bytesFreed;
+        if (applied.failed.length > 0) {
+          log_("warn", "past the age limit but could not be deleted", {
+            root, failed: applied.failed.length, codes: applied.failed.map((f) => f.code),
+          });
+        }
+        // A page where every row failed makes no progress: re-reading the
+        // same page would spin forever on the same rows. Stop this root for
+        // this pass; a fresh page next pass retries them.
+        if (applied.deleted.length === 0) break;
+        if (segments.length < pageSize) break;
+      }
+    } catch (err) {
+      log_("error", "age eviction failed for root", { root, error: String(err?.message ?? err) });
     }
   }
   if (result.segments > 0) log_("info", "deleted past the age limit", { maxDays: settings.maxDays, ...result });
   return result;
 }
 
-async function runEviction(index, storeRoots, log_) {
+/**
+ * Each store root is independent (`try`/`catch` per root, same reasoning as
+ * `runAgeEviction` above): a thrown failure, or an unlink that fails for a
+ * reason other than ENOENT, on one drive must not skip eviction on every
+ * later drive this cycle. `diskUsage` and `unlink` are overridable for
+ * harnesses only.
+ */
+export async function runEviction(index, storeRoots, log_, { diskUsage: diskUsage_ = diskUsage, unlink: unlinkFn } = {}) {
   for (const root of storeRoots) {
-    const usage = await diskUsage(root).catch(() => null);
-    if (usage === null) continue;
-    const budget = usableBytesFromRaw(usage.total, 0) * RING_FILL;
-    const toFree = bytesToFreeFor(usage.used, budget, 0);
-    if (toFree <= 0) continue;
+    try {
+      const usage = await diskUsage_(root).catch(() => null);
+      if (usage === null) continue;
+      const budget = usableBytesFromRaw(usage.total, 0) * RING_FILL;
+      const toFree = bytesToFreeFor(usage.used, budget, 0);
+      if (toFree <= 0) continue;
 
-    const plan = planEvictionScalable(index, toFree, { root });
-    if (plan.evict.length === 0) {
-      // Nothing evictable and still over budget: everything left is held,
-      // pending upload, or open. That is an operator problem, not a bug, and it
-      // must be visible rather than retried silently every five minutes.
-      log_("warn", "over budget with nothing evictable", {
-        root, toFree, blocked: plan.blocked?.length ?? 0,
+      const plan = planEvictionScalable(index, toFree, { root });
+      if (plan.evict.length === 0) {
+        // Nothing evictable and still over budget: everything left is held,
+        // pending upload, or open. That is an operator problem, not a bug, and it
+        // must be visible rather than retried silently every five minutes.
+        log_("warn", "over budget with nothing evictable", {
+          root, toFree, blocked: plan.blocked?.length ?? 0,
+        });
+        continue;
+      }
+      const result = await applyEviction(root, plan, { unlink: unlinkFn });
+      index.removeMany(result.deleted);
+      log_("info", "evicted", {
+        root, segments: result.deleted.length, bytesFreed: result.bytesFreed,
+        failed: result.failed.length, codes: result.failed.map((f) => f.code),
       });
-      continue;
+    } catch (err) {
+      log_("error", "eviction failed for root", { root, error: String(err?.message ?? err) });
     }
-    const result = await applyEviction(root, plan);
-    index.removeMany(result.deleted);
-    log_("info", "evicted", { root, segments: result.deleted.length, bytesFreed: result.bytesFreed });
   }
 }
 

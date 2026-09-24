@@ -9,13 +9,14 @@
  * drive, gets ENOENT, drops them from the index anyway, and never frees the
  * full drive; playback and export look on the wrong drive after a reorder.
  */
-import { mkdtemp, mkdir, writeFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, stat, unlink as realUnlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { openIndex } from "../agent/segindex.mjs";
 import { planEvictionScalable } from "../agent/evict.mjs";
 import { applyEviction } from "../agent/segstore.mjs";
+import { runAgeEviction, runEviction } from "../agent/recorder-service.mjs";
 import { createApiServer } from "../agent/api-server.mjs";
 import { check, eq, report } from "./_assert.mjs";
 
@@ -93,6 +94,162 @@ try {
       for (const s of newer) eq(await exists(join(d0, s.path)), false, "drive 0 file freed");
       eq(planEvictionScalable(index, 1500, { root: d1 }).evict.map((c) => c.segment.path), older.map((s) => s.path));
       eq(planEvictionScalable(index, 500).evict[0].segment.path, legacy.path, "no root: the old behaviour");
+    } finally {
+      index.close();
+    }
+  });
+
+  await check("FEARED: a failing unlink in the middle of a plan does not abort the rest, and only deleted rows are dropped", async () => {
+    const index = openIndex(join(tmp, "partialFail.db"));
+    try {
+      const segs = [seg("cam-4", 30, d0), seg("cam-4", 31, d0), seg("cam-4", 32, d0)];
+      for (const s of segs) await writeSeg(d0, s);
+      index.putMany(segs);
+      const plan = { evict: segs.map((s) => ({ segment: s, bytes: s.bytes })) };
+      const badPath = join(d0, segs[1].path);
+      const unlinkOverride = async (p) => {
+        if (p === badPath) { const e = new Error("access denied"); e.code = "EACCES"; throw e; }
+        return realUnlink(p);
+      };
+      const { deleted, failed, bytesFreed } = await applyEviction(d0, plan, { unlink: unlinkOverride });
+      eq(deleted, [segs[0].path, segs[2].path], "the good ones deleted; the loop did not abort mid-plan");
+      eq(failed, [{ path: segs[1].path, code: "EACCES" }], "the bad one recorded, never thrown");
+      eq(bytesFreed, segs[0].bytes + segs[2].bytes, "freed only what was actually deleted");
+      eq(await exists(join(d0, segs[0].path)), false);
+      eq(await exists(join(d0, segs[1].path)), true, "the failed file is untouched on disk");
+      eq(await exists(join(d0, segs[2].path)), false);
+      // The caller's exact pattern (runEviction / runAgeEviction): remove rows
+      // only for what was actually deleted.
+      index.removeMany(deleted);
+      eq(index.get(segs[0].path), null, "deleted row gone");
+      eq(index.get(segs[1].path) !== null, true, "FEARED: a row must never be removed before its file is gone (EVENTS-RETENTION-SPEC.md)");
+      eq(index.get(segs[2].path), null, "deleted row gone");
+    } finally {
+      index.close();
+    }
+  });
+
+  await check("FEARED: runAgeEviction never lets a bad root's failure skip the age pass on the next drive", async () => {
+    const DAY = 86_400_000;
+    const stateDir = join(tmp, "ageState");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "recording.json"), JSON.stringify({ maxDays: 1 }));
+    const realIndex = openIndex(join(tmp, "ageRootFail.db"));
+    try {
+      const bad = seg("cam-5", 40, d0);
+      const good = seg("cam-5", 41, d1);
+      await writeSeg(d0, bad);
+      await writeSeg(d1, good);
+      realIndex.putMany([bad, good]);
+      // Stands in for a drive that throws mid-pass (a corrupt read, a locked
+      // table...) rather than failing one file at a time.
+      const wrapped = {
+        ...realIndex,
+        olderThan(cutoffMs, root, limit) {
+          if (root === d0) throw new Error("simulated: drive 0 unreadable this pass");
+          return realIndex.olderThan(cutoffMs, root, limit);
+        },
+      };
+      const logs = [];
+      const result = await runAgeEviction(wrapped, [d0, d1], stateDir, {
+        now: () => new Date(T0 + 400 * DAY),
+        log: (level, msg, extra) => logs.push({ level, msg, extra }),
+      });
+      eq(result, { segments: 1, bytesFreed: good.bytes }, "only the healthy drive's segment was freed");
+      eq(await exists(join(d0, bad.path)), true, "bad drive's file untouched");
+      eq(await exists(join(d1, good.path)), false, "good drive's file freed");
+      eq(realIndex.get(bad.path) !== null, true, "bad drive's row kept: its file was never touched");
+      eq(realIndex.get(good.path), null, "good drive's row removed");
+      if (!logs.some((l) => l.level === "error" && l.extra.root === d0)) {
+        throw new Error("the failure on drive 0 must be logged, not swallowed silently");
+      }
+    } finally {
+      realIndex.close();
+    }
+  });
+
+  await check("FEARED: runAgeEviction's paging loop does not spin forever when a whole page fails", async () => {
+    const DAY = 86_400_000;
+    const stateDir = join(tmp, "ageStuck");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "recording.json"), JSON.stringify({ maxDays: 1 }));
+    const index = openIndex(join(tmp, "ageStuck.db"));
+    try {
+      const segs = [seg("cam-7", 60, d0), seg("cam-7", 61, d0), seg("cam-7", 62, d0)];
+      for (const s of segs) await writeSeg(d0, s);
+      index.putMany(segs);
+      let unlinkCalls = 0;
+      const alwaysFails = async () => { unlinkCalls++; const e = new Error("stuck"); e.code = "EBUSY"; throw e; };
+      const result = await runAgeEviction(index, [d0], stateDir, {
+        now: () => new Date(T0 + 400 * DAY),
+        log: () => {},
+        pageSize: 2,
+        unlink: alwaysFails,
+      });
+      eq(result, { segments: 0, bytesFreed: 0 }, "nothing could be deleted");
+      eq(unlinkCalls, 2, "stopped after the one failed page — never re-reads it forever");
+      for (const s of segs) {
+        eq(await exists(join(d0, s.path)), true, `${s.path} still on disk`);
+        eq(index.get(s.path) !== null, true, `${s.path} row kept for the next pass`);
+      }
+    } finally {
+      index.close();
+    }
+  });
+
+  await check("FEARED: runEviction never lets a bad root's failure skip eviction on the next drive", async () => {
+    const realIndex = openIndex(join(tmp, "evictRootFail.db"));
+    try {
+      const bad = seg("cam-6", 50, d0);
+      const good = seg("cam-6", 51, d1);
+      await writeSeg(d0, bad);
+      await writeSeg(d1, good);
+      realIndex.putMany([bad, good]);
+      const wrapped = {
+        ...realIndex,
+        oldestEvictable(limit, root) {
+          if (root === d0) throw new Error("simulated: drive 0 index read failed");
+          return realIndex.oldestEvictable(limit, root);
+        },
+      };
+      const logs = [];
+      const fakeDiskUsage = async () => ({ total: 1_000_000, used: 999_000 });   // both roots read as 99.9% full
+      await runEviction(wrapped, [d0, d1], (level, msg, extra) => logs.push({ level, msg, extra }), { diskUsage: fakeDiskUsage });
+      eq(await exists(join(d0, bad.path)), true, "bad drive's file untouched");
+      eq(await exists(join(d1, good.path)), false, "good drive's file freed");
+      eq(realIndex.get(bad.path) !== null, true, "bad drive's row kept");
+      eq(realIndex.get(good.path), null, "good drive's row removed");
+      if (!logs.some((l) => l.level === "error" && l.extra.root === d0)) {
+        throw new Error("the failure on drive 0 must be logged, not swallowed silently");
+      }
+    } finally {
+      realIndex.close();
+    }
+  });
+
+  await check("runEviction's log line reports failed counts and codes, not just what succeeded", async () => {
+    const index = openIndex(join(tmp, "evictLog.db"));
+    try {
+      const a = seg("cam-8", 70, d0);
+      const b = seg("cam-8", 71, d0);
+      await writeSeg(d0, a);
+      await writeSeg(d0, b);
+      index.putMany([a, b]);
+      const badPath = join(d0, b.path);
+      const unlinkOverride = async (p) => {
+        if (p === badPath) { const e = new Error("busy"); e.code = "EBUSY"; throw e; }
+        return realUnlink(p);
+      };
+      const logs = [];
+      await runEviction(index, [d0], (level, msg, extra) => logs.push({ level, msg, extra }), {
+        diskUsage: async () => ({ total: 1_000_000, used: 999_000 }),
+        unlink: unlinkOverride,
+      });
+      const evicted = logs.find((l) => l.msg === "evicted");
+      if (!evicted) throw new Error("expected an 'evicted' log line");
+      eq([evicted.extra.segments, evicted.extra.failed, evicted.extra.codes], [1, 1, ["EBUSY"]], "counts and codes reported, nothing silent");
+      eq(index.get(a.path), null, "the deleted one's row is gone");
+      eq(index.get(b.path) !== null, true, "the failed one's row stays for retry");
     } finally {
       index.close();
     }
