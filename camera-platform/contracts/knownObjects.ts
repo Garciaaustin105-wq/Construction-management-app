@@ -161,6 +161,14 @@ export interface KnownMatchInput {
   travel?: number | null;
   firstUtc?: string;
   lastUtc?: string;
+  /**
+   * The events.db id of this event - the same id the Review page asks
+   * /event-crop for. Passed to noteMatch (not matchKnown, which never reads
+   * it) so a known object's sample can move to the newest event it hid, and
+   * so keep a still once retention deletes the one it had. Missing or a
+   * blank string leaves sampleEventId as it was: a blank is not an id.
+   */
+  id?: string;
 }
 
 export type KnownLapseReason = "unseen" | "camera_changed" | "reset_by_hand";
@@ -194,7 +202,13 @@ export interface KnownObject {
   matched: number;
   /** The highest score any member was given. */
   confidenceMax: number;
-  /** The most confident member: the still the page shows. */
+  /**
+   * The still the Review page shows, via /event-crop?id=. The most confident
+   * member when learned; after that, noteMatch moves it to the newest event
+   * this object hid, so the still stays showable once retention deletes the
+   * video (and events.db row) the previous sampleEventId pointed to. Never
+   * blank - a match with no id leaves it exactly where it was.
+   */
   sampleEventId: string;
   /** Capped at KNOWN_MAX_MEMBER_IDS, oldest dropped; `members` keeps the true count. */
   memberEventIds: string[];
@@ -728,10 +742,15 @@ export function matchKnown(event: KnownMatchInput, objects: readonly KnownObject
 /**
  * Record that `event` was hidden by `object`: matched + 1, lastMatchedUtc =
  * now, and the seen range widened to cover the event's own times when it has
- * them (a missing time widens nothing - a blank is not "now"). Counts calls:
- * note each finished event once. Throws when the event is on another camera or
- * of another kind - that is a caller bug, not a match. A new object; the
- * argument is not changed.
+ * them (a missing time widens nothing - a blank is not "now"). When `event.id`
+ * is a non-empty string, sampleEventId moves to it - that is the newest event
+ * this object hid, and its video is the freshest the box holds, so the still
+ * stays showable once retention deletes the one sampleEventId pointed to
+ * before. A missing or blank id leaves sampleEventId exactly where it was: a
+ * blank is not a value (build rule 5), never "no sample". Counts calls: note
+ * each finished event once. Throws when the event is on another camera or of
+ * another kind - that is a caller bug, not a match. A new object; the argument
+ * is not changed.
  */
 export function noteMatch(object: KnownObject, event: KnownMatchInput, nowUtc: string): KnownObject {
   const nowMs = requireNow(nowUtc, "noteMatch");
@@ -746,6 +765,8 @@ export function noteMatch(object: KnownObject, event: KnownMatchInput, nowUtc: s
   const last = parseMs(event.lastUtc);
   if (first !== null && first < Date.parse(next.firstSeenUtc)) next.firstSeenUtc = iso(first);
   if (last !== null && last > Date.parse(next.lastSeenUtc)) next.lastSeenUtc = iso(last);
+  const id: unknown = (event as Record<string, unknown>).id;
+  if (typeof id === "string" && id !== "") next.sampleEventId = id;
   return next;
 }
 

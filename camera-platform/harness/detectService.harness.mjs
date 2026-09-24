@@ -1201,10 +1201,13 @@ await check("THIS EVENING, END TO END: 17 umbrella events in 25 minutes teach no
     eq(rows.length, 38, "both stored");
     eq(rows.at(-2).suppressedBy, o.id, "the umbrella's new event: hidden when finished too");
     eq(rows.at(-1).suppressedBy, null, "the person at the gate: shown");
+    const hiddenRow = rows.at(-2);
     await k.svc.knownFlush();
     const [after] = await storedObjects(stateDir);
     eq([after.matched, after.lastMatchedUtc, after.lastSeenUtc], [1, "2026-09-23T00:45:00.000Z", "2026-09-23T00:40:03.000Z"],
       "counted once (one finished event, not one per sighting), and its seen range widened to it");
+    eq(after.sampleEventId, hiddenRow.id, "the sample moved to the newest event this object hid - the same events.db id /event-crop asks for");
+    eq(after.sampleEventId === o.sampleEventId, false, "and it is a real move, not the id the object already had before this match");
     const health = await k.health();
     eq(health.knownObjects, {
       active: 1, lapsed: 0, problem: null, learnProblem: null, saveProblem: null,

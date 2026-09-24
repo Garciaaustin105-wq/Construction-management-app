@@ -598,6 +598,29 @@ check("noteMatch counts the match and widens the seen range, without changing it
   eq(checkKnownObjects({ version: 1, objects: [bare] }).ok, true, "still a valid object");
 });
 
+check("noteMatch moves sampleEventId to the event it just hid, only when it carries a real id", () => {
+  const [o] = learn(stillDay(), { nowMins: 200 }).learned;
+  const original = o.sampleEventId;
+  const withId = { cameraId: "cam1", kind: "person", bestBox: spot, bestConfidence: 0.6, travel: 0, id: "hidden-event-7" };
+  const noted = noteMatch(o, withId, at(253));
+  eq(noted.sampleEventId, "hidden-event-7", "sample moves to the event's own events.db id");
+  eq(o.sampleEventId, original, "the argument object is not mutated");
+
+  // A missing id, or a blank one, is not a value (build rule 5): the sample
+  // stays exactly where it was - the newest hide with a real id wins, not the
+  // freshest hide of any kind.
+  const noId = { cameraId: "cam1", kind: "person", bestBox: spot, bestConfidence: 0.6, travel: 0 };
+  eq(noteMatch(noted, noId, at(260)).sampleEventId, "hidden-event-7", "missing id leaves sampleEventId unchanged");
+  const blankId = { ...noId, id: "" };
+  eq(noteMatch(noted, blankId, at(261)).sampleEventId, "hidden-event-7", "blank id leaves sampleEventId unchanged");
+
+  // A later real id still moves it, and the object it started from is untouched.
+  const again = noteMatch(noted, { ...withId, id: "hidden-event-9" }, at(262));
+  eq(again.sampleEventId, "hidden-event-9", "a later id moves the sample again");
+  eq(noted.sampleEventId, "hidden-event-7", "the previous object is not mutated");
+  eq(checkKnownObjects({ version: 1, objects: [again] }).ok, true, "still a valid object");
+});
+
 // ------------------------------------------------------------------ the stored file
 
 check("the checker accepts what this module makes, at every stage", () => {

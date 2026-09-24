@@ -415,7 +415,10 @@ export async function startDetect(opts = {}) {
     }
     eventsDb.upsert(update, finished, { suppressedBy });
     if (finished && suppressedBy !== null) {
-      pendingNotes.push({ objectId: suppressedBy, event: update.event, atUtc: now().toISOString() });
+      // update.id is the same events.db id eventsDb.upsert just wrote this
+      // event under, and the Review page's /event-crop?id= asks for exactly
+      // that id - so noteMatch can move sampleEventId onto it.
+      pendingNotes.push({ objectId: suppressedBy, event: { ...update.event, id: update.id }, atUtc: now().toISOString() });
       const cam = cameras.get(update.event.cameraId);
       if (cam) cam.hiddenSinceStart += 1;
     }
