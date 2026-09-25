@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<!--
+  Network page for the camera-NVR web UI (NETWORK-PAGE-SPEC.md, Shape item 4).
+
+  The site's local network, seen from the NVR: interfaces and their 60-minute
+  rate strip, the connection checks, every configured camera's IP/MAC/maker/
+  model, every other device this box has seen without scanning, and the
+  "Look for cameras" button. All rendering is done by /ui/network-client.js
+  (served from agent/ui/network-client.mjs) against GET /network; this file
+  only lays out the containers it fills.
+
+  Same house rules as agent/ui/system.html: a missing measurement reads as
+  its own reason text from the server, never a blank or a zero, and nothing
+  here is built from innerHTML -- a camera name, a discovery reply's model
+  string, all of it is text a config file or the wire supplied, not markup
+  this page may trust.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  /* 16px gutter at every width (NETWORK-PAGE-SPEC.md's own phone-width rule),
+     not just under the collapse breakpoint below. */
+  body { margin:0; padding:16px; background:#14161a; color:#e8eaed;
+         font:14px/1.4 system-ui, sans-serif; }
+  nav { margin:0 0 12px; }
+  nav a { color:#8ab4f8; margin-right:14px; text-decoration:none; }
+  nav a:hover { text-decoration:underline; }
+  h1 { margin:0; font-size:20px; display:flex; align-items:center;
+       flex-wrap:wrap; gap:8px 12px; }
+  h2 { margin:22px 0 8px; font-size:15px; }
+  .dim { color:#9aa0a6; }
+  .good { color:#7ddc9a; }
+  .warn { color:#f1e3a0; }
+  .bad { color:#ffb4b4; }
+  #measuredSince { font-size:13px; font-weight:400; }
+  .panel { margin-top:4px; padding:10px 14px; background:#1b1d22;
+           border:1px solid #2c2f36; border-radius:8px; }
+  .card { padding:10px 0; border-bottom:1px solid #2c2f36; }
+  .card:last-child { border-bottom:none; }
+  .card.warn { padding:8px 10px; margin:0 0 8px; border:1px solid #4a4530;
+               border-radius:6px; background:#2c2a1d; color:#f1e3a0; }
+  .card-head { display:flex; justify-content:space-between; align-items:baseline;
+               gap:6px 12px; flex-wrap:wrap; font-weight:600; }
+  .kv { display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:4px;
+        font-size:13px; color:#c7cbd1; }
+  .kv .k { color:#9aa0a6; }
+  .note { margin:4px 0 0; font-size:12px; }
+  .stripSvg { width:100%; height:36px; display:block; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; }
+  th { padding:10px 10px 6px 0; border-bottom:1px solid #2c2f36;
+       text-align:left; font-size:11px; font-weight:600; color:#9aa0a6;
+       letter-spacing:0.5px; text-transform:uppercase; }
+  td { padding:8px 10px 8px 0; border-bottom:1px solid #2c2f36;
+       vertical-align:top; overflow-wrap:anywhere; }
+  tbody tr:last-child td { border-bottom:none; }
+  button.discoverBtn { min-height:44px; padding:8px 16px; border:1px solid #4a4f58;
+                        border-radius:8px; background:#2c2f36; color:#e8eaed;
+                        font:inherit; cursor:pointer; }
+  button.discoverBtn[disabled] { opacity:0.5; cursor:default; }
+  #discoverStatus, #discoverMessage { margin:8px 0 0; font-size:13px; color:#9aa0a6; }
+  #pollError { margin:16px 0 0; padding:8px 12px; background:#3a1d1d;
+               color:#ffb4b4; border-radius:6px; }
+  #pollError[hidden] { display:none; }
+  #ipCollisions[hidden] { display:none; }
+
+  /* Phone in a car park: every table collapses to cards, never a sideways
+     scroll (build rule: 16px gutter, no sideways scroll under ~640px). */
+  @media (max-width: 640px) {
+    .data-table thead { display:none; }
+    .data-table, .data-table tbody, .data-table tr, .data-table td { display:block; width:auto; }
+    .data-table tr { margin:0 0 8px; padding:2px 10px 6px; background:#23262c;
+                      border:1px solid #2c2f36; border-radius:8px; }
+    .data-table tr:last-child { margin-bottom:0; }
+    .data-table td { padding:3px 0; border-bottom:none; }
+    .data-table td::before { content:attr(data-label); display:inline-block;
+                              width:110px; color:#9aa0a6; font-size:11px;
+                              letter-spacing:0.5px; text-transform:uppercase; }
+  }
+</style>
+</head>
+<body>
+  <nav>
+    <a href="/">Live</a>
+    <a href="/review">Review</a>
+    <a href="/system">System</a>
+    <a href="/cameras-page">Cameras</a>
+    <a href="/recording-page">Recording</a>
+    <a href="/accounts-page">Accounts</a>
+  </nav>
+
+  <h1>Network <span id="measuredSince" class="dim"></span></h1>
+
+  <h2>Interfaces</h2>
+  <div id="interfaces" class="panel"></div>
+
+  <h2>Connection checks</h2>
+  <div id="connectionChecks" class="panel"></div>
+
+  <h2>Cameras</h2>
+  <div class="panel">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Camera</th>
+          <th>IP</th>
+          <th>Answering</th>
+          <th>Recording</th>
+          <th>Bitrate</th>
+          <th>FPS</th>
+          <th>MAC</th>
+          <th>Maker</th>
+          <th>Model</th>
+          <th>Firmware</th>
+          <th>Serial</th>
+          <th>MAC history</th>
+        </tr>
+      </thead>
+      <tbody id="cameras"></tbody>
+    </table>
+  </div>
+
+  <h2>Other devices</h2>
+  <div class="panel">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>IP</th>
+          <th>MAC</th>
+          <th>Maker</th>
+          <th>Interface</th>
+          <th>State</th>
+          <th>Model</th>
+          <th>Firmware</th>
+        </tr>
+      </thead>
+      <tbody id="otherDevices"></tbody>
+    </table>
+  </div>
+
+  <div id="ipCollisions" hidden></div>
+
+  <h2>Look for cameras</h2>
+  <div class="panel">
+    <button id="discoverBtn" class="discoverBtn" type="button">Look for cameras</button>
+    <div id="discoverStatus" class="dim"></div>
+    <div id="discoverMessage" class="dim"></div>
+  </div>
+
+  <p id="pollError" hidden></p>
+
+  <script type="module" src="/ui/network-client.js"></script>
+<script type="module" src="/ui/session.js"></script>
+</body>
+</html>

@@ -69,7 +69,16 @@ export type Permission =
    * and a list of every time a person walked past, readable by whoever is alone
    * with that TV, is not the same as the picture already on screen.
    */
-  | "events.view";
+  | "events.view"
+  /**
+   * The Network page (NETWORK-PAGE-SPEC.md): interfaces, connection checks,
+   * every configured camera's IP/MAC/maker/model, and every OTHER device this
+   * box has seen on its LAN without scanning for it. Installer only, like
+   * camera.manage and system.manage — a store account has no reason to see the
+   * site's neighbour table, and a wall display is not a person who could be
+   * asked why it was looking.
+   */
+  | "network.view";
 
 /**
  * Every permission, in one place, so a new one cannot be forgotten below.
@@ -88,6 +97,7 @@ export const ALL_PERMISSIONS: readonly Permission[] = Object.freeze([
   "account.manage",
   "audit.view",
   "events.view",
+  "network.view",
 ]);
 
 const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([

@@ -36,6 +36,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/accounts-page": { kind: "page", permission: "account.manage" },
   "/cameras-page": { kind: "page", permission: "camera.manage" },
   "/recording-page": { kind: "page", permission: "storage.manage" },
+  "/network-page": { kind: "page", permission: "network.view" },
 
   // Page scripts carry no data and are already public source; they still sit
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
@@ -50,6 +51,7 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/accounts-client.js": { kind: "api", permission: "account.manage" },
   "/ui/cameras-client.js": { kind: "api", permission: "camera.manage" },
   "/ui/recording-client.js": { kind: "api", permission: "storage.manage" },
+  "/ui/network-client.js": { kind: "api", permission: "network.view" },
   // Every signed-in page loads it, a wall display included (it draws nothing there).
   "/ui/session.js": { kind: "api", permission: "live.view" },
 
@@ -83,6 +85,10 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // The camera's known objects: recurring still false detections that are
   // hidden from /events. What they are is event content, so the same reach.
   "/known-objects": { kind: "api", permission: "events.view" },
+  // The Network page's own JSON (NETWORK-PAGE-SPEC.md): interfaces, connection
+  // checks, cameras' IP/MAC/maker/model and every other device this box has
+  // seen without scanning. Installer only.
+  "/network": { kind: "api", permission: "network.view" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -103,6 +109,10 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // asked of whoever watches the events. It keeps no footage and changes no
   // setting, so the same reach as seeing the object.
   "/known-objects/answer": { kind: "api", permission: "events.view" },
+  // "Look for cameras" (NETWORK-PAGE-SPEC.md): runs WS-Discovery and SADP on
+  // the camera card. Same reach as /network; rate-limited separately in
+  // agent/api-server.mjs, not by this policy table.
+  "/network/discover": { kind: "api", permission: "network.view" },
 });
 
 /**

@@ -38,7 +38,7 @@ const DESTRUCTIVE = ["camera.manage", "storage.manage", "system.manage", "accoun
 
 check("the installer can do everything there is", () => {
   for (const p of ALL_PERMISSIONS) eq(can(installer, p), true, p);
-  eq(ALL_PERMISSIONS.length, 11, "eleven permissions; a new one needs a decision below");
+  eq(ALL_PERMISSIONS.length, 12, "twelve permissions; a new one needs a decision below");
 });
 
 check("the store has exactly its daily job: watch, review, export, hold, layout", () => {
@@ -62,6 +62,10 @@ check("a wall display can watch and look back, and take nothing away", () => {
   // The AI decision (access.ts): a wall is unattended, and a list of every
   // time a person walked past is not the picture already on the screen.
   eq(can(display, "events.view"), false, "THE FEARED ONE: an unattended TV does not list who walked past");
+  // NETWORK-PAGE-SPEC.md's own decision: the site's neighbour table and every
+  // camera's MAC/maker/model is installer-only, the same reach as
+  // camera.manage and system.manage -- a wall display gets none of it either.
+  eq(can(display, "network.view"), false, "an unattended TV does not get the neighbour table");
 });
 
 check("nobody signed in can do nothing at all", () => {
@@ -103,7 +107,7 @@ check("a caller cannot edit the policy through an array it was handed", () => {
     threw = true;
   }
   eq(threw, true, "ALL_PERMISSIONS is frozen");
-  eq(ALL_PERMISSIONS.length, 11, "and still eleven long");
+  eq(ALL_PERMISSIONS.length, 12, "and still twelve long");
 });
 
 check("there is no way in until an installer exists, and unknown counts as none", () => {

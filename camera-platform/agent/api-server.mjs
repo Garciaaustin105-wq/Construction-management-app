@@ -21,6 +21,9 @@ import { readHealth, alertsResponse } from './alerts-run.mjs';
 import { gatherHealthFacts, cameraFacts } from './healthfacts.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
 import { runEventRetention, EVENT_RETENTION_INTERVAL_MS } from './event-retention.mjs';
+import { startNetworkFacts } from './network-facts.mjs';
+import { discoverSadp } from './sadp.mjs';
+import { discoverOnvif } from './wsdiscovery.mjs';
 
 // The pure contracts, compiled. Refusals are VALUES (ok === false), not
 // exceptions — detect them by shape, never by instanceof (they are interfaces,
@@ -169,8 +172,10 @@ const UI_FILES = {
   '/ui/accounts-client.js': 'accounts-client.mjs',
   '/cameras-page': 'cameras.html',
   '/recording-page': 'recording.html',
+  '/network-page': 'network.html',
   '/ui/cameras-client.js': 'cameras-client.mjs',
   '/ui/recording-client.js': 'recording-client.mjs',
+  '/ui/network-client.js': 'network-client.mjs',
   '/ui/session.js': 'session-bar.mjs',
 };
 
@@ -612,6 +617,17 @@ export function createApiServer({
   // deployment gets the real EVENT_RETENTION_INTERVAL_MS (5 minutes);
   // nothing in this file ever passes anything else outside a test.
   eventRetentionIntervalMs = EVENT_RETENTION_INTERVAL_MS,
+  // The Network page (NETWORK-PAGE-SPEC.md) starts real samplers the instant
+  // it is constructed — a DNS lookup, TCP connects to 1.1.1.1/8.8.8.8 and to
+  // every configured camera's host. THIS FILE IS BUILT BY createApiServer()
+  // FROM DOZENS OF OTHER HARNESSES that know nothing about the network page,
+  // so it must default OFF: only a caller that explicitly asks for it (the
+  // real bootstrap below, or a harness supplying full fakes) ever causes a
+  // packet to leave the process. `networkFactsOverrides` lets that harness
+  // replace every I/O source (execFile, readFile, dns, tcp connect, the two
+  // discovery protocols) with fakes that record their own destinations.
+  networkFactsEnabled = false,
+  networkFactsOverrides = {},
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -630,6 +646,26 @@ export function createApiServer({
     onChange: () => { driveAssignment = assignDrives(); },
   });
   const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
+
+  // The Network page's own samplers (NETWORK-PAGE-SPEC.md): interface
+  // counters, camera RTSP-port probes, and gateway/DNS/internet/clock checks.
+  // Started here, unref()'d inside startNetworkFacts, and stopped by
+  // server.closeNetworkFacts() below — the same pattern as the events
+  // retention timer just above it in this file. Null when disabled (see
+  // networkFactsEnabled above): the routes answer "not enabled" rather than
+  // reach for a subsystem that was never allowed to touch the network.
+  const networkFacts = networkFactsEnabled
+    ? startNetworkFacts({
+        config,
+        index,
+        stateDir,
+        now,
+        discoverSadpFn: discoverSadp,
+        discoverOnvifFn: discoverOnvif,
+        log,
+        ...networkFactsOverrides,
+      })
+    : null;
 
   /**
    * The detector's events, opened on first use and kept open.
@@ -936,6 +972,36 @@ export function createApiServer({
         return;
       }
 
+      // ---------- POST /network/discover ----------
+      // "Look for cameras" (NETWORK-PAGE-SPEC.md): runs WS-Discovery and SADP
+      // on the camera card, exactly as `camctl discover` does. Rate-limited to
+      // once per 60s by network-facts.mjs itself, not by routeAccess — a
+      // throttled call answers with the CACHED run rather than doing nothing.
+      if (method === 'POST' && pathname === '/network/discover') {
+        if (networkFacts === null) {
+          sendError(res, 501, 'network_facts_disabled', 'the network page is not enabled on this server');
+          return;
+        }
+        const result = await networkFacts.runDiscoverNow();
+        if (result.throttled) {
+          const retryAfterS = Math.max(1, Math.ceil(result.retryAfterMs / 1000));
+          res.writeHead(429, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            'Retry-After': String(retryAfterS),
+          });
+          res.end(JSON.stringify({
+            ok: false, code: 'rate_limited',
+            message: `discovery already ran recently; try again in ${retryAfterS}s`,
+            atUtc: result.cache?.atUtc ?? null,
+          }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: true, atUtc: result.cache.atUtc, replies: result.cache.replies }));
+        return;
+      }
+
       // Every route past here reads; the table only lets GET through to them.
       if (method !== 'GET') {
         sendError(res, 404, 'no_such_route', 'No such route');
@@ -1148,6 +1214,22 @@ export function createApiServer({
           objects: scoped.map((o) => ({ ...o, notice: knownObjectNotice(o) })),
           problem,
         }));
+        return;
+      }
+
+      // ---------- /network ----------
+      // Interfaces, connection checks, every configured camera's IP/MAC/
+      // maker/model, and every OTHER device this box has seen without
+      // scanning (NETWORK-PAGE-SPEC.md). Never a credential: gatherView()
+      // only ever sees a camera's bare host, never its resolved URL.
+      if (pathname === '/network') {
+        if (networkFacts === null) {
+          sendError(res, 501, 'network_facts_disabled', 'the network page is not enabled on this server');
+          return;
+        }
+        const view = await networkFacts.gatherView();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(view));
         return;
       }
 
@@ -1563,6 +1645,13 @@ export function createApiServer({
     clearInterval(eventRetentionTimer);
   };
 
+  // Same reasoning again: the Network page's counter/probe/connection-check
+  // timers are this server's own. Cleared on shutdown so nothing keeps
+  // polling a config or index this process has let go of.
+  server.closeNetworkFacts = () => {
+    networkFacts?.close();
+  };
+
   return server;
 }
 
@@ -1572,7 +1661,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
   const config = await loadConfig(stateDir);
   const index = openIndex(indexPathFor(stateDir));
   const auth = await createAuth({ stateDir, log });
-  const server = createApiServer({ stateDir, config, index, auth });
+  const server = createApiServer({ stateDir, config, index, auth, networkFactsEnabled: true });
 
   const port = Number(process.env.CAMPLAT_API_PORT ?? 8080);
 
@@ -1622,6 +1711,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
         server.closeEvents();
         server.closeEventCrops();
         server.closeStillsCleanup();
+        server.closeNetworkFacts();
         process.exit(0);
       });
     });
