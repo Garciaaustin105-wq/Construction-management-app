@@ -1,11 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { Building, Users as UsersIcon, ArrowRight } from "lucide-react";
 import { getMe } from "@/lib/tenant";
 import PageContainer from "@/components/PageContainer";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable from "@/components/ui/DataTable";
 
 type OrgRow = {
   id: string;
@@ -88,52 +88,100 @@ export default async function OrgsPage() {
       {list.length === 0 ? (
         <p className="text-sm text-muted text-center py-6">No organizations yet.</p>
       ) : (
-        <div className="space-y-2">
-          {list.map((org) => (
-            <Link
-              key={org.id}
-              href={`/admin/org?org=${org.id}`}
-              className="block bg-surface rounded-lg border border-line shadow-sm p-4 active:bg-gray-50"
-            >
-              <div className="flex items-start justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 truncate flex items-center gap-1.5">
-                    <Building className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                    {org.name}
-                  </p>
-                  {org.email && (
-                    <p className="text-xs text-muted truncate mt-0.5">{org.email}</p>
+        // Desktop UI pass, phase 2: mobile card JSX moved verbatim into
+        // mobileCard (phones unchanged); lg: gains the shared dense table.
+        <DataTable
+          columns={[
+            {
+              key: "name",
+              header: "Organization",
+              cell: (org) => (
+                <span className="min-w-0 truncate block max-w-72 font-medium text-gray-900">{org.name}</span>
+              ),
+            },
+            {
+              key: "email",
+              header: "Email",
+              cell: (org) => <span className="min-w-0 truncate block max-w-64 text-muted">{org.email ?? ""}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "members",
+              header: "Members",
+              num: true,
+              cell: (org) => <span className="text-muted">{counts.get(org.id) ?? 0}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "plan",
+              header: "Plan",
+              cell: (org) => (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {org.plan && (
+                    <StatusBadge tone="neutral" className="uppercase tracking-wide">
+                      {org.plan}
+                    </StatusBadge>
                   )}
-                  <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    <span className="text-xs text-gray-600 inline-flex items-center gap-1">
-                      <UsersIcon className="w-3 h-3" />
-                      {counts.get(org.id) ?? 0} members
+                  {org.plan_status && org.plan_status !== "trial" && (
+                    <StatusBadge
+                      tone={PLAN_STATUS_TONE[org.plan_status] ?? "muted"}
+                      className="uppercase tracking-wide"
+                    >
+                      {org.plan_status}
+                    </StatusBadge>
+                  )}
+                  {org.plan === "trial" && org.trial_ends_at && (
+                    <span className="text-[10px] text-muted">
+                      ends {new Date(org.trial_ends_at).toLocaleDateString()}
                     </span>
-                    {org.plan && (
-                      <StatusBadge tone="neutral" className="uppercase tracking-wide">
-                        {org.plan}
-                      </StatusBadge>
-                    )}
-                    {org.plan_status && org.plan_status !== "trial" && (
-                      <StatusBadge
-                        tone={PLAN_STATUS_TONE[org.plan_status] ?? "muted"}
-                        className="uppercase tracking-wide"
-                      >
-                        {org.plan_status}
-                      </StatusBadge>
-                    )}
-                    {org.plan === "trial" && org.trial_ends_at && (
-                      <span className="text-[10px] text-muted">
-                        trial ends {new Date(org.trial_ends_at).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
+                  )}
                 </div>
-                <ArrowRight className="w-4 h-4 text-gray-400 flex-shrink-0 mt-1" />
+              ),
+            },
+          ]}
+          rows={list}
+          rowHref={(org) => `/admin/org?org=${org.id}`}
+          framed
+          mobileCardClassName="p-4"
+          mobileCard={(org) => (
+            <div className="flex items-start justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-900 truncate flex items-center gap-1.5">
+                  <Building className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  {org.name}
+                </p>
+                {org.email && (
+                  <p className="text-xs text-muted truncate mt-0.5">{org.email}</p>
+                )}
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <span className="text-xs text-gray-600 inline-flex items-center gap-1">
+                    <UsersIcon className="w-3 h-3" />
+                    {counts.get(org.id) ?? 0} members
+                  </span>
+                  {org.plan && (
+                    <StatusBadge tone="neutral" className="uppercase tracking-wide">
+                      {org.plan}
+                    </StatusBadge>
+                  )}
+                  {org.plan_status && org.plan_status !== "trial" && (
+                    <StatusBadge
+                      tone={PLAN_STATUS_TONE[org.plan_status] ?? "muted"}
+                      className="uppercase tracking-wide"
+                    >
+                      {org.plan_status}
+                    </StatusBadge>
+                  )}
+                  {org.plan === "trial" && org.trial_ends_at && (
+                    <span className="text-[10px] text-muted">
+                      trial ends {new Date(org.trial_ends_at).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
               </div>
-            </Link>
-          ))}
-        </div>
+              <ArrowRight className="w-4 h-4 text-gray-400 flex-shrink-0 mt-1" />
+            </div>
+          )}
+        />
       )}
     </PageContainer>
   );

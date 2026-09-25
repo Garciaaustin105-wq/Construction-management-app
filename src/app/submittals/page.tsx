@@ -9,6 +9,7 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -134,35 +135,79 @@ export default async function SubmittalsPage({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map((r) => (
-            <Link
-              key={r.id}
-              href={`/submittals/${r.id}`}
-              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
-            >
-              <div className="flex justify-between items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 truncate">
-                    {r.submittalNumber ? `${r.submittalNumber} · ` : ""}
-                    {r.title}
-                  </p>
-                  <p className="text-xs text-muted truncate">
-                    {r.jobName}
-                    {r.csiSection ? ` · ${r.csiSection}` : ""}
-                    {` · ${new Date(r.createdAt).toLocaleDateString()}`}
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
-                  <StatusBadge tone={r.ballInCourt === "architect" ? "brand" : "neutral"}>
-                    {courtLabel(r.ballInCourt)}
-                  </StatusBadge>
-                </div>
+        // Desktop UI pass, phase 2: mobile card JSX moved verbatim into
+        // mobileCard (phones unchanged); lg: gains the shared dense table.
+        <DataTable
+          columns={[
+            {
+              key: "title",
+              header: "Submittal",
+              cell: (r) => (
+                <span className="min-w-0 truncate block max-w-72 font-medium text-gray-900">
+                  {r.submittalNumber ? `${r.submittalNumber} · ` : ""}
+                  {r.title}
+                </span>
+              ),
+            },
+            {
+              key: "job",
+              header: "Job",
+              cell: (r) => <span className="min-w-0 truncate block max-w-56">{r.jobName}</span>,
+            },
+            {
+              key: "csi",
+              header: "CSI",
+              cell: (r) => <span className="text-muted">{r.csiSection}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "status",
+              header: "Status",
+              cell: (r) => (
+                <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
+              ),
+            },
+            {
+              key: "court",
+              header: "Ball in court",
+              cell: (r) => (
+                <StatusBadge tone={r.ballInCourt === "architect" ? "brand" : "neutral"}>
+                  {courtLabel(r.ballInCourt)}
+                </StatusBadge>
+              ),
+            },
+            {
+              key: "date",
+              header: "Date",
+              cell: (r) => <span className="text-muted">{new Date(r.createdAt).toLocaleDateString()}</span>,
+              hideOnMobile: true,
+            },
+          ]}
+          rows={rows}
+          rowHref={(r) => `/submittals/${r.id}`}
+          framed
+          mobileCard={(r) => (
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-900 truncate">
+                  {r.submittalNumber ? `${r.submittalNumber} · ` : ""}
+                  {r.title}
+                </p>
+                <p className="text-xs text-muted truncate">
+                  {r.jobName}
+                  {r.csiSection ? ` · ${r.csiSection}` : ""}
+                  {` · ${new Date(r.createdAt).toLocaleDateString()}`}
+                </p>
               </div>
-            </Link>
-          ))}
-        </div>
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
+                <StatusBadge tone={r.ballInCourt === "architect" ? "brand" : "neutral"}>
+                  {courtLabel(r.ballInCourt)}
+                </StatusBadge>
+              </div>
+            </div>
+          )}
+        />
       )}
 
       {rows.length > 0 && (

@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase/server";
 import { getMe } from "@/lib/tenant";
 import { redirect } from "next/navigation";
 import { FIELD_MGMT, type Role } from "@/lib/roles";
-import Link from "next/link";
 import { Plus, CheckSquare } from "lucide-react";
 import PunchFilters from "@/components/PunchFilters";
 import PunchExportButton from "@/components/PunchExportButton";
@@ -10,6 +9,7 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -142,34 +142,79 @@ export default async function PunchPage({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map((r) => (
-            <Link
-              key={r.id}
-              href={`/punch/${r.id}`}
-              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
-            >
-              <div className="flex justify-between items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 truncate">{r.title}</p>
-                  <p className="text-xs text-muted truncate">
-                    {r.jobName}
-                    {r.location ? ` · ${r.location}` : ""}
-                    {r.assigneeName ? ` · ${r.assigneeName}` : ""}
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
-                    {r.status.replace("_", " ")}
-                  </StatusBadge>
-                  <StatusBadge tone={PRIORITY_TONE[r.priority] ?? "neutral"}>
-                    {r.priority}
-                  </StatusBadge>
-                </div>
+        // Desktop UI pass, phase 2: mobile card JSX moved verbatim into
+        // mobileCard (phones unchanged); lg: gains the shared dense table.
+        <DataTable
+          columns={[
+            {
+              key: "title",
+              header: "Item",
+              cell: (r) => (
+                <span className="min-w-0 truncate block max-w-72 font-medium text-gray-900">{r.title}</span>
+              ),
+            },
+            {
+              key: "job",
+              header: "Job",
+              cell: (r) => <span className="min-w-0 truncate block max-w-56">{r.jobName}</span>,
+            },
+            {
+              key: "assignee",
+              header: "Assigned",
+              cell: (r) => <span className="text-muted">{r.assigneeName}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "due",
+              header: "Due",
+              cell: (r) => (
+                <span className="text-muted">
+                  {r.dueDate ? new Date(r.dueDate).toLocaleDateString() : "—"}
+                </span>
+              ),
+              hideOnMobile: true,
+            },
+            {
+              key: "status",
+              header: "Status",
+              cell: (r) => (
+                <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+                  {r.status.replace("_", " ")}
+                </StatusBadge>
+              ),
+            },
+            {
+              key: "priority",
+              header: "Priority",
+              cell: (r) => (
+                <StatusBadge tone={PRIORITY_TONE[r.priority] ?? "neutral"}>{r.priority}</StatusBadge>
+              ),
+            },
+          ]}
+          rows={rows}
+          rowHref={(r) => `/punch/${r.id}`}
+          framed
+          mobileCard={(r) => (
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-900 truncate">{r.title}</p>
+                <p className="text-xs text-muted truncate">
+                  {r.jobName}
+                  {r.location ? ` · ${r.location}` : ""}
+                  {r.assigneeName ? ` · ${r.assigneeName}` : ""}
+                </p>
               </div>
-            </Link>
-          ))}
-        </div>
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>
+                  {r.status.replace("_", " ")}
+                </StatusBadge>
+                <StatusBadge tone={PRIORITY_TONE[r.priority] ?? "neutral"}>
+                  {r.priority}
+                </StatusBadge>
+              </div>
+            </div>
+          )}
+        />
       )}
 
       {rows.length > 0 && <PunchExportButton rows={exportRows} />}

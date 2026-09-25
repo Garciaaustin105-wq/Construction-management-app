@@ -9,6 +9,7 @@ import PageContainer from "@/components/PageContainer";
 import { LinkButton } from "@/components/ui/Button";
 import StatusBadge, { type BadgeTone } from "@/components/ui/StatusBadge";
 import ListToolbar, { type ViewMode } from "@/components/ui/ListToolbar";
+import DataTable from "@/components/ui/DataTable";
 
 type Row = {
   id: string;
@@ -133,29 +134,63 @@ export default async function DailyLogsPage({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map((r) => (
-            <Link
-              key={r.id}
-              href={`/daily-logs/${r.id}`}
-              className="block bg-surface rounded-lg border border-line shadow-sm p-3 active:bg-gray-50"
-            >
-              <div className="flex justify-between items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 truncate">
-                    {new Date(r.logDate).toLocaleDateString()}
-                  </p>
-                  <p className="text-xs text-muted truncate">
-                    {r.jobName}
-                    {r.authorName ? ` · ${r.authorName}` : ""}
-                    {r.weather ? ` · ${r.weather}` : ""}
-                  </p>
-                </div>
+        // Desktop UI pass, phase 2: mobile card JSX moved verbatim into
+        // mobileCard (phones unchanged); lg: gains the shared dense table.
+        <DataTable
+          columns={[
+            {
+              key: "date",
+              header: "Date",
+              cell: (r) => (
+                <span className="font-medium text-gray-900">
+                  {new Date(r.logDate).toLocaleDateString()}
+                </span>
+              ),
+            },
+            {
+              key: "job",
+              header: "Job",
+              cell: (r) => <span className="min-w-0 truncate block max-w-56">{r.jobName}</span>,
+            },
+            {
+              key: "author",
+              header: "Author",
+              cell: (r) => <span className="text-muted">{r.authorName}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "weather",
+              header: "Weather",
+              cell: (r) => <span className="text-muted">{r.weather}</span>,
+              hideOnMobile: true,
+            },
+            {
+              key: "status",
+              header: "Status",
+              cell: (r) => (
                 <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
+              ),
+            },
+          ]}
+          rows={rows}
+          rowHref={(r) => `/daily-logs/${r.id}`}
+          framed
+          mobileCard={(r) => (
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-gray-900 truncate">
+                  {new Date(r.logDate).toLocaleDateString()}
+                </p>
+                <p className="text-xs text-muted truncate">
+                  {r.jobName}
+                  {r.authorName ? ` · ${r.authorName}` : ""}
+                  {r.weather ? ` · ${r.weather}` : ""}
+                </p>
               </div>
-            </Link>
-          ))}
-        </div>
+              <StatusBadge tone={STATUS_TONE[r.status] ?? "neutral"}>{r.status}</StatusBadge>
+            </div>
+          )}
+        />
       )}
 
       {rows.length > 0 && (

@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import AddressInput from "@/components/AddressInput";
 import { useToast } from "@/components/Toast";
 import { Plus, Trash2, Loader2, Phone, Mail, Building2, CreditCard, Search } from "lucide-react";
+import DataTable, { type Column } from "@/components/ui/DataTable";
 
 export type Customer = {
   id: string;
@@ -277,170 +278,182 @@ export default function CustomersManager({
                 No customers match &ldquo;{query}&rdquo;.
               </p>
             ) : (
-              <>
-                {/* Mobile: cards */}
-                <div className="space-y-2 lg:hidden">
-                  {filtered.map((c) => (
-                    <div key={c.id} className="bg-white rounded-lg p-3 shadow-sm relative">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold text-gray-900 truncate flex items-center gap-1">
-                            <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                            {c.name}
-                          </p>
-                          {c.contact_name && (
-                            <p className="text-xs text-gray-500 truncate">{c.contact_name}</p>
-                          )}
-                          {c.address && (
-                            <p className="text-xs text-gray-400 truncate">{c.address}</p>
-                          )}
-                          <div className="flex flex-col gap-0.5 mt-1">
-                            {c.phone && (
-                              <a
-                                href={`tel:${c.phone}`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-xs text-gray-600 inline-flex items-center gap-1 relative z-10"
-                              >
-                                <Phone className="w-3 h-3" /> {c.phone}
-                              </a>
-                            )}
-                            {c.contact_email && (
-                              <a
-                                href={`mailto:${c.contact_email}`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-xs text-gray-600 inline-flex items-center gap-1 truncate relative z-10"
-                              >
-                                <Mail className="w-3 h-3" /> {c.contact_email}
-                              </a>
-                            )}
-                          </div>
-                          {/* Card on file (read-only for everyone). exp columns are
-                              nullable in principle, so guard them — Stripe always
-                              populates them at save time, but never trust a column
-                              the schema permits null on. */}
-                          {c.stripe_card_brand && c.stripe_card_last4 && (
-                            <p className="text-xs text-gray-500 truncate inline-flex items-center gap-1">
-                              <CreditCard className="w-3 h-3" />
-                              {cardOnFile(c)}
-                            </p>
-                          )}
-                          {/* Autopay toggle — office/admin only (canEdit). ON
-                              requires a card on file; OFF always allowed.
-                              relative z-10 keeps it clickable above the
-                              stretched-link card overlay. */}
-                          {canEdit && (
-                            <div className="inline-flex items-center gap-2 relative z-10 mt-1">
-                              <span className="text-xs text-gray-600">Autopay</span>
-                              {autopayButton(c)}
-                            </div>
-                          )}
-                        </div>
-                        {/* Stretched link overlay: makes the whole card navigate
-                            to the detail page. The tel:/mailto: anchors + delete
-                            button carry relative z-10 so they stay independently
-                            clickable (HTML forbids <a> inside <a>, so the card
-                            link is an overlay, not a wrapper). */}
-                        <Link
-                          href={`/admin/customers/${c.id}`}
-                          className="absolute inset-0"
-                          aria-label={c.name}
-                        />
-                        {canEdit && (
-                          <button
-                            onClick={() => remove(c.id)}
-                            disabled={busyId === c.id}
-                            className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 flex-shrink-0 relative z-10"
-                            title="Delete"
-                          >
-                            {busyId === c.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Desktop: real table */}
-                <div className="hidden lg:block rounded-lg border border-gray-200 shadow-sm overflow-hidden bg-white">
-                  <div
-                    className={`grid ${
-                      canEdit
-                        ? "grid-cols-[1fr_1fr_170px_90px_36px]"
-                        : "grid-cols-[1fr_1fr_170px]"
-                    } gap-3 bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200`}
-                  >
-                    <span>Customer</span>
-                    <span>Contact</span>
-                    <span>Card on file</span>
-                    {canEdit && <span>Autopay</span>}
-                    {canEdit && <span />}
-                  </div>
-                  <div className="divide-y divide-gray-100">
-                    {filtered.map((c) => (
-                      <div
-                        key={c.id}
-                        className={`grid ${
-                          canEdit
-                            ? "grid-cols-[1fr_1fr_170px_90px_36px]"
-                            : "grid-cols-[1fr_1fr_170px]"
-                        } gap-3 px-4 py-2.5 items-center hover:bg-gray-50 transition-colors relative`}
-                      >
-                        <Link href={`/admin/customers/${c.id}`} className="absolute inset-0" aria-label={c.name} />
-                        <span className="min-w-0 relative z-0">
-                          <span className="font-medium text-gray-900 truncate flex items-center gap-1.5">
-                            <Building2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                            <span className="truncate">{c.name}</span>
-                          </span>
-                          {c.address && (
-                            <span className="block text-xs text-gray-400 truncate pl-5">{c.address}</span>
-                          )}
+              // Desktop UI pass, phase 2: mobile card JSX moved verbatim into
+              // mobileCard (bare mode — cards carry their own shell, their own
+              // stretched-link overlay and delete button); the lg: grid-row
+              // table became the shared dense table with rowHref as the row
+              // affordance.
+              <DataTable
+                columns={[
+                  {
+                    key: "name",
+                    header: "Customer",
+                    cell: (c) => (
+                      <span className="min-w-0 block">
+                        <span className="font-medium text-gray-900 truncate flex items-center gap-1.5 max-w-64">
+                          <Building2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                          <span className="truncate">{c.name}</span>
                         </span>
-                        <span className="min-w-0 text-sm text-gray-600 space-y-0.5">
-                          {c.contact_name && <span className="block truncate">{c.contact_name}</span>}
+                        {c.address && (
+                          <span className="block text-xs text-gray-400 truncate pl-5">{c.address}</span>
+                        )}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "contact",
+                    header: "Contact",
+                    cell: (c) => (
+                      <span className="min-w-0 text-sm text-gray-600 space-y-0.5 block">
+                        {c.contact_name && <span className="block truncate">{c.contact_name}</span>}
+                        {c.phone && (
+                          <a
+                            href={`tel:${c.phone}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="block text-xs text-gray-500 hover:text-gray-700 truncate relative z-10 w-fit"
+                          >
+                            {c.phone}
+                          </a>
+                        )}
+                        {c.contact_email && (
+                          <a
+                            href={`mailto:${c.contact_email}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="block text-xs text-gray-500 hover:text-gray-700 truncate relative z-10 w-fit"
+                          >
+                            {c.contact_email}
+                          </a>
+                        )}
+                      </span>
+                    ),
+                    hideOnMobile: true,
+                  },
+                  {
+                    key: "card",
+                    header: "Card on file",
+                    cell: (c) => <span className="text-sm text-gray-500 truncate">{cardOnFile(c)}</span>,
+                    hideOnMobile: true,
+                  },
+                  ...(canEdit
+                    ? [
+                        {
+                          key: "autopay",
+                          header: "Autopay",
+                          cell: (c: Customer) => <span className="relative z-10 w-fit">{autopayButton(c)}</span>,
+                        } satisfies Column<Customer>,
+                      ]
+                    : []),
+                  ...(canEdit
+                    ? [
+                        {
+                          key: "del",
+                          header: "",
+                          cell: (c: Customer) => (
+                            <button
+                              onClick={() => remove(c.id)}
+                              disabled={busyId === c.id}
+                              className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 relative z-10 w-fit"
+                              title="Delete"
+                            >
+                              {busyId === c.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-4 h-4" />
+                              )}
+                            </button>
+                          ),
+                        } satisfies Column<Customer>,
+                      ]
+                    : []),
+                ]}
+                rows={filtered}
+                rowHref={(c) => `/admin/customers/${c.id}`}
+                framed
+                mobileCardBare
+                mobileCardClassName="bg-white rounded-lg p-3 shadow-sm relative"
+                mobileCard={(c) => (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-gray-900 truncate flex items-center gap-1">
+                          <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          {c.name}
+                        </p>
+                        {c.contact_name && (
+                          <p className="text-xs text-gray-500 truncate">{c.contact_name}</p>
+                        )}
+                        {c.address && (
+                          <p className="text-xs text-gray-400 truncate">{c.address}</p>
+                        )}
+                        <div className="flex flex-col gap-0.5 mt-1">
                           {c.phone && (
                             <a
                               href={`tel:${c.phone}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="block text-xs text-gray-500 hover:text-gray-700 truncate relative z-10 w-fit"
+                              className="text-xs text-gray-600 inline-flex items-center gap-1 relative z-10"
                             >
-                              {c.phone}
+                              <Phone className="w-3 h-3" /> {c.phone}
                             </a>
                           )}
                           {c.contact_email && (
                             <a
                               href={`mailto:${c.contact_email}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="block text-xs text-gray-500 hover:text-gray-700 truncate relative z-10 w-fit"
+                              className="text-xs text-gray-600 inline-flex items-center gap-1 truncate relative z-10"
                             >
-                              {c.contact_email}
+                              <Mail className="w-3 h-3" /> {c.contact_email}
                             </a>
                           )}
-                        </span>
-                        <span className="text-sm text-gray-500 truncate">{cardOnFile(c)}</span>
-                        {canEdit && <span className="relative z-10 w-fit">{autopayButton(c)}</span>}
+                        </div>
+                        {/* Card on file (read-only for everyone). exp columns are
+                            nullable in principle, so guard them — Stripe always
+                            populates them at save time, but never trust a column
+                            the schema permits null on. */}
+                        {c.stripe_card_brand && c.stripe_card_last4 && (
+                          <p className="text-xs text-gray-500 truncate inline-flex items-center gap-1">
+                            <CreditCard className="w-3 h-3" />
+                            {cardOnFile(c)}
+                          </p>
+                        )}
+                        {/* Autopay toggle — office/admin only (canEdit). ON
+                            requires a card on file; OFF always allowed.
+                            relative z-10 keeps it clickable above the
+                            stretched-link card overlay. */}
                         {canEdit && (
-                          <button
-                            onClick={() => remove(c.id)}
-                            disabled={busyId === c.id}
-                            className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 relative z-10 w-fit"
-                            title="Delete"
-                          >
-                            {busyId === c.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
+                          <div className="inline-flex items-center gap-2 relative z-10 mt-1">
+                            <span className="text-xs text-gray-600">Autopay</span>
+                            {autopayButton(c)}
+                          </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </>
+                      {/* Stretched link overlay: makes the whole card navigate
+                          to the detail page. The tel:/mailto: anchors + delete
+                          button carry relative z-10 so they stay independently
+                          clickable (HTML forbids <a> inside <a>, so the card
+                          link is an overlay, not a wrapper). */}
+                      <Link
+                        href={`/admin/customers/${c.id}`}
+                        className="absolute inset-0"
+                        aria-label={c.name}
+                      />
+                      {canEdit && (
+                        <button
+                          onClick={() => remove(c.id)}
+                          disabled={busyId === c.id}
+                          className="text-red-600 p-1 rounded hover:bg-red-50 disabled:opacity-50 flex-shrink-0 relative z-10"
+                          title="Delete"
+                        >
+                          {busyId === c.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              />
             )}
           </>
         )}
