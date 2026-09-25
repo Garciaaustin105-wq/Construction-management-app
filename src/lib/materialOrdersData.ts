@@ -22,11 +22,17 @@ import {
 // quietly passes. That has bitten this repo twice — AREA_COLUMNS, then
 // NOZZLE_COLUMNS, where a below-minimum safety refusal was inert for weeks.
 export const ORDER_COLUMNS =
-  "id, organization_id, estimate_id, status, supplier, note, placed_at, created_at";
+  "id, organization_id, estimate_id, status, supplier, note, placed_at, created_at, share_token, sent_at, show_prices, delivery_note";
 
 export const ORDER_ITEM_COLUMNS =
   "id, material_order_id, snapshot, quantity, unit, unit_cost";
 
+if (!ORDER_COLUMNS.includes("share_token")) {
+  throw new Error("ORDER_COLUMNS must select share_token — the supplier link reads it");
+}
+if (!ORDER_COLUMNS.includes("show_prices")) {
+  throw new Error("ORDER_COLUMNS must select show_prices — the supplier page decides on it");
+}
 if (!ORDER_COLUMNS.includes("status")) {
   throw new Error("ORDER_COLUMNS must select status — the frozen check reads it");
 }
