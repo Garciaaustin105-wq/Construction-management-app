@@ -45,6 +45,11 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/teach-client.js": { kind: "api", permission: "playback.view" },
   "/ui/alert-banner.js": { kind: "api", permission: "live.view" },
   "/ui/system-client.js": { kind: "api", permission: "live.view" },
+  // The History section's chart builder (agent/ui/health-charts.mjs), served
+  // at its real ".mjs" filename rather than the ".js" convention above --
+  // see system-client.mjs's own import comment. Same reach as the System
+  // page itself: it carries no data of its own, only chart-drawing code.
+  "/ui/health-charts.mjs": { kind: "api", permission: "live.view" },
   "/ui/wall-client.js": { kind: "api", permission: "live.view" },
   "/ui/grid-layout.js": { kind: "api", permission: "live.view" },
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
@@ -56,6 +61,10 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/session.js": { kind: "api", permission: "live.view" },
 
   "/health": { kind: "api", permission: "live.view" },
+  // The System page's History graphs (HEALTH-HISTORY-SPEC.md): the same page,
+  // the same reach as /health itself -- this is "how it has been" for exactly
+  // what /health already reports as "now".
+  "/health/history": { kind: "api", permission: "live.view" },
   "/alerts": { kind: "api", permission: "live.view" },
   "/cameras": { kind: "api", permission: "live.view" },
   "/devices": { kind: "api", permission: "live.view" },

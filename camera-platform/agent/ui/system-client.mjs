@@ -12,8 +12,31 @@
 // House rule: null is not zero and must never look like zero. A missing
 // measurement renders as words -- "not measured", "never", "unknown" --
 // never as 0, an empty cell or a bare dash.
+//
+// The History section (HEALTH-HISTORY-SPEC.md) polls GET /health/history
+// separately, on its own 24h/7d toggle, and draws it with
+// agent/ui/health-charts.mjs's vnode builders via vnodeToDom -- never
+// innerHTML, the same house rule this file already keeps for /health.
+
+// Imported by its real filename, not the .js-request-maps-to-.mjs-source
+// convention every OTHER entry in agent/api-server.mjs's UI_FILES uses --
+// deliberately: this file (unlike every other *-client.mjs, which the
+// browser only ever reaches through that map) is also imported directly by
+// harness/systemPage.harness.mjs and harness/healthCharts.harness.mjs via
+// Node's own ESM resolver, which resolves a relative specifier against the
+// real filesystem and knows nothing about the server's URL map. A specifier
+// of "./health-charts.js" would resolve for the browser but throw
+// ERR_MODULE_NOT_FOUND for Node, since no such file exists on disk. Serving
+// the browser the exact same "/ui/health-charts.mjs" path (see UI_FILES and
+// routeAccess.ts) keeps both resolvers pointed at the one real file.
+import {
+  vnodeToDom, buildHistorySection, CHART_COLORS_DARK,
+  wireLineChartHover, wireStripChartHover,
+} from "./health-charts.mjs";
 
 const NOT_MEASURED = "not measured";
+const HISTORY_POLL_MS = 60_000; // the sampler itself only ticks once a minute; polling faster buys nothing.
+const SMALL_MULTIPLES_MODE = "small-multiples";
 
 function isNum(v) {
   return typeof v === "number" && Number.isFinite(v);
@@ -497,6 +520,173 @@ export function renderHealth(doc, health) {
   }
 }
 
+/* ── History section: GET /health/history, drawn by health-charts.mjs ───── */
+
+/** Mounts one chart's vnode tree and wires its hover layer -- the crosshair
+ *  and tooltip are DOM-only (health-charts.mjs's own wireLineChartHover/
+ *  wireStripChartHover), so they run here, once, right after the real
+ *  element exists, never during the pure vnode build. `unitLabel` is only
+ *  needed for a line chart's tooltip readout; a strip carries its own state
+ *  text and needs none. Wiring is skipped (not an error) when the fake DOM a
+ *  harness supplies has no querySelector/addEventListener -- those harnesses
+ *  test rendering, not live pointer events. */
+function appendChart(doc, container, chart, unitLabel) {
+  const el = vnodeToDom(doc, chart.vnode);
+  container.appendChild(el);
+  if (typeof el.querySelector !== "function") {
+    return;
+  }
+  if (unitLabel) {
+    wireLineChartHover(doc, el, unitLabel);
+  } else {
+    wireStripChartHover(doc, el);
+  }
+}
+
+/** Fills #history and #historyNote from one GET /health/history body. Every
+ *  chart comes from agent/ui/health-charts.mjs's own pure builders; this
+ *  function only decides WHERE each one goes on the page and mounts it via
+ *  vnodeToDom -- never innerHTML, matching renderHealth's own house rule
+ *  above. Never throws on a malformed or missing body: buildHistorySection
+ *  already treats every missing field as "no data" rather than throwing
+ *  (see its own fixtures in harness/healthCharts.harness.mjs). */
+export function renderHistory(doc, historyJson, range) {
+  const container = byId(doc, "history");
+  const noteEl = byId(doc, "historyNote");
+  if (!container) {
+    return;
+  }
+  const section = buildHistorySection(historyJson, range, CHART_COLORS_DARK);
+
+  if (noteEl) {
+    noteEl.textContent = section.note ?? "";
+  }
+
+  clearChildren(container);
+  appendChart(doc, container, section.cpu, section.cpu.unitLabel);
+  appendChart(doc, container, section.temperature, section.temperature.unitLabel);
+  appendChart(doc, container, section.memory, section.memory.unitLabel);
+  if (section.drives.layout.series.length > 0) {
+    appendChart(doc, container, section.drives, section.drives.unitLabel);
+  }
+
+  if (section.cameraBitrate.charts.length > 0) {
+    if (section.cameraBitrate.mode === SMALL_MULTIPLES_MODE) {
+      const grid = doc.createElement("div");
+      grid.className = "hc-small-multiples";
+      for (const chart of section.cameraBitrate.charts) {
+        appendChart(doc, grid, chart, chart.unitLabel);
+      }
+      container.appendChild(grid);
+    } else {
+      appendChart(doc, container, section.cameraBitrate.charts[0], section.cameraBitrate.charts[0].unitLabel);
+    }
+  }
+
+  for (const chart of section.network.charts) {
+    appendChart(doc, container, chart, chart.unitLabel);
+  }
+
+  // Strip charts (recording, recorder running): no unitLabel -- appendChart
+  // wires wireStripChartHover instead of the crosshair/tooltip a line chart
+  // gets, since each segment IS its own hit target (interaction.md's bar/
+  // cell rule).
+  for (const chart of section.recording.charts) {
+    appendChart(doc, container, chart);
+  }
+  appendChart(doc, container, section.recorderRunning);
+}
+
+/** Polls GET /health/history?range=24h|7d on its own toggle. Every
+ *  dependency arrives via opts, same shape as startSystemPage above -- a
+ *  harness drives this without a browser or a real timer. Switching the
+ *  range re-polls immediately rather than waiting out the interval, so
+ *  clicking "7d" does not sit on stale 24h data for up to a minute. */
+export function startHistorySection(opts) {
+  const o = (opts && typeof opts === "object") ? opts : {};
+  const doc = o.doc;
+  const fetchFn = o.fetchFn;
+  const intervalMs = isNum(o.intervalMs) && o.intervalMs > 0 ? o.intervalMs : HISTORY_POLL_MS;
+  const setIntervalFn = typeof o.setIntervalFn === "function"
+    ? o.setIntervalFn
+    : (typeof setInterval === "function" ? setInterval : null);
+  const clearIntervalFn = typeof o.clearIntervalFn === "function"
+    ? o.clearIntervalFn
+    : (typeof clearInterval === "function" ? clearInterval : null);
+
+  let range = "24h";
+  let timer = null;
+
+  async function poll() {
+    try {
+      if (typeof fetchFn !== "function") {
+        throw new Error("no fetch function");
+      }
+      const res = await fetchFn("/health/history?range=" + range);
+      const code = (res && isNum(res.status)) ? res.status : null;
+      const failed = !res
+        || (typeof res.ok === "boolean" && !res.ok)
+        || (code !== null && (code < 200 || code > 299));
+      if (failed) {
+        throw new Error("HTTP " + (code !== null ? code : "request failed"));
+      }
+      const body = await res.json();
+      renderHistory(doc, body, range);
+    } catch {
+      // The History section fails quietly: #pollError already reports a
+      // dead /health poll, and a second banner for the same dead server
+      // would only repeat the news. A stale chart from the last good poll
+      // stays on screen, which is exactly the "keep the last good data"
+      // discipline startSystemPage's own poll() keeps for /health.
+    }
+  }
+
+  function setRange(nextRange) {
+    if (nextRange !== "24h" && nextRange !== "7d") {
+      return;
+    }
+    range = nextRange;
+    const buttons = doc && typeof doc.querySelectorAll === "function"
+      ? doc.querySelectorAll(".hc-range-btn")
+      : [];
+    for (const btn of buttons) {
+      const isActive = btn.getAttribute && btn.getAttribute("data-range") === range;
+      if (typeof btn.setAttribute === "function") {
+        btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+      }
+    }
+    poll();
+  }
+
+  const buttons = doc && typeof doc.querySelectorAll === "function" ? doc.querySelectorAll(".hc-range-btn") : [];
+  for (const btn of buttons) {
+    if (typeof btn.addEventListener === "function") {
+      btn.addEventListener("click", () => {
+        const wanted = btn.getAttribute ? btn.getAttribute("data-range") : null;
+        setRange(wanted);
+      });
+    }
+  }
+
+  const ready = poll();
+  if (setIntervalFn) {
+    timer = setIntervalFn(poll, intervalMs);
+  }
+
+  return {
+    ready,
+    poll,
+    setRange,
+    getRange: () => range,
+    stop: function () {
+      if (timer !== null && typeof clearIntervalFn === "function") {
+        clearIntervalFn(timer);
+      }
+      timer = null;
+    },
+  };
+}
+
 function showPollError(doc, message) {
   const el = byId(doc, "pollError");
   if (el) {
@@ -594,4 +784,12 @@ if (typeof document !== "undefined" &&
       return fetch(url);
     }
   });
+  if (document.getElementById("history")) {
+    startHistorySection({
+      doc: document,
+      fetchFn: function (url) {
+        return fetch(url);
+      },
+    });
+  }
 }

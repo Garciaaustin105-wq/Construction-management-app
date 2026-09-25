@@ -846,13 +846,38 @@ export function startNetworkFacts({
     };
   }
 
+  /**
+   * This pass's rx/tx rates, straight from the counter history this sampler
+   * already keeps in memory -- no I/O, no side effect. agent/health-history.mjs's
+   * own 60s tick (HEALTH-HISTORY-SPEC.md) calls this instead of reading the
+   * same /sys/class/net counter files a second time whenever the Network page
+   * is also enabled, so the two features' numbers agree and neither doubles
+   * the other's sysfs reads. An interface with fewer than two readings yet
+   * (this sampler's own first tick) is simply absent from the map, not a zero
+   * rate — the same "no previous sample" gate describeRate already applies to
+   * every /network response.
+   */
+  function interfaceRates() {
+    const rates = new Map();
+    for (const [name, history] of counterHistory) {
+      if (history.rx.length < 2 && history.tx.length < 2) continue;
+      const rx = history.rx.length >= 2 ? describeRate(history.rx) : null;
+      const tx = history.tx.length >= 2 ? describeRate(history.tx) : null;
+      rates.set(name, {
+        rxMbps: rx !== null && rx.kind === 'ok' ? rx.mbps : null,
+        txMbps: tx !== null && tx.kind === 'ok' ? tx.mbps : null,
+      });
+    }
+    return rates;
+  }
+
   function close() {
     clearInterval(counterTimer);
     clearInterval(probeTimer);
     clearInterval(connectionTimer);
   }
 
-  return { gatherView, runDiscoverNow, close };
+  return { gatherView, runDiscoverNow, interfaceRates, close };
 }
 
 function describeRate(samples) {

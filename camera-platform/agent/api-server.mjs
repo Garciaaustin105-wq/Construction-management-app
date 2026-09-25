@@ -22,6 +22,7 @@ import { gatherHealthFacts, cameraFacts } from './healthfacts.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
 import { runEventRetention, EVENT_RETENTION_INTERVAL_MS } from './event-retention.mjs';
 import { startNetworkFacts } from './network-facts.mjs';
+import { startHealthHistory } from './health-history.mjs';
 import { discoverSadp } from './sadp.mjs';
 import { discoverOnvif } from './wsdiscovery.mjs';
 
@@ -41,6 +42,7 @@ import { siteHealth } from '../dist/siteHealth.js';
 import { planExport } from '../dist/exportPlan.js';
 import { streamExport } from './exportStream.mjs';
 import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
+import { validateHistoryRange } from '../dist/healthHistory.js';
 import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
@@ -165,6 +167,15 @@ const UI_FILES = {
   '/ui/alert-banner.js': 'alert-banner.mjs',
   '/system': 'system.html',
   '/ui/system-client.js': 'system-client.mjs',
+  // Served at its real filename, not the .js-mapped convention every other
+  // entry here uses -- see system-client.mjs's own import comment: this file
+  // is also imported directly by Node (harness/systemPage.harness.mjs,
+  // harness/healthCharts.harness.mjs), and a "/ui/health-charts.js" request
+  // path would resolve to a source file ("health-charts.js") that does not
+  // exist on disk. The content-type check below keys off this map's VALUE,
+  // not the request path, so serving a ".mjs"-suffixed path as
+  // text/javascript needs no special case.
+  '/ui/health-charts.mjs': 'health-charts.mjs',
   '/ui/wall-client.js': 'wall-client.mjs',
   '/login': 'login.html',
   '/ui/login-client.js': 'login-client.mjs',
@@ -628,6 +639,14 @@ export function createApiServer({
   // discovery protocols) with fakes that record their own destinations.
   networkFactsEnabled = false,
   networkFactsOverrides = {},
+  // The System page's History graphs (HEALTH-HISTORY-SPEC.md): a 60s sampler
+  // that reads /proc, /sys, statfs and the segment index. Same reasoning as
+  // networkFactsEnabled above -- THIS FILE IS BUILT BY createApiServer() FROM
+  // DOZENS OF OTHER HARNESSES that know nothing about it, so it defaults OFF;
+  // only the real bootstrap below, or a harness supplying full fakes via
+  // `healthHistoryOverrides`, ever turns it on.
+  healthHistoryEnabled = false,
+  healthHistoryOverrides = {},
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -664,6 +683,26 @@ export function createApiServer({
         discoverOnvifFn: discoverOnvif,
         log,
         ...networkFactsOverrides,
+      })
+    : null;
+
+  // The System page's History graphs (HEALTH-HISTORY-SPEC.md): CPU, memory,
+  // temperature, drive usage and per-camera bitrate/recording over 24h/7d.
+  // Started here, unref()'d inside startHealthHistory, and stopped by
+  // server.closeHealthHistory() below — same pattern as networkFacts just
+  // above it. `networkFacts` (possibly null) is handed in so this sampler can
+  // reuse its interface rates instead of reading /sys/class/net a second
+  // time when both features are enabled together, which the real bootstrap
+  // below always does.
+  const healthHistory = healthHistoryEnabled
+    ? startHealthHistory({
+        config,
+        index,
+        stateDir,
+        now,
+        networkFacts,
+        log,
+        ...healthHistoryOverrides,
       })
     : null;
 
@@ -1025,6 +1064,26 @@ export function createApiServer({
         });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify(siteHealth(facts)));
+        return;
+      }
+
+      // ---------- /health/history ----------
+      // The System page's History section (HEALTH-HISTORY-SPEC.md): the same
+      // page as /health, now over 24h/7d instead of only "now". Same reach as
+      // /health (routeAccess.ts). Disabled reads 501, same as /network.
+      if (pathname === '/health/history') {
+        if (healthHistory === null) {
+          sendError(res, 501, 'health_history_disabled', 'health history is not enabled on this server');
+          return;
+        }
+        const rangeResult = validateHistoryRange(parsedUrl.searchParams.get('range'));
+        if (rangeResult.kind === 'invalid') {
+          sendError(res, 400, 'bad_range', rangeResult.reason);
+          return;
+        }
+        const envelope = healthHistory.readHistory(rangeResult.range, now());
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(envelope));
         return;
       }
 
@@ -1652,6 +1711,16 @@ export function createApiServer({
     networkFacts?.close();
   };
 
+  // Same reasoning again: the History sampler's tick and hourly prune timers,
+  // and its own health-history.db handle, are this server's own.
+  // healthHistory.close() is async (it waits out a tick already in flight
+  // before closing the db -- see agent/health-history.mjs) but every caller
+  // here is a synchronous, fire-and-forget shutdown step, so its rejection is
+  // caught and logged rather than becoming an unhandled rejection.
+  server.closeHealthHistory = () => {
+    healthHistory?.close().catch((err) => log('error', 'health history: close failed', { error: String(err?.message ?? err) }));
+  };
+
   return server;
 }
 
@@ -1661,7 +1730,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
   const config = await loadConfig(stateDir);
   const index = openIndex(indexPathFor(stateDir));
   const auth = await createAuth({ stateDir, log });
-  const server = createApiServer({ stateDir, config, index, auth, networkFactsEnabled: true });
+  const server = createApiServer({ stateDir, config, index, auth, networkFactsEnabled: true, healthHistoryEnabled: true });
 
   const port = Number(process.env.CAMPLAT_API_PORT ?? 8080);
 
@@ -1712,6 +1781,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
         server.closeEventCrops();
         server.closeStillsCleanup();
         server.closeNetworkFacts();
+        server.closeHealthHistory();
         process.exit(0);
       });
     });
