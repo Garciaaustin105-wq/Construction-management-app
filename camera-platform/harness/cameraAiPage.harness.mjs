@@ -161,6 +161,43 @@ check("round trip: load a camera's saved settings, then the POST body matches it
   eq(checked.ok, true, `FEARED: the page's own POST body must validate against the real contract (${checked.ok ? "" : JSON.stringify(checked.errors)})`);
 });
 
+check("FEARED: an existing schedule's saved zone survives an unrelated edit even when the site's zone has since changed", () => {
+  const saved = {
+    zones: [],
+    schedule: {
+      timeZone: "America/Chicago",
+      weekly: [[], [{ open: 480, close: 1020 }], [], [], [], [], []],
+      closedDates: [],
+    },
+    minConfidence: null,
+    kinds: { person: true, vehicle: true },
+  };
+  // The camera's schedule was saved under America/Chicago. Since then the
+  // installer has changed the SITE's zone to something else entirely.
+  const state = stateFromSettings("cam-9", "Loading Dock", saved, 0.5);
+  eq(state.scheduleTimeZone, "America/Chicago", "the loaded schedule's own zone is captured, not discarded");
+
+  // The installer edits something unrelated -- flips a kind -- and saves.
+  // Site's CURRENT effective zone (module-level, from the site, not the
+  // schedule) is passed in as the second argument, exactly as save() does.
+  state.kinds.vehicle = false;
+  const body = settingsBodyFromState(state, "Asia/Tokyo");
+  eq(body.schedule.timeZone, "America/Chicago", "FEARED: must NOT silently shift to the site's current zone");
+  eq(body.kinds.vehicle, false, "the actual edit still went through");
+
+  const checked = contract.checkCameraAiSettings(body, 0.5);
+  eq(checked.ok, true, "still validates");
+});
+
+check("a brand-new custom schedule (no saved zone yet) takes the site's current zone", () => {
+  const state = defaultPanelState("cam-10", "New Camera");
+  eq(state.scheduleTimeZone, null, "no saved schedule yet");
+  state.scheduleMode = "custom";
+  state.weekly[1] = { open: true, from: "09:00", to: "17:00" };
+  const body = settingsBodyFromState(state, "Asia/Tokyo");
+  eq(body.schedule.timeZone, "Asia/Tokyo", "a fresh schedule is saved in the site's current zone");
+});
+
 check("round trip: 'always' schedule and 'site default' sensitivity both send exactly null, never a fabricated value", () => {
   const state = defaultPanelState("cam-2", "Back Lot");
   const body = settingsBodyFromState(state, "America/Chicago");

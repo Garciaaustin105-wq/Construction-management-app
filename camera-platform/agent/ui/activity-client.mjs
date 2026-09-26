@@ -233,14 +233,6 @@ export function renderActivity(doc, envelope, colors, range, cameraNames) {
   if (vehicleEl) mountSection(doc, vehicleEl, vehicleSection);
 }
 
-function browserTz() {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone;
-  } catch {
-    return "UTC";
-  }
-}
-
 /** Populates the camera <select> from GET /cameras, same shape review.html's
  *  own loadCameras() already reads (`[{cameraId, name}]`). Returns the
  *  cameraId -> name Map every chart/tooltip/table on this page reads names
@@ -288,7 +280,26 @@ export function startActivityPage(opts) {
   const fetchFn = o.fetchFn;
   const colors = o.colors;
   const navigate = typeof o.navigate === "function" ? o.navigate : () => {};
-  const tz = typeof o.tz === "string" && o.tz !== "" ? o.tz : browserTz();
+  // SITE-SETTINGS-SPEC.md section 1: "The Activity page uses the site zone
+  // when set, otherwise the browser's." This page has no explicit-override
+  // control of its own, so `tz` is sent ONLY when a caller passes one in (a
+  // harness driving a specific zone, or a future override control) -- never
+  // a browser-computed default filled in here. Left empty, `poll()` below
+  // omits `tz` from the request entirely, letting GET /activity's own
+  // fallback (agent/api-server.mjs: site.timeZone when set, else the NVR's
+  // system zone) fill it in server-side. That server fallback answers with
+  // the NVR's own system zone rather than this VIEWER's browser zone in the
+  // fully-unset case, which is not a byte-for-byte match for "otherwise the
+  // browser's" -- distinguishing "no site zone configured" from "resolved to
+  // the system zone" needs a raw (nullable) field GET /site does not expose
+  // today, which is out of this fix's scope. What this fixes is the
+  // confirmed bug: found 2026-09-26, this used to default to a
+  // browser-computed `Intl.DateTimeFormat().resolvedOptions().timeZone`
+  // unconditionally, so the shipped page (whose bootstrap passes no `tz`)
+  // sent the visitor's OWN browser zone on every single poll and a
+  // configured site zone was NEVER used in practice, no matter what the
+  // installer set.
+  const tz = typeof o.tz === "string" && o.tz !== "" ? o.tz : "";
   const intervalMs = isNum(o.intervalMs) && o.intervalMs > 0 ? o.intervalMs : POLL_MS;
   const setIntervalFn = typeof o.setIntervalFn === "function"
     ? o.setIntervalFn
@@ -304,7 +315,8 @@ export function startActivityPage(opts) {
 
   async function poll() {
     if (typeof fetchFn !== "function") return;
-    const q = new URLSearchParams({ range, tz });
+    const q = new URLSearchParams({ range });
+    if (tz !== "") q.set("tz", tz);
     if (camera !== "") q.set("camera", camera);
     let body;
     let reached = true;

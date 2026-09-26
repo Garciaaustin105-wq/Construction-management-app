@@ -16,8 +16,37 @@ const newDisplayLinkEl = document.getElementById("newDisplayLink");
 const copyDisplayLinkEl = document.getElementById("copyDisplayLink");
 const dismissDisplayTokenEl = document.getElementById("dismissDisplayToken");
 const signOutEl = document.getElementById("signOut");
+const displayLayoutEditorEl = document.getElementById("displayLayoutEditor");
+const displayLayoutTitleEl = document.getElementById("displayLayoutTitle");
+const displayLayoutShapeEl = document.getElementById("displayLayoutShape");
+const displayLayoutCellsEl = document.getElementById("displayLayoutCells");
+const displayLayoutErrorsEl = document.getElementById("displayLayoutErrors");
+const displayLayoutSaveEl = document.getElementById("displayLayoutSave");
+const displayLayoutCancelEl = document.getElementById("displayLayoutCancel");
 
 let signedInUsername = null;
+
+// Mirrored from contracts/gridLayout.mts's own GRID_SHAPES -- that file
+// compiles as an ES module for the BROWSER's own use at /ui/grid-layout.js,
+// but a static top-level import of an absolute "/ui/..." path here would
+// break every harness that imports this file directly by its real filename
+// (Node resolves "/ui/grid-layout.js" as a filesystem path, which does not
+// exist), the same reason camera-ai-client.mjs mirrors CAMERA-AI-SETTINGS
+// contract constants instead of importing dist/cameraAiSettings.js. This is
+// the contract's own source of truth; harness/accountsPage.harness.mjs
+// checks this copy still matches it.
+export const GRID_SHAPES = [
+  { id: "1x1", cells: 1 },
+  { id: "2x2", cells: 4 },
+  { id: "3x3", cells: 9 },
+  { id: "4x4", cells: 16 },
+  { id: "5x5", cells: 25 },
+  { id: "6x6", cells: 36 },
+];
+
+let cameraOptions = []; // [{id, name}], from GET /camera-settings
+let displayLayoutsData = {}; // displayId -> { layout, cells } (raw, unresolved)
+let editingDisplayId = null;
 
 class HaltError extends Error {
   constructor() {
@@ -159,6 +188,37 @@ async function loadDisplays() {
   renderDisplays(data.displays || []);
 }
 
+async function loadCameraOptions() {
+  const data = await api("GET", "/camera-settings");
+  cameraOptions = (data.cameras || [])
+    .filter((c) => c && typeof c.cameraId === "string")
+    .map((c) => ({ id: c.cameraId, name: (typeof c.name === "string" && c.name) || c.cameraId }));
+}
+
+async function loadDisplayLayouts() {
+  const data = await api("GET", "/display-layouts");
+  displayLayoutsData = (data && typeof data.displays === "object" && data.displays) || {};
+  if (data && data.problem) showMessage(data.problem, "error");
+}
+
+/** A short, honest summary of one display's raw assignment -- never a bare
+ *  camera count that hides a removed one: "3 assigned, 1 removed" is a
+ *  different fact than "3 assigned". */
+export function describeAssignment(existing) {
+  if (!existing || !Array.isArray(existing.cells)) return "No layout assigned";
+  const known = new Set(cameraOptions.map((c) => c.id));
+  let assigned = 0;
+  let removed = 0;
+  for (const cell of existing.cells) {
+    if (cell === null || cell === undefined) continue;
+    if (known.has(cell)) assigned++;
+    else removed++;
+  }
+  const parts = [`${existing.layout}`, `${assigned} camera${assigned === 1 ? "" : "s"} assigned`];
+  if (removed > 0) parts.push(`${removed} removed`);
+  return parts.join(" — ");
+}
+
 function renderDisplays(displays) {
   displayListEl.textContent = "";
   if (displays.length === 0) {
@@ -181,6 +241,19 @@ function renderDisplays(displays) {
     created.textContent = formatDate(display.createdUtc);
     row.append(created);
 
+    const layoutSummary = document.createElement("span");
+    layoutSummary.className = "dim";
+    layoutSummary.textContent = describeAssignment(displayLayoutsData[display.displayId]);
+    row.append(layoutSummary);
+
+    const layoutButton = document.createElement("button");
+    layoutButton.type = "button";
+    layoutButton.textContent = "Layout";
+    layoutButton.addEventListener("click", () => {
+      run(() => openLayoutEditor(display.displayId));
+    });
+    row.append(layoutButton);
+
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.className = "danger";
@@ -192,6 +265,93 @@ function renderDisplays(displays) {
 
     displayListEl.append(row);
   }
+}
+
+/* ── display layout assignment (SITE-SETTINGS-SPEC.md section 3) ────────
+ * "The installer (account.manage) assigns a display a layout: a shape plus
+ * cameras." One editor, shared, for whichever display was clicked -- not
+ * one editor per row, which would mean N camera lists live in the DOM at
+ * once for a site with N displays. */
+
+function cellOptionsFor(currentValue) {
+  const select = document.createElement("select");
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "(empty)";
+  select.append(empty);
+  const known = new Set(cameraOptions.map((c) => c.id));
+  for (const cam of cameraOptions) {
+    const option = document.createElement("option");
+    option.value = cam.id;
+    // An installer-typed camera name: .textContent only.
+    option.textContent = cam.name;
+    select.append(option);
+  }
+  if (typeof currentValue === "string" && currentValue !== "" && !known.has(currentValue)) {
+    // The saved cell names a camera that no longer exists -- shown, never
+    // silently dropped to blank, so the installer can see and choose to
+    // clear it (or leave it: the camera may come back).
+    const removedOption = document.createElement("option");
+    removedOption.value = currentValue;
+    removedOption.textContent = `${currentValue} (camera removed)`;
+    select.append(removedOption);
+  }
+  select.value = typeof currentValue === "string" ? currentValue : "";
+  return select;
+}
+
+function rebuildLayoutCells(shapeId, existingCells) {
+  displayLayoutCellsEl.textContent = "";
+  const shape = GRID_SHAPES.find((s) => s.id === shapeId) || GRID_SHAPES[1];
+  const cells = Array.isArray(existingCells) ? existingCells : [];
+  for (let i = 0; i < shape.cells; i++) {
+    const select = cellOptionsFor(cells[i]);
+    const label = document.createElement("label");
+    const tag = document.createElement("span");
+    tag.textContent = `Cell ${i + 1}`;
+    label.append(tag, select);
+    displayLayoutCellsEl.append(label);
+  }
+}
+
+function currentLayoutCellValues() {
+  const labels = [...displayLayoutCellsEl.querySelectorAll("select")];
+  return labels.map((s) => (s.value === "" ? null : s.value));
+}
+
+async function openLayoutEditor(displayId) {
+  editingDisplayId = displayId;
+  displayLayoutTitleEl.textContent = `Assign layout — ${displayId}`;
+  displayLayoutErrorsEl.textContent = "";
+  const existing = displayLayoutsData[displayId];
+  const shapeId = existing && typeof existing.layout === "string" ? existing.layout : "2x2";
+  displayLayoutShapeEl.value = shapeId;
+  rebuildLayoutCells(shapeId, existing ? existing.cells : []);
+  displayLayoutEditorEl.hidden = false;
+}
+
+function closeLayoutEditor() {
+  editingDisplayId = null;
+  displayLayoutEditorEl.hidden = true;
+}
+
+async function saveLayoutAssignment() {
+  if (editingDisplayId === null) return;
+  const cells = currentLayoutCellValues();
+  displayLayoutErrorsEl.textContent = "";
+  try {
+    await api("POST", "/display-layouts", { displayId: editingDisplayId, layout: displayLayoutShapeEl.value, cells });
+  } catch (err) {
+    if (err instanceof RequestError) {
+      displayLayoutErrorsEl.textContent = err.message;
+      return;
+    }
+    throw err;
+  }
+  displayLayoutsData[editingDisplayId] = { layout: displayLayoutShapeEl.value, cells };
+  showMessage(`Layout assigned to ${editingDisplayId}.`, "good");
+  closeLayoutEditor();
+  await loadDisplays();
 }
 
 async function removeAccount(username) {
@@ -297,7 +457,22 @@ async function init() {
   } else {
     whoamiEl.textContent = "Signed in";
   }
-  await Promise.all([loadAccounts(), loadDisplays()]);
+  // The camera list and every display's assignment load BEFORE loadDisplays
+  // renders the display rows, since renderDisplays reads both synchronously
+  // (describeAssignment, cellOptionsFor) -- rendering first would show every
+  // row with a stale or blank summary for one frame, and on a slow link,
+  // longer than that.
+  await Promise.all([loadAccounts(), loadCameraOptions(), loadDisplayLayouts()]);
+  await loadDisplays();
+}
+
+function populateShapeSelect() {
+  for (const shape of GRID_SHAPES) {
+    const option = document.createElement("option");
+    option.value = shape.id;
+    option.textContent = `${shape.id} (${shape.cells} cameras)`;
+    displayLayoutShapeEl.append(option);
+  }
 }
 
 function wireEvents() {
@@ -314,6 +489,18 @@ function wireEvents() {
   });
   copyDisplayLinkEl.addEventListener("click", copyDisplayLink);
   dismissDisplayTokenEl.addEventListener("click", dismissDisplayToken);
+  populateShapeSelect();
+  displayLayoutShapeEl.addEventListener("change", () => {
+    // Best effort: cells that still fit the new shape keep their camera;
+    // ones beyond its cell count are simply dropped, never silently
+    // reassigned to a different index.
+    const previous = currentLayoutCellValues();
+    rebuildLayoutCells(displayLayoutShapeEl.value, previous);
+  });
+  displayLayoutSaveEl.addEventListener("click", () => {
+    run(saveLayoutAssignment);
+  });
+  displayLayoutCancelEl.addEventListener("click", closeLayoutEditor);
 }
 
 async function start() {

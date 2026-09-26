@@ -113,8 +113,27 @@
   .hc-crosshair { pointer-events:none; }
   .hc-tooltip { pointer-events:none; }
 
+  /* Site section (SITE-SETTINGS-SPEC.md): installer-only form -- name, time
+     zone, site type, feature switches, version/license, zone mismatches. */
+  #siteSectionRoot h3 { margin:18px 0 6px; font-size:13px; color:#9aa0a6;
+                         text-transform:uppercase; letter-spacing:0.5px; }
+  #siteSectionRoot .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  #siteSectionRoot label { display:flex; align-items:center; gap:8px; min-width:140px; }
+  #siteSectionRoot input[type="text"], #siteSectionRoot select {
+    font:inherit; color:inherit; background:#14161a; border:1px solid #2c2f36;
+    border-radius:6px; padding:7px 10px; min-width:0; max-width:100%; flex:1 1 220px; }
+  #siteSectionRoot .siteFeatureRow { min-width:0; }
+  #siteSectionRoot button { font:inherit; padding:8px 14px; border:0; border-radius:6px;
+                              background:#4c8bf5; color:#fff; cursor:pointer; }
+  #siteSectionRoot button:disabled { opacity:0.6; cursor:default; }
+  #siteSectionRoot ul { margin:4px 0; padding-left:20px; }
+  #siteSectionRoot .error { color:#ffb4b4; }
+  #siteSectionRoot .good { color:#7ddc9a; }
+
   /* Phone in a car park: stack the camera table, never scroll sideways. */
   @media (max-width: 699px) {
+    #siteSectionRoot label { min-width:0; width:100%; }
+    #siteSectionRoot input[type="text"], #siteSectionRoot select { flex:1 1 auto; width:100%; }
     #totals { gap:8px 18px; }
     .cameras-table thead { display:none; }
     .cameras-table, .cameras-table tbody, .cameras-table tr,
@@ -175,7 +194,10 @@
 
   <p id="pollError" hidden></p>
 
+  <div id="siteSectionRoot"></div>
+
   <script type="module" src="/ui/system-client.js"></script>
+<script type="module" src="/ui/site-client.js"></script>
 <script type="module" src="/ui/session.js"></script>
 </body>
 </html>

@@ -114,12 +114,21 @@ async function persist(file, fileObj) {
   await rename(tmp, file);
 }
 
-export function createCameraAiSettings({ stateDir, config, audit, now = () => new Date(), log = () => {}, readFileFn = readFile }) {
+export function createCameraAiSettings({
+  stateDir, config, audit, now = () => new Date(), log = () => {}, readFileFn = readFile,
+  // SITE-SETTINGS-SPEC.md: "new camera AI schedules use the site zone
+  // (camera-ai-settings GET reports the effective zone)". `siteTimeZone` is
+  // agent/site-settings.mjs's own `effectiveTimeZoneNow` (site.timeZone when
+  // set, else the NVR's own system zone) -- called fresh on every GET, never
+  // cached, so an installer who just set the site zone this same session
+  // sees it here at once. The default keeps this file's original,
+  // pre-site-settings behaviour (the NVR's own system zone, read fresh each
+  // time rather than once at startup, which was CAMERA-AI-SETTINGS-SPEC.md's
+  // own "until the site time-zone setting exists" case) for every caller
+  // that has not wired the site settings module in.
+  siteTimeZone = async () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+}) {
   const file = join(stateDir, CAMERA_AI_SETTINGS_FILE);
-  // The NVR's own zone (CAMERA-AI-SETTINGS-SPEC.md: "its timeZone is the
-  // NVR's own zone ... until the site time-zone setting exists"), read once:
-  // this process does not change zone while it runs.
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   let writing = Promise.resolve();
   /** Serialised: each save reads the file the previous save just wrote. */
@@ -133,6 +142,7 @@ export function createCameraAiSettings({ stateDir, config, audit, now = () => ne
 
   async function handle(req, res, pathname, method, principal) {
     if (method === 'GET' && pathname === '/camera-ai-settings') {
+      const timeZone = await siteTimeZone();
       const floorResult = await readStoringFloor(stateDir, readFileFn);
       if (!floorResult.ok) {
         // The floor itself cannot be trusted: every camera's own minConfidence

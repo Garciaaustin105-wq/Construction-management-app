@@ -564,4 +564,67 @@ await check("THE FEARED ONE: in a browser the page STARTS ITSELF - loading activ
   eq(calls.some((u) => u.startsWith("/activity?") && u.includes("range=24h")), true, `it asked for /activity on its own: ${JSON.stringify(calls)}`);
 });
 
+await check("FEARED: the real bootstrap's /activity request never carries the visitor's own browser zone -- SITE-SETTINGS-SPEC.md 'the site zone when set, otherwise the browser's' means the SITE's zone, never the viewer's", () => {
+  // Found 2026-09-26: startActivityPage defaulted `tz` to
+  // Intl.DateTimeFormat().resolvedOptions().timeZone whenever the caller
+  // passed none, and the real bootstrap (checked above) passes none -- so
+  // every poll from the shipped page carried the VIEWER's own browser zone,
+  // and GET /activity's server-side "fill in the site's zone when tz is
+  // absent" fallback (agent/api-server.mjs) could never fire for a real
+  // user, no matter what zone the installer set on /site-settings. Same
+  // harness shape as the check above: the real module, loaded the way a
+  // browser does, with GET /site mocked to answer a SET site zone -- so a
+  // client that (wrongly) fetched /site and forwarded ITS zone as a
+  // browser-zone substitute would also be caught here, not just the
+  // never-fetches-/site case this file currently ships.
+  const clientUrl = pathToFileURL(join(root, "agent/ui/activity-client.mjs")).href;
+  const code = `
+    const handler = {
+      get(t, k) {
+        if (k === Symbol.toPrimitive) return () => "";
+        if (k === "then") return undefined;
+        if (k === "value" || k === "textContent") return "";
+        if (k === "length") return 0;
+        return fake;
+      },
+      apply() { return fake; },
+      set() { return true; },
+    };
+    const fake = new Proxy(function () {}, handler);
+    const calls = [];
+    globalThis.document = {
+      getElementById: () => fake, createElement: () => fake, createElementNS: () => fake,
+      createTextNode: () => fake, querySelector: () => fake, querySelectorAll: () => [],
+      addEventListener() {}, body: fake, documentElement: fake,
+    };
+    globalThis.window = { location: { assign() {} }, addEventListener() {} };
+    globalThis.fetch = (url) => {
+      calls.push(String(url));
+      const u = String(url);
+      if (u.startsWith("/site")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, displayName: null, timeZone: "Asia/Tokyo", features: { activity: true } }) });
+      }
+      if (u.startsWith("/cameras")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, available: false, buckets: [], perCamera: [] }) });
+    };
+    await import(${JSON.stringify(clientUrl)} + "?boot2");
+    await new Promise((r) => setTimeout(r, 150));
+    console.log(JSON.stringify(calls));
+    process.exit(0);
+  `;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", cwd: root, timeout: 20_000 });
+  eq(r.status, 0, `the child ran (${(r.stderr || "").slice(0, 300)})`);
+  const lines = (r.stdout || "").trim().split(/\r?\n/);
+  const calls = JSON.parse(lines[lines.length - 1] || "[]");
+  const activityCalls = calls.filter((u) => u.startsWith("/activity?"));
+  eq(activityCalls.length > 0, true, `it asked for /activity on its own: ${JSON.stringify(calls)}`);
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  for (const u of activityCalls) {
+    const tzParam = new URL(u, "http://localhost").searchParams.get("tz");
+    eq(tzParam === null || tzParam !== browserZone, true, `/activity must never carry the runner's own browser zone (${browserZone}) as tz: ${u}`);
+  }
+});
+
 report("activity page");

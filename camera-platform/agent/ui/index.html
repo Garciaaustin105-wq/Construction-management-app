@@ -208,13 +208,53 @@
      is ~11% taller than true, and on a 16:9 TV all three look identical. */
   html.wall-mode .cell video { width: 100%; height: 100%; object-fit: fill; background: #000; }
 
+  /* Saved layouts (SITE-SETTINGS-SPEC.md section 3): agent/ui/layout-client.mjs. */
+  html.wall-mode .layoutctl-wrap { display: none; }
+  .layoutctl-wrap { position: relative; display: inline-flex; }
+  .layoutctl-trigger { height: 44px; padding: 0 14px; border: 1px solid #4a4f58; border-radius: 5px;
+    background: #2c2f36; color: #e8eaed; cursor: pointer; font: inherit; }
+  /* Anchored from the LEFT of the trigger, not the right: found 2026-09-26,
+     `right: 0` anchors the panel's right edge to `.layoutctl-wrap`'s own
+     right edge, which is the small trigger button's own width -- so
+     whenever that trigger sits near the left of the viewport (routine on a
+     phone, where #layoutControls wraps to its own line at the page's left
+     gutter, but not tied to phone width at all: any left-anchored trigger
+     hits this), the panel's right-anchored bulk lands at negative X, off
+     the left edge, with no scrollbar to reach it (a negatively-positioned
+     absolute element never registers as horizontal overflow, so
+     document.documentElement.scrollWidth never catches this). */
+  .layoutctl-panel { position: absolute; top: 48px; left: 0; z-index: 10; width: min(360px, calc(100vw - 32px));
+    max-height: 70vh; overflow: auto; padding: 12px; border: 1px solid #4a4f58; border-radius: 8px;
+    background: #22252b; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .layoutctl-panel[hidden] { display: none; }
+  .layoutctl-heading { margin: 12px 0 4px; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+  .layoutctl-row { justify-content: space-between; padding: 6px 0; border-top: 1px solid #2c2f36; }
+  .layoutctl-row:first-child { border-top: none; }
+  .layoutctl-row strong { overflow-wrap: anywhere; flex: 1 1 auto; }
+  .layoutctl-migration { margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: #2c2a1d; color: #f1e3a0; }
+  .layoutctl-migration p { margin: 0 0 8px; }
+  .layoutctl-errors:empty { display: none; }
+  .layoutctl-panel input[type="text"] { font: inherit; color: inherit; background: #14161a;
+    border: 1px solid #2c2f36; border-radius: 6px; padding: 7px 10px; flex: 1 1 140px; min-width: 0; }
+  .layoutctl-panel button { font: inherit; padding: 6px 10px; border: 1px solid #4a4f58; border-radius: 5px;
+    background: #2c2f36; color: #e8eaed; cursor: pointer; }
+  .layoutctl-panel button.danger { background: #3a1d1d; color: #ffb4b4; border-color: #5a2323; }
+  .layoutctl-panel .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  #layoutControls[hidden] { display: none; }
+
 </style>
 </head>
 <body>
 <nav style="margin: 0 0 10px"><a href="/review" style="color: #8ab4f8">Review</a></nav>
 <div class="alertBanner" id="alertBanner" role="status" hidden></div>
 <div class="pageError" id="pageError"></div>
-<div class="controls" id="controls"></div>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;">
+  <div class="controls" id="controls"></div>
+  <!-- Saved layouts (SITE-SETTINGS-SPEC.md section 3): agent/ui/layout-client.mjs.
+       A separate node from #controls -- wall-client.mjs empties and rebuilds
+       #controls on every single render, and this control must survive that. -->
+  <div id="layoutControls"></div>
+</div>
 <div class="grid" id="grid"></div>
 
 <script type="module">
@@ -393,6 +433,11 @@ const wall = createWall({
   moveStream,
   storage: safeStorage(),
 });
+// agent/ui/layout-client.mjs is loaded by its own <script> tag below and has
+// no other way to reach this scope's `wall` -- see that file's own bootstrap
+// comment. Set synchronously, right here, so it exists before that module's
+// own top-level bootstrap check runs.
+window.__campLatWall = wall;
 
 /**
  * /devices, not /cameras: one physical camera answering on two channels is two
@@ -692,6 +737,7 @@ function pumpAppend(t) {
 loadDevices();
 startAlertBanner(document.getElementById('alertBanner'));
 </script>
+<script type="module" src="/ui/layout-client.js"></script>
 <script type="module" src="/ui/session.js"></script>
 </body>
 </html>

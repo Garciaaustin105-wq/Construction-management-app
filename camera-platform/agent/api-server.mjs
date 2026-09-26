@@ -47,6 +47,8 @@ import { validateHistoryRange } from '../dist/healthHistory.js';
 import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createCameraAiSettings } from './camera-ai-settings.mjs';
+import { createSiteSettings } from './site-settings.mjs';
+import { createSavedLayouts } from './saved-layouts.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary, LIBRARY_FILE } from './clip-library.mjs';
 import { createListeners } from './listeners.mjs';
@@ -169,6 +171,10 @@ const UI_FILES = {
   '/ui/alert-banner.js': 'alert-banner.mjs',
   '/system': 'system.html',
   '/ui/system-client.js': 'system-client.mjs',
+  // The Site section (SITE-SETTINGS-SPEC.md) -- its own client, separate
+  // from system-client.mjs (one owner per file), loaded by its own <script>
+  // tag on the same page.
+  '/ui/site-client.js': 'site-client.mjs',
   // Served at its real filename, not the .js-mapped convention every other
   // entry here uses -- see system-client.mjs's own import comment: this file
   // is also imported directly by Node (harness/systemPage.harness.mjs,
@@ -179,6 +185,10 @@ const UI_FILES = {
   // text/javascript needs no special case.
   '/ui/health-charts.mjs': 'health-charts.mjs',
   '/ui/wall-client.js': 'wall-client.mjs',
+  // The Live page's saved-layout controls and a display's own layout poll
+  // (SITE-SETTINGS-SPEC.md section 3) -- its own file, loaded beside
+  // wall-client.js on the same page.
+  '/ui/layout-client.js': 'layout-client.mjs',
   '/login': 'login.html',
   '/ui/login-client.js': 'login-client.mjs',
   '/accounts-page': 'accounts.html',
@@ -663,6 +673,13 @@ export function createApiServer({
   // `healthHistoryOverrides`, ever turns it on.
   healthHistoryEnabled = false,
   healthHistoryOverrides = {},
+  // Site settings' own version/license read (SITE-SETTINGS-SPEC.md section 2)
+  // resolves VERSION relative to the real checkout by default
+  // (agent/site-settings.mjs's own default). Overridable only so a harness
+  // can point it at a temp dir carrying a fake VERSION file with a known mtime,
+  // the same way spawnFn above lets a harness prove live.mjs without a real
+  // ffmpeg. Every real deployment leaves this undefined.
+  siteSettingsAppDir = undefined,
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -680,10 +697,25 @@ export function createApiServer({
     stateDir, config, audit: auth.audit, log,
     onChange: () => { driveAssignment = assignDrives(); },
   });
+  // Site settings (SITE-SETTINGS-SPEC.md section 1): display name, time
+  // zone, site type, feature switches, version/license. Constructed before
+  // cameraAiSettings below, which reads its effectiveTimeZoneNow() for its
+  // own GET's `timeZone` field ("new camera AI schedules use the site
+  // zone").
+  const siteSettings = createSiteSettings({
+    stateDir, audit: auth.audit, now, log,
+    ...(siteSettingsAppDir !== undefined ? { appDir: siteSettingsAppDir } : {}),
+  });
+  // Saved wall layouts (SITE-SETTINGS-SPEC.md section 3): per-account and
+  // per-display.
+  const savedLayouts = createSavedLayouts({ stateDir, config, audit: auth.audit, now, log });
   // Per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md): zones, schedule,
   // sensitivity, kinds. agent/detect-service.mjs (a separate process) owns
   // reading camera-ai.json for detection itself; this only ever writes it.
-  const cameraAiSettings = createCameraAiSettings({ stateDir, config, audit: auth.audit, now, log });
+  const cameraAiSettings = createCameraAiSettings({
+    stateDir, config, audit: auth.audit, now, log,
+    siteTimeZone: siteSettings.effectiveTimeZoneNow,
+  });
   const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
 
   // The Network page's own samplers (NETWORK-PAGE-SPEC.md): interface
@@ -979,8 +1011,22 @@ export function createApiServer({
       if (await auth.handle(req, res, pathname, principal)) return;
       if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
       if (await cameraAiSettings.handle(req, res, pathname, method, principal)) return;
+      if (await siteSettings.handle(req, res, pathname, method, principal)) return;
+      if (await savedLayouts.handle(req, res, pathname, method, principal)) return;
       if (await recordingSettings.handle(req, res, pathname, method, principal)) return;
       if (await clipLibrary.handle(req, res, pathname, method, principal)) return;
+
+      // ---------- the Activity feature switch ----------
+      // SITE-SETTINGS-SPEC.md: "when off, /activity and /activity-page answer
+      // 404 feature_off ... and the nav link is hidden." Checked here, after
+      // routeAccess already confirmed events.view, so a store account still
+      // gets the permission-shaped answer (403) it would get on any other
+      // route it cannot reach at all, and only a signed-in principal who
+      // COULD see this feature ever learns whether it is switched off.
+      if ((pathname === '/activity' || pathname === '/activity-page') && !(await siteSettings.isFeatureEnabledNow('activity'))) {
+        sendError(res, 404, 'feature_off', 'the activity feature is off for this site');
+        return;
+      }
 
       // ---------- POST /known-objects/answer ----------
       // "Is it meant to be there?" (KNOWN-OBJECTS-SPEC.md). This never changes
@@ -1280,9 +1326,21 @@ export function createApiServer({
       // content, bucketed and merged with footage/watch coverage rather than
       // listed one row at a time.
       if (pathname === '/activity') {
+        // SITE-SETTINGS-SPEC.md: "The Activity page uses the site zone when
+        // set, otherwise the browser's." contracts/activity.ts's own
+        // parseActivityQuery has always REQUIRED a `tz` (bad_tz otherwise) --
+        // that rule is unchanged here. What changes is what this route hands
+        // it when the client's own query omits `tz` (or sends an empty one):
+        // the site's effective zone (site.timeZone when set, else the NVR's
+        // own system zone) rather than a 400 for a value the server could
+        // supply itself. A client that DOES send a tz (the page's own
+        // browser-zone fallback, or an explicit override) is never
+        // second-guessed — this only ever fills in an absence.
+        const rawTz = parsedUrl.searchParams.get('tz');
+        const tz = rawTz === null || rawTz === '' ? await siteSettings.effectiveTimeZoneNow() : rawTz;
         const query = {
           range: parsedUrl.searchParams.get('range'),
-          tz: parsedUrl.searchParams.get('tz'),
+          tz,
           camera: parsedUrl.searchParams.get('camera'),
         };
         const envelope = buildActivityResponse(

@@ -48,6 +48,22 @@ export function createWall(options) {
   let pageIndex = 0;
   let pageCount = 1;
   let streaming = [];
+  // A loaded SAVED layout (SITE-SETTINGS-SPEC.md section 3): a shape plus an
+  // explicit camera-or-empty-or-removed cell per index, from GET /layouts or
+  // GET /display-layout, resolved server-side against the live camera list.
+  // Distinct from the auto layout above -- gridPage packs whatever devices
+  // exist, in their configured order; a saved layout fixes WHICH camera sits
+  // in WHICH cell, and never repages, because a display "never edits it" and
+  // an operator previewing a saved layout sees exactly what it saved, not a
+  // repack of it. null means "not showing a saved layout" (the normal case).
+  let explicitCells = null;
+  let explicitShapeId = null;
+  // What the auto layout actually rendered last -- one entry per cell,
+  // camera cells carrying the STREAM id actually chosen (never a deviceId),
+  // so "save the current grid as a layout" (layout-client.mjs) can read back
+  // exactly what is on screen, not re-derive it and risk disagreeing.
+  let lastRenderedCells = null;
+  let lastRenderedShapeId = null;
 
   // Nodes are emptied by removal, never with innerHTML -- an installer can put
   // < and > in a camera name and innerHTML would turn the name into markup.
@@ -159,6 +175,66 @@ export function createWall(options) {
     label.textContent = "Empty - no camera assigned";
     cell.appendChild(label);
     return cell;
+  }
+
+  /**
+   * A saved layout naming a camera id that no longer exists (contracts/
+   * savedLayouts.ts's own `resolveLayoutCells`, run server-side before this
+   * ever reaches the wall) -- "renders as an explicit 'camera removed' cell,
+   * never a silent blank" (SITE-SETTINGS-SPEC.md). Distinct wording and a
+   * distinct class from an EMPTY cell: one was never assigned a camera, the
+   * other lost one, and an installer needs to tell the two apart at a glance.
+   */
+  function buildRemovedCell(shape) {
+    const cell = doc.createElement("div");
+    cell.className = "cell cell-empty cell-removed";
+    cell.style.aspectRatio = grid.cellAspectRatio(shape);
+    const label = doc.createElement("div");
+    label.className = "cell-empty-label";
+    label.textContent = "Camera removed";
+    cell.appendChild(label);
+    return cell;
+  }
+
+  /** The device that answers on `cameraId` (one of its own `.streams`), or
+   *  null when none configured now still does -- a saved layout's raw
+   *  cameraId is a STREAM id, not a deviceId, and the two folded together
+   *  differently every time a camera gains or loses a second channel. */
+  function deviceForStream(cameraId) {
+    for (let i = 0; i < devices.length; i++) {
+      const streams = devices[i].streams;
+      for (let j = 0; j < streams.length; j++) {
+        if (streams[j].cameraId === cameraId) return devices[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * One cell of an EXPLICIT (saved) layout: the exact stream this layout
+   * names, no picker (a saved layout fixed which stream, there is nothing
+   * left to choose) and no unresolved-count warning (that is a live /devices
+   * fact about a camera that still exists; a saved layout's own "this camera
+   * is gone" case is buildRemovedCell above, a different failure).
+   */
+  function buildExplicitCameraCell(cameraId, shape) {
+    const cell = doc.createElement("div");
+    cell.className = "cell";
+    cell.style.aspectRatio = grid.cellAspectRatio(shape);
+    const head = doc.createElement("div");
+    head.className = "cell-head";
+    const label = doc.createElement("span");
+    label.className = "cell-label";
+    const dev = deviceForStream(cameraId);
+    // Untrusted text either way (an installer's own device label, or the
+    // raw id as a fallback -- never blank): .textContent only.
+    label.textContent = dev ? dev.label : cameraId;
+    head.appendChild(label);
+    cell.appendChild(head);
+    const body = doc.createElement("div");
+    body.className = "cell-body";
+    cell.appendChild(body);
+    return { cell: cell, body: body };
   }
 
   function toggleFullscreen() {
@@ -317,6 +393,14 @@ export function createWall(options) {
   }
 
   function render() {
+    if (explicitCells !== null) {
+      renderExplicit();
+      return;
+    }
+    renderAuto();
+  }
+
+  function renderAuto() {
     const deviceIds = devices.map((d) => d.deviceId);
     let page = grid.gridPage({ cameraIds: deviceIds, layout, page: pageIndex });
     // gridPage clamps an out-of-range page; keep our index in step with it.
@@ -333,11 +417,17 @@ export function createWall(options) {
     // Every cell grid returns goes in, in order -- a dropped cell looks dead.
     const bodyForId = Object.create(null);
     const pageLike = { cells: [] };
+    // What actually landed in each cell this render -- one entry per index,
+    // camera cells carrying the CHOSEN stream id -- so layout-client.mjs can
+    // read back exactly what is on screen via cells() below, to save it as a
+    // named layout, without re-deriving chosenStreamId itself.
+    const rendered = [];
     for (let i = 0; i < page.cells.length; i++) {
       const pageCell = page.cells[i];
       if (pageCell.kind !== "camera") {
         gridRoot.appendChild(buildEmptyCell(shape));
         pageLike.cells.push(pageCell);
+        rendered.push({ kind: "empty", index: i });
         continue;
       }
       // gridPage lays out the ids we handed it, so cell.cameraId is a deviceId.
@@ -346,11 +436,15 @@ export function createWall(options) {
       // A camera that resolved to no streams still gets its cell and warning,
       // but there is nothing to open. Leaving it out of the plan keeps a null
       // out of `streaming`, where the next redraw would try to close it.
-      if (built.chosenId === null) continue;
+      if (built.chosenId === null) {
+        rendered.push({ kind: "empty", index: i });
+        continue;
+      }
       bodyForId[built.chosenId] = built.body;
       // pageLike re-expresses each camera cell with the CHOSEN stream id;
       // wallStreams only reads .kind and .cameraId.
       pageLike.cells.push({ kind: "camera", cameraId: built.chosenId });
+      rendered.push({ kind: "camera", index: i, cameraId: built.chosenId });
     }
     const plan = grid.wallStreams(streaming, pageLike);
     // Close before open, always: opening first leaves both streams live at
@@ -369,7 +463,94 @@ export function createWall(options) {
     // plan.keep streams never left the wall -- reopening one would cost a
     // black tile and a keyframe wait on every single page turn.
     streaming = plan.keep.concat(plan.open);
+    lastRenderedCells = rendered;
+    lastRenderedShapeId = layout;
     renderControls(page);
+  }
+
+  /**
+   * A SAVED layout, on screen exactly as saved: a fixed shape and a fixed
+   * camera (or "empty", or "camera removed") per cell -- never repaged, never
+   * repacked from the device list. Used for a display's own assignment
+   * (SITE-SETTINGS-SPEC.md: "the wall shows it on load and when it changes")
+   * and for an operator previewing one of their own saved layouts.
+   */
+  function renderExplicit() {
+    const shape = shapeFor(explicitShapeId) || shapeFor("2x2");
+    pageCount = 1;
+    pageIndex = 0;
+    gridRoot.style.display = "grid";
+    gridRoot.style.gridTemplateColumns = "repeat(" + shape.columns + ", 1fr)";
+    gridRoot.style.gap = "8px";
+    emptyEl(gridRoot);
+    const bodyForId = Object.create(null);
+    const onScreen = [];
+    for (let i = 0; i < explicitCells.length; i++) {
+      const c = explicitCells[i];
+      if (c.kind === "camera") {
+        const built = buildExplicitCameraCell(c.cameraId, shape);
+        gridRoot.appendChild(built.cell);
+        bodyForId[c.cameraId] = built.body;
+        if (!onScreen.includes(c.cameraId)) onScreen.push(c.cameraId);
+      } else if (c.kind === "removed") {
+        gridRoot.appendChild(buildRemovedCell(shape));
+      } else {
+        gridRoot.appendChild(buildEmptyCell(shape));
+      }
+    }
+    const plan = grid.wallStreams(streaming, { cells: onScreen.map((id) => ({ kind: "camera", cameraId: id })) });
+    for (let i = 0; i < plan.close.length; i++) {
+      closeStream(plan.close[i]);
+    }
+    for (let i = 0; i < plan.open.length; i++) {
+      openStream(plan.open[i], bodyForId[plan.open[i]], shape, quality);
+    }
+    if (moveStream) {
+      for (let i = 0; i < plan.keep.length; i++) {
+        moveStream(plan.keep[i], bodyForId[plan.keep[i]], shape, quality);
+      }
+    }
+    streaming = plan.keep.concat(plan.open);
+    // No controls at all: a display "never edits it", and an operator
+    // previewing a saved layout has nothing to page through either -- every
+    // cell this layout has is already on screen, in the shape it was saved.
+    emptyEl(controlsRoot);
+  }
+
+  /**
+   * Show a saved layout exactly as resolved server-side (contracts/
+   * savedLayouts.ts's own resolveLayoutCells output: one entry per cell,
+   * `{kind: "camera"|"empty"|"removed", index, cameraId?}`). Replaces
+   * whatever the wall was showing -- auto grid, another saved layout, or a
+   * tour -- until clearExplicitLayout() or a plain setLayout() choice.
+   */
+  function setExplicitLayout(layoutId, resolvedCells) {
+    touring = false;
+    syncTour();
+    explicitShapeId = layoutId;
+    explicitCells = Array.isArray(resolvedCells) ? resolvedCells : [];
+    render();
+  }
+
+  /** Back to the ordinary auto-packed grid (the layout picker's own choices). */
+  function clearExplicitLayout() {
+    if (explicitCells === null) return;
+    explicitCells = null;
+    explicitShapeId = null;
+    render();
+  }
+
+  /**
+   * What is on screen right now, for layout-client.mjs to save as a named
+   * layout (auto mode) or simply to report (explicit mode, read-only there).
+   * Never the wall's own internal device order -- the CHOSEN stream ids, the
+   * same ones actually open, so a save can never disagree with the picture.
+   */
+  function cells() {
+    if (explicitCells !== null) {
+      return { shapeId: explicitShapeId, cells: explicitCells.slice() };
+    }
+    return { shapeId: lastRenderedShapeId, cells: (lastRenderedCells || []).slice() };
   }
 
   function setDevices(nextDevices) {
@@ -385,6 +566,10 @@ export function createWall(options) {
   function setLayout(id) {
     // An unknown id would desync the dropdown from the layout gridPage draws.
     if (id !== TOUR && !shapeFor(id)) return;
+    // Picking a plain grid (or the tour) from the picker means "go back to
+    // the auto layout" -- it always leaves a loaded saved layout behind.
+    explicitCells = null;
+    explicitShapeId = null;
     touring = id === TOUR;
     layout = touring ? "1x1" : id;
     if (touring) pageIndex = 0;
@@ -454,7 +639,10 @@ export function createWall(options) {
       pageCount: pageCount,
       touring: touring,
       quality: quality,
-      streaming: streaming.slice()
+      streaming: streaming.slice(),
+      // Showing a saved layout rather than the auto-packed grid -- the
+      // layout picker and pager have nothing to offer while this is true.
+      explicit: explicitCells !== null,
     };
   }
 
@@ -486,6 +674,9 @@ export function createWall(options) {
     prevPage: prevPage,
     setStream: setStream,
     state: state,
-    destroy: destroy
+    destroy: destroy,
+    setExplicitLayout: setExplicitLayout,
+    clearExplicitLayout: clearExplicitLayout,
+    cells: cells
   };
 }

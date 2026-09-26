@@ -684,4 +684,98 @@ check("index.html: a TV wall stretches every picture to fill its tile, never cro
   if (htmlContent.includes('.grid:fullscreen { background: #000; padding: 6px; }')) throw new Error("old .grid:fullscreen padding rule should be removed");
 });
 
+/* ------------------------------------------------------------------ */
+/* Explicit (saved) layouts -- SITE-SETTINGS-SPEC.md section 3.        */
+/* wall-client.mjs's own setExplicitLayout/clearExplicitLayout/cells,  */
+/* added alongside agent/ui/layout-client.mjs.                         */
+/* ------------------------------------------------------------------ */
+
+check("a saved layout shows exactly what it names, not a repack of the device list", () => {
+  const cam1 = device("Front", ["cam1"], { deviceId: "host:1" });
+  const cam2 = device("Back", ["cam2"], { deviceId: "host:2" });
+  // Devices in this order would auto-pack cam1 first, cam2 second -- the
+  // saved layout below puts cam2 in cell 0 and cam1 in cell 1, on purpose.
+  const { wall, gridRoot, calls } = makeWall({ layout: "2x2", devices: [cam1, cam2] });
+  calls.length = 0;
+  wall.setExplicitLayout("2x2", [
+    { kind: "camera", index: 0, cameraId: "cam2" },
+    { kind: "camera", index: 1, cameraId: "cam1" },
+    { kind: "empty", index: 2 },
+    { kind: "removed", index: 3, cameraId: "cam9-gone" },
+  ]);
+  eq(withClass(gridRoot, "cell-label").map((el) => el.textContent), ["Back", "Front"],
+    "cell order is the saved order, not the device order");
+  // Both streams were already open under the auto grid (same two ids, just
+  // in the other cell) -- wallStreams keeps them rather than closing and
+  // reopening, so this is a MOVE, not an open.
+  eq(sockets(calls), [], "neither stream was closed or reopened, only moved");
+  eq(wall.state().streaming.sort(), ["cam1", "cam2"], "both still live");
+  eq(withClass(gridRoot, "cell-empty").length, 2, "one plain empty, one removed -- both are 'cell-empty'");
+});
+
+check("THE FEARED ONE: a removed-camera cell reads 'Camera removed', distinct from a plain empty cell", () => {
+  const { wall, gridRoot } = makeWall({ layout: "2x2", devices: devices(1) });
+  wall.setExplicitLayout("2x2", [
+    { kind: "camera", index: 0, cameraId: "cam1" },
+    { kind: "empty", index: 1 },
+    { kind: "removed", index: 2, cameraId: "cam9-gone" },
+    { kind: "empty", index: 3 },
+  ]);
+  const removedCell = withClass(gridRoot, "cell-removed")[0];
+  if (removedCell === undefined) throw new Error("no cell-removed drawn");
+  eq(withClass(removedCell, "cell-empty-label")[0].textContent, "Camera removed", "distinct wording");
+  const plainEmpties = withClass(gridRoot, "cell-empty").filter((c) => !c.classList.contains("cell-removed"));
+  eq(plainEmpties.length, 2, "the two plain empty cells besides the removed one");
+  for (const cell of plainEmpties) {
+    eq(withClass(cell, "cell-empty-label")[0].textContent, "Empty - no camera assigned", "never confused with removed");
+  }
+});
+
+check("an explicit layout shows a device's own label when the saved id still resolves to one", () => {
+  const bench = device("Front door", ["cam1-main", "cam2-sub"], { deviceId: "host:64" });
+  const { wall, gridRoot } = makeWall({ layout: "1x1", devices: [bench] });
+  wall.setExplicitLayout("1x1", [{ kind: "camera", index: 0, cameraId: "cam2-sub" }]);
+  eq(withClass(gridRoot, "cell-label")[0].textContent, "Front door", "the device's label, from its OWN stream id");
+});
+
+check("an explicit layout falls back to the raw id when no device answers it -- never blank", () => {
+  const { wall, gridRoot } = makeWall({ layout: "1x1", devices: [] });
+  wall.setExplicitLayout("1x1", [{ kind: "camera", index: 0, cameraId: "cam-unknown" }]);
+  eq(withClass(gridRoot, "cell-label")[0].textContent, "cam-unknown", "the id itself, not a blank label");
+});
+
+check("a saved layout offers no picker at all -- a display never edits it, and a preview has nothing to page through", () => {
+  const { wall, controlsRoot } = makeWall({ layout: "2x2", devices: devices(4) });
+  wall.setExplicitLayout("1x1", [{ kind: "camera", index: 0, cameraId: "cam1" }]);
+  eq(controlsRoot.children.length, 0, "controls emptied, not just hidden");
+});
+
+check("picking a plain grid from the picker always leaves a loaded saved layout behind", () => {
+  const { wall, gridRoot } = makeWall({ layout: "2x2", devices: devices(4) });
+  wall.setExplicitLayout("1x1", [{ kind: "camera", index: 0, cameraId: "cam1" }]);
+  eq(wall.state().explicit, true, "showing the saved layout");
+  wall.setLayout("3x3");
+  eq(wall.state().explicit, false, "back to auto");
+  eq(withClass(gridRoot, "cell").length, 9, "the ordinary 3x3 grid, from every device");
+});
+
+check("cells() reports the auto grid's own chosen streams, not the device order", () => {
+  const bench = device("Front door", ["cam1-main", "cam2-sub"], { deviceId: "host:64" });
+  const { wall } = makeWall({ layout: "2x2", devices: [bench] });
+  const c = wall.cells();
+  eq(c.shapeId, "2x2", "the shape actually on screen");
+  eq(c.cells[0], { kind: "camera", index: 0, cameraId: "cam1-main" }, "cell 0: the chosen (first) stream");
+  eq(c.cells[1], { kind: "empty", index: 1 }, "unfilled cells report empty");
+});
+
+check("cells() reports the saved layout unchanged while one is loaded", () => {
+  const { wall } = makeWall({ layout: "2x2", devices: devices(1) });
+  const saved = [
+    { kind: "camera", index: 0, cameraId: "cam1" },
+    { kind: "removed", index: 1, cameraId: "cam9-gone" },
+  ];
+  wall.setExplicitLayout("1x1", saved);
+  same(wall.cells(), { shapeId: "1x1", cells: saved }, "handed back exactly as loaded");
+});
+
 report("wallPage");

@@ -50,6 +50,12 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/teach-client.js": { kind: "api", permission: "playback.view" },
   "/ui/alert-banner.js": { kind: "api", permission: "live.view" },
   "/ui/system-client.js": { kind: "api", permission: "live.view" },
+  // The Site section's own client (SITE-SETTINGS-SPEC.md): same reach as the
+  // System page itself (live.view, shared by both roles) -- the section is
+  // installer-only in practice because GET /site-settings answers 403 for a
+  // store account, and this file's own load() removes the section on that
+  // 403 rather than leave a form nobody can save.
+  "/ui/site-client.js": { kind: "api", permission: "live.view" },
   // The History section's chart builder (agent/ui/health-charts.mjs), served
   // at its real ".mjs" filename rather than the ".js" convention above --
   // see system-client.mjs's own import comment. Same reach as the System
@@ -64,6 +70,12 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/activity-client.js": { kind: "api", permission: "events.view" },
   "/ui/activity-charts.mjs": { kind: "api", permission: "events.view" },
   "/ui/wall-client.js": { kind: "api", permission: "live.view" },
+  // The Live page's saved-layout controls (SITE-SETTINGS-SPEC.md section 3)
+  // and a paired display's own layout poll -- same reach as the page and
+  // wall-client.js themselves (live.view, every signed-in kind including a
+  // display). layout.edit/account.manage scoping happens inside the routes
+  // this script calls, not here.
+  "/ui/layout-client.js": { kind: "api", permission: "live.view" },
   "/ui/grid-layout.js": { kind: "api", permission: "live.view" },
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
   "/ui/accounts-client.js": { kind: "api", permission: "account.manage" },
@@ -122,6 +134,30 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // checks, cameras' IP/MAC/maker/model and every other device this box has
   // seen without scanning. Installer only.
   "/network": { kind: "api", permission: "network.view" },
+  // Site settings (SITE-SETTINGS-SPEC.md section 1): display name, time
+  // zone, site type, feature switches, plus the version/license read.
+  // Installer only, like /camera-settings and /network -- a store account
+  // has no reason to reconfigure the box.
+  "/site-settings": { kind: "api", permission: "system.manage" },
+  // The site's own public facts (name, effective zone, which features are
+  // on): every signed-in kind reaches this, including a wall display -- the
+  // same reach as "/", live.view -- because every page, a wall included,
+  // uses it to decide which nav links to show.
+  "/site": { kind: "api", permission: "live.view" },
+  // Saved wall layouts, per account (SITE-SETTINGS-SPEC.md section 3).
+  // layout.edit reaches this, a display never does (contracts/access.ts) --
+  // scoping to the caller's OWN account happens inside the handler, not
+  // here: this table only says WHO may reach the route at all.
+  "/layouts": { kind: "api", permission: "layout.edit" },
+  // The installer's own view of every paired display's layout assignment.
+  // account.manage, the same reach as /displays itself.
+  "/display-layouts": { kind: "api", permission: "account.manage" },
+  // A display's own assigned layout. Gated here on live.view (every signed-in
+  // kind, a display included) so the route is reachable at all; the handler
+  // itself refuses anyone who is not a display credential, since there is no
+  // "installer reading someone else's display" version of this route to
+  // permit.
+  "/display-layout": { kind: "api", permission: "live.view" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -146,6 +182,9 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // the camera card. Same reach as /network; rate-limited separately in
   // agent/api-server.mjs, not by this policy table.
   "/network/discover": { kind: "api", permission: "network.view" },
+  "/site-settings": { kind: "api", permission: "system.manage" },
+  "/layouts": { kind: "api", permission: "layout.edit" },
+  "/display-layouts": { kind: "api", permission: "account.manage" },
 });
 
 /**

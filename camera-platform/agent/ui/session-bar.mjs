@@ -20,7 +20,7 @@ function signInAgain() {
   location.replace("/login?next=" + encodeURIComponent(location.pathname));
 }
 
-function bar(principal, fetchFn) {
+function bar(principal, fetchFn, features) {
   const el = document.createElement("div");
   el.id = "sessionBar";
   el.setAttribute("role", "navigation");
@@ -39,13 +39,21 @@ function bar(principal, fetchFn) {
   // of the store role's own daily ones), so this link is not restricted to
   // installer like Cameras/Recording/Accounts below -- it is one of "the
   // pages the store role uses", the spec's own words.
-  for (const [href, text] of [["/activity-page", "Activity"]]) {
-    if (location.pathname === href) continue;
-    const link = document.createElement("a");
-    link.href = href;
-    link.textContent = text;
-    link.style.cssText = "color:#8ab4f8";
-    el.append(link);
+  // SITE-SETTINGS-SPEC.md: "a switched-off feature: its nav link is
+  // hidden" -- checked here at build time (features.activity === false skips
+  // the link outright) AND again below via hideFeatureLinks, for any link a
+  // page's own static HTML wrote (this bar's own link never needs the
+  // second pass, but a future page's <nav> might).
+  const feats = (features && typeof features === "object") ? features : {};
+  if (feats.activity !== false) {
+    for (const [href, text] of [["/activity-page", "Activity"]]) {
+      if (location.pathname === href) continue;
+      const link = document.createElement("a");
+      link.href = href;
+      link.textContent = text;
+      link.style.cssText = "color:#8ab4f8";
+      el.append(link);
+    }
   }
 
   if (principal.role === "installer") {
@@ -118,6 +126,35 @@ export function hideRefusedLinks(doc, permissions) {
   }
 }
 
+// Links a switched-off site feature hides (SITE-SETTINGS-SPEC.md: "its nav
+// link is hidden ... never 403, which would read as a permission problem").
+// GET /site (every signed-in kind, a display included) is where the answer
+// comes from -- not routeAccess.ts/PAGE_NEEDS above, which only ever answers
+// "may this ROLE reach this page", never "is this feature on for this site".
+export const FEATURE_LINKS = { "/activity-page": "activity" };
+
+/**
+ * `features` is GET /site's own `features` map. A feature this map does not
+ * mention at all reads as ON (the same "a blank is not a zero" rule the
+ * server's own isFeatureEnabled keeps) -- only an explicit `false` hides a
+ * link, so a page loaded before the site ever answered (features undefined)
+ * hides nothing.
+ */
+export function hideFeatureLinks(doc, features) {
+  const feats = (features && typeof features === "object") ? features : {};
+  for (const a of doc.querySelectorAll("a[href]")) {
+    const href = typeof a.getAttribute === "function" ? a.getAttribute("href") : a.href;
+    let pathname;
+    try {
+      pathname = new URL(href, "http://x").pathname;
+    } catch {
+      continue;
+    }
+    const key = FEATURE_LINKS[pathname];
+    if (key !== undefined && feats[key] === false) a.hidden = true;
+  }
+}
+
 // A wall display is a TV nobody touches: keep its screen on, and hide the
 // pointer once it stops moving. Only for a display login -- a person's own
 // screen keeps its normal sleep (and an OLED is not held on by a forgotten tab).
@@ -163,12 +200,24 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
   };
 
   try {
-    const res = await realFetch("/auth/state", { credentials: "same-origin" });
-    const state = await res.json();
+    // /site (SITE-SETTINGS-SPEC.md) reaches every signed-in kind, a display
+    // included -- fetched alongside /auth/state so a switched-off feature's
+    // link never shows even for the instant before this resolves. A failed
+    // /site (unreachable recorder mid-request) is not fatal to the rest of
+    // this bar: `features` just stays undefined, and hideFeatureLinks/bar
+    // both read that as "hide nothing", never as "everything is off".
+    const [authRes, siteRes] = await Promise.all([
+      realFetch("/auth/state", { credentials: "same-origin" }),
+      realFetch("/site", { credentials: "same-origin" }).catch(() => null),
+    ]);
+    const state = await authRes.json();
+    const site = siteRes ? await siteRes.json().catch(() => null) : null;
+    const features = site && typeof site === "object" ? site.features : undefined;
     if (Array.isArray(state?.permissions)) hideRefusedLinks(document, state.permissions);
     if (state?.principal?.kind === "display") tvMode();
-    if (state?.principal?.kind === "user") bar(state.principal, realFetch);
+    if (state?.principal?.kind === "user") bar(state.principal, realFetch, features);
     else if (state?.principal?.kind === "anonymous") signInAgain();
+    if (features !== undefined) hideFeatureLinks(document, features);
   } catch {
     // The recorder is unreachable; the page's own error handling says so.
   }

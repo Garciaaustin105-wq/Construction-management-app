@@ -156,6 +156,12 @@ export function defaultPanelState(cameraId, name) {
     zones: [],
     scheduleMode: "always",
     weekly: [0, 1, 2, 3, 4, 5, 6].map(defaultWeekday),
+    // The zone an existing custom schedule was saved under -- null means
+    // "no saved schedule yet", so a brand-new custom schedule takes the
+    // site's current zone (SITE-SETTINGS-SPEC.md section 1: "New camera AI
+    // schedules are saved in the site zone. Existing schedules keep the
+    // zone they were saved in; never shift them silently.").
+    scheduleTimeZone: null,
     minConfidenceMode: "default",
     minConfidenceValue: null,
     kinds: { person: true, vehicle: true },
@@ -180,6 +186,7 @@ export function stateFromSettings(cameraId, name, settings, floor) {
   }
   if (settings.schedule && typeof settings.schedule === "object") {
     state.scheduleMode = "custom";
+    state.scheduleTimeZone = typeof settings.schedule.timeZone === "string" ? settings.schedule.timeZone : null;
     const weekly = Array.isArray(settings.schedule.weekly) ? settings.schedule.weekly : [];
     state.weekly = [0, 1, 2, 3, 4, 5, 6].map((i) => {
       // Only the day's FIRST interval is shown and editable -- this panel
@@ -212,6 +219,11 @@ export function stateFromSettings(cameraId, name, settings, floor) {
  * exact shape checkCameraAiSettings reads.
  */
 export function settingsBodyFromState(state, timeZone) {
+  // An existing schedule keeps the zone it was saved in even if the site's
+  // own zone has since changed (SITE-SETTINGS-SPEC.md section 1); only a
+  // schedule with no saved zone yet -- being created fresh from "always" --
+  // takes the site's current zone.
+  const scheduleZone = state.scheduleTimeZone != null ? state.scheduleTimeZone : timeZone;
   return {
     zones: state.zones.map((z) => ({
       id: z.id,
@@ -222,7 +234,7 @@ export function settingsBodyFromState(state, timeZone) {
       state.scheduleMode === "always"
         ? null
         : {
-            timeZone,
+            timeZone: scheduleZone,
             weekly: state.weekly.map((day) => {
               if (!day.open) return [];
               const open = minutesFromHHMM(day.from);
@@ -707,6 +719,12 @@ export function createCameraPanel(doc, opts, camera) {
         }
         return;
       }
+      // The save just persisted whatever zone `body.schedule` carried (the
+      // existing zone, or the site's zone for a brand-new schedule, or
+      // nothing if the schedule was just cleared) -- keep panel state in
+      // sync with what is now on disk so a later save this session (with no
+      // reload in between) still treats it correctly as "existing".
+      state.scheduleTimeZone = body.schedule ? body.schedule.timeZone : null;
       saveStatus.textContent = "Saved.";
     } catch (err) {
       if (typeof log === "function") log("error", "camera AI settings save failed", { cameraId, message: err && err.message });
