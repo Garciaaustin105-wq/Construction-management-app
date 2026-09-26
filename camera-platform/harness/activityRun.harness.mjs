@@ -205,6 +205,41 @@ await mustAwait('REQUIRED: detecting is 1 within 120s of lastFrameUtc or a gate 
   await rm(dir, { recursive: true, force: true });
 });
 
+await mustAwait('REQUIRED (CAMERA-AI-SETTINGS-SPEC.md): detecting is 0 whenever aiSchedule.open is false, however fresh the frame or gate window is; missing aiSchedule entirely (an older detect-health.json) is read as open, not as closed', async () => {
+  const dir = await tmpDir('camplat-activity-aischedule-');
+  await mkdir(join(dir, 'disk0'), { recursive: true });
+  const index = openIndex(join(dir, 'index.db'));
+  const config = makeConfig(dir, ['cam-1', 'cam-2', 'cam-3']);
+  const atMs = Date.parse('2026-09-24T14:00:00.000Z');
+  const now = () => new Date(atMs);
+  const detectHealth = {
+    atUtc: new Date(atMs).toISOString(),
+    cameras: [
+      // Fresh frame, but the schedule is CLOSED: must read 0, not 1.
+      { cameraId: 'cam-1', lastFrameUtc: new Date(atMs - 30_000).toISOString(), gate: null, aiSchedule: { open: false, sinceUtc: new Date(atMs - 600_000).toISOString() } },
+      // Fresh frame, schedule OPEN: still 1, same as before this feature.
+      { cameraId: 'cam-2', lastFrameUtc: new Date(atMs - 30_000).toISOString(), gate: null, aiSchedule: { open: true, sinceUtc: new Date(atMs - 600_000).toISOString() } },
+      // Fresh frame, no aiSchedule at all (an older detect-service.mjs): read
+      // as open -- a missing field is not itself a "not watching" measurement.
+      { cameraId: 'cam-3', lastFrameUtc: new Date(atMs - 30_000).toISOString(), gate: null },
+    ],
+  };
+  const readFileFn = async (p) => {
+    if (String(p).replace(/\\/g, '/').endsWith('detect-health.json')) return JSON.stringify(detectHealth);
+    return enoent();
+  };
+  const hh = startHealthHistory({ config, index, stateDir: dir, now, platform: 'win32', readFileFn, readdirFn: async () => [] });
+  await hh.initialTick;
+  const db = openHealthHistoryDb(join(dir, HEALTH_HISTORY_DB_FILE));
+  eq(db.rangeFor('detecting', 'cam-1', 0, atMs + 1), [{ atMs, value: 0 }], 'REQUIRED: schedule closed overrides a fresh frame -- 0, not 1');
+  eq(db.rangeFor('detecting', 'cam-2', 0, atMs + 1), [{ atMs, value: 1 }], 'schedule open, fresh frame -- 1, as always');
+  eq(db.rangeFor('detecting', 'cam-3', 0, atMs + 1), [{ atMs, value: 1 }], 'no aiSchedule at all -- read as open, backward compatible');
+  db.close();
+  await hh.close();
+  index.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
 await mustAwait('REQUIRED: no detecting row for anyone when detect-health.json is missing, unreadable, or not shaped like the real file', async () => {
   for (const readFileFn of [
     enoent,

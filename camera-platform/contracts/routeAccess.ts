@@ -68,6 +68,9 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
   "/ui/accounts-client.js": { kind: "api", permission: "account.manage" },
   "/ui/cameras-client.js": { kind: "api", permission: "camera.manage" },
+  // The AI settings panel's own client (CAMERA-AI-SETTINGS-SPEC.md) -- same
+  // reach as the rest of the Cameras page and cameras-client.js above.
+  "/ui/camera-ai-client.js": { kind: "api", permission: "camera.manage" },
   "/ui/recording-client.js": { kind: "api", permission: "storage.manage" },
   "/ui/network-client.js": { kind: "api", permission: "network.view" },
   // Every signed-in page loads it, a wall display included (it draws nothing there).
@@ -90,6 +93,11 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/audit": { kind: "api", permission: "audit.view" },
   // Camera addresses and the login user name: the installer's, not the store's.
   "/camera-settings": { kind: "api", permission: "camera.manage" },
+  // Per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md): zones, schedule,
+  // sensitivity, kinds. Installer only, same reach as /camera-settings -
+  // "Store and display users are refused" is this line, not a check inside
+  // the handler.
+  "/camera-ai-settings": { kind: "api", permission: "camera.manage" },
   // The age limit deletes footage.
   "/recording-settings": { kind: "api", permission: "storage.manage" },
   // The AI answer key: what someone watching the footage says is in it.
@@ -152,6 +160,8 @@ const PREFIXED: ReadonlyArray<{ method: string; prefix: string; suffix: string; 
   { method: "DELETE", prefix: "/displays/", suffix: "", rule: { kind: "api", permission: "account.manage" } },
   { method: "POST", prefix: "/cameras/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
   { method: "DELETE", prefix: "/cameras/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
+  // POST /camera-ai-settings/<cameraId>: saves one camera's AI settings.
+  { method: "POST", prefix: "/camera-ai-settings/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
 ]);
 
 /** The rule for a request, or null when the server has no such route. */

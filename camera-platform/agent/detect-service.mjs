@@ -20,6 +20,9 @@ import { MERGE_GAP_MS } from "../dist/detection.js";
 import { planDetectSchedule } from "../dist/detectSchedule.js";
 import { buildRtspUrl, redactRtspUrl, RtspTemplateError } from "../dist/rtsp.js";
 import { matchKnown, noteMatch, lapseKnownObjects, learnKnownObjects, LEARN_WINDOW_MS } from "../dist/knownObjects.js";
+import {
+  checkCameraAiSettingsFile, settingsForCamera, judgeDetection, scheduleOpen, CAMERA_AI_SETTINGS_VERSION,
+} from "../dist/cameraAiSettings.js";
 import { loadConfig, resolveCameraUrl } from "./recorder-service.mjs";
 import { openEventsDb } from "./events-db.mjs";
 import { createKnownObjectsStore, cameraFingerprint } from "./known-objects.mjs";
@@ -49,6 +52,19 @@ const LEARN_EVENT_LIMIT = 20_000;
 const GATE_WINDOWS_DIR_NAME = "gate-windows";
 const GATE_WINDOWS_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
 const GATE_WINDOWS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md): zones, schedule,
+ * sensitivity, kinds, installer-written from the Cameras page's own API
+ * (agent/camera-ai-settings.mjs) and picked up here on a timer, never a
+ * restart. `<stateDir>/camera-ai.json` - same directory, same tmp-then-
+ * rename convention as detect.json and known-objects.json.
+ */
+const CAMERA_AI_SETTINGS_FILE = "camera-ai.json";
+const AI_SETTINGS_RELOAD_MS = 30_000;
+function emptyAiSettingsFile() {
+  return { version: CAMERA_AI_SETTINGS_VERSION, cameras: {} };
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultLog = (level, msg, extra) =>
@@ -152,6 +168,12 @@ export async function startDetect(opts = {}) {
     knownPassMs = 600_000,
     knownFlushMs = 60_000,
     knownObjectsStore = null,
+    // Per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md): how often
+    // camera-ai.json is re-read. A harness passes something small so a check
+    // does not have to wait a real 30 s; svc.reloadAiSettings() (below) also
+    // lets a harness trigger a re-read on demand, the same way knownPass and
+    // knownFlush already do for known objects.
+    aiSettingsReloadMs = AI_SETTINGS_RELOAD_MS,
     // Teach list, piece 1: how often the once-a-day sweep of old gate-window
     // files runs. A day in production; a harness passes something small so a
     // check does not have to wait a real day to see it happen again.
@@ -284,6 +306,10 @@ export async function startDetect(opts = {}) {
       // started. Not reset when a worker respawns: it counts what this
       // service hid, not what one worker saw.
       hiddenSinceStart: 0,
+      // Per-camera AI settings' schedule (CAMERA-AI-SETTINGS-SPEC.md): null
+      // until the first check, then { open, sinceUtc } - sinceUtc moves only
+      // on a real open/closed transition, never on every check.
+      aiScheduleState: null,
     });
   }
 
@@ -302,10 +328,77 @@ export async function startDetect(opts = {}) {
         timeSource: { sinceStart: emptyTimeSourceCounts(), lastWindow: emptyTimeSourceCounts() },
         timeSourceOpenWindow: emptyTimeSourceCounts(),
         hiddenSinceStart: 0,
+        aiScheduleState: null,
       });
       return cameras.get(cameraId);
     }
     return cam;
+  }
+
+  // ---------------------------------------------------------------- per-camera AI settings
+
+  // The last GOOD settings file, or the empty defaults if there never was
+  // one. Re-read every aiSettingsReloadMs (see the timer near the other
+  // interval timers below); a file that cannot be read or fails validation
+  // is logged once and this is left exactly as it is (CAMERA-AI-SETTINGS-
+  // SPEC.md: "a bad file is logged and the previous good settings are kept").
+  let aiSettingsFile = emptyAiSettingsFile();
+
+  function aiSettingsFor(cameraId) {
+    return settingsForCamera(aiSettingsFile, cameraId);
+  }
+
+  /** Re-read camera-ai.json now. Never throws: every failure keeps the last
+   *  good settings and logs once while it lasts (logOnce, defined below with
+   *  known objects' own problem logging - shared dedupe map). */
+  async function loadAiSettingsNow() {
+    let raw;
+    try {
+      raw = await readFile(path.join(stateDir, CAMERA_AI_SETTINGS_FILE), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        // Never configured (or removed by hand): the defaults for every
+        // camera, same as a freshly-provisioned site - not a problem to log.
+        if (logged.has("ai-settings")) logged.delete("ai-settings");
+        aiSettingsFile = emptyAiSettingsFile();
+        return;
+      }
+      logOnce("ai-settings", "warn", "camera AI settings could not be read; the last good settings are kept", { error: scrub(err.message) });
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logOnce("ai-settings", "warn", "camera AI settings file is not valid JSON; the last good settings are kept", { error: scrub(err.message) });
+      return;
+    }
+    const check = checkCameraAiSettingsFile(parsed, minConfidence);
+    if (!check.ok) {
+      logOnce("ai-settings", "warn", "camera AI settings file failed validation; the last good settings are kept", {
+        errors: check.errors.slice(0, 3).map((e) => `${e.cameraId || "(file)"}: ${e.field}: ${e.reason}`),
+      }, `bad:${check.errors.length}`);
+      return;
+    }
+    if (logged.has("ai-settings")) {
+      logged.delete("ai-settings");
+      log("info", "camera AI settings file can be read again", {});
+    }
+    aiSettingsFile = check.file;
+  }
+
+  /**
+   * Whether `cam`'s AI is watching at `nowUtc`, per its current settings'
+   * schedule - and the { open, sinceUtc } this tick's detect-health.json
+   * reports. `sinceUtc` only moves on a real open<->closed transition, so a
+   * camera that has been open for hours does not report "since" every call.
+   */
+  function refreshAiSchedule(cam, settings, nowUtc) {
+    const open = scheduleOpen(settings, Date.parse(nowUtc));
+    if (cam.aiScheduleState === null || cam.aiScheduleState.open !== open) {
+      cam.aiScheduleState = { open, sinceUtc: nowUtc };
+    }
+    return cam.aiScheduleState;
   }
 
   // ---------------------------------------------------------------- known objects
@@ -402,24 +495,49 @@ export async function startDetect(opts = {}) {
    * and then walked away is passed suppressedBy null on its next update and
    * shows again. matchKnown answers null for every doubt (unknown travel, a
    * moved thing, a lapsed object, a loose overlap), and null is "show it".
+   *
+   * CAMERA-AI-SETTINGS-SPEC.md's "Where it runs": the per-camera threshold,
+   * kinds and zones are applied here, BEFORE the known-objects check -
+   * judgeDetection first decides whether this update is even stored at all
+   * (below the camera's own confidence: "not an event at all", the same
+   * meaning the site floor already has), then whether it is hidden by the
+   * settings themselves. A `settings:` verdict is used directly as
+   * suppressedBy and matchKnown is never even called for this update -
+   * "settings-hidden beats known objects", enforced by simply never letting
+   * a known-object match have a turn, not by comparing the two afterwards.
    */
   function storeEvent(update, finished) {
-    let suppressedBy = null;
-    try {
-      suppressedBy = matchKnown(update.event, known.active);
-    } catch (err) {
-      // matchKnown throws only for a bad option, which this service never
-      // passes; if it ever does, the event is stored and shown, never lost.
-      logOnce("match-failed", "warn", "known objects: an event could not be matched, so it is shown", { error: scrub(err.message) });
-      suppressedBy = null;
+    const event = update.event;
+    const cam = cameras.get(event.cameraId);
+    const settings = aiSettingsFor(event.cameraId);
+    const judged = judgeDetection(settings, { kind: event.kind, bestConfidence: event.bestConfidence, bestBox: event.bestBox }, minConfidence, now().getTime());
+    if (!judged.store) {
+      // Below THIS camera's own minimum confidence: not an event at all, the
+      // same meaning the site-wide storing floor already has. Nothing is
+      // written - not even a first insert - so an id that never crossed the
+      // camera's own floor never appears in events.db at all.
+      return;
+    }
+    let suppressedBy = judged.hiddenBy;
+    if (suppressedBy === null) {
+      try {
+        suppressedBy = matchKnown(event, known.active);
+      } catch (err) {
+        // matchKnown throws only for a bad option, which this service never
+        // passes; if it ever does, the event is stored and shown, never lost.
+        logOnce("match-failed", "warn", "known objects: an event could not be matched, so it is shown", { error: scrub(err.message) });
+        suppressedBy = null;
+      }
     }
     eventsDb.upsert(update, finished, { suppressedBy });
-    if (finished && suppressedBy !== null) {
+    // Known-objects bookkeeping (matched counts, hiddenSinceStart) is about
+    // objects THIS SERVICE learned - never about a settings hide, which
+    // teaches nothing and is never counted as a known-object match.
+    if (finished && suppressedBy !== null && !suppressedBy.startsWith("settings:")) {
       // update.id is the same events.db id eventsDb.upsert just wrote this
       // event under, and the Review page's /event-crop?id= asks for exactly
       // that id - so noteMatch can move sampleEventId onto it.
-      pendingNotes.push({ objectId: suppressedBy, event: { ...update.event, id: update.id }, atUtc: now().toISOString() });
-      const cam = cameras.get(update.event.cameraId);
+      pendingNotes.push({ objectId: suppressedBy, event: { ...event, id: update.id }, atUtc: now().toISOString() });
       if (cam) cam.hiddenSinceStart += 1;
     }
   }
@@ -491,7 +609,13 @@ export async function startDetect(opts = {}) {
           const since = new Date(Date.parse(nowUtc) - LEARN_WINDOW_MS).toISOString();
           const recent = eventsDb.recentFinished(since, LEARN_EVENT_LIMIT);
           truncated = recent.truncated;
-          learning = learnKnownObjects({ events: recent.events, existing: next, nowUtc, fingerprints });
+          // CAMERA-AI-SETTINGS-SPEC.md: "known-objects learning ignores
+          // events hidden by settings" - a zone- or kind-hidden event was
+          // never shown to anyone, and teaching a known object from it would
+          // let a setting the installer chose train a DIFFERENT, automatic
+          // hide (Austin's 2026-09-20 override) that nothing here asked for.
+          const learnable = recent.events.filter((e) => !(typeof e.suppressedBy === "string" && e.suppressedBy.startsWith("settings:")));
+          learning = learnKnownObjects({ events: learnable, existing: next, nowUtc, fingerprints });
           learned = learning.learned;
           next = [...next, ...learned];
         } catch (err) {
@@ -808,18 +932,28 @@ export async function startDetect(opts = {}) {
           // real, not about what it saw.
           bumpTimeSourceCounts(cam.timeSource.sinceStart, parsed.timeSource);
           bumpTimeSourceCounts(cam.timeSourceOpenWindow, parsed.timeSource);
-          const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
-          const step = advanceFold(cam.fold, kept, now().toISOString());
-          cam.fold = step.state;
-          // update.event / finished.event already carry species when
-          // advanceFold set one (the best sighting's) - nothing here needs to
-          // single it out, the same as plate: eventsDb.upsert stores whatever
-          // the event holds. storeEvent adds only the known-object flag.
-          for (const update of step.updated) {
-            storeEvent(update, false);
-          }
-          for (const finished of step.finished) {
-            storeEvent(finished, true);
+          // CAMERA-AI-SETTINGS-SPEC.md: "outside the schedule the AI is NOT
+          // WATCHING... frames for that camera are ignored: not folded, not
+          // stored." Checked against THIS frame's own timestamp, not the
+          // wall clock, so a replayed or catch-up frame is judged by the
+          // instant it depicts. Round 1 does not stop the worker (the gate
+          // above and timeSource counting just ran regardless) - only the
+          // fold and the event store are skipped while closed.
+          const aiSchedule = refreshAiSchedule(cam, aiSettingsFor(cameraId), parsed.atUtc);
+          if (aiSchedule.open) {
+            const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
+            const step = advanceFold(cam.fold, kept, now().toISOString());
+            cam.fold = step.state;
+            // update.event / finished.event already carry species when
+            // advanceFold set one (the best sighting's) - nothing here needs to
+            // single it out, the same as plate: eventsDb.upsert stores whatever
+            // the event holds. storeEvent adds only the known-object flag.
+            for (const update of step.updated) {
+              storeEvent(update, false);
+            }
+            for (const finished of step.finished) {
+              storeEvent(finished, true);
+            }
           }
         } else if (parsed.kind === "gate") {
           // Only kept when the gate is actually on for this camera: a worker
@@ -915,6 +1049,12 @@ export async function startDetect(opts = {}) {
   // read leaves nothing hidden and detection starts all the same.
   await syncKnown({ learn: true });
 
+  // Per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md): read once before the
+  // first worker starts, same reasoning as known objects above - the first
+  // frame is judged against real settings rather than the defaults for the
+  // instant it takes this to read the file. loadAiSettingsNow never throws.
+  await loadAiSettingsNow();
+
   // Teach list, piece 1: drop this directory's own files older than 7 days
   // before the first new one can be written, same as the known-objects read
   // above - once at start, and the timer below repeats it once a day.
@@ -952,6 +1092,13 @@ export async function startDetect(opts = {}) {
     if (!stopping) syncKnown({ learn: false });
   }, knownFlushMs);
 
+  // Per-camera AI settings: re-read camera-ai.json every aiSettingsReloadMs
+  // (CAMERA-AI-SETTINGS-SPEC.md: "it re-reads camera-ai.json every 30 s").
+  // loadAiSettingsNow never throws.
+  const aiSettingsTimer = setInterval(() => {
+    if (!stopping) loadAiSettingsNow();
+  }, aiSettingsReloadMs);
+
   // Teach list, piece 1: the once-a-day sweep. pruneGateWindows never throws
   // (its own failures are logged and swallowed), so nothing here needs to
   // catch it either.
@@ -976,6 +1123,11 @@ export async function startDetect(opts = {}) {
       cameraId: cam.cameraId,
       state: cam.state,
       grantedFps: cam.grantedFps,
+      // Per-camera AI settings' schedule, refreshed against THIS instant so a
+      // camera whose worker sends no frames (down, or simply quiet) still
+      // reports accurately rather than freezing at whatever a frame last
+      // said. { open, sinceUtc }: sinceUtc only moves on a real transition.
+      aiSchedule: refreshAiSchedule(cam, aiSettingsFor(cam.cameraId), now().toISOString()),
       // Read only as "this camera is alive", never as "this camera is
       // stalled": with the gate on, a quiet camera can go a whole
       // keepalive (5 s by default, motion_gate.py's DEFAULT_KEEPALIVE_MS) between
@@ -1037,6 +1189,7 @@ export async function startDetect(opts = {}) {
     clearInterval(healthTimer);
     clearInterval(knownPassTimer);
     clearInterval(knownFlushTimer);
+    clearInterval(aiSettingsTimer);
     clearInterval(gateRetentionTimer);
     if (timeSourceWindowTimer) clearInterval(timeSourceWindowTimer);
 
@@ -1106,6 +1259,9 @@ export async function startDetect(opts = {}) {
     knownFlush: () => syncKnown({ learn: false }),
     // For a harness, as knownPass/knownFlush are: run the once-a-day sweep now.
     pruneGateWindows: () => pruneGateWindows(),
+    // For a harness, as knownPass/knownFlush are: re-read camera-ai.json now,
+    // rather than waiting aiSettingsReloadMs.
+    reloadAiSettings: () => loadAiSettingsNow(),
     // For a harness, as tick/pruneGateWindows are: close every camera's
     // timeSource window now, exactly as the gate-off timer would, without a
     // real wait. Exposed unconditionally - closing a window by hand is always

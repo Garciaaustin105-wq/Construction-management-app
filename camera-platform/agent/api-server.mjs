@@ -46,6 +46,7 @@ import { decideRoute, ruleFor, safeNext } from '../dist/routeAccess.js';
 import { validateHistoryRange } from '../dist/healthHistory.js';
 import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
+import { createCameraAiSettings } from './camera-ai-settings.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary, LIBRARY_FILE } from './clip-library.mjs';
 import { createListeners } from './listeners.mjs';
@@ -196,6 +197,10 @@ const UI_FILES = {
   '/ui/activity-client.js': 'activity-client.mjs',
   '/ui/activity-charts.mjs': 'activity-charts.mjs',
   '/ui/cameras-client.js': 'cameras-client.mjs',
+  // The Cameras page's "AI settings" panel (CAMERA-AI-SETTINGS-SPEC.md): its
+  // own client, separate from cameras-client.mjs (one owner per file) --
+  // both load on /cameras-page.
+  '/ui/camera-ai-client.js': 'camera-ai-client.mjs',
   '/ui/recording-client.js': 'recording-client.mjs',
   '/ui/network-client.js': 'network-client.mjs',
   '/ui/session.js': 'session-bar.mjs',
@@ -675,6 +680,10 @@ export function createApiServer({
     stateDir, config, audit: auth.audit, log,
     onChange: () => { driveAssignment = assignDrives(); },
   });
+  // Per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md): zones, schedule,
+  // sensitivity, kinds. agent/detect-service.mjs (a separate process) owns
+  // reading camera-ai.json for detection itself; this only ever writes it.
+  const cameraAiSettings = createCameraAiSettings({ stateDir, config, audit: auth.audit, now, log });
   const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
 
   // The Network page's own samplers (NETWORK-PAGE-SPEC.md): interface
@@ -969,6 +978,7 @@ export function createApiServer({
 
       if (await auth.handle(req, res, pathname, principal)) return;
       if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
+      if (await cameraAiSettings.handle(req, res, pathname, method, principal)) return;
       if (await recordingSettings.handle(req, res, pathname, method, principal)) return;
       if (await clipLibrary.handle(req, res, pathname, method, principal)) return;
 

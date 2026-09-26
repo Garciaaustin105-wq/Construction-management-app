@@ -566,6 +566,24 @@ check("setSuppressed and clearSuppressed count the rows they actually change, an
   db.close();
 });
 
+check("REQUIRED: setSuppressed never overwrites a settings:-hidden row with a known-object id (CAMERA-AI-SETTINGS-SPEC.md: settings-hidden beats known objects)", () => {
+  // Direct proof of the SQL guard itself (agent/events-db.mjs stmts.setSuppressed's
+  // "AND (suppressed_by IS NULL OR suppressed_by NOT LIKE 'settings:%')"), not of
+  // the upstream filtering that happens to keep settings-hidden ids away from it
+  // in production (detect-service.mjs's learning pass). Without this test the
+  // guard is reachable only through that one caller's own pre-filtering, and a
+  // change to either side could silently stop protecting the other.
+  const db = dbWith([ev("zone-hidden", "person", DAY), ev("kind-hidden", "person", DAY + 60_000), ev("plain", "person", DAY + 120_000)]);
+  db.setSuppressed(["zone-hidden"], "settings:zone");
+  db.setSuppressed(["kind-hidden"], "settings:kind");
+  const flags = () => Object.fromEntries(db.all().map((e) => [e.id, e.suppressedBy]));
+  eq(flags(), { "zone-hidden": "settings:zone", "kind-hidden": "settings:kind", plain: null }, "set up: two settings-hidden rows, one plain");
+
+  eq(db.setSuppressed(["zone-hidden", "kind-hidden", "plain"], "obj-1"), 1, "only the plain row is a real change - both settings-hidden rows refuse the overwrite");
+  eq(flags(), { "zone-hidden": "settings:zone", "kind-hidden": "settings:kind", plain: "obj-1" }, "the settings: values are untouched; the plain row is now hidden behind the object");
+  db.close();
+});
+
 check("setSuppressed and clearSuppressed refuse arguments that name nothing", () => {
   const db = dbWith([ev("a", "person", DAY)]);
   db.setSuppressed(["a"], "obj-1");

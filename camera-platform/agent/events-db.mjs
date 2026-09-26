@@ -241,8 +241,13 @@ export function openEventsDb(file) {
     // `IS NOT ?` rather than `!= ?`: it is sqlite's NULL-safe comparison, so
     // a row that is not hidden at all (NULL) is still "different", and a row
     // already hidden behind this very object is left alone and not counted -
-    // the count is of rows that actually changed.
-    setSuppressed: db.prepare("UPDATE events SET suppressed_by = ? WHERE id = ? AND suppressed_by IS NOT ?"),
+    // the count is of rows that actually changed. CAMERA-AI-SETTINGS-SPEC.md:
+    // "settings-hidden beats known objects" - a row already flagged
+    // `settings:zone` or `settings:kind` (agent/detect-service.mjs's own
+    // judgeDetection, applied before the known-objects check) is never
+    // overwritten with a known-object id by this statement; the `NOT LIKE`
+    // guard is the belt, not a trust that no caller would ever try.
+    setSuppressed: db.prepare("UPDATE events SET suppressed_by = ? WHERE id = ? AND suppressed_by IS NOT ? AND (suppressed_by IS NULL OR suppressed_by NOT LIKE 'settings:%')"),
     clearSuppressed: db.prepare("UPDATE events SET suppressed_by = NULL WHERE suppressed_by = ?"),
     // Every distinct camera in the table and how many rows it has, for
     // events retention (EVENTS-RETENTION-SPEC.md): idx_events_camera_first
@@ -519,11 +524,19 @@ export function openEventsDb(file) {
      * Show again every event hidden behind one known object - a reset by
      * hand. Only that object's events: another object's stay hidden. Returns
      * how many rows changed.
+     *
+     * A `settings:` value is never a known-object id in practice (an object's
+     * id is always `${cameraId}:${kind}:${learnedAtMs}`, and `kind` is never
+     * "settings"), so the exact-match WHERE clause already cannot touch one -
+     * this early return is the explicit belt (CAMERA-AI-SETTINGS-SPEC.md:
+     * "a known object's reset never clears a settings: value"), not a trust
+     * in that coincidence holding forever.
      */
     clearSuppressed(objectId) {
       if (!isObjectId(objectId)) {
         throw new TypeError(`clearSuppressed needs an object id, not ${JSON.stringify(objectId)}`);
       }
+      if (objectId.startsWith("settings:")) return 0;
       return Number(stmts.clearSuppressed.run(objectId).changes);
     },
 

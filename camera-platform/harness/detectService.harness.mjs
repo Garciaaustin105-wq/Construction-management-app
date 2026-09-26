@@ -1549,4 +1549,238 @@ await check("THE FEARED ONE: no known-objects log line, detect-health.json or kn
   }
 });
 
+// ---------------- per-camera AI settings (CAMERA-AI-SETTINGS-SPEC.md) ----------------
+//
+// "Where it runs": detect-service.mjs re-reads camera-ai.json, applies the
+// per-camera threshold, kinds and zones before the known-objects check in
+// the event store step, gates frames on the schedule, and reports both the
+// schedule and (indirectly, via events.db) the settings hide in
+// detect-health.json. Every check below drives the REAL service with a fake
+// worker, the same as every check above it.
+
+async function writeAiSettings(stateDir, cameraId, settings) {
+  await writeFile(path.join(stateDir, "camera-ai.json"), JSON.stringify({
+    version: 1,
+    cameras: { [cameraId]: { zones: [], schedule: null, minConfidence: null, kinds: { person: true, vehicle: true }, ...settings, updatedUtc: at(0), updatedBy: "tech" } },
+  }));
+}
+const LEFT_HALF_ZONE = { id: "z1", mode: "watch", points: [[0, 0], [0.5, 0], [0.5, 1], [0, 1]] };
+const LEFT_BOX = { x: 0.1, y: 0.1, w: 0.1, h: 0.2 }; // ground point (0.15, 0.3): inside LEFT_HALF_ZONE
+const RIGHT_BOX = { x: 0.7, y: 0.1, w: 0.1, h: 0.2 }; // ground point (0.75, 0.3): outside it
+
+await check("REQUIRED: below the CAMERA's own threshold is not an event at all - not even a first row", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    await writeAiSettings(stateDir, "cam-1", { minConfidence: 0.7 }); // site floor is 0.5
+    await svc.reloadAiSettings();
+    // 0.65: above the site's own 0.5 floor (so it is not this camera's problem
+    // that the worker never sent it), below THIS camera's 0.7.
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.65, box: LEFT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 0, "never stored, not even while open");
+    db.close();
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("REQUIRED: a kind switched off is STORED, hidden behind settings:kind - never dropped", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    await writeAiSettings(stateDir, "cam-1", { kinds: { person: true, vehicle: false } });
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "vehicle", confidence: 0.9, box: LEFT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    const rows = db.all();
+    eq(rows.length, 1, "stored");
+    eq([rows[0].kind, rows[0].suppressedBy, rows[0].finished], ["vehicle", "settings:kind", true]);
+    db.close();
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("REQUIRED: an out-of-zone event is STORED, hidden behind settings:zone - never dropped; the SAME box inside the watch zone is visible", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    await writeAiSettings(stateDir, "cam-1", { zones: [LEFT_HALF_ZONE] });
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.9, box: RIGHT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    workers[0].say({ type: "frame", atUtc: at(MERGE_GAP_MS + 1000), detections: [{ kind: "person", confidence: 0.9, box: LEFT_BOX }] });
+    await settle();
+    setClock(2 * (MERGE_GAP_MS + 1000));
+    await svc.tick();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    const rows = db.all().sort((a, b) => a.first_ms - b.first_ms);
+    eq(rows.map((r) => r.suppressedBy), ["settings:zone", null], "outside the zone: hidden; inside it: visible");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("kind is judged before zone (matching the contract's own order): a switched-off kind that is ALSO out of zone is reported settings:kind, not settings:zone", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    await writeAiSettings(stateDir, "cam-1", { zones: [LEFT_HALF_ZONE], kinds: { person: true, vehicle: false } });
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "vehicle", confidence: 0.9, box: RIGHT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all()[0].suppressedBy, "settings:kind");
+    db.close();
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("REQUIRED: a bad or missing camera-ai.json keeps the LAST GOOD settings; if there never was a good file, the defaults apply", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    // No file at all yet: the defaults (whole frame, both kinds, site floor).
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.9, box: RIGHT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    let db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all()[0].suppressedBy, null, "no file yet: the defaults, nothing hidden");
+    db.close();
+
+    // A real setting takes hold once written and reloaded.
+    await writeAiSettings(stateDir, "cam-1", { zones: [LEFT_HALF_ZONE] });
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(2 * (MERGE_GAP_MS + 1)), detections: [{ kind: "person", confidence: 0.9, box: RIGHT_BOX }] });
+    await settle();
+    setClock(3 * (MERGE_GAP_MS + 1));
+    await svc.tick();
+    db = openEventsDb(path.join(stateDir, "events.db"));
+    let rows = db.all().sort((a, b) => a.first_ms - b.first_ms);
+    eq(rows[1].suppressedBy, "settings:zone", "the real setting took hold");
+    db.close();
+
+    // Now the file goes bad: a re-read must keep this same good setting.
+    await writeFile(path.join(stateDir, "camera-ai.json"), "not json at all {{{");
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(4 * (MERGE_GAP_MS + 1)), detections: [{ kind: "person", confidence: 0.9, box: RIGHT_BOX }] });
+    await settle();
+    setClock(5 * (MERGE_GAP_MS + 1));
+    await svc.tick();
+    db = openEventsDb(path.join(stateDir, "events.db"));
+    rows = db.all().sort((a, b) => a.first_ms - b.first_ms);
+    eq(rows[2].suppressedBy, "settings:zone", "the LAST GOOD settings are kept - not the defaults, and not a crash");
+    db.close();
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("REQUIRED: known objects never learn from, overwrite, or clear a settings:-hidden event", async () => {
+  const T = Date.parse("2026-09-24T12:00:00.000Z");
+  const stateDir = await knownSite();
+  // ground point (0.8, 0.6): the RIGHT half - outside LEFT_HALF_ZONE, so every
+  // sighting there is settings-hidden the whole time it is offered.
+  const ZONE_HIDDEN_BOX = { x: 0.75, y: 0.4, w: 0.1, h: 0.2 };
+  // ground point (0.25, 0.6): the LEFT half - inside LEFT_HALF_ZONE, visible.
+  const ZONE_VISIBLE_BOX = { x: 0.2, y: 0.4, w: 0.1, h: 0.2 };
+  await writeAiSettings(stateDir, "cam-1", { zones: [LEFT_HALF_ZONE] });
+  const k = await knownRun(stateDir, T);
+  try {
+    await k.svc.reloadAiSettings();
+    // Six still sightings, 30 minutes apart (2.5 hours end to end - past
+    // KNOWN_MIN_EVENTS and KNOWN_MIN_SPAN_MS, so this WOULD teach an object if
+    // it were ever offered to the learner) - every one of them settings-hidden
+    // the whole time. Each finishes as soon as the next one arrives (more than
+    // MERGE_GAP_MS apart); the last needs the explicit finish() below.
+    // conf 0.7, not 0.9: above CONFIDENCE_CEILING (0.85) is refused before it
+    // could even count as too few, and that is not what this check is about.
+    for (let i = 0; i < 6; i += 1) k.play("cam-1", { firstMs: T + i * 30 * 60_000, box: ZONE_HIDDEN_BOX, conf: 0.7 });
+    k.finish(T + 6 * 30 * 60_000);
+    let rows = k.rows();
+    eq(rows.length, 6, "stored, every one of them");
+    eq(rows.every((r) => r.suppressedBy === "settings:zone"), true, "hidden by the zone setting, not dropped");
+    await k.svc.knownPass();
+    eq(await exists(knownFile(stateDir)), false, "REQUIRED: nothing learned from settings-hidden events, however many of them there are");
+    const health = await k.health();
+    eq(health.knownObjects.lastPass.considered, 0, "the learner was never even shown them");
+
+    // The SAME shape of evidence at a spot INSIDE the watch zone teaches
+    // normally - proving the filter is about settings, not the learner being
+    // broken outright.
+    const T2 = T + 4 * 3_600_000;
+    for (let i = 0; i < 6; i += 1) k.play("cam-1", { firstMs: T2 + i * 30 * 60_000, box: ZONE_VISIBLE_BOX, conf: 0.7 });
+    k.finish(T2 + 6 * 30 * 60_000);
+    await k.svc.knownPass();
+    eq(await exists(knownFile(stateDir)), true, "a normal, visible spot still teaches");
+    const [o] = await storedObjects(stateDir);
+    eq(o.cameraId, "cam-1");
+
+    // Even once an object IS active, its learning/matching never reaches out
+    // and takes over a settings-hidden row: setSuppressed (agent/events-db.mjs)
+    // refuses to overwrite a `settings:` value, and this object's own members
+    // were never among the settings-hidden rows in the first place.
+    rows = k.rows();
+    eq(rows.filter((r) => r.suppressedBy === "settings:zone").length, 6, "the settings-hidden rows are exactly as they were - untouched by learning");
+    eq(rows.filter((r) => r.suppressedBy === o.id).length, 6, "the newly taught object's own rows: hidden behind IT, not the zone setting");
+  } finally {
+    await k.svc.stop();
+  }
+});
+
+await check("REQUIRED: outside the schedule, frames are ignored (not folded, not stored), and detect-health.json reports the camera closed", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    // Closed all week: a schedule with every day empty.
+    await writeAiSettings(stateDir, "cam-1", {
+      schedule: { timeZone: "UTC", weekly: [[], [], [], [], [], [], []], closedDates: [] },
+    });
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.9, box: LEFT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 0, "the frame was never folded into an event at all");
+    db.close();
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    const c1 = health.cameras.find((c) => c.cameraId === "cam-1");
+    eq(c1.aiSchedule.open, false, "detect-health.json: not watching");
+    eq(typeof c1.aiSchedule.sinceUtc, "string", "and since when");
+  } finally {
+    await svc.stop();
+  }
+});
+
+await check("a schedule that is open all the time behaves exactly as no schedule at all (aiSchedule.open stays true, frames are folded normally)", async () => {
+  const { stateDir, workers, svc, setClock } = await run();
+  try {
+    await writeAiSettings(stateDir, "cam-1", {
+      schedule: { timeZone: "UTC", weekly: [[{ open: 0, close: 1440 }], [{ open: 0, close: 1440 }], [{ open: 0, close: 1440 }], [{ open: 0, close: 1440 }], [{ open: 0, close: 1440 }], [{ open: 0, close: 1440 }], [{ open: 0, close: 1440 }]], closedDates: [] },
+    });
+    await svc.reloadAiSettings();
+    workers[0].say({ type: "frame", atUtc: at(0), detections: [{ kind: "person", confidence: 0.9, box: LEFT_BOX }] });
+    await settle();
+    setClock(MERGE_GAP_MS + 1);
+    await svc.tick();
+    const db = openEventsDb(path.join(stateDir, "events.db"));
+    eq(db.all().length, 1, "folded and stored as usual");
+    db.close();
+    await svc.writeHealth();
+    const health = JSON.parse(await readFile(path.join(stateDir, "detect-health.json"), "utf8"));
+    eq(health.cameras.find((c) => c.cameraId === "cam-1").aiSchedule.open, true);
+  } finally {
+    await svc.stop();
+  }
+});
+
 report("detect service");

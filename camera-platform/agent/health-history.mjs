@@ -376,11 +376,23 @@ async function readDetectHealth(file, readFileFn) {
  * own comment on why nothing today reads `lastFrameUtc` as a staleness
  * signal by itself).
  *
+ * CAMERA-AI-SETTINGS-SPEC.md: "the detecting sample is 1 only when the
+ * camera's schedule is open AND a frame or gate window is fresh." A schedule
+ * the installer closed means the AI is not watching at all, whatever the
+ * worker's own liveness says -- so a closed `aiSchedule.open` short-circuits
+ * to 0 before either timestamp is even looked at. `cam.aiSchedule` missing
+ * entirely (a detect-health.json from before this feature, or a harness that
+ * never set one) is read as open, never as closed: build rule 5 again -- an
+ * absent field is not itself a "not watching" measurement, and defaulting to
+ * open keeps every existing caller's behaviour unchanged.
+ *
  * Always a real 0 or 1 once `cam` is a real entry -- never "unmeasured":
  * that only happens one level up, when the camera has no entry in the file
  * (or the file itself could not be read) and so no row is written at all.
  */
 function detectingFromCameraHealth(cam, atMs, thresholdMs = DETECTING_THRESHOLD_MS) {
+  const scheduleOpen = cam?.aiSchedule === undefined || cam?.aiSchedule === null ? true : cam.aiSchedule.open === true;
+  if (!scheduleOpen) return 0;
   const lastFrameMs = typeof cam?.lastFrameUtc === 'string' ? Date.parse(cam.lastFrameUtc) : NaN;
   const gateMs = typeof cam?.gate?.lastWindow?.atUtc === 'string' ? Date.parse(cam.gate.lastWindow.atUtc) : NaN;
   const candidates = [lastFrameMs, gateMs].filter((ms) => Number.isFinite(ms));
