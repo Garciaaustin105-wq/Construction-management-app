@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<!--
+  Activity page for the camera-NVR web UI (ACTIVITY-PAGE-SPEC.md).
+
+  Sightings per camera by local hour (24h) or local day (7d) -- never a
+  verdict on who was seen (build rule 11), always in units the page names
+  out loud (build rule 6): "sightings", never "people", "customers" or
+  "visitors". All rendering is done by /ui/activity-client.js (served from
+  agent/ui/activity-client.mjs) and its chart builder, /ui/activity-charts.mjs
+  -- this file only lays out the page's own chrome.
+
+  Colours: pinned dark (data-theme="dark" below, and the client passes
+  CHART_COLORS_DARK), like every other page on this NVR, since 2026-09-26.
+  The light tokens stay for a future app-wide theme switch. Originally this
+  page answered prefers-color-scheme
+  rather than force dark (every other page here -- system.html, review.html,
+  network.html -- hardcodes `color-scheme: dark`). The dataviz skill's own
+  reference palette is validated in BOTH modes (references/palette.md), and
+  agent/ui/health-charts.mjs already carries both CHART_COLORS_DARK and
+  CHART_COLORS_LIGHT -- validated, just never asked for a light surface to
+  render on before. This page asks. The tokens below are exactly those two
+  objects' own values (never re-picked by eye), scoped the way palette.md's
+  own worked example shows: a media query for the OS setting, guarded so a
+  future `data-theme="light"` stamp could still override it, even though
+  nothing on this page sets that attribute yet.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page-bg: #f9f9f7;
+    --surface: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --good: #0ca30c;
+    --warn: #fab219;
+    --bad: #d03b3b;
+    --link: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page-bg: #111317;
+      --surface: #1b1d22;
+      --text-primary: #e8eaed;
+      --text-secondary: #c3c2b7;
+      --muted: #9aa0a6;
+      --grid: #2c2f36;
+      --border: rgba(255,255,255,0.10);
+      --good: #7ddc9a;
+      --warn: #f1e3a0;
+      --bad: #ffb4b4;
+      --link: #8ab4f8;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page-bg: #111317;
+    --surface: #1b1d22;
+    --text-primary: #e8eaed;
+    --text-secondary: #c3c2b7;
+    --muted: #9aa0a6;
+    --grid: #2c2f36;
+    --border: rgba(255,255,255,0.10);
+    --good: #7ddc9a;
+    --warn: #f1e3a0;
+    --bad: #ffb4b4;
+    --link: #8ab4f8;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; padding-bottom: 56px;
+    background: var(--page-bg); color: var(--text-primary);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 900px;
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  h2 { margin: 22px 0 8px; font-size: 15px; }
+  .dim { color: var(--text-secondary); }
+  #explainer { margin: 0 0 12px; font-size: 13px; color: var(--text-secondary); }
+  #coverage { font-size: 12px; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+              margin: 4px 0 14px; }
+  .act-range-btn { min-height: 36px; padding: 6px 16px; border: 1px solid var(--border);
+                   border-radius: 8px; background: var(--surface); color: var(--text-primary);
+                   font: inherit; cursor: pointer; }
+  .act-range-btn[aria-pressed="true"] { border-color: var(--link); font-weight: 600; }
+  .camera-filter { display: flex; align-items: center; gap: 6px; font-size: 13px;
+                   color: var(--text-secondary); }
+  .camera-filter select { min-height: 36px; padding: 4px 8px; border: 1px solid var(--border);
+                          border-radius: 8px; background: var(--surface); color: var(--text-primary);
+                          font: inherit; }
+
+  .notice { padding: 10px 14px; border-radius: 8px; background: var(--surface);
+            border: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); }
+  .notice.problem { color: var(--bad); border-color: var(--bad); }
+
+  .tiles { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 4px 0 8px; }
+  .act-tile { padding: 10px 16px; background: var(--surface); border: 1px solid var(--border);
+              border-radius: 8px; min-width: 150px; }
+  .act-tile-value { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+  .act-tile-label { font-size: 11px; color: var(--muted); letter-spacing: 0.4px;
+                    text-transform: uppercase; margin-top: 2px; }
+  .act-tile.dim .act-tile-value { color: var(--muted); font-weight: 500; font-size: 15px; }
+
+  .panel { margin-top: 4px; padding: 2px 14px 10px; background: var(--surface);
+           border: 1px solid var(--border); border-radius: 8px; }
+  .act-chart { padding: 12px 0 16px; border-bottom: 1px solid var(--grid); }
+  .act-chart:last-child { border-bottom: none; }
+  .act-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .act-svg { width: 100%; height: auto; display: block; cursor: pointer; }
+  .act-bar { transition: opacity 0.1s; }
+  .act-bar:hover, .act-bar-hover { opacity: 0.8; }
+  .act-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 2px;
+                font-size: 12px; color: var(--text-secondary); }
+  .act-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+  .act-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+  .act-small-multiples { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                         gap: 4px 16px; }
+  .act-table-toggle { margin-top: 6px; }
+  .act-table-toggle summary { font-size: 11px; color: var(--muted); cursor: pointer;
+                              letter-spacing: 0.4px; text-transform: uppercase; }
+  .act-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  .act-table th, .act-table td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--grid);
+                                 text-align: left; overflow-wrap: anywhere; }
+  .act-table td.act-cell-blank { color: var(--muted); font-style: italic; }
+  .act-tooltip { position: absolute; pointer-events: none; background: var(--surface);
+                 border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+                 font-size: 12px; color: var(--text-primary); box-shadow: 0 2px 8px var(--border);
+                 white-space: nowrap; z-index: 5; }
+
+  /* Phone: 16px gutter (already body's own padding), no sideways scroll --
+     every chart's SVG already scales to its container's width. */
+  @media (max-width: 480px) {
+    .tiles { gap: 8px; }
+    .act-tile { min-width: 130px; flex: 1 1 130px; }
+    .act-small-multiples { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <h1>Activity</h1>
+  <p id="explainer">A sighting is one continuous stretch of someone (or a vehicle) in view.
+    The same person passing twice counts twice.</p>
+
+  <div class="controls" role="group" aria-label="Range and camera">
+    <div class="act-range-group" role="group" aria-label="Time range">
+      <button type="button" class="act-range-btn" data-range="24h" aria-pressed="true">24h</button>
+      <button type="button" class="act-range-btn" data-range="7d" aria-pressed="false">7d</button>
+    </div>
+    <label class="camera-filter">Camera
+      <select id="camera"><option value="">All cameras</option></select>
+    </label>
+  </div>
+
+  <p id="pageError" class="notice problem" hidden></p>
+  <p id="unavailable" class="notice" hidden>No detector events recorded on this box yet.</p>
+
+  <div id="activityBody">
+    <div id="tiles" class="tiles"></div>
+
+    <h2>Person sightings</h2>
+    <div id="personCharts" class="panel"></div>
+
+    <h2>Vehicle sightings</h2>
+    <div id="vehicleCharts" class="panel"></div>
+
+    <p id="coverage" class="dim"></p>
+  </div>
+
+  <script type="module" src="/ui/activity-client.js"></script>
+<script type="module" src="/ui/session.js"></script>
+</body>
+</html>

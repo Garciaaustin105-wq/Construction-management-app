@@ -228,7 +228,11 @@ function install(byId) {
     createElement: (tag) => (tag === "video" ? new FakeVideo() : new FakeEl(tag)),
     createTextNode: textNode,
   };
-  globalThis.location = { host, protocol: "http:" };
+  // "search" defaults to none, so the very first boot (used by every check
+  // above the deep-link ones below) sees no query string at all -- the exact
+  // condition applyDeepLink's own doc comment says must leave the page
+  // byte-for-byte as it was before that function existed.
+  globalThis.location = { host, protocol: "http:", search: "" };
   globalThis.fetch = (url, opts) => {
     const u = String(url);
     fetchLog.push(u);
@@ -255,7 +259,7 @@ const html = (await readFile(join(import.meta.dirname, "..", "agent", "ui", "rev
   .replaceAll("\r\n", "\n");
 const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const clientUrl = pathToFileURL(join(import.meta.dirname, "..", "agent", "ui", "review-client.mjs")).href;
-const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "clearStrip", "drawStrip",
+const NAMES = ["view", "el", "dayWindow", "shiftDay", "loadCameras", "loadDay", "applyDeepLink", "clearStrip", "drawStrip",
   "drawHours", "movePlayhead", "playAt", "applyPlan", "stopVideo", "wireEvents",
   "exportWindow", "setExportStatus", "clearExport", "offerExport", "wireExport", "setRate", "step", "saveTestClip", "wireTestClip",
   "watchedInstant", "drawCameraTiles", "chooseCamera", "chooseDay", "drawDayButton", "showCalendar",
@@ -1588,6 +1592,42 @@ await check("known objects: nothing readable from the recorder means nothing sho
   } finally {
     globalThis.fetch = pageFetch;
   }
+});
+
+await check("Review deep link: a valid camera + at select the camera, jump to that day, and play that instant", async () => {
+  fetchLog = [];
+  globalThis.location.search = "?camera=cam-2&at=2026-09-11T11:00:00.000Z";
+  const handled = await page.applyDeepLink();
+  eq(handled, true, "a usable camera and/or at is taken over");
+  eq(dom.camera.value, "cam-2", "the requested camera is selected");
+  eq(dom.day.value, "2026-09-11", "the local day the instant falls in");
+  eq(fetchLog.some((u) => u.startsWith("/timeline?") && u.includes("camera=cam-2")), true, "that camera's day was loaded");
+  eq(
+    fetchLog.some((u) => u.startsWith("/playback?") && u.includes("camera=cam-2")
+      && u.includes(encodeURIComponent("2026-09-11T11:00:00.000Z"))),
+    true,
+    "playback was asked for that camera at that instant",
+  );
+});
+
+await check("Review deep link: an unknown camera or an unparsable at is left alone, never guessed at", async () => {
+  const cameraBefore = dom.camera.value;
+  const dayBefore = dom.day.value;
+  fetchLog = [];
+  globalThis.location.search = "?camera=cam-does-not-exist&at=not-a-real-instant";
+  const handled = await page.applyDeepLink();
+  eq(handled, false, "nothing usable in either parameter");
+  eq(dom.camera.value, cameraBefore, "camera left exactly as it was");
+  eq(dom.day.value, dayBefore, "day left exactly as it was");
+  eq(fetchLog.length, 0, "no fetch at all -- a bad deep link never guesses a fallback of its own");
+});
+
+await check("Review deep link: no query string at all changes nothing -- Review without parameters is unchanged", async () => {
+  fetchLog = [];
+  globalThis.location.search = "";
+  const handled = await page.applyDeepLink();
+  eq(handled, false, "no camera and no at: nothing to apply");
+  eq(fetchLog.length, 0, "no fetch here -- the ordinary boot path (proven by every check above) is what ran instead");
 });
 
 globalThis.fetch = realFetch;

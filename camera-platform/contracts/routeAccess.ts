@@ -37,6 +37,11 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/cameras-page": { kind: "page", permission: "camera.manage" },
   "/recording-page": { kind: "page", permission: "storage.manage" },
   "/network-page": { kind: "page", permission: "network.view" },
+  // The activity page (ACTIVITY-PAGE-SPEC.md): sightings per camera by hour
+  // and day. Same reach as /events and /known-objects -- events.view, which
+  // a display never carries (contracts/access.ts), matching the spec's own
+  // words ("A display never sees it").
+  "/activity-page": { kind: "page", permission: "events.view" },
 
   // Page scripts carry no data and are already public source; they still sit
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
@@ -50,6 +55,14 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // see system-client.mjs's own import comment. Same reach as the System
   // page itself: it carries no data of its own, only chart-drawing code.
   "/ui/health-charts.mjs": { kind: "api", permission: "live.view" },
+  // The Activity page's own client and chart builder -- same reach as the
+  // page itself (events.view), not live.view like the scripts above: unlike
+  // health-charts.mjs (chart-drawing code only), activity-charts.mjs's
+  // module is loaded only from a page already gated on events.view, and
+  // keeping the same permission here means a store account that cannot see
+  // the page cannot fetch its script either.
+  "/ui/activity-client.js": { kind: "api", permission: "events.view" },
+  "/ui/activity-charts.mjs": { kind: "api", permission: "events.view" },
   "/ui/wall-client.js": { kind: "api", permission: "live.view" },
   "/ui/grid-layout.js": { kind: "api", permission: "live.view" },
   "/ui/playback.js": { kind: "api", permission: "playback.view" },
@@ -88,6 +101,9 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/still": { kind: "api", permission: "playback.view" },
   // What the detector thinks it saw. Not playback.view: see access.ts.
   "/events": { kind: "api", permission: "events.view" },
+  // Sightings per camera by hour and day (ACTIVITY-PAGE-SPEC.md) -- the same
+  // detector content /events lists one row at a time, bucketed instead.
+  "/activity": { kind: "api", permission: "events.view" },
   // A crop of the frame at an event's most confident moment — the same reach
   // as /events, because a crop IS an event's content, not recorded footage.
   "/event-crop": { kind: "api", permission: "events.view" },

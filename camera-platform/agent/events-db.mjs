@@ -266,6 +266,39 @@ export function openEventsDb(file) {
   };
 
   /**
+   * One prepared statement per distinct camera COUNT, for eventsInWindow and
+   * oldestFirstMs below -- both take a variable-length camera id list, which
+   * sqlite has no way to bind as a single parameter, so the `IN (?, ?, ...)`
+   * clause is built per call-shape and cached by how many placeholders it
+   * needs (the activity page only ever asks for one camera or the whole
+   * configured list, so this cache never grows past a couple of entries).
+   */
+  const eventsInWindowStmts = new Map();
+  function eventsInWindowStmt(n) {
+    let stmt = eventsInWindowStmts.get(n);
+    if (stmt === undefined) {
+      const placeholders = Array.from({ length: n }, () => "?").join(", ");
+      stmt = db.prepare(`
+        SELECT camera_id, kind, first_ms, suppressed_by FROM events
+        WHERE camera_id IN (${placeholders}) AND first_ms >= ? AND first_ms < ?
+        ORDER BY first_ms
+      `);
+      eventsInWindowStmts.set(n, stmt);
+    }
+    return stmt;
+  }
+  const oldestFirstMsStmts = new Map();
+  function oldestFirstMsStmt(n) {
+    let stmt = oldestFirstMsStmts.get(n);
+    if (stmt === undefined) {
+      const placeholders = Array.from({ length: n }, () => "?").join(", ");
+      stmt = db.prepare(`SELECT MIN(first_ms) AS m FROM events WHERE camera_id IN (${placeholders})`);
+      oldestFirstMsStmts.set(n, stmt);
+    }
+    return stmt;
+  }
+
+  /**
    * Run several statements as one: reads see one snapshot, writes land all
    * together or not at all. IMMEDIATE for writes takes the write lock up
    * front, so busy_timeout waits for it instead of failing half way.
@@ -555,6 +588,59 @@ export function openEventsDb(file) {
         // back to waiting the connection's normal amount, not this one's.
         db.exec(`PRAGMA busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MS}`);
       }
+    },
+
+    /**
+     * Every event (finished or not) of these cameras whose `first_ms` falls
+     * in `[startUtc, endUtc)`, for the activity page
+     * (ACTIVITY-PAGE-SPEC.md): only `cameraId`, `kind`, `firstMs` and
+     * `suppressedBy` — exactly what contracts/activity.ts's `countSightings`
+     * needs, and no more (never a plate, a box, a confidence — this route
+     * has no business with any of that).
+     *
+     * Uses `idx_events_camera_first` (camera_id, first_ms): the window is
+     * bounded by `first_ms` alone, unlike `inRange`'s `last_ms >=` /
+     * `first_ms <=` overlap test — an activity bucket is decided by where a
+     * sighting STARTED (build rule: "a sighting counts in the hour its
+     * first_ms falls in"), not by how long it ran, so a still-open event
+     * that started inside the window belongs here even though it has not
+     * finished, and one that started before the window but is still running
+     * now does not.
+     *
+     * `cameraIds` must be a non-empty array of camera ids the caller already
+     * validated (e.g. one requested camera, or the server's whole configured
+     * list) — an empty array answers `[]` rather than the SQL-invalid
+     * `IN ()`, and is never itself "no filter" (that is what the caller
+     * passing every configured camera means instead).
+     */
+    eventsInWindow(cameraIds, startUtc, endUtc) {
+      if (!Array.isArray(cameraIds) || cameraIds.length === 0) return [];
+      const rows = eventsInWindowStmt(cameraIds.length).all(...cameraIds, fromIso(startUtc), fromIso(endUtc));
+      return rows.map((r) => ({
+        cameraId: r.camera_id,
+        kind: r.kind,
+        firstMs: Number(r.first_ms),
+        suppressedBy: r.suppressed_by ?? null,
+      }));
+    },
+
+    /**
+     * The earliest `first_ms` still stored for these cameras, as an ISO
+     * instant — the activity page's `countsFromUtc` (ACTIVITY-PAGE-SPEC.md):
+     * "the oldest event still held, meaning how far back the video, and so
+     * the counts, reach". Events retention deletes an event only once its
+     * own footage is gone (EVENTS-RETENTION-SPEC.md), so this is a real
+     * measurement of that boundary, not a guess.
+     *
+     * `null` when these cameras have no events at all — genuinely different
+     * from "everything is older than instant X": it means there is no X to
+     * compare against yet, so the caller must not treat every bucket as
+     * "before the oldest video" just because this came back empty.
+     */
+    oldestFirstMs(cameraIds) {
+      if (!Array.isArray(cameraIds) || cameraIds.length === 0) return null;
+      const row = oldestFirstMsStmt(cameraIds.length).get(...cameraIds);
+      return row?.m === null || row?.m === undefined ? null : Number(row.m);
     },
 
     close() {

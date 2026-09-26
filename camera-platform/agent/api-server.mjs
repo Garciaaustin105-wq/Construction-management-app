@@ -23,6 +23,7 @@ import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs
 import { runEventRetention, EVENT_RETENTION_INTERVAL_MS } from './event-retention.mjs';
 import { startNetworkFacts } from './network-facts.mjs';
 import { startHealthHistory } from './health-history.mjs';
+import { buildActivityResponse } from './activity-run.mjs';
 import { discoverSadp } from './sadp.mjs';
 import { discoverOnvif } from './wsdiscovery.mjs';
 
@@ -184,6 +185,16 @@ const UI_FILES = {
   '/cameras-page': 'cameras.html',
   '/recording-page': 'recording.html',
   '/network-page': 'network.html',
+  // The activity page (Shape item 3, ACTIVITY-PAGE-SPEC.md): the page shell,
+  // its client, and its own pure chart builder. The chart module is served at
+  // its real ".mjs" filename, not the ".js"-mapped convention every other
+  // entry here uses -- same reason as '/ui/health-charts.mjs' above:
+  // harness/activityPage.harness.mjs imports it directly via Node's own ESM
+  // resolver, which would fail on a "activity-charts.js" that does not exist
+  // on disk.
+  '/activity-page': 'activity.html',
+  '/ui/activity-client.js': 'activity-client.mjs',
+  '/ui/activity-charts.mjs': 'activity-charts.mjs',
   '/ui/cameras-client.js': 'cameras-client.mjs',
   '/ui/recording-client.js': 'recording-client.mjs',
   '/ui/network-client.js': 'network-client.mjs',
@@ -1250,6 +1261,30 @@ export function createApiServer({
           ok: true, cameraId: camera, effective, available: true,
           events: found.events, truncated: found.truncated, hiddenCount: found.hiddenCount, limit,
         }));
+        return;
+      }
+
+      // ---------- /activity ----------
+      // Sightings per camera by local hour and day (ACTIVITY-PAGE-SPEC.md).
+      // Same reach as /events (events.view): this is the same detector
+      // content, bucketed and merged with footage/watch coverage rather than
+      // listed one row at a time.
+      if (pathname === '/activity') {
+        const query = {
+          range: parsedUrl.searchParams.get('range'),
+          tz: parsedUrl.searchParams.get('tz'),
+          camera: parsedUrl.searchParams.get('camera'),
+        };
+        const envelope = buildActivityResponse(
+          { config, index, eventsDb: openEvents(), healthHistory, now },
+          query,
+        );
+        if (envelope.ok === false) {
+          sendError(res, envelope.status, envelope.code, envelope.message);
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(envelope));
         return;
       }
 

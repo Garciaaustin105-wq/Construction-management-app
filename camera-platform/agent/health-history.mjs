@@ -52,6 +52,7 @@ import {
   BUCKET_COUNT,
 } from '../dist/healthHistory.js';
 import { counterRate } from '../dist/networkView.js';
+import { watchedMinutesForBuckets } from '../dist/activityMeasure.js';
 import { cameraFacts, storeFact, recorderRunning } from './healthfacts.mjs';
 import { listInterfaceNames, readCounterSample } from './network-facts.mjs';
 
@@ -78,6 +79,16 @@ export const METRIC = Object.freeze({
   DRIVE_USED_PCT: 'driveUsedPct',
   CAMERA_KBPS: 'recordedKbps',
   CAMERA_RECORDING: 'recording',
+  // The activity page's own sample (ACTIVITY-PAGE-SPEC.md): 1 when
+  // detect-health.json shows this camera's detector alive (a frame or a
+  // gate window) within the last 120 s, 0 otherwise -- always written once
+  // detect-health.json itself is readable and names this camera, exactly
+  // like CAMERA_RECORDING above, and for the same reason: "not watching" is
+  // a real, always-answerable fact, never an unmeasured blank BY ITSELF.
+  // (Before this metric existed for a camera at all, its ABSENCE is what
+  // /activity's watchMeasuredFromUtc / watchedMinutesFor below report as
+  // truly unmeasured -- a missing row, not a stored 0.)
+  CAMERA_DETECTING: 'detecting',
   RECORDER_RUNNING: 'recorderRunning',
   IFACE_RX_MBPS: 'rxMbps',
   IFACE_TX_MBPS: 'txMbps',
@@ -145,6 +156,12 @@ export function openHealthHistoryDb(file) {
     distinctSubjectsSince: db.prepare(
       'SELECT DISTINCT subject FROM samples WHERE metric IN (?, ?) AND at_ms >= ? ORDER BY subject',
     ),
+    // The activity page's watchMeasuredFromUtc (ACTIVITY-PAGE-SPEC.md): the
+    // very first instant a metric+subject was EVER written, unbounded by any
+    // requested range -- a bucket from last month must still read as
+    // "before the sample existed" if the feature was only turned on
+    // yesterday, which a range-bounded query could never tell it.
+    earliestForSubject: db.prepare('SELECT MIN(at_ms) AS m FROM samples WHERE metric = ? AND subject = ?'),
   };
 
   return {
@@ -193,6 +210,12 @@ export function openHealthHistoryDb(file) {
      *  a live process's own memory. */
     distinctSubjectsSince(metricA, metricB, sinceMs) {
       return stmts.distinctSubjectsSince.all(metricA, metricB, sinceMs).map((r) => r.subject);
+    },
+    /** The first instant (epoch ms) this metric+subject ever has a row, or
+     *  null when it never has -- see stmts.earliestForSubject's own comment. */
+    earliestForSubject(metric, subject) {
+      const row = stmts.earliestForSubject.get(metric, subject);
+      return row?.m === null || row?.m === undefined ? null : Number(row.m);
     },
     close: () => db.close(),
   };
@@ -313,6 +336,64 @@ export async function readThermalZoneInputs({ platform = process.platform, readd
 }
 
 // ---------------------------------------------------------------------------
+// detect-health.json: the detector's own health file (agent/detect-service.mjs
+// writeHealth()), read the same tolerant way recorderRunning() reads
+// health.json -- missing, unreadable or not shaped like JSON is "nothing to
+// report", never a thrown error taking the whole tick down with it. Cross-
+// platform and cross-process (a separate service writes this file, may not
+// be installed at all, or may be mid-rewrite): every failure mode answers
+// null, same policy as readProcStatSample and friends above.
+// ---------------------------------------------------------------------------
+
+/** How recent a detector's own last-seen instant must be to count as
+ *  "watching now" -- the spec's own number (ACTIVITY-PAGE-SPEC.md). */
+export const DETECTING_THRESHOLD_MS = 120_000;
+
+async function readDetectHealth(file, readFileFn) {
+  let raw;
+  try {
+    raw = await readFileFn(file, 'utf8');
+  } catch {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || !Array.isArray(parsed.cameras)) return null;
+  return parsed;
+}
+
+/**
+ * Whether `cam` (one entry of detect-health.json's own `cameras` array) was
+ * watching within `thresholdMs` of `atMs`: its `lastFrameUtc`, or its
+ * `gate.lastWindow.atUtc` when the motion gate is on -- either is "the
+ * detector was alive for this camera", per the spec's own words. The more
+ * recent of the two wins when both are present (a gated camera's own
+ * `lastFrameUtc` can lag behind its gate window, per detect-service.mjs's
+ * own comment on why nothing today reads `lastFrameUtc` as a staleness
+ * signal by itself).
+ *
+ * Always a real 0 or 1 once `cam` is a real entry -- never "unmeasured":
+ * that only happens one level up, when the camera has no entry in the file
+ * (or the file itself could not be read) and so no row is written at all.
+ */
+function detectingFromCameraHealth(cam, atMs, thresholdMs = DETECTING_THRESHOLD_MS) {
+  const lastFrameMs = typeof cam?.lastFrameUtc === 'string' ? Date.parse(cam.lastFrameUtc) : NaN;
+  const gateMs = typeof cam?.gate?.lastWindow?.atUtc === 'string' ? Date.parse(cam.gate.lastWindow.atUtc) : NaN;
+  const candidates = [lastFrameMs, gateMs].filter((ms) => Number.isFinite(ms));
+  if (candidates.length === 0) return 0;
+  const mostRecentMs = Math.max(...candidates);
+  // Matches recordingStateSample's own convention (contracts/healthHistory.ts):
+  // no lower-bound guard against a timestamp that looks like it is in the
+  // future -- two processes' clocks are assumed to agree, the same
+  // assumption already made everywhere else in this file.
+  return atMs - mostRecentMs <= thresholdMs ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
 // Segments sealed inside one 60s tick's own window -- NOT cameraFacts' lifetime
 // aggregate. `endMsExclusive` is the tick's own `atMs`; a segment must be
 // sealed (state='sealed'), have a measured byte count, and have sealed inside
@@ -390,6 +471,7 @@ export function startHealthHistory({
   log = () => {},
 } = {}) {
   const healthFile = join(stateDir, 'health.json');
+  const detectHealthFile = join(stateDir, 'detect-health.json');
   const cameraIds = config.cameras.map((c) => c.cameraId);
   // Computed once, from config, the same way cameraIds is above -- stable for
   // this process's lifetime and recomputed identically on every restart as
@@ -497,6 +579,24 @@ export function startHealthHistory({
       const recordingValue = recordingStateSample(lastSealedUtc, atUtc, recordingThresholdSeconds);
       // Always written -- recordingStateSample is never "unmeasured" (its own doc comment).
       rows.push({ metric: METRIC.CAMERA_RECORDING, subject: cameraId, atMs, value: recordingValue });
+    }
+
+    // --- detecting: the activity page's watched-minutes source. A row is
+    // written ONLY for a camera detect-health.json itself names -- the file
+    // missing, unreadable, or simply not yet mentioning this camera (the
+    // detector was never installed, or has not started for it) writes
+    // NOTHING for it, ever, rather than a guessed 0 (build rule 5): that
+    // absence is exactly what /activity's watchMeasuredFromUtc reports as
+    // "watch time not measured", and a stored 0 here would instead read as
+    // "measured, and definitely not watching", which is a different claim.
+    const detectHealth = await readDetectHealth(detectHealthFile, readFileFn);
+    if (detectHealth !== null) {
+      const byId = new Map(detectHealth.cameras.map((c) => [c.cameraId, c]));
+      for (const cameraId of cameraIds) {
+        const cam = byId.get(cameraId);
+        if (cam === undefined) continue;
+        rows.push({ metric: METRIC.CAMERA_DETECTING, subject: cameraId, atMs, value: detectingFromCameraHealth(cam, atMs) });
+      }
     }
 
     // --- recorder alive ---
@@ -675,5 +775,65 @@ export function startHealthHistory({
     db.close();
   }
 
-  return { runTick, runPrune: runPruneToCompletion, readHistory, initialTick, close };
+  /**
+   * The activity page's own read (ACTIVITY-PAGE-SPEC.md): for each of
+   * `cameraIds`, how many minutes of each bucket in `edges` the `detecting`
+   * sample was 1. Each camera's own bucket arithmetic is gated on THAT
+   * CAMERA'S OWN earliest `detecting` sample, never a different camera's --
+   * a camera added to the site later than another must still read null
+   * (never a guessed 0) for the hours before ITS OWN sampling began, even
+   * while a sibling camera in the same request already has months of
+   * history (build rule 5: a blank is not a zero). `edges` is whatever
+   * contracts/activity.ts's `hourBucketsFor24h` or one day's own `hours`
+   * from `dayBucketsFor7d` produced -- this function does not care which,
+   * it only reads the store between the first and last edge's own instants.
+   *
+   * The returned top-level `watchMeasuredFromUtc` is the site-wide MIN
+   * across every camera in `cameraIds` (null when none of them has ever
+   * been sampled) -- documented, site-wide metadata for the response
+   * envelope, deliberately NOT what gates any one camera's own per-bucket
+   * arithmetic below.
+   *
+   * The arithmetic itself (which samples land in which bucket, and the
+   * null-before-watchMeasuredFromUtc rule) is
+   * contracts/activityMeasure.ts's watchedMinutesForBuckets -- this is only
+   * the I/O: reading the rows and each camera's own earliest-ever instant
+   * back out of health-history.db.
+   */
+  function watchedMinutesFor(cameraIdsToRead, edges) {
+    // Each camera's OWN earliest `detecting` sample -- never borrowed from a
+    // different camera in the same request. A camera added to the site after
+    // another one already had months of history must still come back null
+    // for the hours before ITS OWN sampling began, even though a sibling
+    // camera's sampling started earlier (build rule 5: a blank is not a
+    // zero -- see the two fixed reviewer findings this guards against).
+    let earliestMs = null; // the site-wide MIN, for the top-level envelope field only.
+    const earliestMsByCamera = new Map();
+    for (const cameraId of cameraIdsToRead) {
+      const e = db.earliestForSubject(METRIC.CAMERA_DETECTING, cameraId);
+      earliestMsByCamera.set(cameraId, e);
+      if (e !== null && (earliestMs === null || e < earliestMs)) earliestMs = e;
+    }
+    const watchMeasuredFromUtc = earliestMs === null ? null : new Date(earliestMs).toISOString();
+
+    const perCamera = new Map();
+    if (edges.length > 0) {
+      const rangeStartMs = Math.min(...edges.map((e) => Date.parse(e.startUtc)));
+      const rangeEndMs = Math.max(...edges.map((e) => Date.parse(e.endUtc)));
+      for (const cameraId of cameraIdsToRead) {
+        const samples = db
+          .rangeFor(METRIC.CAMERA_DETECTING, cameraId, rangeStartMs, rangeEndMs)
+          .map((r) => ({ atUtc: new Date(r.atMs).toISOString(), value: r.value === 1 ? 1 : 0 }));
+        const camEarliestMs = earliestMsByCamera.get(cameraId) ?? null;
+        const camWatchMeasuredFromUtc = camEarliestMs === null ? null : new Date(camEarliestMs).toISOString();
+        perCamera.set(cameraId, watchedMinutesForBuckets(edges, samples, camWatchMeasuredFromUtc));
+      }
+    } else {
+      for (const cameraId of cameraIdsToRead) perCamera.set(cameraId, []);
+    }
+
+    return { watchMeasuredFromUtc, perCamera };
+  }
+
+  return { runTick, runPrune: runPruneToCompletion, readHistory, watchedMinutesFor, initialTick, close };
 }

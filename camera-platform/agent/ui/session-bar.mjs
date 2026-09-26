@@ -34,6 +34,20 @@ function bar(principal, fetchFn) {
   who.textContent = `${principal.username} (${principal.role})`;
   el.append(who);
 
+  // The Activity page (ACTIVITY-PAGE-SPEC.md): both roles carry events.view
+  // (contracts/access.ts -- installer holds every permission, and it is one
+  // of the store role's own daily ones), so this link is not restricted to
+  // installer like Cameras/Recording/Accounts below -- it is one of "the
+  // pages the store role uses", the spec's own words.
+  for (const [href, text] of [["/activity-page", "Activity"]]) {
+    if (location.pathname === href) continue;
+    const link = document.createElement("a");
+    link.href = href;
+    link.textContent = text;
+    link.style.cssText = "color:#8ab4f8";
+    el.append(link);
+  }
+
   if (principal.role === "installer") {
     for (const [href, text] of [["/cameras-page", "Cameras"], ["/recording-page", "Recording"], ["/accounts-page", "Accounts"]]) {
       if (location.pathname === href) continue;
@@ -74,6 +88,7 @@ function bar(principal, fetchFn) {
 export const PAGE_NEEDS = {
   "/review": "playback.view",
   "/system": "live.view",
+  "/activity-page": "events.view",
   "/accounts-page": "account.manage",
   "/cameras-page": "camera.manage",
   "/recording-page": "storage.manage",

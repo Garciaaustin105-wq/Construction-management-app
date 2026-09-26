@@ -727,7 +727,58 @@ async function loadCameras() {
   if (firstValue !== null) el.camera.value = firstValue;
   drawCameraTiles();
   showPageError(null);
+  if (!(await applyDeepLink())) {
+    await loadDay();
+  }
+}
+
+/**
+ * The Review deep link (ACTIVITY-PAGE-SPEC.md): "/review?camera=<id>&at=<ISO>
+ * opens Review at that camera and time." Called once from loadCameras(),
+ * right after the camera list is populated -- so a `camera` id is checked
+ * against the list this page just loaded, never assumed to exist. Returns
+ * true when it took over navigation (loadCameras() must then NOT also call
+ * the default loadDay(), or the day would load twice); false when there was
+ * nothing usable to apply. With no query string at all this is the first
+ * thing false is returned for, which is what keeps "Review with no
+ * parameters" byte-for-byte the same page it was before this function
+ * existed -- it costs one URLSearchParams read and two false comparisons,
+ * then gets out of the way.
+ *
+ * A `camera` absent from the list, or an `at` that does not parse as an
+ * instant (Date.parse), is left alone rather than guessed at -- this never
+ * throws and never blanks the page; a bad or partial deep link just falls
+ * back to whatever loadCameras()'s own defaults already picked (the first
+ * camera, today). Either half may be used without the other: a link with
+ * only `camera` switches cameras and loads today; a link with only `at`
+ * keeps the default camera and jumps to that day and instant.
+ */
+async function applyDeepLink() {
+  const params = new URLSearchParams(location.search);
+  const cameraParam = params.get('camera');
+  const atParam = params.get('at');
+  if (cameraParam === null && atParam === null) return false;
+
+  const atMs = atParam !== null ? Date.parse(atParam) : NaN;
+  const atValid = atParam !== null && Number.isFinite(atMs);
+  const cameraValid = cameraParam !== null
+    && Array.from(el.camera.childNodes).some((o) => o.value === cameraParam);
+  if (!cameraValid && !atValid) return false;
+
+  if (cameraValid) {
+    el.camera.value = cameraParam;
+    drawCameraTiles();
+  }
+  if (atValid) {
+    el.day.value = localDayValue(new Date(atMs));
+    view.followDay = null;
+    drawDayButton();
+  }
+  stopVideo();
+  setStatus('');
   await loadDay();
+  if (atValid) await playAt(atParam);
+  return true;
 }
 
 /**
