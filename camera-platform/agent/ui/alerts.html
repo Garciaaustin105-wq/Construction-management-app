@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<!--
+  Alerts page for the camera-NVR web UI (MANAGER-ALERTS-SPEC.md "The phone
+  side"): "Get alerts on this phone" (register /sw.js, subscribe with the
+  box's own VAPID public key), choose all rules or pick some, "Send a test
+  alert", and a list of this account's own devices, each with Remove. All
+  rendering is done by /ui/alerts-client.js (served from agent/ui/alerts-
+  client.mjs) -- this file only lays out the page's own chrome. The rule
+  picker's own show/hide is toggled from JS, by that same client, from the
+  radios' own `change` event (see #rulePickList's own CSS comment below for
+  why a pure-CSS `:checked` toggle cannot work here).
+
+  Dark, pinned (data-theme="dark"), like every other page on this NVR since
+  2026-09-26. Phone width: 16px gutter (body padding below), no sideways
+  scroll.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alerts</title>
+<style>
+  :root { color-scheme: dark; --page-bg:#111317; --surface:#1b1d22; --text-primary:#e8eaed;
+          --text-secondary:#c3c2b7; --muted:#9aa0a6; --border:rgba(255,255,255,0.10);
+          --bad:#ffb4b4; --good:#9be29b; --link:#8ab4f8; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; padding-bottom:56px; background:var(--page-bg); color:var(--text-primary);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; max-width:640px; overflow-x:hidden; }
+  h1 { margin:0 0 12px; font-size:20px; }
+  h2 { margin:0 0 8px; font-size:15px; }
+  .dim { color: var(--text-secondary); }
+  .panel { padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+           margin-bottom:14px; max-width:100%; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  label.row { font-size:inherit; color:inherit; }
+  button { font:inherit; padding:8px 14px; border:0; border-radius:6px; background:#4c8bf5; color:#fff;
+           cursor:pointer; min-height:36px; }
+  button.secondary { background:var(--page-bg); border:1px solid var(--border); color:var(--text-primary); }
+  button:disabled { opacity:0.5; cursor:default; }
+  .notice { padding:10px 14px; border-radius:8px; background:var(--surface); border:1px solid var(--border);
+            font-size:13px; color:var(--text-secondary); }
+  .notice.problem { color: var(--bad); border-color: var(--bad); }
+  #secureNotice { margin-bottom:14px; }
+  #iosHint { margin-bottom:14px; }
+  /* Shown/hidden by alerts-client.mjs's own updateRulePickerVisibility, from
+     the radios' `change` event -- NOT by CSS: #ruleModePick sits inside its
+     own <div class="row"> (see the markup below), so it is never a REAL
+     sibling of #rulePickList and a `:checked ~` selector could never match
+     here in a real browser. `[hidden]` (below) wins over this rule via
+     `!important` when the JS collapses it. */
+  #rulePickList { display:flex; flex-direction:column; gap:6px; margin:8px 0 0 22px; }
+  #deviceList { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:6px; }
+  #deviceList li { display:flex; justify-content:space-between; align-items:center; gap:10px;
+                   border-top:1px solid var(--border); padding-top:6px; }
+  #deviceList li:first-child { border-top:none; padding-top:0; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+  <h1>Alerts</h1>
+  <p class="dim">Get a push notification on this phone when a rule fires.</p>
+
+  <p id="secureNotice" class="notice problem" hidden></p>
+  <p id="iosHint" class="notice" hidden></p>
+
+  <section class="panel" id="alertsBody">
+    <h2>This device</h2>
+
+    <div class="row">
+      <input type="radio" id="ruleModeAll" name="ruleMode" checked>
+      <label for="ruleModeAll">All my rules</label>
+    </div>
+    <div class="row">
+      <input type="radio" id="ruleModePick" name="ruleMode">
+      <label for="ruleModePick">Pick rules</label>
+    </div>
+    <div id="rulePickList" hidden></div>
+
+    <div class="row" style="margin-top:10px">
+      <button id="subscribeBtn" type="button">Get alerts on this phone</button>
+      <span id="subscribeStatus" class="dim"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Test</h2>
+    <div class="row">
+      <button id="testBtn" type="button" class="secondary">Send a test alert</button>
+      <span id="testStatus" class="dim"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>My devices</h2>
+    <p id="deviceEmpty" class="dim" hidden>No devices yet.</p>
+    <ul id="deviceList"></ul>
+  </section>
+
+  <script type="module" src="/ui/alerts-client.js"></script>
+  <script type="module" src="/ui/session.js"></script>
+</body>
+</html>

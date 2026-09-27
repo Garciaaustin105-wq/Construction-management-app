@@ -26,6 +26,13 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/login": { kind: "public" },
   "/ui/login-client.js": { kind: "public" },
   "/auth/state": { kind: "public" },
+  // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md "A service
+  // worker"). Public, deliberately: "it holds no secrets, and a service
+  // worker fetch must not depend on the session" — a push or notificationclick
+  // event fires with no cookie attached (the browser, not this page, wakes
+  // the worker), so gating this file behind a permission would make every
+  // push after a session expired fail to even load the handler that shows it.
+  "/sw.js": { kind: "public" },
 
   "/": { kind: "page", permission: "live.view" },
   "/review": { kind: "page", permission: "playback.view" },
@@ -49,6 +56,17 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // and /activity-page already use, which every role but a display carries).
   "/rules-page": { kind: "page", permission: "rules.manage" },
   "/reports-page": { kind: "page", permission: "events.view" },
+  // The Alerts page (MANAGER-ALERTS-SPEC.md "The phone side"): "for managers
+  // and installers" — rules.manage, the same reach as /rules-page, not
+  // events.view like the push/* API routes further down. This page's own
+  // rule-picker calls GET /rules, which already needs rules.manage, so
+  // gating the store account out of the PAGE (rather than letting it open a
+  // page whose own rule list would 403) keeps what the nav link hides
+  // (agent/ui/session-bar.mjs's hideRefusedLinks) consistent with what the
+  // page could actually do once opened. A store account can still reach
+  // every /push/* route directly (see that section's own comment) — it just
+  // has no page here built for it.
+  "/alerts-page": { kind: "page", permission: "rules.manage" },
 
   // Page scripts carry no data and are already public source; they still sit
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
@@ -79,6 +97,8 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // The Rules and Reports pages' own clients — same reach as their pages.
   "/ui/rules-client.js": { kind: "api", permission: "rules.manage" },
   "/ui/reports-client.js": { kind: "api", permission: "events.view" },
+  // The Alerts page's own client — same reach as its page.
+  "/ui/alerts-client.js": { kind: "api", permission: "rules.manage" },
   // The Areas panel on the Cameras page (MANAGER-RULES-SPEC.md section 1):
   // installer's own drawing surface, same reach as camera-ai-client.js.
   "/ui/areas-client.js": { kind: "api", permission: "camera.manage" },
@@ -192,6 +212,27 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // (the installer via ALL_PERMISSIONS, the manager explicitly), and to
   // nobody else.
   "/open-hours": { kind: "api", permission: "hours.manage" },
+
+  // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md). The spec's
+  // own words are "rules.manage or events.view" for who may see the public
+  // key and manage a subscription — but every role that carries rules.manage
+  // (manager, installer) also carries events.view (contracts/access.ts's own
+  // MANAGER_PERMISSIONS and ALL_PERMISSIONS), so "rules.manage or events.view"
+  // and "events.view" admit exactly the same set of roles. events.view alone
+  // is what this table's single-permission-per-route shape can express, and
+  // it is the same reach /events and /reports already use — any account that
+  // could ever see a firing may also opt a device in to hear about one.
+  // Deliberately NOT gated on the managerRules feature switch (unlike /rules,
+  // /reports, /areas): a subscription is account data, useful to keep even
+  // while the switch happens to be off, and MANAGER-ALERTS-SPEC.md's own
+  // "Tests that matter" asks only that the SENDER goes idle when the switch
+  // is off, never that these routes 404.
+  "/push/public-key": { kind: "api", permission: "events.view" },
+  "/push/my-subscriptions": { kind: "api", permission: "events.view" },
+  // The installer's own per-account count (MANAGER-ALERTS-SPEC.md: "the
+  // installer can see a count per account, but never the endpoints") — the
+  // same reach as /accounts and /displays, account.manage.
+  "/push/counts": { kind: "api", permission: "account.manage" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -224,6 +265,12 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/areas": { kind: "api", permission: "camera.manage" },
   "/rules": { kind: "api", permission: "rules.manage" },
   "/open-hours": { kind: "api", permission: "hours.manage" },
+  // Manager rules, build 2 (MANAGER-ALERTS-SPEC.md) — same reach as their GET
+  // siblings above.
+  "/push/subscribe": { kind: "api", permission: "events.view" },
+  // "Send a test alert", own devices only — the handler scopes it to the
+  // caller's own subscriptions; this table only says who may reach it at all.
+  "/push/test": { kind: "api", permission: "events.view" },
 });
 
 /**
@@ -243,6 +290,10 @@ const PREFIXED: ReadonlyArray<{ method: string; prefix: string; suffix: string; 
   // DELETE /areas/<areaId>: removes one area — installer only, same reach as
   // drawing one (MANAGER-RULES-SPEC.md section 5: "draw, name, and delete").
   { method: "DELETE", prefix: "/areas/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
+  // POST /push/unsubscribe/<id>: removes one of the CALLER'S OWN devices
+  // (MANAGER-ALERTS-SPEC.md) — own-scoping happens in the handler, same as
+  // every other "own only" route in this table.
+  { method: "POST", prefix: "/push/unsubscribe/", suffix: "", rule: { kind: "api", permission: "events.view" } },
 ]);
 
 /** The rule for a request, or null when the server has no such route. */

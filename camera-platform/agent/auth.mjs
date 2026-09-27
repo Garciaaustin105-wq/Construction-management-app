@@ -655,5 +655,21 @@ export async function createAuth({
     return true;
   }
 
-  return { principalOf, handle, audit, isBroken: () => broken };
+  /**
+   * The account's CURRENT role, for a caller that already has a username
+   * from somewhere else (a stored push subscription, MANAGER-ALERTS-SPEC.md)
+   * and must re-check standing fresh on every use rather than trust anything
+   * cached alongside that username -- contracts/pushAlerts.ts's own
+   * `AccountStanding`/`mayReceiveFiring`. `role: null` covers both "no such
+   * account" and "not signed in" the same way principalOf's own anonymous
+   * fallback does; this function performs no I/O beyond the in-memory `users`
+   * map already loaded above, so calling it often (every push-delivery tick,
+   * for every subscription) costs nothing extra.
+   */
+  function standingOf(username) {
+    const account = typeof username === 'string' ? users.get(username) : undefined;
+    return { role: account ? account.role : null };
+  }
+
+  return { principalOf, handle, audit, standingOf, isBroken: () => broken };
 }

@@ -45,8 +45,15 @@ function fakeDocWithLinks(hrefs) {
   return { querySelectorAll: () => anchors, _anchors: anchors };
 }
 
-check("FEATURE_LINKS names the Activity, Rules and Reports pages, and nothing else", () => {
-  eq(sessionBar.FEATURE_LINKS, { "/activity-page": "activity", "/rules-page": "managerRules", "/reports-page": "managerRules" });
+check("FEATURE_LINKS names the Activity, Rules, Reports and Alerts pages, and nothing else", () => {
+  // Alerts (MANAGER-ALERTS-SPEC.md, this codebase's build 2) joined Rules and
+  // Reports on the managerRules switch after this check was first written --
+  // updated here rather than left to silently drift, the same "and nothing
+  // else" exhaustiveness this check's own name promises.
+  eq(sessionBar.FEATURE_LINKS, {
+    "/activity-page": "activity", "/rules-page": "managerRules", "/reports-page": "managerRules",
+    "/alerts-page": "managerRules",
+  });
 });
 
 check("PAGE_NEEDS names rules.manage for Rules and events.view for Reports, matching routeAccess.ts", () => {

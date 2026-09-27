@@ -52,6 +52,47 @@ CREATE INDEX IF NOT EXISTS idx_firings_camera_end ON firings(camera_id, end_ms);
 -- courtesy from the READER, not a guarantee from STORAGE -- this index is
 -- the guarantee.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_firings_dedup ON firings(rule_id, what, start_ms);
+
+-- Manager rules, build 2 (MANAGER-ALERTS-SPEC.md "Delivery"): one row per
+-- (firing, subscription) attempted-or-attempting send. Lives in this same
+-- database, not a file of its own, because "never sent twice" and "resume
+-- after a crash without double-sending" are both questions about firings —
+-- the same rows this file already owns — asked from a second angle, not a
+-- new subject. agent/push-delivery.mjs is the only reader and writer.
+-- state: 'sending' (claimed, outcome not yet known -- see below), 'sent',
+-- 'retry' (429/5xx/network error; next_at_ms says when), 'failed' (retries
+-- exhausted, or any other status), 'gone' (404/410; the subscription itself
+-- is deleted by the caller in the SAME pass).
+-- UNIQUE(firing_id, subscription_id): "a firing is never sent twice to the
+-- same subscription" is enforced HERE, at storage, the same discipline
+-- idx_firings_dedup above already keeps for firings themselves -- an upsert
+-- (INSERT ... ON CONFLICT) is the only way this file's own code ever writes
+-- a second row for a pair, never a second INSERT.
+-- The 'sending' state exists for exactly one failure it protects against: a
+-- crash between the network call returning and this file recording what it
+-- returned would otherwise mean the NEXT process cannot tell "never
+-- attempted" from "attempted, outcome unknown" -- and resending on that
+-- guess risks the one thing this build refuses to guess at (build rule 10):
+-- a phone that already got the alert getting it twice. Every row is claimed
+-- 'sending' (attempts and last_code carried over from any prior row)
+-- immediately before the network call and resolved to a real state right
+-- after it returns; a 'sending' row still on disk when a pass BEGINS is
+-- necessarily left over from a previous run that never got to resolve it,
+-- and is swept to 'failed' before anything else runs (see
+-- push-delivery.mjs's resolveStaleSending) -- never retried, because
+-- retrying is exactly the guess that could double-send.
+CREATE TABLE IF NOT EXISTS deliveries (
+  firing_id INTEGER NOT NULL,
+  subscription_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_at_ms INTEGER,
+  last_code INTEGER,
+  updated_ms INTEGER NOT NULL,
+  UNIQUE(firing_id, subscription_id)
+);
+-- The sender's own read: rows due for a retry right now.
+CREATE INDEX IF NOT EXISTS idx_deliveries_retry ON deliveries(state, next_at_ms);
 `;
 
 const BUSY_TIMEOUT_MS = 2000;
@@ -77,6 +118,36 @@ export function openRulesDb(file) {
   );
   const allStmt = db.prepare(
     "SELECT rule_id AS ruleId, rule_name AS ruleName, camera_id AS cameraId, area_id AS areaId, kind, what, complete, start_ms AS startMs, end_ms AS endMs, duration_ms AS durationMs, text, alert_wanted AS alertWanted, report_wanted AS reportWanted FROM firings ORDER BY start_ms, id",
+  );
+  // push-delivery.mjs's own read: every firing that wants a phone alert, WITH
+  // its row id -- the id deliveries.firing_id refers to, which no other
+  // reader in this file has ever needed (a report groups by rule_id, never a
+  // row id).
+  const wantingAlertStmt = db.prepare(
+    "SELECT id, rule_id AS ruleId, rule_name AS ruleName, camera_id AS cameraId, area_id AS areaId, kind, what, complete, start_ms AS startMs, end_ms AS endMs, duration_ms AS durationMs, text, alert_wanted AS alertWanted, report_wanted AS reportWanted FROM firings WHERE alert_wanted = 1 ORDER BY id",
+  );
+  const deliveryRowStmt = db.prepare(
+    "SELECT state, attempts, next_at_ms AS nextAtMs, last_code AS lastCode FROM deliveries WHERE firing_id = ? AND subscription_id = ?",
+  );
+  // Claims a pair right before the network call, carrying over attempts and
+  // last_code from any existing row (a retry becoming a new attempt is still
+  // the SAME attempt count until the attempt resolves) -- see this file's own
+  // schema comment on 'sending' above.
+  const claimSendingStmt = db.prepare(`
+    INSERT INTO deliveries (firing_id, subscription_id, state, attempts, next_at_ms, last_code, updated_ms)
+    VALUES (?, ?, 'sending', 0, NULL, NULL, ?)
+    ON CONFLICT(firing_id, subscription_id) DO UPDATE SET state = 'sending', updated_ms = excluded.updated_ms
+  `);
+  const recordOutcomeStmt = db.prepare(`
+    INSERT INTO deliveries (firing_id, subscription_id, state, attempts, next_at_ms, last_code, updated_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(firing_id, subscription_id) DO UPDATE SET
+      state = excluded.state, attempts = excluded.attempts,
+      next_at_ms = excluded.next_at_ms, last_code = excluded.last_code, updated_ms = excluded.updated_ms
+  `);
+  const resolveStaleSendingStmt = db.prepare("UPDATE deliveries SET state = 'failed', updated_ms = ? WHERE state = 'sending'");
+  const allDeliveriesStmt = db.prepare(
+    "SELECT firing_id AS firingId, subscription_id AS subscriptionId, state, attempts, next_at_ms AS nextAtMs, last_code AS lastCode FROM deliveries ORDER BY firing_id, subscription_id",
   );
 
   /**
@@ -146,9 +217,53 @@ export function openRulesDb(file) {
     return allStmt.all().map(toBool);
   }
 
+  /** push-delivery.mjs's own candidates: every firing wanting a phone alert,
+   *  oldest first, WITH its row id (see wantingAlertStmt above). */
+  function firingsWantingAlert() {
+    return wantingAlertStmt.all().map(toBool);
+  }
+
+  /** The one delivery row for this (firing, subscription) pair, or null —
+   *  never attempted before. */
+  function deliveryRow(firingId, subscriptionId) {
+    return deliveryRowStmt.get(firingId, subscriptionId) ?? null;
+  }
+
+  /** Claims a pair 'sending' immediately before the network call — see this
+   *  file's own schema comment on why this write happens BEFORE the call,
+   *  not after. */
+  function claimSending(firingId, subscriptionId, nowMs) {
+    claimSendingStmt.run(firingId, subscriptionId, nowMs);
+  }
+
+  /** Records what actually happened. `outcome.nextAtMs` is null for every
+   *  state but 'retry'; `outcome.lastCode` is null for a network error (no
+   *  HTTP status was ever received). */
+  function recordOutcome(firingId, subscriptionId, outcome, nowMs) {
+    recordOutcomeStmt.run(firingId, subscriptionId, outcome.state, outcome.attempts, outcome.nextAtMs ?? null, outcome.lastCode ?? null, nowMs);
+  }
+
+  /** Crash recovery (this file's own schema comment on 'sending'): every row
+   *  still claimed 'sending' when a NEW pass begins was left there by a run
+   *  that never got to record what actually happened — resolved to 'failed'
+   *  rather than retried, because retrying is the one guess that could send
+   *  the same alert twice. Returns how many rows this call resolved, for a
+   *  harness to prove it ran. */
+  function resolveStaleSending(nowMs) {
+    return resolveStaleSendingStmt.run(nowMs).changes;
+  }
+
+  /** Every delivery row, for a harness — never used on a hot path. */
+  function allDeliveries() {
+    return allDeliveriesStmt.all();
+  }
+
   function close() {
     db.close();
   }
 
-  return { insert, lastFiredAtMs, firingsInRange, cameraRowCounts, deleteEndedBefore, all, close };
+  return {
+    insert, lastFiredAtMs, firingsInRange, cameraRowCounts, deleteEndedBefore, all, close,
+    firingsWantingAlert, deliveryRow, claimSending, recordOutcome, resolveStaleSending, allDeliveries,
+  };
 }

@@ -53,6 +53,8 @@ import { createManagerRules } from './manager-rules.mjs';
 import { openOccupancyDb, OCCUPANCY_DB_FILE } from './occupancy-db.mjs';
 import { openRulesDb, RULES_DB_FILE } from './rules-db.mjs';
 import { evaluateManagerRule, reportDayRange, wholeCameraAreaId } from '../dist/managerRules.js';
+import { createPushSubscriptionStore } from './push-store.mjs';
+import { createPushDelivery, PUSH_SENDER_INTERVAL_MS } from './push-delivery.mjs';
 import { createSavedLayouts } from './saved-layouts.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary, LIBRARY_FILE } from './clip-library.mjs';
@@ -221,6 +223,11 @@ const UI_FILES = {
   '/ui/rules-client.js': 'rules-client.mjs',
   '/reports-page': 'reports.html',
   '/ui/reports-client.js': 'reports-client.mjs',
+  // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md "The phone
+  // side"). '/sw.js' is NOT here -- it is served at root scope with its own
+  // extra header, in its own branch below, not through this generic map.
+  '/alerts-page': 'alerts.html',
+  '/ui/alerts-client.js': 'alerts-client.mjs',
   '/ui/cameras-client.js': 'cameras-client.mjs',
   // The Cameras page's "AI settings" panel (CAMERA-AI-SETTINGS-SPEC.md): its
   // own client, separate from cameras-client.mjs (one owner per file) --
@@ -679,6 +686,19 @@ export function createApiServer({
   // deployment gets the real MANAGER_RULES_EVALUATOR_INTERVAL_MS (5 s, per
   // MANAGER-RULES-SPEC.md section 3: "reading occupancy.db every 5 s").
   managerRulesIntervalMs = MANAGER_RULES_EVALUATOR_INTERVAL_MS,
+  // Injectable so a harness can prove the push-delivery sender loop's TIMER
+  // wiring itself (idle when managerRules is off, ticks on its own schedule,
+  // stops on closePushDelivery) in bounded time — same reasoning as
+  // managerRulesIntervalMs just above. Every real deployment gets the real
+  // PUSH_SENDER_INTERVAL_MS (10 s, MANAGER-ALERTS-SPEC.md's own "A sender
+  // loop in api-server").
+  pushSenderIntervalMs = PUSH_SENDER_INTERVAL_MS,
+  // Injectable so a harness can prove every push route AND the sender loop
+  // itself against a fake push service (no network, no real VAPID traffic —
+  // "Tests NEVER send real pushes or touch the network: sendPush's fetch is
+  // injected"). Every real deployment leaves this undefined, and agent/web-
+  // push.mjs's own sendPush falls back to the real global fetch.
+  pushFetchFn = undefined,
   // The Network page (NETWORK-PAGE-SPEC.md) starts real samplers the instant
   // it is constructed — a DNS lookup, TCP connects to 1.1.1.1/8.8.8.8 and to
   // every configured camera's host. THIS FILE IS BUILT BY createApiServer()
@@ -1060,6 +1080,27 @@ export function createApiServer({
   const managerRulesTimer = setInterval(() => { runManagerRulesEvaluatorPass().catch(() => {}); }, managerRulesIntervalMs);
   managerRulesTimer.unref?.();
 
+  // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md). The store
+  // (push-subscriptions.json) and the sender loop's own routes/timer are both
+  // scoped to this stateDir, the same "closure, not a module-level global"
+  // discipline agent/push-store.mjs's own createPushSubscriptionStore already
+  // documents for itself.
+  const pushSubscriptionStore = createPushSubscriptionStore({ stateDir, now });
+  const pushDelivery = createPushDelivery({
+    stateDir,
+    getRulesDb: () => openRules(false),
+    pushStore: pushSubscriptionStore,
+    standingOf: auth.standingOf,
+    isManagerRulesEnabled: () => siteSettings.isFeatureEnabledNow('managerRules'),
+    audit: auth.audit,
+    now,
+    log,
+    ...(pushFetchFn ? { fetchFn: pushFetchFn } : {}),
+  });
+  pushDelivery.runSenderPass().catch(() => {});
+  const pushSenderTimer = setInterval(() => { pushDelivery.runSenderPass().catch(() => {}); }, pushSenderIntervalMs);
+  pushSenderTimer.unref?.();
+
   const STILLS_MAX_CONCURRENT = 2;
   const STILLS_MAX_QUEUE = 32;
   let stillsActive = 0;
@@ -1176,9 +1217,15 @@ export function createApiServer({
       // 404 feature_off". /open-hours is deliberately NOT gated here: it is
       // plain site data (site.json), useful (and settable) whether or not
       // this feature happens to be on right now.
+      // '/alerts-page' joins '/rules-page'/'/reports-page' here: its own
+      // rule-picker calls GET /rules, already on this list, so leaving the
+      // PAGE reachable while that call 404s underneath it would read as a
+      // broken page rather than an off switch. The /push/* routes themselves
+      // stay OFF this list (see the comment two lines below) — a device
+      // already opted in keeps that opt-in even while this switch is off.
       const MANAGER_RULES_ROUTE = pathname === '/areas' || pathname === '/areas/list'
         || pathname === '/rules' || pathname === '/rule-templates' || pathname === '/reports'
-        || pathname === '/rules-page' || pathname === '/reports-page'
+        || pathname === '/rules-page' || pathname === '/reports-page' || pathname === '/alerts-page'
         || (method === 'DELETE' && pathname.startsWith('/areas/'));
       if (MANAGER_RULES_ROUTE && !(await siteSettings.isFeatureEnabledNow('managerRules'))) {
         sendError(res, 404, 'feature_off', 'the manager rules feature is off for this site');
@@ -1187,6 +1234,10 @@ export function createApiServer({
 
       if (await areasStore.handle(req, res, pathname, method, principal)) return;
       if (await managerRulesStore.handle(req, res, pathname, method, principal)) return;
+      // Manager rules, build 2: phone alerts. Deliberately NOT behind the
+      // MANAGER_RULES_ROUTE feature-switch check above — see contracts/
+      // routeAccess.ts's own comment on why these routes stay reachable.
+      if (await pushDelivery.handle(req, res, pathname, method, principal)) return;
 
       // ---------- GET /reports ----------
       // The daily report (MANAGER-RULES-SPEC.md section 5): every reportWanted
@@ -1898,6 +1949,31 @@ export function createApiServer({
         return;
       }
 
+      // ---------- /sw.js ----------
+      // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md "A
+      // service worker"). Public (routeAccess.ts), served at root scope
+      // (path "/sw.js", not "/ui/sw.js") with Service-Worker-Allowed: / --
+      // this box already registers it from the root, so the header is
+      // belt-only, but it says the scope out loud rather than relying on the
+      // default. Its own branch, ahead of the generic UI_FILES map below, so
+      // it can carry that one extra header the rest of that map never needs.
+      if (pathname === '/sw.js') {
+        let body;
+        try {
+          body = await readFile(join(import.meta.dirname, 'ui', 'sw.js'));
+        } catch {
+          sendError(res, 500, 'ui_missing', 'the UI files are not installed');
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/javascript',
+          'Cache-Control': 'no-store',
+          'Service-Worker-Allowed': '/',
+        });
+        res.end(body);
+        return;
+      }
+
       // ---------- the UI pages ----------
       // Served per request, not cached at boot, so an edit to a UI file lands
       // on the next page load without a server restart.
@@ -2006,6 +2082,12 @@ export function createApiServer({
   server.closeManagerRulesEvaluator = () => {
     clearInterval(managerRulesTimer);
   };
+  // Same reasoning again: the push-delivery sender loop is this server's own
+  // timer. Cleared before shutdown moves on, so no tick past this point
+  // reopens rules.db after closeRules() below has already let go of it.
+  server.closePushDelivery = () => {
+    clearInterval(pushSenderTimer);
+  };
   server.closeOccupancy = () => {
     if (occupancyDb !== null) {
       occupancyDb.close();
@@ -2092,6 +2174,7 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
         // await between these two lines), but this keeps the order honest.
         server.closeEventRetention();
         server.closeManagerRulesEvaluator();
+        server.closePushDelivery();
         index.close();
         server.closeEvents();
         server.closeOccupancy();

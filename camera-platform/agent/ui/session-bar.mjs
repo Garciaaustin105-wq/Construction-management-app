@@ -66,8 +66,13 @@ function bar(principal, fetchFn, features) {
   // (events.view) and loses Rules (rules.manage); a manager keeps both but
   // never sees Cameras/Recording/Accounts below, which stay behind their own
   // installer-only block.
+  // Alerts (MANAGER-ALERTS-SPEC.md "The phone side": "for managers and
+  // installers") joins the same array: PAGE_NEEDS/routeAccess.ts gate it on
+  // rules.manage, the SAME permission Rules itself uses, so hideRefusedLinks
+  // below already removes it for a store account exactly the way it already
+  // removes Rules -- no separate role check needed here.
   if (feats.managerRules !== false) {
-    for (const [href, text] of [["/rules-page", "Rules"], ["/reports-page", "Reports"]]) {
+    for (const [href, text] of [["/rules-page", "Rules"], ["/reports-page", "Reports"], ["/alerts-page", "Alerts"]]) {
       if (location.pathname === href) continue;
       const link = document.createElement("a");
       link.href = href;
@@ -126,6 +131,11 @@ export const PAGE_NEEDS = {
   // own GET_EXACT entries for these two pages.
   "/rules-page": "rules.manage",
   "/reports-page": "events.view",
+  // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md) -- the
+  // same permission Rules itself uses (rules.manage), matching
+  // routeAccess.ts's own entry: see that file's comment on why this page,
+  // unlike the /push/* routes it calls, is not events.view.
+  "/alerts-page": "rules.manage",
 };
 
 /**
@@ -164,6 +174,8 @@ export const FEATURE_LINKS = {
   // PAGE_NEEDS/hideRefusedLinks above.
   "/rules-page": "managerRules",
   "/reports-page": "managerRules",
+  // Manager rules, build 2: phone alerts -- same switch as Rules and Reports.
+  "/alerts-page": "managerRules",
 };
 
 /**
