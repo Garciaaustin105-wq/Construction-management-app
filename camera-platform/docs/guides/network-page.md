@@ -76,8 +76,9 @@ One row per configured camera:
 | **Model / Firmware / Serial** | From the latest matching discovery reply, or "not reported". |
 | **MAC history** | "unchanged" or "first seen" normally. If the MAC on an IP changes, it instead reads "MAC for `<ip>` changed from `<old>` to `<new>` at `<time>`" — a measurement, not an accusation. |
 
-The Answering field changes colour as soon as a camera misses one check,
-but the words next to it still just state the measurement.
+The Answering field changes colour once a camera has missed three or more
+checks in a row; one or two misses show only as text. Either way, the
+words just state the measurement.
 
 ---
 

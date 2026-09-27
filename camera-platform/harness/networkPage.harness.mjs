@@ -691,4 +691,17 @@ check("network.html declares a 16px gutter and a sub-640px collapse breakpoint",
   if (!/\.data-table\s+thead\s*\{\s*display\s*:\s*none/.test(css)) throw new Error("expected the table header to be hidden when collapsed to cards");
 });
 
+// Owner's call, 2026-09-27: keep the spec's rule -- colour a camera only
+// after THREE or more missed connects in a row. One or two misses on flaky
+// Wi-Fi must not paint the row; never-probed (null) is not a miss at all.
+check("the Answering cell is coloured only at 3+ consecutive misses, never at 0, 1, 2 or never-probed", () => {
+  const doc = freshDom();
+  const misses = [0, 1, 2, 3, 4, null];
+  const cams = misses.map((m, i) => ({ ...clone(CAM_FULL), cameraId: `cam-${i}`, name: `Cam ${i}`, consecutiveMisses: m }));
+  renderNetwork(doc, { ...clone(VIEW), cameras: cams }, NOW_MS);
+  const cells = doc.byId.cameras.descendants().filter((el) => el.attrs && el.attrs["data-label"] === "Answering");
+  eq(cells.length, misses.length, "one Answering cell per camera");
+  same(cells.map((c) => c.className || ""), ["", "", "", "warn", "warn", ""]);
+});
+
 report("network page");

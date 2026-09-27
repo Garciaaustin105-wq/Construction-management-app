@@ -471,16 +471,22 @@ function answeringText(cam) {
   return reason + missSuffix;
 }
 
+/** Consecutive missed connects before a camera's Answering cell is coloured. */
+const MISS_WARN_AT = 3;
+
 function cameraRow(doc, cam) {
   const tr = doc.createElement("tr");
   const label = (typeof cam.name === "string" && cam.name)
     ? cam.name
     : ((typeof cam.cameraId === "string" && cam.cameraId) ? cam.cameraId : "unknown camera");
   const macChange = macChangeText(cam.macChange);
+  // Colour only at MISS_WARN_AT or more misses in a row (NETWORK-PAGE-SPEC.md
+  // Rules; owner, 2026-09-27): one or two misses on flaky Wi-Fi are shown
+  // as text, not painted.
   const cells = [
     ["Camera", label, ""],
     ["IP", measuredOrReason(cam.ip), ""],
-    ["Answering", answeringText(cam), isNum(cam.consecutiveMisses) && cam.consecutiveMisses > 0 ? "warn" : ""],
+    ["Answering", answeringText(cam), isNum(cam.consecutiveMisses) && cam.consecutiveMisses >= MISS_WARN_AT ? "warn" : ""],
     ["Recording", measuredOrReason(cam.lastSealedUtc, localTime), ""],
     ["Bitrate", measuredOrReason(cam.measuredKbps, kbpsText), ""],
     ["FPS", measuredOrReason(cam.fps, (v) => `${v} fps`), ""],
