@@ -78,6 +78,52 @@ check("describeReason turns hours_not_set into the spec's own exact refusal word
   eq(client.describeReason("hours_not_set"), "set the store's open hours first");
 });
 
+check("REQUIRED: the two new appearance-of-day templates (manager_leaves/manager_returns) round-trip their own awayMinutes field through the draft/body helpers, never dropping it as an unrelated condition type would", () => {
+  for (const type of ["manager_leaves", "manager_returns"]) {
+    const def = rulesContract.MANAGER_RULE_TEMPLATES.find((t) => t.template === type);
+    eq(def !== undefined, true, `MANAGER_RULE_TEMPLATES has a ${type} row`);
+    const draft = client.draftFromTemplate(def);
+    eq(draft.awayMinutes, def.condition.awayMinutes);
+    const body = client.buildRuleBody(draft);
+    same(body.condition, { type, awayMinutes: def.condition.awayMinutes });
+    const sentence = client.ruleSentence(draft, "Back door", "Back door");
+    eq(sentence.includes("today's manager"), true, `manager_leaves/manager_returns must say "today's manager", never a name: ${sentence}`);
+  }
+});
+
+check("draftFromRule copies an existing manager_leaves/manager_returns rule's own awayMinutes, not its minutes/minMinutes (which the condition does not have)", () => {
+  const rule = {
+    id: "r2", name: "Manager leaves", enabled: true, template: "manager_leaves", cameraId: "cam-1", areaId: "door1",
+    kind: "person", condition: { type: "manager_leaves", awayMinutes: 7 }, when: "open_hours",
+    notify: { alert: true, report: true, cooldownMinutes: 0 },
+  };
+  const draft = client.draftFromRule(rule);
+  eq(draft.awayMinutes, 7);
+  same(client.buildRuleBody(draft).condition, { type: "manager_leaves", awayMinutes: 7 });
+});
+
+check("appearanceStatusText: off, learned, and 'not enough sightings' each read in plain words, never the raw reason code", () => {
+  eq(client.appearanceStatusText({ enabled: false }), "Off for this site.");
+  eq(client.appearanceStatusText({ enabled: true, learnedToday: true, hasSecondary: false }), "Learned today's manager.");
+  eq(
+    client.appearanceStatusText({ enabled: true, learnedToday: true, hasSecondary: true }),
+    "Learned today's manager. A second manager was also learned today.",
+  );
+  eq(
+    client.appearanceStatusText({ enabled: true, learnedToday: false, reason: "not enough sightings yet: 7 of 20" }),
+    "Not learned yet, 7 of 20.",
+  );
+  eq(
+    client.appearanceStatusText({ enabled: true, learnedToday: false, reason: "open hours not set" }),
+    "Not learned: set the store's open hours first.",
+  );
+  eq(
+    client.appearanceStatusText({ enabled: true, learnedToday: false, reason: "no manager's desk area" }),
+    "Not learned: mark an area as the manager's desk on the Cameras page first.",
+  );
+});
+
+
 /** THE FEARED ONE: with #rulesBody in the DOM, the real bootstrap fetches
  *  every route the page needs on its own, with no harness calling
  *  startRulesPage directly -- same isolation shape as
@@ -241,6 +287,23 @@ await check("REQUIRED (page lens finding): rules.html's .rule-toggle rule redecl
     const has = new RegExp(`(^|[;{])\\s*${prop}\\s*:`).test(decl);
     eq(has, true, `.rule-toggle must set its own ${prop}, or the base "label" rule's ${prop} silently wins`);
   }
+});
+
+await check("REQUIRED: with #rulesBody in the DOM, the Today's manager card renders from GET /appearance/status, in plain words, with the limits text shown", async () => {
+  const doc = new FakeDoc();
+  const fetchFn = async (url) => {
+    const u = String(url);
+    if (u.startsWith("/appearance/status")) {
+      return { ok: true, status: 200, json: async () => ({ enabled: true, learnedToday: false, hasSecondary: false, reason: "not enough sightings yet: 7 of 20" }) };
+    }
+    return fakeFetch([])(url);
+  };
+  const page = client.startRulesPage({ doc, fetchFn, now: () => new Date("2026-09-27T12:00:00Z"), log: () => {}, navigate: () => {} });
+  await page.ready;
+  const statusEl = doc.getElementById("appearanceStatusText");
+  eq(statusEl.textContent, "Not learned yet, 7 of 20.", statusEl.textContent);
+  const limitsEl = doc.getElementById("appearanceLimitsText");
+  eq(limitsEl.textContent, client.APPEARANCE_LIMITS_TEXT);
 });
 
 report("rules page");

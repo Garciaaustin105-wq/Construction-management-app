@@ -47,6 +47,8 @@ export type ManagerRuleTemplate =
   | "vehicle_arrives"
   | "vehicle_leaves"
   | "door_used"
+  | "manager_leaves"
+  | "manager_returns"
   | "custom";
 
 export const MANAGER_RULE_TEMPLATES_KNOWN: readonly ManagerRuleTemplate[] = Object.freeze([
@@ -57,6 +59,8 @@ export const MANAGER_RULE_TEMPLATES_KNOWN: readonly ManagerRuleTemplate[] = Obje
   "vehicle_arrives",
   "vehicle_leaves",
   "door_used",
+  "manager_leaves",
+  "manager_returns",
   "custom",
 ]);
 
@@ -83,7 +87,18 @@ export type ManagerRuleCondition =
   | { type: "leaves" }
   | { type: "absent_longer_than"; minutes: number }
   | { type: "present_longer_than"; minutes: number }
-  | { type: "away_and_back"; minMinutes: number };
+  | { type: "away_and_back"; minMinutes: number }
+  // APPEARANCE-OF-DAY-SPEC.md's "New conditions and templates": these two do
+  // NOT read occupancy.db's presence/absence at all — they read manager-MATCH
+  // sightings (contracts/appearance.ts's matchAppearance) at two areas the
+  // rule does not itself name in full: rule.cameraId/areaId is the chosen
+  // door or exit area, and the site's manager's-desk area (at most one per
+  // site — contracts/areas.ts's `managerDesk` role) is a SEPARATE input the
+  // caller always supplies alongside it (see deriveManagerLeaveEpisodes and
+  // the two evaluators below) — a rule never needs to name the desk itself,
+  // because there is only ever one.
+  | { type: "manager_leaves"; awayMinutes: number }
+  | { type: "manager_returns"; awayMinutes: number };
 
 export interface ManagerRuleNotify {
   alert: boolean;
@@ -208,6 +223,27 @@ export const MANAGER_RULE_TEMPLATES: readonly ManagerRuleTemplateDef[] = Object.
     when: "always",
     notify: { alert: false, report: true, cooldownMinutes: 0 },
   },
+  // APPEARANCE-OF-DAY-SPEC.md: rule.cameraId/areaId here is the installer's
+  // CHOSEN door or exit area — the manager's desk itself is never picked by
+  // this rule (there is only ever one, found by its `managerDesk` role).
+  {
+    template: "manager_leaves",
+    label: "Manager leaves",
+    kind: "person",
+    wholeCamera: false,
+    condition: { type: "manager_leaves", awayMinutes: 5 },
+    when: "open_hours",
+    notify: { alert: true, report: true, cooldownMinutes: 0 },
+  },
+  {
+    template: "manager_returns",
+    label: "Manager returns",
+    kind: "person",
+    wholeCamera: false,
+    condition: { type: "manager_returns", awayMinutes: 5 },
+    when: "open_hours",
+    notify: { alert: false, report: true, cooldownMinutes: 0 },
+  },
 ]);
 
 // ---------------------------------------------------------------- validation
@@ -262,6 +298,18 @@ function checkCondition(raw: unknown, errors: FieldProblem[]): ManagerRuleCondit
         ok = false;
       }
       return ok ? { type, minMinutes: minMinutes as number } : null;
+    }
+    case "manager_leaves":
+    case "manager_returns": {
+      const extra = otherKeys(["type", "awayMinutes"]);
+      let ok = extra.length === 0;
+      if (!ok) errors.push({ field: "condition", reason: "unknown_field" });
+      const awayMinutes = raw.awayMinutes;
+      if (typeof awayMinutes !== "number" || !Number.isFinite(awayMinutes) || awayMinutes <= 0) {
+        errors.push({ field: "condition.awayMinutes", reason: "bad_away_minutes" });
+        ok = false;
+      }
+      return ok ? { type, awayMinutes: awayMinutes as number } : null;
     }
     default:
       errors.push({ field: "condition.type", reason: "bad_condition_type" });
@@ -583,6 +631,16 @@ function candidatesFor(rule: ManagerRule, transitions: readonly OccupancyTransit
       return longerThanCandidates(transitions, "present", rule.condition.minutes * 60_000, nowMs, "present_longer_than");
     case "away_and_back":
       return awayAndBackCandidates(transitions, rule.condition.minMinutes * 60_000);
+    case "manager_leaves":
+    case "manager_returns":
+      // These two read manager-MATCH sightings, not occupancy transitions —
+      // evaluateManagerLeavesRule/evaluateManagerReturnsRule are their own
+      // evaluator, never this one. Reaching here means a caller ran the
+      // occupancy-based evaluator over a rule it should never have been
+      // handed (checkManagerRule never refuses this combination itself,
+      // since the condition and the rule are each well-formed on their own —
+      // it is which EVALUATOR a caller picks that must not mix them up).
+      throw new TypeError(`evaluateManagerRule: ${rule.condition.type} is evaluated by its own function, not this one`);
   }
 }
 
@@ -714,6 +772,211 @@ export function evaluateManagerRule(
       reportWanted: rule.notify.report,
     });
     lastKeptAtMs = f.gateAtMs;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- appearance-based: "Manager leaves" / "Manager returns"
+
+/**
+ * One manager-match sighting (contracts/appearance.ts's `matchAppearance`),
+ * at one area, chronological in whatever stream it came from. Never carries
+ * a name — `which` is only ever "primary" or "secondary", today's own file's
+ * own index, not an identity (APPEARANCE-OF-DAY-SPEC.md's identity-free
+ * mandate, same as everywhere else in this file).
+ */
+export interface ManagerMatchSighting {
+  atMs: number;
+  which: "primary" | "secondary";
+  similarityPercent: number;
+}
+
+/**
+ * One departure, start to (maybe) finish. `confirmedLeaveAtMs` is always
+ * `departAtMs + awayMinutes` — fixed the instant the episode is created,
+ * never recomputed later, the same "a firing's own numbers never move"
+ * discipline the occupancy-based evaluator above already keeps.
+ * `returnAtMs`/`returnSimilarityPercent` are null while the manager is still
+ * away (nothing to report yet, not a guessed return — build rule 17).
+ */
+export interface ManagerLeaveEpisode {
+  departAtMs: number;
+  departSimilarityPercent: number;
+  confirmedLeaveAtMs: number;
+  returnAtMs: number | null;
+  returnSimilarityPercent: number | null;
+}
+
+/**
+ * Turn two manager-match streams — `doorMatches` (the rule's own chosen
+ * door/exit area) and `deskMatches` (the site's manager's-desk area) — into
+ * departure episodes: the ONE piece of shared machinery both
+ * evaluateManagerLeavesRule and evaluateManagerReturnsRule read, so the two
+ * templates can never disagree about which departure they are each
+ * describing. Each input stream is chronological on its own; this function
+ * merges the two by time itself (mirroring advanceFold's own "sort, then
+ * walk in one true time order" discipline), because a door sighting and a
+ * desk sighting only mean what they mean relative to EACH OTHER's actual
+ * order in time, not to whichever array happens to list them first.
+ *
+ * A departure starts at a door sighting seen while the manager is NOT
+ * already mid-departure (a burst of door sightings from one walk-out is ONE
+ * episode, not one per sighting — this file's own "own edge, not a level"
+ * rule, the same awayAndBackCandidates already keeps for occupancy). The
+ * NEXT desk sighting in true time order then decides it:
+ * - arriving BEFORE awayMinutes have passed since the departure: cancelled
+ *   OUTRIGHT — never reported at all, because it was never really a leave,
+ *   whatever the door camera briefly thought it saw;
+ * - arriving at or after awayMinutes: closes the episode as its return
+ *   (which, by construction, is always at or after confirmedLeaveAtMs).
+ * A departure with no desk sighting after it anywhere in the data stays
+ * open — pushed once, at the end, with `returnAtMs: null` — the two
+ * evaluators below each filter for what THEY report.
+ */
+export function deriveManagerLeaveEpisodes(
+  doorMatches: readonly ManagerMatchSighting[],
+  deskMatches: readonly ManagerMatchSighting[],
+  awayMinutes: number,
+): ManagerLeaveEpisode[] {
+  const awayMs = awayMinutes * 60_000;
+  const episodes: ManagerLeaveEpisode[] = [];
+  let doorIdx = 0;
+  let deskIdx = 0;
+  let current: { departAtMs: number; departSimilarityPercent: number; confirmedLeaveAtMs: number } | null = null;
+
+  while (doorIdx < doorMatches.length || deskIdx < deskMatches.length) {
+    const nextDoor: ManagerMatchSighting | null = doorIdx < doorMatches.length ? (doorMatches[doorIdx] as ManagerMatchSighting) : null;
+    const nextDesk: ManagerMatchSighting | null = deskIdx < deskMatches.length ? (deskMatches[deskIdx] as ManagerMatchSighting) : null;
+    const takeDoor = nextDesk === null || (nextDoor !== null && nextDoor.atMs <= nextDesk.atMs);
+
+    if (takeDoor) {
+      const d = nextDoor as ManagerMatchSighting;
+      doorIdx++;
+      if (current === null) {
+        current = { departAtMs: d.atMs, departSimilarityPercent: d.similarityPercent, confirmedLeaveAtMs: d.atMs + awayMs };
+      }
+      // else: a burst — already mid-departure, this sighting changes nothing.
+    } else {
+      const d = nextDesk as ManagerMatchSighting;
+      deskIdx++;
+      if (current !== null) {
+        if (d.atMs - current.departAtMs < awayMs) {
+          current = null; // cancelled outright: never reported
+        } else {
+          episodes.push({ ...current, returnAtMs: d.atMs, returnSimilarityPercent: d.similarityPercent });
+          current = null;
+        }
+      }
+      // else: a desk sighting while nobody has departed — irrelevant.
+    }
+  }
+  if (current !== null) {
+    episodes.push({ ...current, returnAtMs: null, returnSimilarityPercent: null });
+  }
+  return episodes;
+}
+
+/**
+ * "Manager leaves": fires once per CONFIRMED departure, at
+ * `confirmedLeaveAtMs` — "Person matching today's manager (NN%) left through
+ * <doorAreaName> <time>". `doorMatches` is every manager-match sighting at
+ * THIS rule's own area (the chosen door/exit); `deskMatches` is every
+ * manager-match sighting at the site's manager's-desk area, a separate
+ * stream the caller always supplies regardless of the rule's own areaId.
+ */
+export function evaluateManagerLeavesRule(
+  rule: ManagerRule,
+  doorMatches: readonly ManagerMatchSighting[],
+  deskMatches: readonly ManagerMatchSighting[],
+  doorAreaName: string,
+  nowMs: number,
+  openHours: Schedule | null,
+  timeZone: string,
+  lastFiredAtMs: number | null,
+): ManagerRuleFiring[] {
+  if (rule.condition.type !== "manager_leaves") {
+    throw new TypeError("evaluateManagerLeavesRule: rule.condition.type must be manager_leaves");
+  }
+  const episodes = deriveManagerLeaveEpisodes(doorMatches, deskMatches, rule.condition.awayMinutes);
+  const cooldownMs = rule.notify.cooldownMinutes * 60_000;
+  const out: ManagerRuleFiring[] = [];
+  let lastKeptAtMs = lastFiredAtMs;
+  for (const ep of episodes) {
+    const gateAtMs = ep.confirmedLeaveAtMs;
+    if (gateAtMs > nowMs) continue; // not yet confirmed as of `now`
+    if (!whenGate(rule.when, openHours, gateAtMs)) continue;
+    if (lastKeptAtMs !== null && gateAtMs <= lastKeptAtMs) continue;
+    if (lastKeptAtMs !== null && gateAtMs - lastKeptAtMs < cooldownMs) continue;
+    out.push({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      cameraId: rule.cameraId,
+      areaId: rule.areaId,
+      kind: rule.kind,
+      what: "manager_leaves",
+      complete: true,
+      startMs: ep.departAtMs,
+      endMs: gateAtMs,
+      durationMs: gateAtMs - ep.departAtMs,
+      text: `Person matching today's manager (${Math.round(ep.departSimilarityPercent)}%) left through ${doorAreaName} ${clockLabel(timeZone, ep.departAtMs)}`,
+      alertWanted: rule.notify.alert,
+      reportWanted: rule.notify.report,
+    });
+    lastKeptAtMs = gateAtMs;
+  }
+  return out;
+}
+
+/**
+ * "Manager returns": fires once per departure that BOTH confirmed as a real
+ * leave AND has since returned, at the return's own instant — "Person
+ * matching today's manager (NN%) matched back at <deskAreaName> <time>
+ * (<N> min)", the duration measured from the ORIGINAL door sighting (when
+ * the manager actually left), not from the moment the leave was confirmed.
+ * An episode still away (no return yet) reports nothing — build rule 17,
+ * never a guessed return.
+ */
+export function evaluateManagerReturnsRule(
+  rule: ManagerRule,
+  doorMatches: readonly ManagerMatchSighting[],
+  deskMatches: readonly ManagerMatchSighting[],
+  deskAreaName: string,
+  nowMs: number,
+  openHours: Schedule | null,
+  timeZone: string,
+  lastFiredAtMs: number | null,
+): ManagerRuleFiring[] {
+  if (rule.condition.type !== "manager_returns") {
+    throw new TypeError("evaluateManagerReturnsRule: rule.condition.type must be manager_returns");
+  }
+  const episodes = deriveManagerLeaveEpisodes(doorMatches, deskMatches, rule.condition.awayMinutes);
+  const cooldownMs = rule.notify.cooldownMinutes * 60_000;
+  const out: ManagerRuleFiring[] = [];
+  let lastKeptAtMs = lastFiredAtMs;
+  for (const ep of episodes) {
+    if (ep.returnAtMs === null) continue; // still away: nothing to report yet
+    const gateAtMs = ep.returnAtMs;
+    if (gateAtMs > nowMs) continue;
+    if (!whenGate(rule.when, openHours, gateAtMs)) continue;
+    if (lastKeptAtMs !== null && gateAtMs <= lastKeptAtMs) continue;
+    if (lastKeptAtMs !== null && gateAtMs - lastKeptAtMs < cooldownMs) continue;
+    const minutes = Math.round((gateAtMs - ep.departAtMs) / 60_000);
+    out.push({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      cameraId: rule.cameraId,
+      areaId: rule.areaId,
+      kind: rule.kind,
+      what: "manager_returns",
+      complete: true,
+      startMs: ep.departAtMs,
+      endMs: gateAtMs,
+      durationMs: gateAtMs - ep.departAtMs,
+      text: `Person matching today's manager (${Math.round(ep.returnSimilarityPercent as number)}%) matched back at ${deskAreaName} ${clockLabel(timeZone, gateAtMs)} (${minutes} min)`,
+      alertWanted: rule.notify.alert,
+      reportWanted: rule.notify.report,
+    });
+    lastKeptAtMs = gateAtMs;
   }
   return out;
 }

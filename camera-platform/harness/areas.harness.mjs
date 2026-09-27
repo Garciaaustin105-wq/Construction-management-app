@@ -6,7 +6,7 @@
 // reusing cameraAiSettings.ts's own pointInZone.
 
 import { check, eq, same, report } from "./_assert.mjs";
-import { MAX_AREAS_PER_CAMERA, MIN_AREA_POINTS, MAX_AREA_POINTS, checkArea, checkAreasFile, boxInsideArea } from "../dist/areas.js";
+import { MAX_AREAS_PER_CAMERA, MIN_AREA_POINTS, MAX_AREA_POINTS, AREA_ROLES, checkArea, checkAreasFile, boxInsideArea } from "../dist/areas.js";
 
 console.log("areas");
 
@@ -61,6 +61,51 @@ check("point count and range are checked like a camera-ai zone", () => {
 check("name is trimmed; a whitespace-only name is refused", () => {
   eq(checkArea(area("a1", "cam1", "  Manager's desk  "), []).area.name, "Manager's desk");
   eq(checkArea(area("a1", "cam1", "   "), []).ok, false);
+});
+
+// ---------------------------------------------------------------- role: managerDesk (APPEARANCE-OF-DAY-SPEC.md)
+
+check("an area with no role is an ordinary area — role is absent, not defaulted to anything", () => {
+  const r = checkArea(area("a1", "cam1", "Register 1"), []);
+  eq(r.ok, true);
+  eq(Object.prototype.hasOwnProperty.call(r.area, "role"), false);
+});
+
+check("role: managerDesk is accepted when no other area already has it", () => {
+  const r = checkArea({ ...area("a1", "cam1", "Manager's desk"), role: "managerDesk" }, []);
+  eq(r.ok, true);
+  eq(r.area.role, "managerDesk");
+});
+
+check("FEARED: a second managerDesk anywhere on the site is refused — 'at most one per site', not per camera", () => {
+  const existing = [{ ...area("a1", "cam1", "Desk"), role: "managerDesk" }];
+  // Even on a DIFFERENT camera: one manager, one desk, for the whole site.
+  const r = checkArea({ ...area("a2", "cam2", "Another desk"), role: "managerDesk" }, existing);
+  eq(r.ok, false);
+  eq(r.errors[0], { field: "role", reason: "duplicate_role" });
+});
+
+check("an unknown role string is refused, never silently accepted as a future role", () => {
+  const r = checkArea({ ...area("a1", "cam1", "Desk"), role: "registerStation" }, []);
+  eq(r.ok, false);
+  eq(r.errors[0], { field: "role", reason: "bad_role" });
+});
+
+check("checkAreasFile enforces the same site-wide managerDesk uniqueness across the whole array", () => {
+  const raw = {
+    version: 1,
+    areas: [
+      { ...area("a1", "cam1", "Desk"), role: "managerDesk" },
+      { ...area("a2", "cam2", "Second desk", [[0, 0.6], [1, 0.6], [1, 1]]), role: "managerDesk" },
+    ],
+  };
+  const r = checkAreasFile(raw);
+  eq(r.ok, false);
+  eq(r.errors[0], { index: 1, field: "role", reason: "duplicate_role" });
+});
+
+check("AREA_ROLES lists exactly the one role that exists today", () => {
+  eq(AREA_ROLES, ["managerDesk"]);
 });
 
 // ---------------------------------------------------------------- whole-file validation

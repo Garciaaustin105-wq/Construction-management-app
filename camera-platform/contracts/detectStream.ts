@@ -8,6 +8,8 @@
 
 import { parseUtc } from "./time.js";
 import { Detection, DetectionEvent, Box, checkDetection, matchScore, travelFrom, MERGE_GAP_MS } from "./detection.js";
+import { isValidSignature } from "./appearance.js";
+import type { Signature } from "./appearance.js";
 
 export const MAX_WORKER_LINE_BYTES = 65536;
 export const MAX_DETECTIONS_PER_FRAME = 300;
@@ -27,9 +29,20 @@ export const GATE_REASONS: readonly string[] = Object.freeze(["first", "unsure",
 // either - still accepted, same as a line with no species.
 export type FrameTimeSource = "arrival" | "read";
 
+/**
+ * One detection's own clothing signature, alongside `detections` (same
+ * index, same length): APPEARANCE-OF-DAY-SPEC.md's "appearance" field on a
+ * PERSON detection - detector/yolox_worker.py's `apply_appearance()`, never
+ * detection.ts's own `Detection`/`checkDetection`, which stay exactly what
+ * they were before this feature existed (events.db stores DetectionEvent,
+ * built from Detection - a signature must never be able to reach there by
+ * riding along inside a type that folding and storage both already trust).
+ * `null` is "too small" or "empty crop" (detector/appearance.py's own null
+ * reasons) - a real answer, never a guess.
+ */
 export type WorkerLine =
   | { kind: "ready"; model: string }
-  | { kind: "frame"; atUtc: string; timeSource?: FrameTimeSource; detections: Detection[]; refused: string[] }
+  | { kind: "frame"; atUtc: string; timeSource?: FrameTimeSource; detections: Detection[]; refused: string[]; appearances: (Signature | null)[] }
   | { kind: "error"; message: string }
   | { kind: "gate"; windowS: number; frames: number; looked: number; reasons: Record<string, number> }
   | { kind: "invalid"; reason: string };
@@ -51,7 +64,16 @@ export type WorkerLine =
  *     "read" -> else invalid "bad_time_source"; absent is fine (an older
  *     worker that has never heard of it) and carried through as undefined,
  *     never defaulted to either value - a default here would claim to know
- *     which clock atUtc came from when the line never said.
+ *     which clock atUtc came from when the line never said. Each item may
+ *     also carry "appearance" (APPEARANCE-OF-DAY-SPEC.md): absent is fine (an
+ *     older worker, or a worker run without --appearance) and carries no
+ *     appearance at all; present must be a PERSON detection's, and must be
+ *     either exactly 145 finite numbers or null - anything else, or an
+ *     appearance on a non-person detection, refuses that ONE detection whole
+ *     ("bad_appearance" / "appearance_on_non_person"), never silently
+ *     stripped and kept. Kept detections' appearances (or null) come back in
+ *     the frame's own `appearances` array, same index, same length as
+ *     `detections` - never attached to the Detection objects themselves.
  *   - "gate": a motion gate's once-a-minute summary of what it looked at.
  *     Valid only as a whole: windowS a positive number; frames and looked
  *     integers >= 0 with looked <= frames; reasons an object whose keys are a
@@ -132,6 +154,7 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
     }
 
     const detections: Detection[] = [];
+    const appearances: (Signature | null)[] = [];
     const refused: string[] = [];
 
     for (const item of detectionsRaw) {
@@ -156,16 +179,40 @@ export function parseWorkerLine(line: string, cameraId: string): WorkerLine {
       };
 
       const checked = checkDetection(toCheck);
-      if (checked.ok) {
-        detections.push(checked.detection);
-      } else {
+      if (!checked.ok) {
         refused.push(checked.reason);
+        continue;
       }
+
+      // appearance: APPEARANCE-OF-DAY-SPEC.md. Absent is fine (an older
+      // worker, a non-person detection, or a worker run without
+      // --appearance) - the same "an older worker that has never heard of
+      // it" tolerance timeSource already gets. Present is checked with the
+      // SAME "refused whole, not partly trusted" discipline bad_species and
+      // bad_gate already keep in this file: a signature of the wrong shape,
+      // or one attached to anything but a person, refuses this ONE
+      // detection rather than being silently dropped and the detection kept.
+      const rawAppearance = raw.appearance;
+      if (rawAppearance === undefined) {
+        detections.push(checked.detection);
+        appearances.push(null);
+        continue;
+      }
+      if (checked.detection.kind !== "person") {
+        refused.push("appearance_on_non_person");
+        continue;
+      }
+      if (rawAppearance !== null && !isValidSignature(rawAppearance)) {
+        refused.push("bad_appearance");
+        continue;
+      }
+      detections.push(checked.detection);
+      appearances.push(rawAppearance === null ? null : rawAppearance);
     }
 
     return timeSource === undefined
-      ? { kind: "frame", atUtc, detections, refused }
-      : { kind: "frame", atUtc, timeSource, detections, refused };
+      ? { kind: "frame", atUtc, detections, refused, appearances }
+      : { kind: "frame", atUtc, timeSource, detections, refused, appearances };
   }
 
   if (type === "gate") {

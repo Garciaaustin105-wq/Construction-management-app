@@ -16,7 +16,7 @@
  */
 import { parseWorkerLine, emptyFold, advanceFold, MAX_WORKER_LINE_BYTES, GATE_REASONS } from "../dist/detectStream.js";
 import { foldDetections, MERGE_GAP_MS } from "../dist/detection.js";
-import { check, eq, report } from "./_assert.mjs";
+import { check, eq, same, report } from "./_assert.mjs";
 
 console.log("detect stream");
 
@@ -55,6 +55,79 @@ check("a line with no species still parses, because that is every worker running
   const r = parseWorkerLine(frameLine(0, [{ kind: "person", confidence: 0.8, box: box(0.2, 0.3) }]), "cam-1");
   eq(r.refused, [], "nothing refused");
   eq(r.detections[0].species, undefined, "absent, not defaulted to anything");
+});
+
+// ---------------- appearance: APPEARANCE-OF-DAY-SPEC.md ----------------
+
+const sig145 = (v = 0.5) => new Array(145).fill(v);
+
+check("a frame line with no appearance anywhere still parses exactly as before -- an older worker, or the flag off", () => {
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "person", confidence: 0.8, box: box(0.1, 0.2) },
+    { kind: "vehicle", confidence: 0.6, box: box(0.5, 0.5, 0.3, 0.2) },
+  ]), "cam-1");
+  eq(r.refused, [], "nothing refused");
+  eq(r.detections.length, 2);
+  same(r.appearances, [null, null], "no appearance data at all -> null, same length and order as detections");
+});
+
+check("appearance: null on a person (too small / empty crop) is accepted, never guessed into zeros", () => {
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "person", confidence: 0.8, box: box(0.1, 0.2), appearance: null },
+  ]), "cam-1");
+  eq(r.refused, [], "nothing refused");
+  eq(r.detections.length, 1);
+  same(r.appearances, [null]);
+});
+
+check("appearance: a real 145-number signature on a person is accepted and carried through, parallel to detections", () => {
+  const s = sig145(0.123);
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "vehicle", confidence: 0.7, box: box(0.2, 0.2) }, // no appearance at all
+    { kind: "person", confidence: 0.9, box: box(0.4, 0.2), appearance: s },
+  ]), "cam-1");
+  eq(r.refused, [], "nothing refused");
+  eq(r.detections.map((d) => d.kind), ["vehicle", "person"]);
+  same(r.appearances, [null, s], "same index as detections: the vehicle's is null, the person's is the signature");
+  eq(Object.prototype.hasOwnProperty.call(r.detections[1], "appearance"), false, "never attached to the Detection object itself -- only the frame's own parallel array carries it");
+});
+
+check("THE FEARED ONE: appearance on anything but a person is refused whole, named appearance_on_non_person, never silently stripped", () => {
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "vehicle", confidence: 0.8, box: box(0.2, 0.3), appearance: sig145() },
+  ]), "cam-1");
+  eq(r.detections.length, 0, "not kept at all -- not with the appearance dropped, not without it");
+  eq(r.refused, ["appearance_on_non_person"]);
+  eq(r.appearances, [], "refused detections never get an appearances slot");
+});
+
+check("THE FEARED ONE: a malformed appearance refuses the WHOLE detection, named bad_appearance, never partly trusted or silently stripped", () => {
+  for (const bad of [
+    new Array(144).fill(0.1), new Array(146).fill(0.1), // wrong length
+    [null, ...new Array(144).fill(0)], // a non-number entry (JSON has no NaN/Infinity to send over the wire at all)
+    ["0.5", ...new Array(144).fill(0)], // a string entry
+    "not-an-array", {}, 42, true,
+  ]) {
+    const r = parseWorkerLine(frameLine(0, [
+      { kind: "person", confidence: 0.8, box: box(0.1, 0.2), appearance: bad },
+    ]), "cam-1");
+    eq(r.detections.length, 0, `${JSON.stringify(bad).slice(0, 20)}: not kept`);
+    eq(r.refused, ["bad_appearance"], `${JSON.stringify(bad).slice(0, 20)}: named bad_appearance`);
+  }
+});
+
+check("appearance is checked only AFTER the ordinary detection contract -- a detection checkDetection would refuse anyway is refused by ITS OWN reason, not bad_appearance", () => {
+  const r = parseWorkerLine(frameLine(0, [
+    { kind: "person", confidence: 1.7, box: box(0.1, 0.2), appearance: sig145() }, // confidence past 1
+  ]), "cam-1");
+  eq(r.refused, ["bad_confidence"]);
+});
+
+check("REQUIRED: appearance never reaches a DetectionEvent -- events.db's own shape is untouched by this feature", () => {
+  const r = parseWorkerLine(frameLine(0, [{ kind: "person", confidence: 0.9, box: box(0.1, 0.2), appearance: sig145() }]), "cam-1");
+  const step = advanceFold(emptyFold(), r.detections, at(0));
+  eq(Object.keys(step.updated[0].event).includes("appearance"), false);
+  eq(Object.keys(step.state.open[0]).includes("appearance"), false);
 });
 
 // ---------------- timeSource: which clock atUtc came from ----------------

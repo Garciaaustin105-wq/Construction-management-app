@@ -52,7 +52,9 @@ import { createAreas } from './areas.mjs';
 import { createManagerRules } from './manager-rules.mjs';
 import { openOccupancyDb, OCCUPANCY_DB_FILE } from './occupancy-db.mjs';
 import { openRulesDb, RULES_DB_FILE } from './rules-db.mjs';
-import { evaluateManagerRule, reportDayRange, wholeCameraAreaId } from '../dist/managerRules.js';
+import {
+  evaluateManagerRule, evaluateManagerLeavesRule, evaluateManagerReturnsRule, reportDayRange, wholeCameraAreaId,
+} from '../dist/managerRules.js';
 import { createPushSubscriptionStore } from './push-store.mjs';
 import { createPushDelivery, PUSH_SENDER_INTERVAL_MS } from './push-delivery.mjs';
 import { createSavedLayouts } from './saved-layouts.mjs';
@@ -88,6 +90,32 @@ const log = (level, msg, extra) =>
 const MANAGER_RULES_EVALUATOR_INTERVAL_MS = 5_000;
 
 const isRefusal = (r) => r !== null && typeof r === 'object' && r.ok === false;
+
+/**
+ * GET /appearance/status's own read of detect-health.json — the SAME
+ * cross-process file, read the SAME tolerant way agent/health-history.mjs's
+ * own readDetectHealth already reads it (missing, unreadable, or not shaped
+ * like JSON is "nothing to report", never a thrown error): this process
+ * never learns or matches a clothing signature itself, so its only view of
+ * that work is whatever agent/detect-service.mjs (a separate process)
+ * reported into this file's own `appearance` field.
+ */
+async function readAppearanceHealth(file) {
+  let raw;
+  try {
+    raw = await readFile(file, 'utf8');
+  } catch {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object') return null;
+  return parsed;
+}
 
 /**
  * The id detectStream.ts mints for a detection event: `<cameraId>:<atMs>:<seq>`.
@@ -1052,7 +1080,32 @@ export function createApiServer({
       if (rules.length === 0) return;
       const rdb = openRules(true);
       const nowMs = now().getTime();
+      // "Manager leaves"/"Manager returns" (APPEARANCE-OF-DAY-SPEC.md) read
+      // manager-MATCH sightings, not occupancy transitions — fetched once per
+      // pass (areas.json rarely changes tick to tick) rather than once per
+      // rule. `deskArea` is the site's own, at most one (checkArea/
+      // checkAreasFile already refuse a second `managerDesk` anywhere).
+      const areas = await areasStore.listAreas();
+      const deskArea = areas.find((a) => a.role === 'managerDesk') ?? null;
       for (const rule of rules) {
+        if (rule.condition.type === 'manager_leaves' || rule.condition.type === 'manager_returns') {
+          if (deskArea === null) continue; // "no manager's desk area" -- nothing to evaluate yet
+          const doorArea = areas.find((a) => a.id === rule.areaId) ?? null;
+          if (doorArea === null) continue; // the rule's own door/exit area no longer exists
+          const doorMatches = occ.managerMatchesForArea(doorArea.id);
+          const deskMatches = occ.managerMatchesForArea(deskArea.id);
+          let appearanceFirings;
+          try {
+            appearanceFirings = rule.condition.type === 'manager_leaves'
+              ? evaluateManagerLeavesRule(rule, doorMatches, deskMatches, doorArea.name, nowMs, openHours, timeZone, rdb.lastFiredAtMs(rule.id))
+              : evaluateManagerReturnsRule(rule, doorMatches, deskMatches, deskArea.name, nowMs, openHours, timeZone, rdb.lastFiredAtMs(rule.id));
+          } catch (err) {
+            log('error', 'manager rules evaluator: an appearance rule could not be evaluated', { id: rule.id, error: err?.message ?? String(err) });
+            continue;
+          }
+          for (const f of appearanceFirings) rdb.insert(f);
+          continue;
+        }
         const areaIdForOccupancy = rule.areaId === null ? wholeCameraAreaId(rule.cameraId) : rule.areaId;
         const transitions = occ.transitionsFor(areaIdForOccupancy, rule.kind);
         if (transitions.length === 0) continue;
@@ -1268,6 +1321,44 @@ export function createApiServer({
         const oldestFootageUtc = footageStarts.length === 0 ? null : new Date(Math.min(...footageStarts)).toISOString();
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ ok: true, day: parsedUrl.searchParams.get('day'), timeZone, groups: [...groups.values()], oldestFootageUtc }));
+        return;
+      }
+
+      // ---------- GET /appearance/status ----------
+      // APPEARANCE-OF-DAY-SPEC.md build 3: learned or not and why, learnedAtUtc,
+      // a sample count, and whether a second manager exists — NEVER the
+      // signature itself. This process (api-server.mjs) never learns or
+      // matches anything itself; agent/detect-service.mjs is a SEPARATE
+      // process that does, so this route reads its own status straight off
+      // detect-health.json — the SAME cross-process file agent/health-
+      // history.mjs, agent/gate-check.mjs, agent/score-clips.mjs and
+      // agent/checkin.mjs already each read their own small slice of,
+      // tolerantly: missing, unreadable or unshaped is "not available", not
+      // a thrown error. Deliberately NOT gated on the managerRules feature
+      // switch above (like /open-hours): appearanceOfDay is its OWN switch,
+      // and this route's own `reason: "switch off"` already says so.
+      if (method === 'GET' && pathname === '/appearance/status') {
+        const detectHealth = await readAppearanceHealth(join(stateDir, 'detect-health.json'));
+        const appearance = detectHealth?.appearance;
+        const body = appearance === undefined || appearance === null || typeof appearance !== 'object'
+          ? {
+              ok: true,
+              enabled: false, learnedToday: false, learnedAtUtc: null, hasSecondary: false,
+              sampleCount: null, minSignaturesToLearn: null,
+              reason: 'the detector is not running, or has not reported yet',
+            }
+          : {
+              ok: true,
+              enabled: Boolean(appearance.enabled),
+              learnedToday: Boolean(appearance.learnedToday),
+              learnedAtUtc: typeof appearance.learnedAtUtc === 'string' ? appearance.learnedAtUtc : null,
+              hasSecondary: Boolean(appearance.hasSecondary),
+              sampleCount: typeof appearance.sampleCount === 'number' ? appearance.sampleCount : null,
+              minSignaturesToLearn: typeof appearance.minSignaturesToLearn === 'number' ? appearance.minSignaturesToLearn : null,
+              reason: typeof appearance.reason === 'string' ? appearance.reason : null,
+            };
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(body));
         return;
       }
 

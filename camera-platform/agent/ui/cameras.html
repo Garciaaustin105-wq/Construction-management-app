@@ -64,6 +64,14 @@ legend { padding:0 4px; color:#9aa0a6; }
 .areas-name { min-width:0; flex:1 1 200px; }
 .areas-errors:empty { display:none; }
 .areas-errors ul { margin:4px 0 0; padding-left:18px; }
+/* The manager's-desk checkbox rows are their own class, not the base <label>
+   rule above (flex-direction:column) -- a class selector only outranks a
+   type selector for a property BOTH rules actually set, so ".row" alone
+   (which never redeclares flex-direction) would leave these stacked
+   vertically instead of checkbox-then-text, the exact leak rules.html's own
+   .rule-toggle was written to fix (page lens finding, carried over here). */
+.areas-desk-label, .areas-desk-toggle-label { flex-direction:row; align-items:center; gap:6px; min-width:0; font-size:inherit; }
+.areas-desk-note:empty { display:none; }
 </style>
 </head>
 <body>

@@ -91,6 +91,15 @@ export function createCameraAreasPanel(doc, opts, camera) {
   let areas = []; // this camera's own areas only, as loaded from GET /areas
   let draft = null; // { points: [] } while drawing
   let saveErrorText = "";
+  // The SITE-wide manager's-desk area id (APPEARANCE-OF-DAY-SPEC.md: "one
+  // manager per store", so at most one area anywhere on the site can carry
+  // the role) -- never just this camera's own areas, since the desk could be
+  // drawn on a different camera than the one this panel is showing.
+  // contracts/areas.ts's checkArea already refuses a second `managerDesk`
+  // server-side; this is only ever the CLIENT's own mirror of that fact, so
+  // the checkbox below can disable itself rather than let an installer draw
+  // a save that is certain to be refused.
+  let deskAreaId = null;
 
   const root = el(doc, "details", { class: "areas-panel panel" }, []);
   const summary = el(doc, "summary", {}, []);
@@ -123,6 +132,17 @@ export function createCameraAreasPanel(doc, opts, camera) {
   const hint = el(doc, "span", { class: "dim areas-hint", text: "" });
   const controls = el(doc, "div", { class: "row" }, [nameInput, startBtn, closeBtn, cancelBtn, hint]);
   body.append(controls);
+
+  // "Areas gain an optional role managerDesk, set by the installer" (MANAGER-
+  // RULES-SPEC.md section 1 / APPEARANCE-OF-DAY-SPEC.md) -- a checkbox on the
+  // area being drawn, at most one per SITE (not per camera): see deskAreaId
+  // above and updateButtons() below for the disabling logic.
+  const deskCheckbox = el(doc, "input", { type: "checkbox", class: "areas-desk-checkbox" });
+  const deskLabel = el(doc, "label", { class: "row areas-desk-label" }, [
+    deskCheckbox, el(doc, "span", { text: "This is the manager's desk" }),
+  ]);
+  const deskNote = el(doc, "p", { class: "dim areas-desk-note", text: "" });
+  body.append(deskLabel, deskNote);
 
   const errorsEl = el(doc, "div", { class: "areas-errors error", role: "alert" }, []);
   body.append(errorsEl);
@@ -158,9 +178,19 @@ export function createCameraAreasPanel(doc, opts, camera) {
       const label = el(doc, "span", {});
       // Untrusted text (the installer's own area name): .textContent, never innerHTML.
       label.textContent = `${a.name} (${a.points.length} points)`;
+      const isDesk = a.role === "managerDesk";
+      const toggle = el(doc, "input", { type: "checkbox", class: "areas-desk-toggle" });
+      toggle.checked = isDesk;
+      // Disabled only when SOME OTHER area already holds the role -- turning
+      // this one's OWN checkbox off (to clear it) always stays available.
+      toggle.disabled = !isDesk && deskAreaId !== null;
+      toggle.addEventListener("change", () => { void setAreaRole(a, toggle.checked); });
+      const toggleLabel = el(doc, "label", { class: "row areas-desk-toggle-label" }, [
+        toggle, el(doc, "span", { class: "dim", text: "Manager's desk" }),
+      ]);
       const del = el(doc, "button", { type: "button", class: "danger", text: "Delete" });
       del.addEventListener("click", () => { void removeArea(a.id); });
-      list.append(el(doc, "li", {}, [label, del]));
+      list.append(el(doc, "li", {}, [label, toggleLabel, del]));
     }
   }
 
@@ -176,6 +206,16 @@ export function createCameraAreasPanel(doc, opts, camera) {
     } else {
       hint.textContent = "";
     }
+    // "At most one per site" (APPEARANCE-OF-DAY-SPEC.md): a NEW area being
+    // drawn can only offer to become the desk when the site does not already
+    // have one -- clearing an existing one is done from its own row above,
+    // never from here.
+    const deskAlreadySet = deskAreaId !== null;
+    deskCheckbox.disabled = draft === null || deskAlreadySet;
+    if (deskAlreadySet && draft !== null) deskCheckbox.checked = false;
+    deskNote.textContent = deskAlreadySet
+      ? "The manager's desk is already set for this site — clear it on its own area first to move it."
+      : "";
   }
 
   startBtn.addEventListener("click", () => {
@@ -217,11 +257,19 @@ export function createCameraAreasPanel(doc, opts, camera) {
     saveErrorText = "";
     clearChildren(errorsEl);
     try {
+      const body = { cameraId, name: nameInput.value.trim(), points: draft.points };
+      // Only ever sent when actually checked AND not disabled -- a disabled,
+      // still-checked box (a race against another install saving the desk
+      // elsewhere) never smuggles a role through that updateButtons() would
+      // otherwise have blocked; checkArea would refuse it anyway
+      // (duplicate_role), but this page never relies on the server to catch
+      // what its own UI already knows not to offer.
+      if (deskCheckbox.checked && !deskCheckbox.disabled) body.role = "managerDesk";
       const res = await fetchFn("/areas", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cameraId, name: nameInput.value.trim(), points: draft.points }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data || data.ok === false) {
@@ -230,8 +278,10 @@ export function createCameraAreasPanel(doc, opts, camera) {
         return;
       }
       areas = [...areas, data.area];
+      if (data.area.role === "managerDesk") setSiteDeskAreaId(data.area.id);
       draft = null;
       nameInput.value = "";
+      deskCheckbox.checked = false;
       renderList();
       renderOverlay();
     } catch (err) {
@@ -243,6 +293,51 @@ export function createCameraAreasPanel(doc, opts, camera) {
     }
   }
   closeBtn.addEventListener("click", () => { void saveArea(); });
+
+  /** Toggle an EXISTING area's own managerDesk role on or off, re-posting the
+   *  same area unchanged apart from `role` (POST /areas edits by id --
+   *  agent/areas.mjs). Never optimistic: the checkbox's own visible state is
+   *  only ever set from what the server actually accepted, in renderList(),
+   *  so a refused toggle (another area already holds the role) snaps back
+   *  rather than lying about what was saved. */
+  async function setAreaRole(area, makeDesk) {
+    saveErrorText = "";
+    clearChildren(errorsEl);
+    try {
+      const body = { id: area.id, cameraId: area.cameraId, name: area.name, points: area.points };
+      if (makeDesk) body.role = "managerDesk";
+      const res = await fetchFn("/areas", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.ok === false) {
+        if (data && Array.isArray(data.errors)) renderErrors(data.errors);
+        else { saveErrorText = (data && data.message) || "Could not change the manager's desk."; renderErrors(null); }
+        renderList(); // snap the checkbox back to what is actually on file
+        return;
+      }
+      areas = areas.map((a) => (a.id === area.id ? data.area : a));
+      setSiteDeskAreaId(data.area.role === "managerDesk" ? data.area.id : (deskAreaId === area.id ? null : deskAreaId));
+      renderList();
+      updateButtons();
+    } catch (err) {
+      if (typeof log === "function") log("error", "area role save failed", { cameraId, id: area.id, message: err && err.message });
+      saveErrorText = "Could not reach the recorder.";
+      renderErrors(null);
+      renderList();
+    }
+  }
+
+  /** Update this panel's own knowledge of the SITE-wide desk area id, and
+   *  tell the page driver (if any) so every OTHER camera's panel re-renders
+   *  its own checkboxes too -- the role is site-wide, so a change on one
+   *  camera must disable/enable the option everywhere else immediately, not
+   *  just on the next full page load. */
+  function setSiteDeskAreaId(id) {
+    deskAreaId = id;
+    if (typeof opts.onDeskChanged === "function") opts.onDeskChanged(id);
+  }
 
   async function removeArea(id) {
     try {
@@ -273,13 +368,26 @@ export function createCameraAreasPanel(doc, opts, camera) {
   return {
     root,
     /** Apply this camera's own areas from GET /areas (filtered by the
-     *  caller, since that route returns every camera's areas at once). */
-    applyLoaded(camerasAreas) {
+     *  caller, since that route returns every camera's areas at once), and
+     *  the site-wide manager's-desk area id (found across EVERY camera's
+     *  areas, by the page driver below -- never just this one's). */
+    applyLoaded(camerasAreas, siteDeskAreaId) {
       areas = Array.isArray(camerasAreas) ? camerasAreas : [];
+      deskAreaId = siteDeskAreaId ?? null;
       renderList();
       renderOverlay();
       updateButtons();
       loadStill();
+    },
+    /** The page driver's own push, after ANY panel (this one or another
+     *  camera's) changes which area holds the role -- re-renders this
+     *  panel's checkboxes with the new site-wide state, without re-fetching
+     *  or re-notifying (setSiteDeskAreaId is the notifying path; this is the
+     *  receiving one, so the two can never loop into each other). */
+    setDeskAreaId(id) {
+      deskAreaId = id;
+      renderList();
+      updateButtons();
     },
   };
 }
@@ -339,11 +447,26 @@ export function startAreasPage(opts) {
     if (cameras.length === 0 && container) {
       container.append(el(doc, "p", { class: "dim", text: "No cameras yet." }));
     }
+    // "One manager per store" (APPEARANCE-OF-DAY-SPEC.md): at most one area,
+    // on any camera, ever holds this role -- found once, across every
+    // camera's own areas, and handed to EVERY panel so each one's checkbox
+    // knows whether some OTHER camera already has it.
+    let deskAreaId = allAreas.find((a) => a.role === "managerDesk")?.id ?? null;
     for (const camera of cameras) {
       if (!camera || typeof camera.cameraId !== "string") continue;
-      const panel = createCameraAreasPanel(doc, { fetchFn, now, log }, camera);
+      const panel = createCameraAreasPanel(doc, {
+        fetchFn, now, log,
+        // Any panel's own role change is site-wide: push it to every OTHER
+        // panel immediately (setDeskAreaId, the receiving half -- see its own
+        // comment), so a checkbox disables/enables without waiting for a
+        // full page reload.
+        onDeskChanged: (id) => {
+          deskAreaId = id;
+          for (const p of panels.values()) p.setDeskAreaId(id);
+        },
+      }, camera);
       panels.set(camera.cameraId, panel);
-      panel.applyLoaded(allAreas.filter((a) => a.cameraId === camera.cameraId));
+      panel.applyLoaded(allAreas.filter((a) => a.cameraId === camera.cameraId), deskAreaId);
       if (container) container.append(panel.root);
     }
   }

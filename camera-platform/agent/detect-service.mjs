@@ -11,7 +11,8 @@
  * when it sits on one. Flagged, never deleted: the Review page can show it.
  */
 
-import { readFile, writeFile, rename, mkdir, appendFile, readdir, unlink } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, appendFile, readdir, unlink, open } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -25,7 +26,15 @@ import {
 } from "../dist/cameraAiSettings.js";
 import { checkAreasFile, boxInsideArea, AREAS_VERSION } from "../dist/areas.js";
 import { advanceOccupancy, INITIAL_OCCUPANCY_STATE } from "../dist/zoneOccupancy.js";
-import { wholeCameraAreaId } from "../dist/managerRules.js";
+import { wholeCameraAreaId, reportDayRange } from "../dist/managerRules.js";
+import { localParts } from "../dist/alertRules.js";
+import {
+  checkSiteSettingsFile, siteSettingsView, isFeatureEnabled, effectiveTimeZone, DEFAULT_APPEARANCE_MATCH_PERCENT,
+} from "../dist/siteSettings.js";
+import {
+  learnTodaysManager, matchAppearance, checkAppearanceTodayFile, isAppearanceTodayStale, APPEARANCE_TODAY_VERSION,
+  MIN_SIGNATURES_TO_LEARN,
+} from "../dist/appearance.js";
 import { loadConfig, resolveCameraUrl } from "./recorder-service.mjs";
 import { openEventsDb } from "./events-db.mjs";
 import { openOccupancyDb, OCCUPANCY_DB_FILE } from "./occupancy-db.mjs";
@@ -101,6 +110,32 @@ const OCCUPANCY_KINDS = ["person", "vehicle"];
 function emptyAreasFile() {
   return { version: AREAS_VERSION, areas: [] };
 }
+
+/**
+ * Appearance of the day (APPEARANCE-OF-DAY-SPEC.md, MANAGER-RULES-SPEC.md
+ * build 3): "just need to learn what managers look like daily without
+ * learning the face" - a per-site switch (contracts/siteSettings.ts's own
+ * `appearanceOfDay` feature, off by default in every preset), re-read from
+ * the SAME site.json every `appearanceReloadMs`. Unlike `managerRulesEnabled`
+ * above (a hand-rolled single-field reader, kept that way for a historical
+ * reason its own comment explains), `appearanceOfDay` and `managerRules` are
+ * BOTH already listed in contracts/siteSettings.ts's FEATURE_REGISTRY today,
+ * so this reader uses the real validator (`checkSiteSettingsFile`) rather
+ * than inventing a second one - a malformed site.json is logged once and the
+ * last good appearance settings are kept, exactly the "keep the last good
+ * copy" discipline every other file this service reloads already keeps.
+ */
+const APPEARANCE_RELOAD_MS = 30_000;
+const APPEARANCE_TODAY_FILE = "appearance-today.json";
+/** "The first hour of the site's openHours" / "the first two hours" - the
+ *  gate `learnTodaysManager` needs both a primary-manager window and a
+ *  (superset) second-manager window. Agent-level, not a pure contract: this
+ *  file decides which raw sightings fall in which window (contracts/
+ *  appearance.ts's own header comment: "this file does not itself decide
+ *  WHICH detections fall inside a window ... that judgement belongs to
+ *  whoever correlates occupancy tracking with this event id"). */
+const FIRST_MANAGER_WINDOW_MS = 60 * 60_000;
+const SECOND_MANAGER_WINDOW_MS = 2 * 60 * 60_000;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultLog = (level, msg, extra) =>
@@ -217,6 +252,13 @@ export async function startDetect(opts = {}) {
     // harness trigger a re-read on demand, same as reloadAiSettings does for
     // camera-ai.json.
     occupancyReloadMs = OCCUPANCY_RELOAD_MS,
+    // Appearance of the day: how often site.json's `appearanceOfDay` switch,
+    // `appearanceMatchPercent`, `openHours` and effective time zone are
+    // re-read. A harness passes something small so a check does not have to
+    // wait a real 30 s; svc.reloadAppearanceConfig() (below) also lets a
+    // harness trigger a re-read on demand, same as reloadOccupancyConfig does
+    // for areas.json/managerRules.
+    appearanceReloadMs = APPEARANCE_RELOAD_MS,
     // Teach list, piece 1: how often the once-a-day sweep of old gate-window
     // files runs. A day in production; a harness passes something small so a
     // check does not have to wait a real day to see it happen again.
@@ -700,6 +742,451 @@ export async function startDetect(opts = {}) {
     }
   }
 
+  // ---------------------------------------------------------------- appearance of the day
+  //
+  // APPEARANCE-OF-DAY-SPEC.md, MANAGER-RULES-SPEC.md build 3: "just need to
+  // learn what managers look like daily without learning the face". NO FACE
+  // RECOGNITION, EVER - this service never reads a signature apart from the
+  // 145 numbers detector/appearance.py (via the worker's own --appearance
+  // flag) already reduced a detection to; it never opens a crop, a face
+  // detector or a landmark library, and it never writes a person's name
+  // anywhere.
+
+  /** The last GOOD reading of the switch, the match threshold, openHours and
+   *  the effective time zone - all from site.json, all re-read together on
+   *  the same timer (see APPEARANCE_RELOAD_MS's own comment above for why
+   *  this uses the real siteSettings validator, unlike managerRulesEnabled's
+   *  hand-rolled reader). Starts at the registry defaults / off, same as
+   *  "never configured" everywhere else in this file. */
+  let appearanceOfDayEnabled = false;
+  let appearanceMatchPercent = DEFAULT_APPEARANCE_MATCH_PERCENT;
+  let appearanceOpenHours = null;
+  let appearanceTimeZone = "UTC";
+
+  /**
+   * The zone every "what is today, locally" question in this section is
+   * asked in: the openHours SCHEDULE's own timeZone when one is set (it is
+   * the schedule's own zone that decides when the store opens each day, and
+   * therefore when its "first hour" is - contracts/alertRules.ts's own
+   * `isOpen` already reads `schedule.timeZone`, never a separate site
+   * setting), falling back to `appearanceTimeZone` (the site's effective
+   * zone) only when there is no schedule at all (nothing to fall back to
+   * otherwise, and the nightly wipe still has to ask SOME zone). Keeping the
+   * window computation and the staleness check on the SAME zone is the
+   * point: two different zones for "when did today start" would let the
+   * two disagree about what day it is, which is exactly the bug this
+   * function exists to rule out.
+   */
+  function appearanceZone() {
+    return appearanceOpenHours !== null ? appearanceOpenHours.timeZone : appearanceTimeZone;
+  }
+
+  /** Today's learned signature(s), in memory - the ONLY durable copy is
+   *  `<stateDir>/appearance-today.json` itself; this is a cache of what this
+   *  process last read or wrote there. `null` until learned (or once wiped). */
+  let appearanceTodayFile = null;
+
+  /** This local day's in-progress learning: which fold event ids have been
+   *  seen at the manager's desk so far today, and every desk sighting each
+   *  one has (timestamp + signature), capped to the first two hours by
+   *  never recording past them (see recordAppearanceSighting below).
+   *  Reset whenever the local date changes (a new day's window). */
+  let appearanceLearning = { localDate: null, sightings: new Map() };
+
+  const systemTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  /** Re-read site.json's appearance-of-day settings now. Never throws: a bad
+   *  or missing file keeps the last good reading, exactly like every other
+   *  file this service reloads. On a real change of the switch itself, every
+   *  running worker is restarted (see restartWorkerForAppearanceChange) so
+   *  its --appearance flag matches the new value, the same way any other
+   *  worker-launch argument change would need a restart to take effect. */
+  async function loadAppearanceConfigNow() {
+    let raw;
+    try {
+      raw = await readFile(path.join(stateDir, SITE_SETTINGS_FILE), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        if (logged.has("site-settings-appearance")) logged.delete("site-settings-appearance");
+        appearanceMatchPercent = DEFAULT_APPEARANCE_MATCH_PERCENT;
+        appearanceOpenHours = null;
+        appearanceTimeZone = systemTimeZone();
+        await applyAppearanceSwitch(false);
+        return;
+      }
+      logOnce("site-settings-appearance", "warn", "site settings could not be read; the last good appearance-of-day settings are kept", { error: scrub(err.message) });
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logOnce("site-settings-appearance", "warn", "site.json is not valid JSON; the last good appearance-of-day settings are kept", { error: scrub(err.message) });
+      return;
+    }
+    const checked = checkSiteSettingsFile(parsed);
+    if (!checked.ok) {
+      logOnce("site-settings-appearance", "warn", "site settings failed validation; the last good appearance-of-day settings are kept", {
+        errors: checked.errors.slice(0, 3).map((e) => `${e.field}: ${e.reason}`),
+      }, `bad:${checked.errors.length}`);
+      return;
+    }
+    if (logged.has("site-settings-appearance")) {
+      logged.delete("site-settings-appearance");
+      log("info", "site settings can be read again", {});
+    }
+    const view = siteSettingsView(checked.file);
+    appearanceMatchPercent = view.appearanceMatchPercent;
+    appearanceOpenHours = view.openHours;
+    appearanceTimeZone = effectiveTimeZone(view, systemTimeZone());
+    await applyAppearanceSwitch(isFeatureEnabled(view.features, "appearanceOfDay"));
+  }
+
+  /** Flip the in-memory switch, restarting every running worker so its
+   *  --appearance flag catches up (a no-op when the value has not actually
+   *  changed). Turning it OFF also wipes appearance-today.json and every
+   *  manager-match sighting at once - "deleted ... when the switch turns
+   *  off" (APPEARANCE-OF-DAY-SPEC.md) - and clears this day's in-progress
+   *  learning, so turning the switch back on later starts learning fresh
+   *  rather than resuming stale, possibly-hours-old sightings. */
+  async function applyAppearanceSwitch(nextEnabled) {
+    if (nextEnabled === appearanceOfDayEnabled) return;
+    appearanceOfDayEnabled = nextEnabled;
+    for (const worker of workers.values()) {
+      worker.restartForSettingChange = true;
+      try {
+        worker.child.kill("SIGTERM");
+      } catch {
+        // Already gone; its own exit handler (or the next spawn attempt) sorts it out.
+      }
+    }
+    if (!nextEnabled) {
+      appearanceLearning = { localDate: null, sightings: new Map() };
+      await wipeAppearanceToday("switch turned off");
+    }
+  }
+
+  /** Delete appearance-today.json (if any) and every manager-match sighting,
+   *  logging once why. Used by the switch turning off, the nightly local-
+   *  midnight wipe, and a start whose file's date is already stale - the
+   *  three cases APPEARANCE-OF-DAY-SPEC.md names as "DELETED". Never throws:
+   *  a failed delete is logged once and the in-memory copy is cleared
+   *  regardless, so this service's own idea of "today's manager" is never
+   *  stale even if the file on disk could not be removed just now. */
+  async function wipeAppearanceToday(reason) {
+    appearanceTodayFile = null;
+    try {
+      await unlink(path.join(stateDir, APPEARANCE_TODAY_FILE));
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        logOnce("appearance-today-delete", "warn", "appearance-today.json could not be deleted", { error: scrub(err.message), reason });
+      }
+    }
+    clearManagerMatchesIfPresent();
+  }
+
+  /** Delete every manager-match row, WITHOUT creating occupancy.db just to
+   *  find it empty - a site that has never opened occupancy.db for any
+   *  reason must not have this cleanup step be the thing that creates it. */
+  function clearManagerMatchesIfPresent() {
+    const dbPath = path.join(stateDir, OCCUPANCY_DB_FILE);
+    if (occupancyDb === null && !existsSync(dbPath)) return;
+    const db = occupancyDbHandle();
+    if (db === null) return;
+    try {
+      db.clearManagerMatches();
+    } catch (err) {
+      logOnce("manager-matches-clear", "warn", "manager-match sightings could not be cleared", { error: scrub(err.message) });
+    }
+  }
+
+  /** Re-read appearance-today.json now: absent is fine (not learned yet
+   *  today); present is validated and, if stale (a date that is not today,
+   *  in the site's own time zone - never UTC), wiped at once, per
+   *  isAppearanceTodayStale's own contract. An unreadable or invalid file is
+   *  treated as "not learned" (never guessed at, never left half-trusted) -
+   *  the next successful learning pass simply overwrites it. */
+  async function loadAppearanceTodayNow() {
+    let raw;
+    try {
+      raw = await readFile(path.join(stateDir, APPEARANCE_TODAY_FILE), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        appearanceTodayFile = null;
+        return;
+      }
+      logOnce("appearance-today-read", "warn", "appearance-today.json could not be read; treated as not learned today", { error: scrub(err.message) });
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logOnce("appearance-today-read", "warn", "appearance-today.json is not valid JSON; treated as not learned today", { error: scrub(err.message) });
+      return;
+    }
+    const checked = checkAppearanceTodayFile(parsed);
+    if (!checked.ok) {
+      logOnce("appearance-today-read", "warn", "appearance-today.json failed validation; treated as not learned today", {});
+      return;
+    }
+    if (logged.has("appearance-today-read")) logged.delete("appearance-today-read");
+    if (isAppearanceTodayStale(checked.file, appearanceZone(), now().toISOString())) {
+      await wipeAppearanceToday("stale date on read");
+      return;
+    }
+    appearanceTodayFile = checked.file;
+  }
+
+  async function loadAppearanceStateNow() {
+    await loadAppearanceConfigNow();
+    await loadAppearanceTodayNow();
+  }
+
+  /** One area's own manager-desk role, or null - "one manager per store,
+   *  very rarely two" means at most one such area site-wide (checkArea/
+   *  checkAreasFile already refuse a second one anywhere on the site). */
+  function managerDeskArea() {
+    return areasFile.areas.find((a) => a.role === "managerDesk") ?? null;
+  }
+
+  /** "The first hour of the site's openHours" / "the first two hours",
+   *  resolved to real UTC instants for TODAY (the site's own local day at
+   *  `nowMs`) - null when the site is closed all day today (no interval, or
+   *  a closed date), which simply means no learning window exists today,
+   *  not a refusal of the feature itself. `reportDayRange`'s own DST
+   *  correction resolves local midnight; the day's own open time is added on
+   *  top of that as a flat offset, an approximation this file accepts (a
+   *  DST transition landing between midnight and opening time on the same
+   *  day is a corner case no store's real hours are likely to hit).
+   */
+  function firstManagerWindowsToday(openHours, timeZone, nowMs) {
+    const { date, weekday } = localParts(timeZone, nowMs);
+    if (openHours.closedDates.includes(date)) return null;
+    const intervals = openHours.weekly[weekday] ?? [];
+    if (intervals.length === 0) return null;
+    let earliestOpen = null;
+    for (const interval of intervals) {
+      if (earliestOpen === null || interval.open < earliestOpen) earliestOpen = interval.open;
+    }
+    if (earliestOpen === null) return null;
+    const dayRange = reportDayRange(timeZone, date);
+    if (!dayRange.ok) return null;
+    const windowStartMs = dayRange.startMs + earliestOpen * 60_000;
+    return {
+      windowStartMs,
+      firstHourEndMs: windowStartMs + FIRST_MANAGER_WINDOW_MS,
+      secondWindowEndMs: windowStartMs + SECOND_MANAGER_WINDOW_MS,
+    };
+  }
+
+  /** This local day's sightings, restricted to whatever was seen before
+   *  `beforeMs`, one PersonSignatureRun (contracts/appearance.ts) per fold
+   *  event id that has at least one such sighting. Both the desk-presence
+   *  span and the signature LIST are cut at the same boundary, so a run's
+   *  signature count never counts a sighting from a later sub-window than
+   *  the one being asked about. */
+  function appearanceRunsBefore(beforeMs) {
+    const runs = [];
+    for (const [eventId, sightings] of appearanceLearning.sightings) {
+      const inWindow = sightings.filter((s) => s.atMs < beforeMs);
+      if (inWindow.length === 0) continue;
+      let firstAtMs = inWindow[0].atMs;
+      let lastAtMs = inWindow[0].atMs;
+      const signatures = [];
+      for (const s of inWindow) {
+        if (s.atMs < firstAtMs) firstAtMs = s.atMs;
+        if (s.atMs > lastAtMs) lastAtMs = s.atMs;
+        signatures.push(s.signature);
+      }
+      runs.push({ eventId, deskPresenceMs: lastAtMs - firstAtMs, signatures });
+    }
+    return runs;
+  }
+
+  let appearanceWriteChain = Promise.resolve();
+
+  /** Write appearance-today.json - 0600, tmp then rename, the same
+   *  convention agent/manager-rules.mjs's own persist() and agent/areas.mjs
+   *  already keep for their own files. Chained so two learning passes never
+   *  interleave two half-written files; failures are logged once and never
+   *  thrown into the frame path. `appearanceTodayFile` is updated in memory
+   *  BEFORE the write settles, so matching can use today's manager the very
+   *  moment learning succeeds, and so this day's learning never re-attempts
+   *  itself while the write is still in flight. */
+  function writeAppearanceTodayFile(file) {
+    appearanceTodayFile = file;
+    appearanceWriteChain = appearanceWriteChain
+      .then(async () => {
+        const finalPath = path.join(stateDir, APPEARANCE_TODAY_FILE);
+        const tmpPath = `${finalPath}.tmp`;
+        const fh = await open(tmpPath, "w", 0o600);
+        try {
+          await fh.writeFile(JSON.stringify(file));
+          await fh.sync();
+        } finally {
+          await fh.close();
+        }
+        await rename(tmpPath, finalPath);
+        log("info", "today's manager learned from the desk (a clothing signature, never a face)", {
+          date: file.date, hasSecondary: file.secondary !== null,
+        });
+      })
+      .catch((err) => {
+        logOnce("appearance-today-write", "warn", "appearance-today.json could not be saved; will try again next pass", { error: scrub(err.message) });
+      });
+    return appearanceWriteChain;
+  }
+
+  /** Try to learn today's manager from whatever has been collected so far.
+   *  A no-op once already learned today (appearanceTodayFile.date === the
+   *  window's own local date) - "it keeps trying until the window ends"
+   *  means retrying on more data, never re-learning over an answer already
+   *  found. Never throws: learnTodaysManager only throws for a malformed
+   *  signature, which cannot happen here (every signature reaching
+   *  appearanceLearning already passed parseWorkerLine's own strict check). */
+  function attemptLearnTodaysManager(localDate, windows, nowMs) {
+    if (appearanceTodayFile !== null && appearanceTodayFile.date === localDate) return;
+    const runsFirstHour = appearanceRunsBefore(windows.firstHourEndMs);
+    const runsFirstTwoHours = appearanceRunsBefore(windows.secondWindowEndMs);
+    let result;
+    try {
+      result = learnTodaysManager(appearanceOpenHours, runsFirstHour, runsFirstTwoHours);
+    } catch (err) {
+      log("error", "appearance of the day: learning could not run", { error: err?.message ?? String(err) });
+      return;
+    }
+    if (!result.ok) return;
+    writeAppearanceTodayFile({
+      version: APPEARANCE_TODAY_VERSION,
+      date: localDate,
+      primary: result.primary.signature,
+      secondary: result.secondary === null ? null : result.secondary.signature,
+      learnedAtUtc: new Date(nowMs).toISOString(),
+    });
+  }
+
+  /**
+   * One frame, on the manager-desk camera only, schedule OPEN, appearanceOfDay
+   * on, openHours set: record every person detection with a real signature
+   * that lies inside the manager's-desk area, keyed by the SAME fold event id
+   * `advanceFold` just assigned it (`assigned`, aligned to `kept` by input
+   * order - contracts/detectStream.ts's own EventUpdate/assigned contract),
+   * then try to learn. Sightings are never recorded past the second window
+   * (two hours after opening) - nothing is kept growing forever once the
+   * window has closed for the day.
+   */
+  function recordAppearanceLearning(cameraId, kept, keptAppearances, assignedIds, atMs) {
+    const desk = managerDeskArea();
+    if (desk === null || desk.cameraId !== cameraId || appearanceOpenHours === null) return;
+    const { date: localDate } = localParts(appearanceZone(), atMs);
+    if (appearanceLearning.localDate !== localDate) {
+      appearanceLearning = { localDate, sightings: new Map() };
+    }
+    const windows = firstManagerWindowsToday(appearanceOpenHours, appearanceZone(), atMs);
+    if (windows === null) return; // closed today: no learning window at all
+    if (atMs < windows.windowStartMs || atMs >= windows.secondWindowEndMs) return;
+    for (let i = 0; i < kept.length; i++) {
+      const d = kept[i];
+      const signature = keptAppearances[i];
+      if (d.kind !== "person" || signature === null) continue;
+      if (!boxInsideArea(d.box, desk.points)) continue;
+      const eventId = assignedIds[i];
+      let sightings = appearanceLearning.sightings.get(eventId);
+      if (sightings === undefined) {
+        sightings = [];
+        appearanceLearning.sightings.set(eventId, sightings);
+      }
+      sightings.push({ atMs, signature });
+    }
+    attemptLearnTodaysManager(localDate, windows, atMs);
+  }
+
+  /**
+   * One frame, appearanceOfDay on: match every person detection with a real
+   * signature against today's file (contracts/appearance.ts's
+   * `matchAppearance`), and for every area on THIS camera whose polygon the
+   * detection's box lies inside, write a manager-match sighting - "camera,
+   * area, at_ms, similarity%" (this build's own job description). A no-op
+   * while today's manager is not yet learned (nothing to match against), and
+   * for a camera with no areas drawn at all (a match sighting always names
+   * an area - a door, an exit, the desk - never "whole camera").
+   */
+  function processAppearanceMatches(cameraId, kept, keptAppearances, atMs) {
+    if (appearanceTodayFile === null) return;
+    const areas = areasForCamera(cameraId);
+    if (areas.length === 0) return;
+    for (let i = 0; i < kept.length; i++) {
+      const d = kept[i];
+      const signature = keptAppearances[i];
+      if (d.kind !== "person" || signature === null) continue;
+      const decision = matchAppearance(signature, appearanceTodayFile, appearanceMatchPercent);
+      if (!decision.match) continue;
+      for (const area of areas) {
+        if (!boxInsideArea(d.box, area.points)) continue;
+        writeManagerMatch(area.id, cameraId, atMs, decision.which, decision.similarityPercent);
+      }
+    }
+  }
+
+  /**
+   * GET /appearance/status's own read (agent/api-server.mjs, a SEPARATE
+   * process): learned or not and why, `learnedAtUtc`, a sample count, and
+   * whether a second manager exists - NEVER the signature itself, which
+   * never leaves this function (it is not even in scope: only
+   * `appearanceTodayFile.secondary !== null`, a boolean, is read). Reasons,
+   * in the order this build's own job description names them: "switch off",
+   * "open hours not set", "no manager's desk area", "not enough sightings
+   * yet: N of M" - `null` once actually learned today.
+   */
+  function appearanceStatusForHealth(nowMs) {
+    if (!appearanceOfDayEnabled) {
+      return { enabled: false, learnedToday: false, learnedAtUtc: null, hasSecondary: false, sampleCount: null, minSignaturesToLearn: MIN_SIGNATURES_TO_LEARN, reason: "switch off" };
+    }
+    const { date: today } = localParts(appearanceZone(), nowMs);
+    if (appearanceTodayFile !== null && appearanceTodayFile.date === today) {
+      return {
+        enabled: true, learnedToday: true, learnedAtUtc: appearanceTodayFile.learnedAtUtc,
+        hasSecondary: appearanceTodayFile.secondary !== null, sampleCount: null,
+        minSignaturesToLearn: MIN_SIGNATURES_TO_LEARN, reason: null,
+      };
+    }
+    if (appearanceOpenHours === null) {
+      return { enabled: true, learnedToday: false, learnedAtUtc: null, hasSecondary: false, sampleCount: null, minSignaturesToLearn: MIN_SIGNATURES_TO_LEARN, reason: "open hours not set" };
+    }
+    if (managerDeskArea() === null) {
+      return { enabled: true, learnedToday: false, learnedAtUtc: null, hasSecondary: false, sampleCount: null, minSignaturesToLearn: MIN_SIGNATURES_TO_LEARN, reason: "no manager's desk area" };
+    }
+    let sampleCount = 0;
+    if (appearanceLearning.localDate === today) {
+      const windows = firstManagerWindowsToday(appearanceOpenHours, appearanceZone(), nowMs);
+      if (windows !== null) {
+        for (const run of appearanceRunsBefore(windows.firstHourEndMs)) {
+          if (run.signatures.length > sampleCount) sampleCount = run.signatures.length;
+        }
+      }
+    }
+    return {
+      enabled: true, learnedToday: false, learnedAtUtc: null, hasSecondary: false, sampleCount,
+      minSignaturesToLearn: MIN_SIGNATURES_TO_LEARN,
+      reason: `not enough sightings yet: ${sampleCount} of ${MIN_SIGNATURES_TO_LEARN}`,
+    };
+  }
+
+  /** Write one manager-match sighting - never thrown into the frame path: a
+   *  failure to open or write occupancy.db is logged once and detection
+   *  keeps running, the exact discipline writeOccupancyTransition already
+   *  keeps for the 'occupancy' table in the same database. */
+  function writeManagerMatch(areaId, cameraId, atMs, which, similarityPercent) {
+    const db = occupancyDbHandle();
+    if (db === null) return;
+    try {
+      db.insertManagerMatch({ areaId, cameraId, atMs, which, similarityPercent });
+    } catch (err) {
+      logOnce("manager-match-write", "warn", "a manager-match sighting could not be saved; detection keeps running", { error: scrub(err.message) });
+    }
+  }
+
   // ---------------------------------------------------------------- known objects
   //
   // AUSTIN'S DECISION (2026-09-20) IS APPLIED HERE: hiding an event behind a
@@ -1173,6 +1660,12 @@ export async function startDetect(opts = {}) {
           ...(motionGate.keepaliveMs !== null ? ["--gate-keepalive-ms", String(motionGate.keepaliveMs)] : []),
         ]
       : [];
+    // Appearance of the day: --appearance ONLY while the site's switch is on
+    // at the moment this worker is (re)launched - "off means nothing is
+    // computed and nothing is sent" (APPEARANCE-OF-DAY-SPEC.md). A later
+    // change of the switch is picked up by restarting this worker
+    // (applyAppearanceSwitch above), never by this worker noticing on its own.
+    const appearanceArgs = appearanceOfDayEnabled ? ["--appearance"] : [];
     const child = spawnFn(python, [
       workerPath,
       "--camera", cameraId,
@@ -1180,6 +1673,7 @@ export async function startDetect(opts = {}) {
       "--fps", String(grantedFps),
       "--model", finalModelPath,
       ...gateArgs,
+      ...appearanceArgs,
     ], { stdio: ["ignore", "pipe", "pipe"] });
 
     workers.set(cameraId, { child, substreamUrl, urlPassword: extractUrlPassword(substreamUrl) });
@@ -1240,7 +1734,20 @@ export async function startDetect(opts = {}) {
           // fold and the event store are skipped while closed.
           const settings = aiSettingsFor(cameraId);
           const aiSchedule = refreshAiSchedule(cam, settings, parsed.atUtc);
-          const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
+          const frameAtMs = Date.parse(parsed.atUtc);
+          // kept/keptAppearances are built TOGETHER, index by index, so a
+          // signature (contracts/detectStream.ts's own `appearances`, aligned
+          // to `parsed.detections` before this filter) never drifts out of
+          // step with the detection it belongs to once minConfidence drops
+          // some of them - the same pairing advanceFold's own `assigned`
+          // (below) then extends with a third, equally-aligned array.
+          const kept = [];
+          const keptAppearances = [];
+          for (let i = 0; i < parsed.detections.length; i++) {
+            if (parsed.detections[i].confidence < minConfidence) continue;
+            kept.push(parsed.detections[i]);
+            keptAppearances.push(parsed.appearances[i]);
+          }
           // Manager rules' occupancy (MANAGER-RULES-SPEC.md section 2): fed
           // from this SAME frame, right beside advanceFold - "in the frame
           // handler... right where kept is formed". Only when the site's
@@ -1248,12 +1755,20 @@ export async function startDetect(opts = {}) {
           // (closed: not_watching at once, never a folded frame's worth of
           // presence/absence), independent of whether the fold below runs.
           if (managerRulesEnabled) {
-            const frameAtMs = Date.parse(parsed.atUtc);
             if (aiSchedule.open) {
               processOccupancyFrame(cameraId, settings, kept, frameAtMs);
             } else {
               occupancyScheduleClosed(cameraId, frameAtMs);
             }
+          }
+          // Appearance of the day (APPEARANCE-OF-DAY-SPEC.md): matching runs
+          // whenever the switch is on and AI is watching, regardless of the
+          // separate managerRules switch above - it is this build's own
+          // feature, with its own switch. Learning additionally needs the
+          // fold's own event ids (`step.assigned`, below), so it runs after
+          // advanceFold rather than here.
+          if (appearanceOfDayEnabled && aiSchedule.open) {
+            processAppearanceMatches(cameraId, kept, keptAppearances, frameAtMs);
           }
           if (aiSchedule.open) {
             const step = advanceFold(cam.fold, kept, now().toISOString());
@@ -1267,6 +1782,9 @@ export async function startDetect(opts = {}) {
             }
             for (const finished of step.finished) {
               storeEvent(finished, true);
+            }
+            if (appearanceOfDayEnabled) {
+              recordAppearanceLearning(cameraId, kept, keptAppearances, step.assigned, frameAtMs);
             }
           }
         } else if (parsed.kind === "gate") {
@@ -1329,8 +1847,18 @@ export async function startDetect(opts = {}) {
 
     // Handle exit
     child.once("exit", (code) => {
+      const worker = workers.get(cameraId);
       workers.delete(cameraId);
       if (stopping) return;
+
+      // Appearance of the day: a deliberate kill from applyAppearanceSwitch,
+      // not a crash - respawn AT ONCE with the new --appearance value,
+      // rather than counting it as a restart and waiting out the backoff a
+      // real crash would deserve (cam.restarts is left untouched).
+      if (worker?.restartForSettingChange) {
+        spawnWorker(assignment);
+        return;
+      }
 
       log("warn", "detect worker exited", {
         cameraId,
@@ -1373,6 +1901,14 @@ export async function startDetect(opts = {}) {
   // and the managerRules switch once before the first worker starts, same
   // reasoning as camera AI settings above. loadOccupancyConfigNow never throws.
   await loadOccupancyConfigNow();
+
+  // Appearance of the day (APPEARANCE-OF-DAY-SPEC.md): read site.json's
+  // switch/threshold/openHours/timezone AND appearance-today.json (deleting
+  // it at once if its date is already stale) before the first worker starts
+  // - so a stale file from a previous run is never matched against for even
+  // one frame, and the very first worker launch already knows whether to
+  // pass --appearance. loadAppearanceStateNow never throws.
+  await loadAppearanceStateNow();
 
   // Teach list, piece 1: drop this directory's own files older than 7 days
   // before the first new one can be written, same as the known-objects read
@@ -1448,6 +1984,15 @@ export async function startDetect(opts = {}) {
     if (!stopping) loadOccupancyConfigNow();
   }, occupancyReloadMs);
 
+  // Appearance of the day: re-read site.json's switch/threshold/openHours/
+  // timezone, AND re-check appearance-today.json's own date against "now" -
+  // this is what actually notices local midnight (or a date that went stale
+  // some other way) and wipes the file, since nothing else in this service
+  // watches the clock for that purpose. loadAppearanceStateNow never throws.
+  const appearanceReloadTimer = setInterval(() => {
+    if (!stopping) loadAppearanceStateNow();
+  }, appearanceReloadMs);
+
   // Teach list, piece 1: the once-a-day sweep. pruneGateWindows never throws
   // (its own failures are logged and swallowed), so nothing here needs to
   // catch it either.
@@ -1506,8 +2051,9 @@ export async function startDetect(opts = {}) {
   }
 
   async function writeHealth() {
+    const nowIsoForHealth = now().toISOString();
     const health = {
-      atUtc: now().toISOString(),
+      atUtc: nowIsoForHealth,
       capacityFps: plan.capacityFps,
       minConfidence,
       motionGate,
@@ -1525,6 +2071,12 @@ export async function startDetect(opts = {}) {
         lastPass: known.lastPass,
       },
       cameras: getCameras(),
+      // Appearance of the day's own status (GET /appearance/status,
+      // agent/api-server.mjs — a SEPARATE process that has no other way to
+      // see this process's in-memory learning progress): NEVER the
+      // signature itself, only whether it is learned and why, learnedAtUtc,
+      // a sample count, and whether a second manager exists.
+      appearance: appearanceStatusForHealth(Date.parse(nowIsoForHealth)),
     };
     const tmpFile = path.join(stateDir, "detect-health.json.tmp");
     const finalFile = path.join(stateDir, "detect-health.json");
@@ -1540,6 +2092,7 @@ export async function startDetect(opts = {}) {
     clearInterval(knownFlushTimer);
     clearInterval(aiSettingsTimer);
     clearInterval(occupancyReloadTimer);
+    clearInterval(appearanceReloadTimer);
     clearInterval(gateRetentionTimer);
     if (timeSourceWindowTimer) clearInterval(timeSourceWindowTimer);
 
@@ -1610,6 +2163,17 @@ export async function startDetect(opts = {}) {
     // For a harness, as reloadAiSettings is: re-read areas.json and the
     // managerRules switch now, rather than waiting occupancyReloadMs.
     reloadOccupancyConfig: () => loadOccupancyConfigNow(),
+    // For a harness, as reloadOccupancyConfig is: re-read site.json's
+    // appearance-of-day settings AND re-check appearance-today.json's own
+    // date now, rather than waiting appearanceReloadMs - this is also how a
+    // harness proves the local-midnight (or stale-date) wipe without a real
+    // wait.
+    reloadAppearanceConfig: () => loadAppearanceStateNow(),
+    // For a harness: today's learned signature(s), or null - read-only, and
+    // never handed to anything outside this process. NEVER exposed over
+    // HTTP; GET /appearance/status (agent/api-server.mjs) reports only
+    // whether it is learned and why, never this value itself.
+    appearanceToday: () => appearanceTodayFile,
     // For a harness, as tick/pruneGateWindows are: close every camera's
     // timeSource window now, exactly as the gate-off timer would, without a
     // real wait. Exposed unconditionally - closing a window by hand is always

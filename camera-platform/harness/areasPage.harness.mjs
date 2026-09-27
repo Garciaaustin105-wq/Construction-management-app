@@ -69,6 +69,61 @@ check("applyLoaded renders the camera's own areas only, never another camera's",
   eq(allText.includes("Manager's desk"), true, "the loaded area's name reached the panel");
 });
 
+await check("REQUIRED: the new-area 'This is the manager's desk' checkbox disables itself once the site already has one, and posting a checked one sends role: managerDesk", async () => {
+  const doc = fakeDoc();
+  let posted = null;
+  const fetchFn = async (url, init) => {
+    posted = init && init.body ? JSON.parse(init.body) : null;
+    return { ok: true, json: async () => ({ ok: true, area: { id: "new1", cameraId: "cam-1", name: "Desk", points: [[0, 0], [0.5, 0], [0.5, 1]], role: "managerDesk" } }) };
+  };
+  const panel = client.createCameraAreasPanel(doc, { fetchFn, now: () => 0 }, { cameraId: "cam-1", name: "Front Desk" });
+  panel.applyLoaded([], null); // no desk anywhere on the site yet
+  // body's own children, in append order: stillWrap(0), stillStatus(1),
+  // controls(2), deskLabel(3), deskNote(4), errorsEl(5), list(6).
+  const controls = panel.root.children[1].children[2];
+  const deskLabelEl = panel.root.children[1].children[3];
+  eq(deskLabelEl.tag, "label");
+  const deskCheckbox = deskLabelEl.children[0];
+  const startBtn = controls.children[1];
+  startBtn.fire("click");
+  deskCheckbox.checked = true;
+  const nameInput = controls.children[0];
+  nameInput.value = "Desk";
+  nameInput.fire("input");
+  const stillWrap = panel.root.children[1].children[0];
+  stillWrap.fire("pointerdown", { clientX: 0, clientY: 0 });
+  stillWrap.fire("pointerdown", { clientX: 100, clientY: 0 });
+  stillWrap.fire("pointerdown", { clientX: 100, clientY: 100 });
+  const closeBtn = controls.children[2];
+  eq(closeBtn.disabled, false, "3 points and a name were entered, so Save area must be enabled before it is clicked");
+  closeBtn.fire("click");
+  await new Promise((r) => setTimeout(r, 10));
+  eq(posted !== null, true, "a save was actually posted");
+  eq(posted.role, "managerDesk", `the checked box's role reached the POST body: ${JSON.stringify(posted)}`);
+});
+
+check("REQUIRED: an existing area's own desk-toggle checkbox is disabled when a DIFFERENT area already holds the role, but never for its own", () => {
+  const doc = fakeDoc();
+  const panel = client.createCameraAreasPanel(doc, { fetchFn: async () => ({ ok: true, json: async () => ({}) }), now: () => 0 }, { cameraId: "cam-1", name: "Front Desk" });
+  panel.applyLoaded(
+    [
+      { id: "a1", cameraId: "cam-1", name: "Register", points: [[0, 0], [0.5, 0], [0.5, 1]] },
+      { id: "a2", cameraId: "cam-1", name: "Manager's desk", points: [[0, 0], [0.5, 0], [0.5, 1]], role: "managerDesk" },
+    ],
+    "a2",
+  );
+  const list = panel.root.children[1].children[6];
+  eq(list.tag, "ul");
+  const rowA1 = list.children[0];
+  const rowA2 = list.children[1];
+  const toggleA1 = rowA1.children[1].children[0];
+  const toggleA2 = rowA2.children[1].children[0];
+  eq(toggleA1.checked, false);
+  eq(toggleA1.disabled, true, "a1 cannot become the desk while a2 already holds it");
+  eq(toggleA2.checked, true);
+  eq(toggleA2.disabled, false, "a2's own checkbox stays enabled so it can be cleared");
+});
+
 /** THE FEARED ONE: run the module's own bottom bootstrap in a fresh child
  *  process (camera-page-bootstrap-lesson) -- proving the REAL page, with
  *  #areasList in the DOM, fetches on its own with no harness calling

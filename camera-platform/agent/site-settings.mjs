@@ -270,6 +270,12 @@ export function createSiteSettings({
           // saving the display name does not silently clear a manager's stored
           // open hours.
           openHours: before.openHours,
+          // appearanceMatchPercent (APPEARANCE-OF-DAY-SPEC.md): an ordinary
+          // full-replace field, like displayName/timeZone above -- not a
+          // preset-driven switch and not openHours' own separate route, so
+          // it always takes whatever this save submitted (checkSiteSettings
+          // already defaulted it to 80 when the body omitted it).
+          appearanceMatchPercent: checked.settings.appearanceMatchPercent,
         };
         const nowUtc = now().toISOString();
         const actor = actorOf(principal);

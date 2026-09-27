@@ -10,6 +10,7 @@
 import { check, eq, same, throws, report } from "./_assert.mjs";
 import {
   MANAGER_RULE_TEMPLATES, checkManagerRule, evaluateManagerRule,
+  deriveManagerLeaveEpisodes, evaluateManagerLeavesRule, evaluateManagerReturnsRule,
 } from "../dist/managerRules.js";
 
 console.log("manager rules");
@@ -47,7 +48,7 @@ function baseRule(over = {}) {
 // ---------------------------------------------------------------- templates
 
 check("the template table matches the spec exactly, desk_unattended first", () => {
-  eq(MANAGER_RULE_TEMPLATES.length, 8);
+  eq(MANAGER_RULE_TEMPLATES.length, 10);
   eq(MANAGER_RULE_TEMPLATES[0].label, "Manager's desk unattended");
   const rows = MANAGER_RULE_TEMPLATES.map((t) => ({
     template: t.template, label: t.label, kind: t.kind, condition: t.condition, when: t.when,
@@ -62,6 +63,8 @@ check("the template table matches the spec exactly, desk_unattended first", () =
     { template: "vehicle_arrives", label: "Vehicle arrives", kind: "vehicle", condition: { type: "enters" }, when: "always", alert: true, report: true },
     { template: "vehicle_leaves", label: "Vehicle leaves", kind: "vehicle", condition: { type: "leaves" }, when: "always", alert: true, report: true },
     { template: "door_used", label: "Door used", kind: "person", condition: { type: "enters" }, when: "always", alert: false, report: true },
+    { template: "manager_leaves", label: "Manager leaves", kind: "person", condition: { type: "manager_leaves", awayMinutes: 5 }, when: "open_hours", alert: true, report: true },
+    { template: "manager_returns", label: "Manager returns", kind: "person", condition: { type: "manager_returns", awayMinutes: 5 }, when: "open_hours", alert: false, report: true },
   ]);
   eq(MANAGER_RULE_TEMPLATES[3].wholeCamera, true); // "Person after hours"
   eq(MANAGER_RULE_TEMPLATES.filter((t) => t.wholeCamera).length, 1);
@@ -101,6 +104,12 @@ check("every condition shape is checked, extra fields and bad numbers refused", 
   eq(cond({ type: "present_longer_than", minutes: 10 }).ok, true);
   eq(cond({ type: "away_and_back", minMinutes: 5 }).ok, true);
   eq(cond({ type: "away_and_back", minMinutes: 0 }).ok, false);
+  eq(cond({ type: "manager_leaves", awayMinutes: 5 }).ok, true);
+  eq(cond({ type: "manager_leaves", awayMinutes: 0 }).ok, false);
+  eq(cond({ type: "manager_leaves" }).ok, false);
+  eq(cond({ type: "manager_leaves", awayMinutes: 5, extra: 1 }).ok, false);
+  eq(cond({ type: "manager_returns", awayMinutes: 5 }).ok, true);
+  eq(cond({ type: "manager_returns", awayMinutes: -1 }).ok, false);
   eq(cond({ type: "nonsense" }).ok, false);
 });
 
@@ -433,6 +442,152 @@ check("alertWanted and reportWanted follow the rule's own notify flags; an incom
   const f2 = evaluateManagerRule(reportOnly, enterStream, T0 + 1, null, TZ, null);
   eq(f2[0].alertWanted, false);
   eq(f2[0].reportWanted, true);
+});
+
+// ---------------------------------------------------------------- appearance-based: "Manager leaves" / "Manager returns"
+// (contracts/appearance.ts's matchAppearance sightings, never occupancy —
+// deriveManagerLeaveEpisodes is the ONE piece of shared machinery both
+// evaluators read, so the two templates can never disagree about which
+// departure they are each describing.)
+
+const L0 = z("2026-07-20T19:00:00.000Z"); // 14:00 America/Chicago (CDT), well inside OPEN_HOURS
+
+function sighting(atMs, similarityPercent = 90, which = "primary") {
+  return { atMs, which, similarityPercent };
+}
+
+const leavesRule = (over = {}) => baseRule({
+  template: "manager_leaves",
+  name: "Manager leaves",
+  areaId: "back-door",
+  condition: { type: "manager_leaves", awayMinutes: 5 },
+  when: "open_hours",
+  notify: { alert: true, report: true, cooldownMinutes: 0 },
+  ...over,
+});
+
+const returnsRule = (over = {}) => baseRule({
+  template: "manager_returns",
+  name: "Manager returns",
+  areaId: "back-door",
+  condition: { type: "manager_returns", awayMinutes: 5 },
+  when: "open_hours",
+  notify: { alert: false, report: true, cooldownMinutes: 0 },
+  ...over,
+});
+
+check("deriveManagerLeaveEpisodes: no desk sighting within awayMinutes confirms a leave, still open (no return yet)", () => {
+  const episodes = deriveManagerLeaveEpisodes([sighting(L0, 91)], [], 5);
+  eq(episodes.length, 1);
+  eq(episodes[0].departAtMs, L0);
+  eq(episodes[0].confirmedLeaveAtMs, L0 + 5 * 60_000);
+  eq(episodes[0].returnAtMs, null);
+  eq(episodes[0].returnSimilarityPercent, null);
+});
+
+check("FEARED: a desk sighting before awayMinutes elapses cancels the departure outright -- never reported at all", () => {
+  const door = [sighting(L0, 91)];
+  const desk = [sighting(L0 + 2 * 60_000, 95)]; // back at the desk after only 2 minutes
+  eq(deriveManagerLeaveEpisodes(door, desk, 5), []);
+});
+
+check("a desk sighting at or after awayMinutes confirms AND closes the episode as the return", () => {
+  const door = [sighting(L0, 88)];
+  const desk = [sighting(L0 + 12 * 60_000, 93)];
+  const episodes = deriveManagerLeaveEpisodes(door, desk, 5);
+  eq(episodes.length, 1);
+  eq(episodes[0].confirmedLeaveAtMs, L0 + 5 * 60_000);
+  eq(episodes[0].returnAtMs, L0 + 12 * 60_000);
+  eq(episodes[0].returnSimilarityPercent, 93);
+});
+
+check("a burst of door sightings before the desk gap resolves is ONE episode, starting at the FIRST sighting", () => {
+  const door = [sighting(L0, 85), sighting(L0 + 30_000, 90), sighting(L0 + 60_000, 92)];
+  const desk = [sighting(L0 + 20 * 60_000, 91)];
+  const episodes = deriveManagerLeaveEpisodes(door, desk, 5);
+  eq(episodes.length, 1);
+  eq(episodes[0].departAtMs, L0);
+  eq(episodes[0].departSimilarityPercent, 85);
+});
+
+check("after a completed episode, a later door sighting starts a fresh one", () => {
+  const door = [sighting(L0, 85), sighting(L0 + 60 * 60_000, 87)];
+  const desk = [sighting(L0 + 10 * 60_000, 90)];
+  const episodes = deriveManagerLeaveEpisodes(door, desk, 5);
+  eq(episodes.length, 2);
+  eq(episodes[0].returnAtMs, L0 + 10 * 60_000);
+  eq(episodes[1].departAtMs, L0 + 60 * 60_000);
+  eq(episodes[1].returnAtMs, null);
+});
+
+check("evaluateManagerLeavesRule/evaluateManagerReturnsRule throw when handed a rule of the wrong condition type", () => {
+  throws(() => evaluateManagerLeavesRule(returnsRule(), [], [], "Back door", L0, OPEN_HOURS, TZ, null), "leaves given a returns rule");
+  throws(() => evaluateManagerReturnsRule(leavesRule(), [], [], "Manager's desk", L0, OPEN_HOURS, TZ, null), "returns given a leaves rule");
+});
+
+check("evaluateManagerLeavesRule does not fire before the confirmation instant, and fires at it with identity-free, rounded wording", () => {
+  const rule = leavesRule();
+  const door = [sighting(L0, 86.4)];
+  eq(evaluateManagerLeavesRule(rule, door, [], "Back door", L0 + 4 * 60_000, OPEN_HOURS, TZ, null), []);
+  const firings = evaluateManagerLeavesRule(rule, door, [], "Back door", L0 + 5 * 60_000 + 1, OPEN_HOURS, TZ, null);
+  eq(firings.length, 1);
+  eq(firings[0].what, "manager_leaves");
+  eq(firings[0].startMs, L0);
+  eq(firings[0].endMs, L0 + 5 * 60_000);
+  eq(firings[0].durationMs, 5 * 60_000);
+  eq(firings[0].text, "Person matching today's manager (86%) left through Back door 14:00");
+  eq(firings[0].alertWanted, true);
+  eq(firings[0].reportWanted, true);
+  eq(firings[0].text.toLowerCase().includes("manager"), true);
+  // identity-free: no field anywhere carries a name
+  eq(Object.keys(firings[0]).includes("personName"), false);
+});
+
+check("evaluateManagerLeavesRule: a cancelled departure (desk sighting too soon) never fires, even long after", () => {
+  const rule = leavesRule();
+  const door = [sighting(L0, 90)];
+  const desk = [sighting(L0 + 2 * 60_000, 95)];
+  eq(evaluateManagerLeavesRule(rule, door, desk, "Back door", L0 + 60 * 60_000, OPEN_HOURS, TZ, null), []);
+});
+
+check("evaluateManagerReturnsRule fires once the manager is back, with the duration measured from the ORIGINAL departure", () => {
+  const rule = returnsRule();
+  const door = [sighting(L0, 89.6)];
+  const desk = [sighting(L0 + 45 * 60_000, 91.2)];
+  // still away: nothing to report
+  eq(evaluateManagerReturnsRule(rule, door, [], "Manager's desk", L0 + 30 * 60_000, OPEN_HOURS, TZ, null), []);
+  const firings = evaluateManagerReturnsRule(rule, door, desk, "Manager's desk", L0 + 45 * 60_000 + 1, OPEN_HOURS, TZ, null);
+  eq(firings.length, 1);
+  eq(firings[0].what, "manager_returns");
+  eq(firings[0].startMs, L0);
+  eq(firings[0].endMs, L0 + 45 * 60_000);
+  eq(firings[0].durationMs, 45 * 60_000);
+  eq(firings[0].text, "Person matching today's manager (91%) matched back at Manager's desk 14:45 (45 min)");
+  eq(firings[0].alertWanted, false); // this template's own notify.alert is off
+  eq(firings[0].reportWanted, true);
+});
+
+check("evaluateManagerReturnsRule never fires for a cancelled (too-soon) departure", () => {
+  const rule = returnsRule();
+  const door = [sighting(L0, 90)];
+  const desk = [sighting(L0 + 2 * 60_000, 95)]; // cancels the departure at the SAME instant it would otherwise "return"
+  eq(evaluateManagerReturnsRule(rule, door, desk, "Manager's desk", L0 + 60 * 60_000, OPEN_HOURS, TZ, null), []);
+});
+
+check("both templates respect when: open_hours, and cooldown/lastFiredAtMs the same way the occupancy evaluator does", () => {
+  // Sunday is closed all day in OPEN_HOURS.
+  const sunday = z("2026-07-19T13:00:00.000Z");
+  const rule = leavesRule();
+  eq(evaluateManagerLeavesRule(rule, [sighting(sunday, 90)], [], "Back door", sunday + 6 * 60_000, OPEN_HOURS, TZ, null), []);
+
+  const cooldownRule = leavesRule({ notify: { alert: true, report: true, cooldownMinutes: 30 } });
+  const door = [sighting(L0, 90), sighting(L0 + 10 * 60_000, 90)];
+  const desk = [sighting(L0 + 6 * 60_000, 95)]; // closes the FIRST departure as a genuine return
+  const firstFirings = evaluateManagerLeavesRule(cooldownRule, [door[0]], desk, "Back door", L0 + 5 * 60_000 + 1, OPEN_HOURS, TZ, null);
+  eq(firstFirings.length, 1);
+  // The second departure confirms only 10 minutes after the first firing: inside the 30 min cooldown.
+  const secondFirings = evaluateManagerLeavesRule(cooldownRule, door, desk, "Back door", L0 + 20 * 60_000, OPEN_HOURS, TZ, firstFirings[0].endMs);
+  eq(secondFirings, []);
 });
 
 report("manager rules");

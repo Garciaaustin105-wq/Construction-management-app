@@ -75,6 +75,23 @@ function el(doc, tag, attrs, kids) {
 // of truth; harness/sitePage.harness.mjs checks this copy still matches it.
 export const MAX_DISPLAY_NAME_LENGTH = 80;
 
+// Mirrored from contracts/siteSettings.ts's own appearance-match constants
+// (APPEARANCE-OF-DAY-SPEC.md, MANAGER-RULES-SPEC.md build 3: "50-99, default
+// 80"). Same mirroring discipline as MAX_DISPLAY_NAME_LENGTH above --
+// harness/sitePage.harness.mjs checks these three still match the contract.
+export const MIN_APPEARANCE_MATCH_PERCENT = 50;
+export const MAX_APPEARANCE_MATCH_PERCENT = 99;
+export const DEFAULT_APPEARANCE_MATCH_PERCENT = 80;
+
+// The spec's own "Known limits (say them on the page)" (APPEARANCE-OF-DAY-
+// SPEC.md): shown verbatim under the match-threshold field, never softened --
+// an installer turning this switch on needs to know what it cannot do before
+// they rely on it, the same "report measurements, not verdicts" discipline
+// (AGENTS.md build rule 11) applied to a feature's own limits.
+export const APPEARANCE_LIMITS_TEXT =
+  "Clothing-colour matching is weak across cameras with very different lighting, "
+  + "and useless under uniforms. It is uncalibrated until you record test walks.";
+
 const REASON_TEXT = {
   bad_display_name: `must be plain text, at most ${MAX_DISPLAY_NAME_LENGTH} characters`,
   bad_time_zone: "is not a recognised time zone",
@@ -82,6 +99,7 @@ const REASON_TEXT = {
   not_an_object: "must be an object",
   unknown_feature_key: "is not a feature this recorder knows about",
   bad_feature_flag: "must be on or off",
+  bad_appearance_match_percent: `must be a number from ${MIN_APPEARANCE_MATCH_PERCENT} to ${MAX_APPEARANCE_MATCH_PERCENT}`,
 };
 
 /** Plain text for a FieldProblem.reason -- never the raw code, on a page an
@@ -102,7 +120,14 @@ export function siteTypeLabel(siteType) {
   return SITE_TYPE_LABELS[siteType] || String(siteType);
 }
 
-const FEATURE_LABELS = { activity: "Activity" };
+const FEATURE_LABELS = {
+  activity: "Activity",
+  managerRules: "Manager rules",
+  // "we don't need facial rec" (owner's own words, memory manager-ai-rules) --
+  // the label itself says so, every place this switch appears, not just the
+  // limits text below it.
+  appearanceOfDay: "Appearance of the day (no face)",
+};
 
 export function featureLabel(key) {
   return FEATURE_LABELS[key] || key;
@@ -177,6 +202,22 @@ export function buildSiteSection(doc, opts) {
 
   const featuresList = el(doc, "div", { id: "siteFeatures" }, []);
 
+  // Appearance of the day's own match threshold (APPEARANCE-OF-DAY-SPEC.md:
+  // "a per-site setting, default 80%") -- its own field, not a feature
+  // switch, so it lives beside siteFeatures rather than inside
+  // renderFeatures' loop over FEATURE_REGISTRY. Always visible (even with the
+  // switch off) so turning appearanceOfDay on and setting a threshold can
+  // happen in the same save, without a round trip.
+  const appearanceMatchInput = el(doc, "input", {
+    type: "number", id: "siteAppearanceMatchPercent",
+    min: String(MIN_APPEARANCE_MATCH_PERCENT), max: String(MAX_APPEARANCE_MATCH_PERCENT), step: "1",
+  });
+  const appearanceLimitsText = el(doc, "p", { class: "dim", id: "siteAppearanceLimits", text: APPEARANCE_LIMITS_TEXT });
+  const appearanceBlock = el(doc, "div", { class: "siteAppearanceBlock" }, [
+    el(doc, "div", { class: "row" }, [el(doc, "label", { text: "Match threshold (%)" }, []), appearanceMatchInput]),
+    appearanceLimitsText,
+  ]);
+
   const zonesList = el(doc, "div", { id: "siteZoneMismatches" }, []);
 
   const versionBlock = el(doc, "div", { id: "siteVersionBlock" }, []);
@@ -198,6 +239,7 @@ export function buildSiteSection(doc, opts) {
     presetNote,
     el(doc, "h3", { text: "Features" }),
     featuresList,
+    appearanceBlock,
     saveErrors,
     el(doc, "div", { class: "row" }, [saveBtn, saveStatus]),
     el(doc, "h3", { text: "Cameras in another time zone" }),
@@ -209,6 +251,7 @@ export function buildSiteSection(doc, opts) {
   return {
     root: section,
     nameInput, tzInput, tzNote, typeSelect, typeNote, presetNote, featuresList,
+    appearanceMatchInput, appearanceLimitsText,
     zonesList, versionBlock, saveErrors, saveBtn, saveStatus, notice,
   };
 }
@@ -321,6 +364,13 @@ export function startSitePage(opts) {
       : `Blank uses the recorder's own zone: ${sysZone}`;
     dom.typeSelect.value = settings.siteType || "";
     renderFeatures(doc, dom, registry, settings.features, false);
+    // "A blank is not a zero" (build rule 5): a site that never saved this
+    // reads settings.appearanceMatchPercent already defaulted to 80 by
+    // checkSiteSettings/defaultSiteSettings server-side -- this field is
+    // never left blank or zeroed here either.
+    dom.appearanceMatchInput.value = String(
+      typeof settings.appearanceMatchPercent === "number" ? settings.appearanceMatchPercent : DEFAULT_APPEARANCE_MATCH_PERCENT,
+    );
   }
 
   async function loadZoneMismatches() {
@@ -390,11 +440,19 @@ export function startSitePage(opts) {
     dom.presetNote.textContent = "";
     const beforeFeatures = readFeaturesFromForm();
     const beforeType = siteType;
+    // The match threshold is a full-replace field (agent/site-settings.mjs's
+    // own POST /site-settings: "not a preset-driven switch and not
+    // openHours' own separate route, so it always takes whatever this save
+    // submitted") -- sent on EVERY save, never omitted, or an installer
+    // saving just their display name would silently reset it back to 80
+    // (checkSiteSettings defaults an absent field, it does not preserve one).
+    const matchPercentRaw = Number(dom.appearanceMatchInput.value);
     const body = {
       displayName: dom.nameInput.value,
       timeZone: dom.tzInput.value.trim() === "" ? null : dom.tzInput.value.trim(),
       siteType: dom.typeSelect.value === "" ? null : dom.typeSelect.value,
       features: beforeFeatures,
+      appearanceMatchPercent: Number.isFinite(matchPercentRaw) ? matchPercentRaw : DEFAULT_APPEARANCE_MATCH_PERCENT,
     };
     try {
       const res = await fetchFn("/site-settings", {

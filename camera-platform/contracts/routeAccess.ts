@@ -212,6 +212,14 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // (the installer via ALL_PERMISSIONS, the manager explicitly), and to
   // nobody else.
   "/open-hours": { kind: "api", permission: "hours.manage" },
+  // Appearance of the day (APPEARANCE-OF-DAY-SPEC.md build 3): learned or
+  // not and why, never the signature itself — same reach as /rules and
+  // /rule-templates, rules.manage. Deliberately NOT added to
+  // agent/api-server.mjs's own MANAGER_RULES_ROUTE feature-switch gate list,
+  // same reasoning as /open-hours just above: appearanceOfDay is its own,
+  // separate switch, and this route's own response already says "switch
+  // off" when it is.
+  "/appearance/status": { kind: "api", permission: "rules.manage" },
 
   // Manager rules, build 2: phone alerts (MANAGER-ALERTS-SPEC.md). The spec's
   // own words are "rules.manage or events.view" for who may see the public

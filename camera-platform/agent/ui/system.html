@@ -119,10 +119,13 @@
                          text-transform:uppercase; letter-spacing:0.5px; }
   #siteSectionRoot .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
   #siteSectionRoot label { display:flex; align-items:center; gap:8px; min-width:140px; }
-  #siteSectionRoot input[type="text"], #siteSectionRoot select {
+  #siteSectionRoot input[type="text"], #siteSectionRoot input[type="number"], #siteSectionRoot select {
     font:inherit; color:inherit; background:#14161a; border:1px solid #2c2f36;
     border-radius:6px; padding:7px 10px; min-width:0; max-width:100%; flex:1 1 220px; }
+  #siteSectionRoot input[type="number"] { flex:0 1 100px; }
   #siteSectionRoot .siteFeatureRow { min-width:0; }
+  #siteSectionRoot .siteAppearanceBlock { margin-top:4px; }
+  #siteSectionRoot .siteAppearanceBlock p { font-size:12px; margin:4px 0; }
   #siteSectionRoot button { font:inherit; padding:8px 14px; border:0; border-radius:6px;
                               background:#4c8bf5; color:#fff; cursor:pointer; }
   #siteSectionRoot button:disabled { opacity:0.6; cursor:default; }
@@ -133,7 +136,7 @@
   /* Phone in a car park: stack the camera table, never scroll sideways. */
   @media (max-width: 699px) {
     #siteSectionRoot label { min-width:0; width:100%; }
-    #siteSectionRoot input[type="text"], #siteSectionRoot select { flex:1 1 auto; width:100%; }
+    #siteSectionRoot input[type="text"], #siteSectionRoot input[type="number"], #siteSectionRoot select { flex:1 1 auto; width:100%; }
     #totals { gap:8px 18px; }
     .cameras-table thead { display:none; }
     .cameras-table, .cameras-table tbody, .cameras-table tr,

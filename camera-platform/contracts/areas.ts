@@ -30,12 +30,23 @@ export const MAX_AREA_POINTS = MAX_ZONE_POINTS;
 export const MAX_AREAS_PER_CAMERA = 12;
 export const AREAS_VERSION = 1;
 
+/**
+ * A closed vocabulary of one, deliberately: only "managerDesk" exists today
+ * (APPEARANCE-OF-DAY-SPEC.md — "the person present longest inside the area
+ * named as the manager's desk"). A future role is added here, not invented by
+ * a caller passing an arbitrary string through.
+ */
+export type AreaRole = "managerDesk";
+export const AREA_ROLES: readonly AreaRole[] = Object.freeze(["managerDesk"]);
+
 /** A named polygon on one camera, frame fractions (0..1), like a camera-ai zone. */
 export interface Area {
   id: string;
   cameraId: string;
   name: string;
   points: Array<[number, number]>;
+  /** "At most one per site" (APPEARANCE-OF-DAY-SPEC.md) — see checkArea's own duplicate_role refusal. Absent: an ordinary area. */
+  role?: AreaRole;
 }
 
 export interface AreasFile {
@@ -131,10 +142,29 @@ export function checkArea(raw: unknown, otherAreas: readonly Area[]): AreaCheck 
 
   const points = checkPoints(raw.points, errors);
 
+  // role: absent is an ordinary area (the overwhelmingly common case) — never
+  // required, never defaulted to a role nobody asked for. Present must be one
+  // of AREA_ROLES, and "managerDesk" specifically must be unique across the
+  // WHOLE site (otherAreas is the full set, not filtered to this camera —
+  // "one manager per store" (APPEARANCE-OF-DAY-SPEC.md) means one desk, not
+  // one per camera).
+  let role: AreaRole | undefined;
+  if (raw.role !== undefined) {
+    if (typeof raw.role !== "string" || !(AREA_ROLES as readonly string[]).includes(raw.role)) {
+      errors.push({ field: "role", reason: "bad_role" });
+    } else if (raw.role === "managerDesk" && otherAreas.some((a) => a.role === "managerDesk")) {
+      errors.push({ field: "role", reason: "duplicate_role" });
+    } else {
+      role = raw.role as AreaRole;
+    }
+  }
+
   if (errors.length > 0 || id === null || cameraId === null || name === null || points === null) {
     return { ok: false, errors };
   }
-  return { ok: true, area: { id, cameraId, name, points } };
+  const area: Area = { id, cameraId, name, points };
+  if (role !== undefined) area.role = role;
+  return { ok: true, area };
 }
 
 export interface IndexedFieldProblem extends FieldProblem {

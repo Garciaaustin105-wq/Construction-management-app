@@ -31,6 +31,19 @@ so a "frame" line is printed only for those, and about once a minute a line
 says how many frames were read and why each look happened: the measured
 load of this camera, which is what decides how many cameras a box can take.
 
+With --appearance (APPEARANCE-OF-DAY-SPEC.md; off by default, and off means
+nothing is computed and nothing is sent) every PERSON detection also carries
+  "appearance": [145 numbers, 3 decimal places] or null
+- the clothing signature (detector/appearance.py): NEVER the top 20% of the
+box (the head - no face pixels are ever read), an HSV histogram per body
+region plus the box's aspect ratio, or null when the box is too small to
+trust. Vehicles never carry the key. Nothing here is ever written to
+events.db or any other durable store - see apply_appearance() and
+detector/appearance.py for what "computed" actually means. When --gate is
+also on, a per-reason count of why a signature came back null rides the
+existing "gate" line above as an extra "appearanceReasons" field, rather
+than a second reporting channel.
+
 TIMESTAMPING. atUtc used to be stamped when a frame was READ from ffmpeg's
 stdout pipe - after RTSP buffering, software decode, the fps/scale/pad filters
 and the pipe itself. Measured on a live camera (event-times-lag-footage,
@@ -125,6 +138,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+import appearance
 import motion_gate
 
 # How long to wait for the stderr showinfo line matching a frame already read
@@ -550,6 +564,38 @@ def postprocess(output, width, height, size=INPUT, score_floor=SCORE_FLOOR, nms_
     return detections
 
 
+def apply_appearance(detections, frame, width, height, ratio, counts):
+    """Attach an `appearance` signature (appearance.compute) to every PERSON
+    detection in `detections`, in place. main() calls this only when
+    --appearance was given - there is no other caller, and no other code
+    path ever sets the key, so a run without the flag never puts "appearance"
+    in a frame line at all (APPEARANCE-OF-DAY-SPEC.md: "off means nothing is
+    computed and nothing is sent"). Vehicles never get the key either way -
+    it is a person-only concept.
+
+    `frame` is the worker's own 640x640 letterboxed buffer, `width`/`height`
+    the SOURCE frame's real resolution from probe_size(), `ratio` the same
+    letterbox_ratio() main() already computes for the gate. `counts` is a
+    dict from appearance.APPEARANCE_NULL_REASONS to int - the per-reason
+    counter that goes into the worker's existing gate/health reporting - and
+    is bumped (never silently) whenever a person's signature comes back
+    null.
+
+    Pure with respect to everything except `frame`'s own pixels: no I/O, no
+    clock, no model. This is what detector/test_appearance.py exercises
+    directly, without ffmpeg or ONNX Runtime, the same split (rule 2) that
+    keeps postprocess() and resolve_time_source() unit-testable on their own.
+    """
+    for d in detections:
+        if d.get("kind") != "person":
+            continue
+        sig, reason = appearance.compute(frame, d["box"], width, height, ratio, INPUT)
+        d["appearance"] = sig
+        if reason is not None:
+            appearance.bump_reason(counts, reason)
+    return detections
+
+
 def probe_size(url):
     """The substream's width and height, from ffprobe. None when it cannot tell."""
     try:
@@ -579,6 +625,12 @@ def main():
                     help="detect.json minConfidence: what counts as tracking")
     ap.add_argument("--gate-threshold", type=float, default=None)
     ap.add_argument("--gate-keepalive-ms", type=float, default=None)
+    # APPEARANCE-OF-DAY-SPEC.md's clothing signature (detector/appearance.py):
+    # off by default, and off means nothing is computed and nothing is sent -
+    # see apply_appearance(), the only place the "appearance" key is ever
+    # set. A per-site switch, not a global one - detect-service passes this
+    # only when the site's own appearanceOfDay setting is on.
+    ap.add_argument("--appearance", action="store_true")
     args = ap.parse_args()
     gate_settings = None
     if args.gate:
@@ -664,11 +716,20 @@ def main():
     say({"type": "ready", "model": args.model.rsplit("/", 1)[-1].rsplit(".", 1)[0], "inputSize": INPUT})
 
     frame_bytes = INPUT * INPUT * 3
+    # Needed to map a box's SOURCE-frame fractions back to pixel coordinates
+    # in `frame`, this worker's own 640x640 letterboxed buffer - both the
+    # gate (its picture-only grid) and appearance (its person crop) share
+    # this exact same ratio, computed once regardless of whether either
+    # feature is on.
+    ratio = letterbox_ratio(width, height)
     gate = None
     if gate_settings is not None:
-        ratio = letterbox_ratio(width, height)
         floor, threshold, keepalive = gate_settings
         gate = motion_gate.Gate(int(width * ratio), int(height * ratio), floor, threshold, keepalive)
+    # APPEARANCE-OF-DAY-SPEC.md: off means nothing is computed and nothing is
+    # sent, so this stays None - and apply_appearance() is never called at
+    # all - unless --appearance was actually given.
+    appearance_counts = appearance.new_counts() if args.appearance else None
     frame_index = 0
     last = time.monotonic()
     try:
@@ -684,6 +745,8 @@ def main():
             now_ms = time.monotonic() * 1000
             if gate is None or gate.should_look(frame, now_ms):
                 detections = postprocess(run_model(frame), width, height)
+                if args.appearance:
+                    apply_appearance(detections, frame, width, height, ratio, appearance_counts)
                 if gate is not None:
                     gate.looked(detections, now_ms)
                 # Waited for ONLY here, never for a frame the gate skipped
@@ -705,6 +768,17 @@ def main():
             if gate is not None:
                 report = gate.window_report(now_ms)
                 if report is not None:
+                    # The appearance per-reason counter rides the gate's own
+                    # once-a-minute line rather than inventing a second
+                    # reporting channel - "into the existing gate/health
+                    # reporting" (APPEARANCE-OF-DAY-SPEC.md's YOUR JOB note).
+                    # contracts/detectStream.ts's parseWorkerLine only reads
+                    # the fields it knows about from a "gate" line, so this
+                    # extra one is inert to it, never a parse failure.
+                    if appearance_counts is not None:
+                        report["appearanceReasons"] = dict(appearance_counts)
+                        for r in appearance.APPEARANCE_NULL_REASONS:
+                            appearance_counts[r] = 0
                     say(report)
             # Checked every iteration, alongside the stall check below: unlike
             # that one (which only logs), a dead stderr thread is fatal -

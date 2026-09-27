@@ -27,6 +27,8 @@
   h2 { margin:20px 0 8px; font-size:15px; }
   h3 { margin:0 0 4px; font-size:14px; }
   .dim { color: var(--text-secondary); }
+  .good { color: #7ddc9a; }
+  .warn { color: var(--bad); }
   .panel { padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px;
            margin-bottom:14px; max-width:100%; }
   .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
@@ -69,6 +71,12 @@
   <h1>Rules</h1>
   <p class="dim">Templates prefill a rule; change anything before saving.</p>
 
+  <section class="panel" id="appearanceCard">
+    <h2>Today's manager</h2>
+    <p id="appearanceStatusText"></p>
+    <p id="appearanceLimitsText" class="dim"></p>
+  </section>
+
   <section class="panel">
     <h2>Start from a template</h2>
     <div id="templatePicker"></div>
@@ -87,6 +95,8 @@
         <option value="absent_longer_than">is missing for more than</option>
         <option value="present_longer_than">is present for more than</option>
         <option value="away_and_back">is away and back for at least</option>
+        <option value="manager_leaves">matches today's manager and leaves for at least</option>
+        <option value="manager_returns">matches today's manager and returns after at least</option>
       </select></label>
       <div class="row" id="ruleMinutesRow">
         <label>Minutes<input id="ruleMinutes" type="number" min="1" step="1"></label>

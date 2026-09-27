@@ -35,6 +35,38 @@ CREATE TABLE IF NOT EXISTS occupancy (
 CREATE INDEX IF NOT EXISTS idx_occupancy_area_kind_at ON occupancy(area_id, kind, at_ms);
 -- Events-retention's own shape: every transition for one camera, by time.
 CREATE INDEX IF NOT EXISTS idx_occupancy_camera_at ON occupancy(camera_id, at_ms);
+
+-- Manager-of-the-day appearance matches (APPEARANCE-OF-DAY-SPEC.md,
+-- MANAGER-RULES-SPEC.md build 3): one row per person detection that matched
+-- today's signature ("On each person detection on any camera, detect-service
+-- compares the signature with today's. At or above the match threshold, that
+-- detection is a 'manager match' with its %"), for each area that detection's
+-- box lies inside -- agent/detect-service.mjs is its only writer, fed by the
+-- SAME per-frame loop that already writes the 'occupancy' table above, never
+-- from a signature itself (which never reaches this database at all -- only
+-- a similarity percentage and which of today's one or two managers it was
+-- closer to). NEVER a name, NEVER a face, NEVER the 145-number signature.
+-- Read by agent/api-server.mjs's evaluator for the "Manager leaves" /
+-- "Manager returns" templates (contracts/managerRules.ts's own
+-- deriveManagerLeaveEpisodes, evaluateManagerLeavesRule/
+-- evaluateManagerReturnsRule) against one area's own stream at a time -- the
+-- rule's chosen door/exit area, or the site's one manager's-desk area.
+-- Wiped whole whenever appearance-today.json itself is wiped (local
+-- midnight, a stale-date start, or the appearanceOfDay switch turning off) --
+-- "Those rows are deleted with the nightly wipe, since they derive from the
+-- signature" -- never by the footage-based retention pass the 'occupancy'
+-- table above uses, because these rows do not describe what a camera saw,
+-- they describe a comparison against a signature that no longer exists.
+CREATE TABLE IF NOT EXISTS manager_matches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  area_id TEXT NOT NULL,
+  camera_id TEXT NOT NULL,
+  at_ms INTEGER NOT NULL,
+  which TEXT NOT NULL,
+  similarity_percent REAL NOT NULL
+);
+-- The evaluator's own read shape: one area's own sighting stream, chronological.
+CREATE INDEX IF NOT EXISTS idx_manager_matches_area_at ON manager_matches(area_id, at_ms);
 `;
 
 /** Short: this file's writer (detect-service) is a single short-lived
@@ -71,6 +103,13 @@ export function openOccupancyDb(file) {
   const forAreaKindStmt = db.prepare(
     "SELECT state, at_ms AS atMs FROM occupancy WHERE area_id = ? AND kind = ? ORDER BY at_ms, id",
   );
+  const insertManagerMatchStmt = db.prepare(
+    "INSERT INTO manager_matches (area_id, camera_id, at_ms, which, similarity_percent) VALUES (?, ?, ?, ?, ?)",
+  );
+  const managerMatchesForAreaStmt = db.prepare(
+    "SELECT at_ms AS atMs, which, similarity_percent AS similarityPercent FROM manager_matches WHERE area_id = ? ORDER BY at_ms, id",
+  );
+  const clearManagerMatchesStmt = db.prepare("DELETE FROM manager_matches");
   const allStmt = db.prepare(
     "SELECT id, area_id AS areaId, camera_id AS cameraId, kind, state, at_ms AS atMs FROM occupancy ORDER BY at_ms, id",
   );
@@ -136,9 +175,41 @@ export function openOccupancyDb(file) {
     return allStmt.all();
   }
 
+  /** One manager-match sighting: `{ areaId, cameraId, atMs, which,
+   *  similarityPercent }` -- exactly a contracts/managerRules.ts
+   *  `ManagerMatchSighting` plus the (area, camera) it belongs to, which that
+   *  pure type never knows. Never thrown into the frame path by the caller
+   *  (agent/detect-service.mjs) -- this function itself throws plainly on a
+   *  real failure, the same discipline `insert` already keeps for
+   *  occupancy transitions. */
+  function insertManagerMatch(m) {
+    insertManagerMatchStmt.run(m.areaId, m.cameraId, m.atMs, m.which, m.similarityPercent);
+  }
+
+  /** One area's own manager-match sighting stream, chronological -- what the
+   *  "Manager leaves"/"Manager returns" evaluator (agent/api-server.mjs)
+   *  reads for the rule's own door/exit area, and separately for the site's
+   *  one manager's-desk area. */
+  function managerMatchesForArea(areaId) {
+    return managerMatchesForAreaStmt.all(areaId);
+  }
+
+  /** Delete every manager-match row -- the nightly wipe (or a stale-date
+   *  start, or the appearanceOfDay switch turning off): "those rows are
+   *  deleted with the nightly wipe, since they derive from the signature"
+   *  (APPEARANCE-OF-DAY-SPEC.md). Whole-table, never a footage-based cutoff
+   *  -- these rows are never retained past the day they were matched on,
+   *  whatever the camera's own footage horizon is. */
+  function clearManagerMatches() {
+    clearManagerMatchesStmt.run();
+  }
+
   function close() {
     db.close();
   }
 
-  return { insert, transitionsFor, cameraRowCounts, deleteEndedBefore, all, close };
+  return {
+    insert, transitionsFor, cameraRowCounts, deleteEndedBefore, all, close,
+    insertManagerMatch, managerMatchesForArea, clearManagerMatches,
+  };
 }

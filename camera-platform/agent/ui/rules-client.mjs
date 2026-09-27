@@ -46,7 +46,11 @@ export function kindText(kind) {
 
 /** The condition's own verb phrase, WITH its minutes folded in --
  *  MANAGER-RULES-SPEC.md's own example: "[is missing for more than] [20]
- *  minutes". `draft` is { conditionType, minutes, minMinutes }. */
+ *  minutes". `draft` is { conditionType, minutes, minMinutes, awayMinutes }.
+ *  manager_leaves/manager_returns (APPEARANCE-OF-DAY-SPEC.md) read
+ *  manager-MATCH sightings, not occupancy -- their own phrasing says so
+ *  ("matching today's manager") rather than reusing the presence-based
+ *  wording above, which would misstate what these two actually watch. */
 export function verbPhrase(draft) {
   switch (draft.conditionType) {
     case "enters":
@@ -59,6 +63,10 @@ export function verbPhrase(draft) {
       return `is present for more than ${draft.minutes} minutes`;
     case "away_and_back":
       return `is away and back for at least ${draft.minMinutes} minutes`;
+    case "manager_leaves":
+      return `matches today's manager and leaves for at least ${draft.awayMinutes} minutes`;
+    case "manager_returns":
+      return `matches today's manager and returns after being away for at least ${draft.awayMinutes} minutes`;
     default:
       return String(draft.conditionType);
   }
@@ -102,7 +110,7 @@ export function blankDraft() {
   return {
     id: null, name: "", enabled: true, template: "custom",
     cameraId: "", areaId: null, kind: "person",
-    conditionType: "absent_longer_than", minutes: 20, minMinutes: 5,
+    conditionType: "absent_longer_than", minutes: 20, minMinutes: 5, awayMinutes: 5,
     when: "open_hours", alert: true, report: true, cooldownMinutes: 0,
   };
 }
@@ -123,6 +131,9 @@ export function draftFromTemplate(def) {
     d.minutes = def.condition.minutes;
   }
   if (def.condition.type === "away_and_back") d.minMinutes = def.condition.minMinutes;
+  if (def.condition.type === "manager_leaves" || def.condition.type === "manager_returns") {
+    d.awayMinutes = def.condition.awayMinutes;
+  }
   d.when = def.when;
   d.alert = def.notify.alert;
   d.report = def.notify.report;
@@ -147,6 +158,9 @@ export function draftFromRule(rule) {
     d.minutes = rule.condition.minutes;
   }
   if (rule.condition.type === "away_and_back") d.minMinutes = rule.condition.minMinutes;
+  if (rule.condition.type === "manager_leaves" || rule.condition.type === "manager_returns") {
+    d.awayMinutes = rule.condition.awayMinutes;
+  }
   d.when = rule.when;
   d.alert = rule.notify.alert;
   d.report = rule.notify.report;
@@ -163,7 +177,9 @@ export function buildRuleBody(draft) {
     ? { type: draft.conditionType }
     : draft.conditionType === "away_and_back"
       ? { type: "away_and_back", minMinutes: draft.minMinutes }
-      : { type: draft.conditionType, minutes: draft.minutes };
+      : draft.conditionType === "manager_leaves" || draft.conditionType === "manager_returns"
+        ? { type: draft.conditionType, awayMinutes: draft.awayMinutes }
+        : { type: draft.conditionType, minutes: draft.minutes };
   return {
     ...(draft.id ? { id: draft.id } : {}),
     name: draft.name.trim(),
@@ -184,7 +200,8 @@ const REASON_TEXT = {
   bad_area: "choose an area, or whole camera", bad_kind: "must be person or vehicle",
   not_an_object: "must be an object", unknown_field: "has a field this page does not know",
   bad_condition_type: "not a known condition", bad_minutes: "must be a whole number of minutes above 0",
-  bad_min_minutes: "must be a whole number of minutes above 0", bad_flag: "must be on or off",
+  bad_min_minutes: "must be a whole number of minutes above 0", bad_away_minutes: "must be a whole number of minutes above 0",
+  bad_flag: "must be on or off",
   bad_cooldown: "must be zero or more minutes", bad_actor: "missing who is saving this",
   bad_time: "the save time is invalid", bad_when: "not a known schedule",
   hours_not_set: "set the store's open hours first",
@@ -194,6 +211,39 @@ const REASON_TEXT = {
  *  manager (not a developer) reads. */
 export function describeReason(reason) {
   return REASON_TEXT[reason] || String(reason);
+}
+
+// ---------------------------------------------------------------- the "Today's manager" status card
+
+/** APPEARANCE-OF-DAY-SPEC.md's own "Known limits (say them on the page)" --
+ *  the exact same wording site-client.mjs shows on the Site section's own
+ *  match-threshold field (mirrored, not imported: these are two separate
+ *  browser modules, never one importing the other). */
+export const APPEARANCE_LIMITS_TEXT =
+  "Clothing-colour matching is weak across cameras with very different lighting, "
+  + "and useless under uniforms. It is uncalibrated until you record test walks.";
+
+/**
+ * GET /appearance/status's own `reason` strings (minted in exactly one
+ * place, agent/detect-service.mjs's appearanceStatusForHealth) turned into
+ * plain words for a manager or installer -- never the raw code (build rule
+ * 11: report measurements, not jargon). `status` is that route's own body
+ * shape: { enabled, learnedToday, hasSecondary, reason, ... }. Identity-free
+ * throughout, same as every other piece of this page -- there is no name in
+ * any branch below.
+ */
+export function appearanceStatusText(status) {
+  if (!status || status.enabled !== true) return "Off for this site.";
+  if (status.learnedToday) {
+    const secondary = status.hasSecondary ? " A second manager was also learned today." : "";
+    return `Learned today's manager.${secondary}`;
+  }
+  const reason = typeof status.reason === "string" ? status.reason : "";
+  const sampleMatch = /^not enough sightings yet: (\d+) of (\d+)$/.exec(reason);
+  if (sampleMatch) return `Not learned yet, ${sampleMatch[1]} of ${sampleMatch[2]}.`;
+  if (reason === "open hours not set") return "Not learned: set the store's open hours first.";
+  if (reason === "no manager's desk area") return "Not learned: mark an area as the manager's desk on the Cameras page first.";
+  return reason ? `Not learned: ${reason}.` : "Not learned yet today.";
 }
 
 /* ── DOM helpers -- never innerHTML ──────────────────────────────────── */
@@ -280,6 +330,8 @@ export function startRulesPage(opts) {
   const openHoursWeek = byId("openHoursWeek");
   const openHoursSave = byId("openHoursSave");
   const openHoursStatus = byId("openHoursStatus");
+  const appearanceStatusEl = byId("appearanceStatusText");
+  const appearanceLimitsEl = byId("appearanceLimitsText");
 
   let draft = blankDraft();
   let cameraNames = new Map(); // cameraId -> name
@@ -351,7 +403,14 @@ export function startRulesPage(opts) {
 
   function minutesFieldNeeded() {
     return draft.conditionType === "absent_longer_than" || draft.conditionType === "present_longer_than"
-      || draft.conditionType === "away_and_back";
+      || draft.conditionType === "away_and_back"
+      || draft.conditionType === "manager_leaves" || draft.conditionType === "manager_returns";
+  }
+
+  function minutesValueFor(d) {
+    if (d.conditionType === "away_and_back") return d.minMinutes;
+    if (d.conditionType === "manager_leaves" || d.conditionType === "manager_returns") return d.awayMinutes;
+    return d.minutes;
   }
 
   function renderSentence() {
@@ -376,12 +435,20 @@ export function startRulesPage(opts) {
     }
   }
 
+  function renderAppearanceStatus(status) {
+    if (appearanceStatusEl) {
+      appearanceStatusEl.textContent = appearanceStatusText(status);
+      appearanceStatusEl.className = status && status.enabled && status.learnedToday ? "good" : (status && status.enabled ? "warn" : "dim");
+    }
+    if (appearanceLimitsEl) appearanceLimitsEl.textContent = APPEARANCE_LIMITS_TEXT;
+  }
+
   function applyDraftToForm() {
     if (nameInput) nameInput.value = draft.name;
     if (kindSelect) kindSelect.value = draft.kind;
     if (conditionSelect) conditionSelect.value = draft.conditionType;
     if (minutesRow) minutesRow.hidden = !minutesFieldNeeded();
-    if (minutesInput) minutesInput.value = String(draft.conditionType === "away_and_back" ? draft.minMinutes : draft.minutes);
+    if (minutesInput) minutesInput.value = String(minutesValueFor(draft));
     renderCameraOptions();
     renderAreaOptions();
     if (whenSelect) whenSelect.value = draft.when;
@@ -434,7 +501,8 @@ export function startRulesPage(opts) {
       const sentence = el(doc, "p", { class: "dim" });
       sentence.textContent = ruleSentence({
         kind: r.kind, conditionType: r.condition.type,
-        minutes: r.condition.minutes, minMinutes: r.condition.minMinutes, when: r.when,
+        minutes: r.condition.minutes, minMinutes: r.condition.minMinutes,
+        awayMinutes: r.condition.awayMinutes, when: r.when,
         alert: r.notify.alert, report: r.notify.report,
       }, cameraName, areaName);
       const onOff = el(doc, "input", { type: "checkbox" });
@@ -516,7 +584,9 @@ export function startRulesPage(opts) {
     });
     if (minutesInput) minutesInput.addEventListener("input", () => {
       const n = Number(minutesInput.value);
-      if (draft.conditionType === "away_and_back") draft.minMinutes = n; else draft.minutes = n;
+      if (draft.conditionType === "away_and_back") draft.minMinutes = n;
+      else if (draft.conditionType === "manager_leaves" || draft.conditionType === "manager_returns") draft.awayMinutes = n;
+      else draft.minutes = n;
       renderSentence();
     });
     if (cameraSelect) cameraSelect.addEventListener("change", () => {
@@ -592,16 +662,17 @@ export function startRulesPage(opts) {
   wireForm();
 
   async function load() {
-    let templatesRes; let rulesRes; let areasRes; let camerasRes; let hoursRes;
+    let templatesRes; let rulesRes; let areasRes; let camerasRes; let hoursRes; let appearanceRes;
     try {
-      [templatesRes, rulesRes, areasRes, camerasRes, hoursRes] = await Promise.all([
+      [templatesRes, rulesRes, areasRes, camerasRes, hoursRes, appearanceRes] = await Promise.all([
         fetchFn("/rule-templates", { credentials: "same-origin" }),
         fetchFn("/rules", { credentials: "same-origin" }),
         fetchFn("/areas/list", { credentials: "same-origin" }),
         fetchFn("/cameras", { credentials: "same-origin" }),
         fetchFn("/open-hours", { credentials: "same-origin" }),
+        fetchFn("/appearance/status", { credentials: "same-origin" }),
       ]);
-      if ([templatesRes, rulesRes, areasRes, camerasRes, hoursRes].some((r) => r && r.status === 401)) {
+      if ([templatesRes, rulesRes, areasRes, camerasRes, hoursRes, appearanceRes].some((r) => r && r.status === 401)) {
         navigate("/login?next=%2Frules-page");
         return;
       }
@@ -614,6 +685,11 @@ export function startRulesPage(opts) {
     const areasBody = (await areasRes.json().catch(() => null)) || { areas: [] };
     const camerasBody = (await camerasRes.json().catch(() => null)) || [];
     const hoursBody = (await hoursRes.json().catch(() => null)) || { openHours: null };
+    // Tolerant: a 404 (feature_off) or any other non-2xx still means SOMETHING
+    // for the card to say ("Off for this site.", via appearanceStatusText's
+    // own `enabled !== true` branch) rather than a blank card or a thrown
+    // error -- the same "no" reads as an honest status, never a crash.
+    const appearanceBody = (await appearanceRes.json().catch(() => null)) || { enabled: false, learnedToday: false, reason: null };
 
     templates = Array.isArray(templatesBody.templates) ? templatesBody.templates : [];
     rules = Array.isArray(rulesBody.rules) ? rulesBody.rules : [];
@@ -635,6 +711,7 @@ export function startRulesPage(opts) {
       areasByCamera.set(a.cameraId, list);
     }
 
+    renderAppearanceStatus(appearanceBody);
     renderTemplates();
     applyDraftToForm();
     renderRulesList();

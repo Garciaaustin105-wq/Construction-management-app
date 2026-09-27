@@ -86,6 +86,12 @@ export const FEATURE_REGISTRY: readonly FeatureDefinition[] = Object.freeze([
   // the Site section must keep sampling NOTHING, not "on until told
   // otherwise" (build rule 5's own "a blank is not a zero", the other way).
   Object.freeze({ key: "managerRules", registryDefault: false }),
+  // Appearance of day (APPEARANCE-OF-DAY-SPEC.md, build 3): off by default in
+  // EVERY preset, including retail — "the owner's own words: we don't need
+  // facial rec" is a per-store choice, made by whoever installs the box, not
+  // a default anyone should have to opt out of. Off means nothing is computed
+  // and nothing is sent (the worker's own --appearance flag stays unset).
+  Object.freeze({ key: "appearanceOfDay", registryDefault: false }),
 ]);
 
 const FEATURE_KEYS: ReadonlySet<string> = new Set(FEATURE_REGISTRY.map((f) => f.key));
@@ -126,12 +132,22 @@ export function isFeatureEnabled(features: Readonly<Record<string, boolean>> | u
  *   home: activity off · other: activity on.
  */
 export const SITE_TYPE_PRESETS: Readonly<Record<SiteType, Readonly<Record<string, boolean>>>> = Object.freeze({
-  retail: Object.freeze({ activity: true, managerRules: true }),
-  storage: Object.freeze({ activity: true, managerRules: true }),
-  carwash: Object.freeze({ activity: true, managerRules: true }),
-  home: Object.freeze({ activity: false, managerRules: false }),
-  other: Object.freeze({ activity: true, managerRules: false }),
+  // appearanceOfDay: false everywhere, on purpose — "a per-site switch,
+  // because some stores use uniforms" (MANAGER-RULES-SPEC.md build 3): the
+  // installer turns it on per store, no preset ever turns it on for them.
+  retail: Object.freeze({ activity: true, managerRules: true, appearanceOfDay: false }),
+  storage: Object.freeze({ activity: true, managerRules: true, appearanceOfDay: false }),
+  carwash: Object.freeze({ activity: true, managerRules: true, appearanceOfDay: false }),
+  home: Object.freeze({ activity: false, managerRules: false, appearanceOfDay: false }),
+  other: Object.freeze({ activity: true, managerRules: false, appearanceOfDay: false }),
 });
+
+// ---------------------------------------------------------------- appearance match threshold
+
+/** "50-99, default 80" (MANAGER-RULES-SPEC.md's appearance-of-day matching). */
+export const MIN_APPEARANCE_MATCH_PERCENT = 50;
+export const MAX_APPEARANCE_MATCH_PERCENT = 99;
+export const DEFAULT_APPEARANCE_MATCH_PERCENT = 80;
 
 // ---------------------------------------------------------------- shapes
 
@@ -144,6 +160,13 @@ export interface SiteSettings {
   features: Record<string, boolean>;
   /** MANAGER-RULES-SPEC.md section 3. null = not set (never "always closed"). */
   openHours: Schedule | null;
+  /**
+   * "The threshold is a per-site setting, default 80%" (MANAGER-RULES-
+   * SPEC.md's appearance-of-day matching). Always populated — a site that
+   * never touched this field reads the registry-style default, the same
+   * "a blank is not a zero" discipline every other field here already keeps.
+   */
+  appearanceMatchPercent: number;
 }
 
 export interface StoredSiteSettings extends SiteSettings {
@@ -164,7 +187,14 @@ export interface SiteSettingsFile extends StoredSiteSettings {
  *  checkSiteSettingsFile, the same way camera-ai-settings.mjs's own
  *  `emptyFile()` never goes through checkCameraAiSettingsFile either. */
 export function defaultSiteSettings(): SiteSettings {
-  return { displayName: null, timeZone: null, siteType: null, features: defaultFeatures(), openHours: null };
+  return {
+    displayName: null,
+    timeZone: null,
+    siteType: null,
+    features: defaultFeatures(),
+    openHours: null,
+    appearanceMatchPercent: DEFAULT_APPEARANCE_MATCH_PERCENT,
+  };
 }
 
 // ---------------------------------------------------------------- validation
@@ -259,6 +289,28 @@ export function checkOpenHoursField(raw: unknown): { ok: true; openHours: Schedu
   return errors.length > 0 ? { ok: false, reason: (errors[0] as FieldProblem).reason } : { ok: true, openHours };
 }
 
+/**
+ * Absent or null: the default (build rule 5 — a site that never set this
+ * reads 80%, never 0%, which would refuse every match outright). Present
+ * must be a finite number in [MIN_APPEARANCE_MATCH_PERCENT,
+ * MAX_APPEARANCE_MATCH_PERCENT] — not necessarily an integer (build rule 9:
+ * numeric wherever a rate can be fractional; nothing here says a percentage
+ * point is the smallest meaningful step).
+ */
+function checkAppearanceMatchPercent(raw: unknown, errors: FieldProblem[]): number {
+  if (raw === undefined || raw === null) return DEFAULT_APPEARANCE_MATCH_PERCENT;
+  if (
+    typeof raw !== "number" ||
+    !Number.isFinite(raw) ||
+    raw < MIN_APPEARANCE_MATCH_PERCENT ||
+    raw > MAX_APPEARANCE_MATCH_PERCENT
+  ) {
+    errors.push({ field: "appearanceMatchPercent", reason: "bad_appearance_match_percent" });
+    return DEFAULT_APPEARANCE_MATCH_PERCENT;
+  }
+  return raw;
+}
+
 function checkOpenHoursInner(raw: unknown, errors: FieldProblem[]): Schedule | null {
   if (raw === undefined || raw === null) return null;
   const checked = checkSchedule(raw);
@@ -289,8 +341,9 @@ export function checkSiteSettings(raw: unknown): SiteSettingsCheck {
   const siteType = checkSiteType(raw.siteType, errors);
   const features = checkFeatures(raw.features, errors);
   const openHours = checkOpenHoursInner(raw.openHours, errors);
+  const appearanceMatchPercent = checkAppearanceMatchPercent(raw.appearanceMatchPercent, errors);
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, settings: { displayName, timeZone, siteType, features, openHours } };
+  return { ok: true, settings: { displayName, timeZone, siteType, features, openHours, appearanceMatchPercent } };
 }
 
 export type SiteSettingsFileCheck =
@@ -349,10 +402,17 @@ export function siteSettingsView(file: SiteSettingsFile | null): SiteSettings {
     const v = file.features[f.key];
     if (typeof v === "boolean") features[f.key] = v;
   }
-  return { displayName: file.displayName, timeZone: file.timeZone, siteType: file.siteType, features, openHours: file.openHours };
+  return {
+    displayName: file.displayName,
+    timeZone: file.timeZone,
+    siteType: file.siteType,
+    features,
+    openHours: file.openHours,
+    appearanceMatchPercent: file.appearanceMatchPercent,
+  };
 }
 
-const SETTINGS_FIELDS = ["displayName", "timeZone", "siteType", "features", "openHours"] as const;
+const SETTINGS_FIELDS = ["displayName", "timeZone", "siteType", "features", "openHours", "appearanceMatchPercent"] as const;
 
 /** Names of the fields that differ, for the audit line — never the values
  *  (the same discipline diffCameraAiSettings already keeps: a changed

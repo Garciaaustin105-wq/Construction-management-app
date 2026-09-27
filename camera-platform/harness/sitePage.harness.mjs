@@ -161,6 +161,16 @@ check("describeSiteReason never echoes a raw code it does not recognise, but nev
   eq(client.describeSiteReason("something_new"), "something_new");
 });
 
+check("REQUIRED: the mirrored appearance-match constants match contracts/siteSettings.ts exactly", () => {
+  eq(client.MIN_APPEARANCE_MATCH_PERCENT, contract.MIN_APPEARANCE_MATCH_PERCENT);
+  eq(client.MAX_APPEARANCE_MATCH_PERCENT, contract.MAX_APPEARANCE_MATCH_PERCENT);
+  eq(client.DEFAULT_APPEARANCE_MATCH_PERCENT, contract.DEFAULT_APPEARANCE_MATCH_PERCENT);
+});
+
+check("describeSiteReason turns bad_appearance_match_percent into the field's own real bounds, never the raw code", () => {
+  eq(client.describeSiteReason("bad_appearance_match_percent"), "must be a number from 50 to 99");
+});
+
 /* ------------------------------------------------------------------ */
 /* DOM: the section builds, and the store-account 403 removes it.      */
 /* ------------------------------------------------------------------ */
@@ -214,6 +224,50 @@ await check("the section fills from GET /site-settings", async () => {
   eq(page.dom.tzInput.value, "America/Chicago", "time zone");
   eq(page.dom.typeSelect.value, "retail", "site type");
   eq(calls.some((c) => c.url === "/site-settings"), true, "it asked for /site-settings itself");
+});
+
+await check("REQUIRED: the appearance match-percent field fills from settings, shows the spec's own limits text, and is always sent on save (never silently reset to 80)", async () => {
+  const doc = fakeDoc();
+  const rootEl = new FakeEl("div");
+  rootEl.setAttribute("id", "siteSectionRoot");
+  doc.mount(rootEl);
+  let posted = null;
+  const { fetchFn } = makeFetchFrom({
+    "GET /site-settings": () => jsonRes(200, { ...SITE_SETTINGS_OK, settings: { ...SITE_SETTINGS_OK.settings, appearanceMatchPercent: 72 } }),
+    "GET /camera-ai-settings": () => jsonRes(200, { ok: true, cameras: {}, storingFloor: 0.3, timeZone: "America/Chicago", problem: null }),
+    "GET /camera-settings": () => jsonRes(200, { ok: true, cameras: [] }),
+    "POST /site-settings": (url, init) => {
+      posted = JSON.parse(init.body);
+      return jsonRes(200, { ok: true, settings: { ...SITE_SETTINGS_OK.settings, appearanceMatchPercent: posted.appearanceMatchPercent } });
+    },
+  });
+  const page = client.startSitePage({ doc, fetchFn, timeZones: [] });
+  await page.ready;
+  eq(page.dom.appearanceMatchInput.value, "72", "loaded from settings, never the registry default");
+  eq(page.dom.appearanceLimitsText.textContent, client.APPEARANCE_LIMITS_TEXT);
+  page.dom.saveBtn.fire("click");
+  await new Promise((r) => setTimeout(r, 20));
+  eq(posted.appearanceMatchPercent, 72, "sent on every save, even one that never touched this field");
+});
+
+await check("a site that never saved this field reads the registry-style default (80), never blank or zero (build rule 5)", async () => {
+  const doc = fakeDoc();
+  const rootEl = new FakeEl("div");
+  rootEl.setAttribute("id", "siteSectionRoot");
+  doc.mount(rootEl);
+  const { fetchFn } = makeFetchFrom({
+    "GET /site-settings": () => jsonRes(200, SITE_SETTINGS_OK), // SITE_SETTINGS_OK's own settings omit appearanceMatchPercent
+    "GET /camera-ai-settings": () => jsonRes(200, { ok: true, cameras: {}, storingFloor: 0.3, timeZone: "America/Chicago", problem: null }),
+    "GET /camera-settings": () => jsonRes(200, { ok: true, cameras: [] }),
+  });
+  const page = client.startSitePage({ doc, fetchFn, timeZones: [] });
+  await page.ready;
+  eq(page.dom.appearanceMatchInput.value, "80");
+});
+
+check("featureLabel names managerRules and appearanceOfDay in plain words, never the bare registry key", () => {
+  eq(client.featureLabel("managerRules"), "Manager rules");
+  eq(client.featureLabel("appearanceOfDay").includes("no face"), true, client.featureLabel("appearanceOfDay"));
 });
 
 await check("a store account (403 on GET /site-settings) loses the whole section, not a broken form", async () => {

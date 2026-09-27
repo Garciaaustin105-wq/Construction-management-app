@@ -159,7 +159,7 @@ try {
   });
 
   let ruleId;
-  await check("POST /rules now succeeds (openHours is set); GET /rule-templates lists 8, desk_unattended first", async () => {
+  await check("POST /rules now succeeds (openHours is set); GET /rule-templates lists 10, desk_unattended first", async () => {
     const r = await send("POST", "/rules", {
       name: "Manager's desk unattended", enabled: true, template: "desk_unattended",
       cameraId: "cam-1", areaId, kind: "person",
@@ -171,7 +171,7 @@ try {
     eq(r.json.rule.createdBy, "tech");
 
     const templates = await send("GET", "/rule-templates");
-    eq(templates.json.templates.length, 8);
+    eq(templates.json.templates.length, 10);
     eq(templates.json.templates[0].template, "desk_unattended");
     eq(templates.json.templates[0].label, "Manager's desk unattended");
   });
