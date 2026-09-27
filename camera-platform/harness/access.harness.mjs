@@ -38,7 +38,16 @@ const DESTRUCTIVE = ["camera.manage", "storage.manage", "system.manage", "accoun
 
 check("the installer can do everything there is", () => {
   for (const p of ALL_PERMISSIONS) eq(can(installer, p), true, p);
-  eq(ALL_PERMISSIONS.length, 12, "twelve permissions; a new one needs a decision below");
+  eq(ALL_PERMISSIONS.length, 14, "fourteen permissions; a new one needs a decision below");
+});
+
+check("MANAGER-RULES-SPEC.md section 4: a manager builds rules and reads reports, and nothing this box calls destructive", () => {
+  const manager = { kind: "user", username: "regional", role: "manager" };
+  same(ALL_PERMISSIONS.filter((p) => can(manager, p)),
+    ["live.view", "playback.view", "layout.edit", "events.view", "rules.manage", "hours.manage"], "manager permissions");
+  for (const p of [...DESTRUCTIVE, "network.view", "audit.view", "export.create", "segment.hold"]) {
+    eq(can(manager, p), false, `manager / ${p}`);
+  }
 });
 
 check("the store has exactly its daily job: watch, review, export, hold, layout", () => {
@@ -107,7 +116,7 @@ check("a caller cannot edit the policy through an array it was handed", () => {
     threw = true;
   }
   eq(threw, true, "ALL_PERMISSIONS is frozen");
-  eq(ALL_PERMISSIONS.length, 12, "and still twelve long");
+  eq(ALL_PERMISSIONS.length, 14, "and still fourteen long");
 });
 
 check("there is no way in until an installer exists, and unknown counts as none", () => {

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<!--
+  Rules page for the camera-NVR web UI (MANAGER-RULES-SPEC.md section 5):
+  the template picker ("Manager's desk unattended" first), the plain-words
+  form, the rule list with on/off switches, the camera still with the chosen
+  area outlined, and the open-hours editor (with its refusal text). All
+  rendering is done by /ui/rules-client.js (served from agent/ui/rules-
+  client.mjs) -- this file only lays out the page's own chrome.
+
+  Dark, pinned (data-theme="dark"), like every other page on this NVR since
+  2026-09-26. Phone width: 16px gutter (body padding below), no sideways
+  scroll -- the still wrap and every control wrap onto their own line.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rules</title>
+<style>
+  :root { color-scheme: dark; --page-bg:#111317; --surface:#1b1d22; --text-primary:#e8eaed;
+          --text-secondary:#c3c2b7; --muted:#9aa0a6; --border:rgba(255,255,255,0.10);
+          --bad:#ffb4b4; --link:#8ab4f8; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; padding-bottom:56px; background:var(--page-bg); color:var(--text-primary);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; max-width:640px; overflow-x:hidden; }
+  h1 { margin:0 0 12px; font-size:20px; }
+  h2 { margin:20px 0 8px; font-size:15px; }
+  h3 { margin:0 0 4px; font-size:14px; }
+  .dim { color: var(--text-secondary); }
+  .panel { padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+           margin-bottom:14px; max-width:100%; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); min-width:0; flex:1 1 140px; }
+  input, select { font:inherit; color:inherit; background:var(--page-bg); border:1px solid var(--border);
+                  border-radius:6px; padding:8px; min-height:36px; max-width:100%; }
+  input[type="checkbox"] { width:auto; flex:0 0 auto; }
+  button { font:inherit; padding:8px 14px; border:0; border-radius:6px; background:#4c8bf5; color:#fff;
+           cursor:pointer; min-height:36px; }
+  button.secondary { background:var(--page-bg); border:1px solid var(--border); color:var(--text-primary); }
+  button:disabled { opacity:0.5; cursor:default; }
+  .template-btn { background:var(--page-bg); border:1px solid var(--border); color:var(--text-primary);
+                  text-align:left; padding:10px 12px; margin:0 0 6px; display:block; width:100%; }
+  .template-btn:first-child { border-color:var(--link); }
+  #templatePicker { display:flex; flex-direction:column; }
+  #ruleSentence { padding:10px 12px; background:var(--page-bg); border:1px solid var(--border);
+                  border-radius:6px; font-size:14px; }
+  #hoursNotice { color:var(--bad); font-size:13px; }
+  #ruleErrors:empty, #ruleErrors > :empty { display:none; }
+  #ruleErrors ul { margin:4px 0 0; padding-left:18px; color:var(--bad); }
+  #ruleStillWrap { position:relative; width:100%; max-width:400px; background:#0b0c0e; border-radius:6px;
+                   overflow:hidden; margin-top:8px; }
+  #ruleStill { display:block; width:100%; height:auto; max-width:100%; }
+  #ruleOverlay { position:absolute; inset:0; width:100%; height:100%; }
+  /* The existing-rules toggle+name row: its OWN class, not the shared .row
+     (that one leaves flex-direction/font-size/color to whichever generic
+     selector sets them -- fine for .row's own callers, wrong for a <label>,
+     since the base `label` rule above sets exactly those three). */
+  .rule-toggle { display:flex; flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px;
+                 font-size:inherit; color:inherit; min-width:0; }
+  .rule-row { list-style:none; padding:8px 0; border-top:1px solid var(--border); }
+  .rule-row:first-child { border-top:none; }
+  #rulesList { padding:0; margin:0; }
+  .report-firings, #rulesList { list-style:none; }
+  a { color: var(--link); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+  <h1>Rules</h1>
+  <p class="dim">Templates prefill a rule; change anything before saving.</p>
+
+  <section class="panel">
+    <h2>Start from a template</h2>
+    <div id="templatePicker"></div>
+  </section>
+
+  <section class="panel" id="rulesBody">
+    <h2>Rule</h2>
+    <div class="row">
+      <label>Name<input id="ruleName" maxlength="80"></label>
+      <label>Who<select id="ruleKind"><option value="person">a person</option><option value="vehicle">a vehicle</option></select></label>
+    </div>
+    <div class="row">
+      <label>Condition<select id="ruleCondition">
+        <option value="enters">enters</option>
+        <option value="leaves">leaves</option>
+        <option value="absent_longer_than">is missing for more than</option>
+        <option value="present_longer_than">is present for more than</option>
+        <option value="away_and_back">is away and back for at least</option>
+      </select></label>
+      <div class="row" id="ruleMinutesRow">
+        <label>Minutes<input id="ruleMinutes" type="number" min="1" step="1"></label>
+      </div>
+    </div>
+    <div class="row">
+      <label>Camera<select id="ruleCamera"></select></label>
+      <label>Area<select id="ruleArea"></select></label>
+    </div>
+    <div class="row">
+      <label>During<select id="ruleWhen">
+        <option value="open_hours">open hours</option>
+        <option value="closed_hours">closed hours</option>
+        <option value="always">any time</option>
+      </select></label>
+    </div>
+    <div class="row">
+      <label class="row"><input id="ruleAlert" type="checkbox"><span>Alert me</span></label>
+      <label class="row"><input id="ruleReport" type="checkbox"><span>Add to the daily report</span></label>
+      <label>Cooldown (minutes)<input id="ruleCooldown" type="number" min="0" step="1"></label>
+    </div>
+
+    <p id="hoursNotice" hidden></p>
+    <p id="ruleSentence"></p>
+
+    <div id="ruleStillWrap" hidden>
+      <img id="ruleStill" alt="">
+      <svg id="ruleOverlay" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div id="ruleErrors"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="ruleSave" type="button">Save rule</button>
+      <button id="ruleNew" type="button" class="secondary">New rule</button>
+      <span id="ruleSaveStatus" class="dim"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Existing rules</h2>
+    <ul id="rulesList"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>Open hours</h2>
+    <p id="openHoursStatus" class="dim"></p>
+    <div id="openHoursForm">
+      <div id="openHoursWeek"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="openHoursSave" type="button" class="secondary">Save open hours</button>
+      </div>
+    </div>
+  </section>
+
+  <script type="module" src="/ui/rules-client.js"></script>
+  <script type="module" src="/ui/session.js"></script>
+</body>
+</html>

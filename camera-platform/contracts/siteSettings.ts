@@ -27,9 +27,19 @@
  *   ever answers "what zone is EFFECTIVE now", it never rewrites a zone
  *   already stored somewhere else (that belongs to
  *   contracts/cameraAiSettings.ts's own file, a separate owner).
+ *
+ * `openHours` (MANAGER-RULES-SPEC.md section 3) is additive to the shape
+ * above: a `Schedule` (contracts/alertRules.ts) or `null` — null meaning "not
+ * set", never "always closed" (build rule 5, a blank is not a zero). A
+ * manager rule using `when: "open_hours"` or `"closed_hours"` while this is
+ * null is refused at the RULE's own save time (contracts/managerRules.ts's
+ * checkManagerRule), never guessed here or there.
  */
 
 // ---------------------------------------------------------------- constants
+
+import { checkSchedule } from "./alertRules.js";
+import type { Schedule } from "./alertRules.js";
 
 export const SITE_SETTINGS_VERSION = 1;
 
@@ -70,6 +80,12 @@ export interface FeatureDefinition {
 
 export const FEATURE_REGISTRY: readonly FeatureDefinition[] = Object.freeze([
   Object.freeze({ key: "activity", registryDefault: true }),
+  // Manager rules (MANAGER-RULES-SPEC.md section 4): off by default — "some
+  // sites are storage facilities or homes" and this switch decides whether
+  // detect-service samples any occupancy at all, so a site that never opens
+  // the Site section must keep sampling NOTHING, not "on until told
+  // otherwise" (build rule 5's own "a blank is not a zero", the other way).
+  Object.freeze({ key: "managerRules", registryDefault: false }),
 ]);
 
 const FEATURE_KEYS: ReadonlySet<string> = new Set(FEATURE_REGISTRY.map((f) => f.key));
@@ -110,11 +126,11 @@ export function isFeatureEnabled(features: Readonly<Record<string, boolean>> | u
  *   home: activity off · other: activity on.
  */
 export const SITE_TYPE_PRESETS: Readonly<Record<SiteType, Readonly<Record<string, boolean>>>> = Object.freeze({
-  retail: Object.freeze({ activity: true }),
-  storage: Object.freeze({ activity: true }),
-  carwash: Object.freeze({ activity: true }),
-  home: Object.freeze({ activity: false }),
-  other: Object.freeze({ activity: true }),
+  retail: Object.freeze({ activity: true, managerRules: true }),
+  storage: Object.freeze({ activity: true, managerRules: true }),
+  carwash: Object.freeze({ activity: true, managerRules: true }),
+  home: Object.freeze({ activity: false, managerRules: false }),
+  other: Object.freeze({ activity: true, managerRules: false }),
 });
 
 // ---------------------------------------------------------------- shapes
@@ -126,6 +142,8 @@ export interface SiteSettings {
   timeZone: string | null;
   siteType: SiteType | null;
   features: Record<string, boolean>;
+  /** MANAGER-RULES-SPEC.md section 3. null = not set (never "always closed"). */
+  openHours: Schedule | null;
 }
 
 export interface StoredSiteSettings extends SiteSettings {
@@ -146,7 +164,7 @@ export interface SiteSettingsFile extends StoredSiteSettings {
  *  checkSiteSettingsFile, the same way camera-ai-settings.mjs's own
  *  `emptyFile()` never goes through checkCameraAiSettingsFile either. */
 export function defaultSiteSettings(): SiteSettings {
-  return { displayName: null, timeZone: null, siteType: null, features: defaultFeatures() };
+  return { displayName: null, timeZone: null, siteType: null, features: defaultFeatures(), openHours: null };
 }
 
 // ---------------------------------------------------------------- validation
@@ -227,6 +245,31 @@ function checkFeatures(raw: unknown, errors: FieldProblem[]): Record<string, boo
 }
 
 /**
+ * `raw`: absent or null validates as null (not set — build rule 5). Anything
+ * else is validated with alertRules.ts's own `checkSchedule`, the same
+ * schedule shape a rule already has, so this file does not invent a second
+ * answer for "is this a real schedule". Exported (unlike this file's other
+ * per-field checkers) so agent/site-settings.mjs's own POST /open-hours route
+ * — a single-field save, separate from the full-settings POST /site-settings
+ * — validates the same way rather than re-deriving it.
+ */
+export function checkOpenHoursField(raw: unknown): { ok: true; openHours: Schedule | null } | { ok: false; reason: string } {
+  const errors: FieldProblem[] = [];
+  const openHours = checkOpenHoursInner(raw, errors);
+  return errors.length > 0 ? { ok: false, reason: (errors[0] as FieldProblem).reason } : { ok: true, openHours };
+}
+
+function checkOpenHoursInner(raw: unknown, errors: FieldProblem[]): Schedule | null {
+  if (raw === undefined || raw === null) return null;
+  const checked = checkSchedule(raw);
+  if (!checked.ok) {
+    errors.push({ field: "openHours", reason: checked.reason });
+    return null;
+  }
+  return checked.schedule;
+}
+
+/**
  * Validate a save payload (the whole desired state, not a patch — the same
  * full-replace shape checkCameraAiSettings already uses for one camera's
  * settings), returning EVERY problem at once, never the first alone.
@@ -245,8 +288,9 @@ export function checkSiteSettings(raw: unknown): SiteSettingsCheck {
   const timeZone = checkTimeZone(raw.timeZone, errors);
   const siteType = checkSiteType(raw.siteType, errors);
   const features = checkFeatures(raw.features, errors);
+  const openHours = checkOpenHoursInner(raw.openHours, errors);
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, settings: { displayName, timeZone, siteType, features } };
+  return { ok: true, settings: { displayName, timeZone, siteType, features, openHours } };
 }
 
 export type SiteSettingsFileCheck =
@@ -305,10 +349,10 @@ export function siteSettingsView(file: SiteSettingsFile | null): SiteSettings {
     const v = file.features[f.key];
     if (typeof v === "boolean") features[f.key] = v;
   }
-  return { displayName: file.displayName, timeZone: file.timeZone, siteType: file.siteType, features };
+  return { displayName: file.displayName, timeZone: file.timeZone, siteType: file.siteType, features, openHours: file.openHours };
 }
 
-const SETTINGS_FIELDS = ["displayName", "timeZone", "siteType", "features"] as const;
+const SETTINGS_FIELDS = ["displayName", "timeZone", "siteType", "features", "openHours"] as const;
 
 /** Names of the fields that differ, for the audit line — never the values
  *  (the same discipline diffCameraAiSettings already keeps: a changed

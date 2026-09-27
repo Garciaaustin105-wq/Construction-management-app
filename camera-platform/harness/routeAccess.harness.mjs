@@ -199,4 +199,50 @@ check("the teach page: the same reach as Review (playback.view), and a wall disp
   eq(d(nobody, "GET", "/teach").kind === "allow", false, "signed out: not let in");
 });
 
+check("MANAGER-RULES-SPEC.md section 4: a manager reaches rules, templates, reports and open-hours; never areas, cameras or the rest of the Site section", () => {
+  const manager = { kind: "user", username: "regional", role: "manager" };
+  for (const [m, p] of [["GET", "/rules"], ["POST", "/rules"], ["GET", "/rule-templates"], ["GET", "/reports"],
+    ["GET", "/areas/list"], ["GET", "/open-hours"], ["POST", "/open-hours"]]) {
+    eq(d(manager, m, p).kind, "allow", `manager: ${m} ${p}`);
+  }
+  for (const [m, p] of [["GET", "/areas"], ["POST", "/areas"], ["DELETE", "/areas/a1"], ["POST", "/cameras"],
+    ["GET", "/camera-settings"], ["GET", "/site-settings"], ["POST", "/site-settings"], ["GET", "/network"],
+    ["GET", "/accounts"], ["GET", "/audit"], ["GET", "/recording-settings"]]) {
+    eq(d(manager, m, p).kind, "refuse", `manager: ${m} ${p} must stay refused`);
+  }
+});
+
+check("a store account: reports only (spec section 5 names it explicitly); everything else manager-rules-shaped is refused", () => {
+  for (const [m, p] of [["GET", "/reports"]]) {
+    eq(d(store, m, p).kind, "allow", `store: ${m} ${p}`);
+  }
+  for (const [m, p] of [["GET", "/rules"], ["POST", "/rules"], ["GET", "/rule-templates"], ["GET", "/areas"],
+    ["POST", "/areas"], ["GET", "/areas/list"], ["DELETE", "/areas/a1"], ["GET", "/open-hours"], ["POST", "/open-hours"]]) {
+    eq(d(store, m, p).kind, "refuse", `store: ${m} ${p}`);
+  }
+});
+
+check("FEARED: a wall display is refused on every manager-rules route, including reports and open-hours", () => {
+  for (const [m, p] of [["GET", "/areas"], ["POST", "/areas"], ["GET", "/areas/list"], ["DELETE", "/areas/a1"],
+    ["GET", "/rules"], ["POST", "/rules"], ["GET", "/rule-templates"], ["GET", "/reports"],
+    ["GET", "/open-hours"], ["POST", "/open-hours"]]) {
+    eq(d(display, m, p).kind, "refuse", `display: ${m} ${p}`);
+  }
+});
+
+check("the installer can reach every manager-rules route, including drawing and deleting areas", () => {
+  for (const [m, p] of [["GET", "/areas"], ["POST", "/areas"], ["DELETE", "/areas/a1"], ["GET", "/areas/list"],
+    ["GET", "/rules"], ["POST", "/rules"], ["GET", "/rule-templates"], ["GET", "/reports"],
+    ["GET", "/open-hours"], ["POST", "/open-hours"]]) {
+    eq(d(installer, m, p).kind, "allow", `installer: ${m} ${p}`);
+  }
+});
+
+check("DELETE /areas/<id> is the same near-miss-proof prefix shape as /accounts/<id> and /displays/<id>", () => {
+  for (const p of ["/areas/", "/areas/a1/b2"]) {
+    eq(ruleFor("DELETE", p), null, `no rule for DELETE ${p}`);
+  }
+  eq(d(installer, "GET", "/areas/a1").kind, "refuse", "GET /areas/<id> is not a route -- only /areas and /areas/list are");
+});
+
 report("route access");

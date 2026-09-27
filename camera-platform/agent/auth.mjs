@@ -170,7 +170,7 @@ function parseAccountsFile(text) {
     if (!isPlainObject(u)) throw new Error('bad user');
     const name = validateName(u.username);
     if (name.kind !== 'ok' || name.name !== u.username) throw new Error('bad username');
-    if (u.role !== 'installer' && u.role !== 'store') throw new Error('bad role');
+    if (u.role !== 'installer' && u.role !== 'store' && u.role !== 'manager') throw new Error('bad role');
     if (!validStoredHash(u.hash)) throw new Error('bad hash');
     if (users.has(u.username)) throw new Error('duplicate user');
     users.set(u.username, { username: u.username, role: u.role, hash: u.hash, createdUtc: String(u.createdUtc ?? '') });
@@ -554,8 +554,8 @@ export async function createAuth({
       if (body === null) return true;
       const name = validateName(body.username);
       if (name.kind !== 'ok') { refuse(res, 400, 'bad_username', name.reason); return true; }
-      if (body.role !== 'installer' && body.role !== 'store') {
-        refuse(res, 400, 'bad_role', 'role must be installer or store');
+      if (body.role !== 'installer' && body.role !== 'store' && body.role !== 'manager') {
+        refuse(res, 400, 'bad_role', 'role must be installer, store or manager');
         return true;
       }
       const pw = validatePassword(body.password, name.name);

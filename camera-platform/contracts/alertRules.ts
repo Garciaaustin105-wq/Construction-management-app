@@ -105,54 +105,29 @@ export function previousDate(date: string): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 }
 
+export type ScheduleCheck = { ok: true; schedule: Schedule } | { ok: false; reason: string };
+
 /**
- * Validate a rule before it is saved. First failure wins, in this order:
+ * Validate a `Schedule` on its own — the same checks `checkRule` below has
+ * always run on `rule.schedule` (steps 5-7 of its own doc comment), pulled
+ * out so a caller with a schedule and no whole `AlertRule` around it (site.json's
+ * `openHours`, MANAGER-RULES-SPEC.md section 3) validates it the same way,
+ * rather than inventing a second "is this a real schedule" answer.
  *
- * 1. id: non-empty string: "bad_id".
- * 2. cameraIds: a non-empty array of non-empty strings: "no_cameras".
- * 3. kinds: a non-empty array, each "person", "vehicle" or "plate": "bad_kinds".
- * 4. minConfidence: finite, 0..1: "bad_confidence".
- * 5. schedule.timeZone: a string that `new Intl.DateTimeFormat("en-US",
- *    { timeZone })` accepts without throwing: "bad_time_zone".
- * 6. schedule.weekly: an array of exactly 7 arrays; every interval has integer
- *    open and close with 0 <= open <= 1440, 0 <= close <= 1440 and
- *    open !== close: "bad_hours".
- * 7. schedule.closedDates: an array of strings each matching
- *    /^\d{4}-\d{2}-\d{2}$/ and naming a real date (round-trips through
- *    Date.UTC): "bad_closed_date".
- * 8. zones: an array; each zone has at least 3 points, each point two finite
- *    numbers in 0..1: "bad_zone".
- * 9. cooldownSeconds: an integer, 0..86400: "bad_cooldown".
- * 10. Otherwise { ok: true }.
+ * 1. timeZone: a string that `new Intl.DateTimeFormat("en-US", { timeZone })`
+ *    accepts without throwing: "bad_time_zone".
+ * 2. weekly: an array of exactly 7 arrays; every interval has integer open
+ *    and close with 0 <= open <= 1440, 0 <= close <= 1440 and open !== close:
+ *    "bad_hours".
+ * 3. closedDates: an array of strings each matching /^\d{4}-\d{2}-\d{2}$/ and
+ *    naming a real date (round-trips through Date.UTC): "bad_closed_date".
+ * 4. Otherwise { ok: true, schedule }.
  */
-export function checkRule(rule: unknown): RuleCheck {
-  if (typeof rule !== "object" || rule === null) {
-    return { ok: false, reason: "bad_id" };
-  }
-  const r = rule as Record<string, unknown>;
-  if (typeof r.id !== "string" || r.id === "") {
-    return { ok: false, reason: "bad_id" };
-  }
-  const cameraIds = r.cameraIds;
-  if (!Array.isArray(cameraIds) || cameraIds.length === 0 ||
-      cameraIds.some((c) => typeof c !== "string" || c === "")) {
-    return { ok: false, reason: "no_cameras" };
-  }
-  const kinds = r.kinds;
-  if (!Array.isArray(kinds) || kinds.length === 0 ||
-      kinds.some((k) => typeof k !== "string" || !(EVENT_KINDS as readonly string[]).includes(k))) {
-    return { ok: false, reason: "bad_kinds" };
-  }
-  const minConfidence = r.minConfidence;
-  if (typeof minConfidence !== "number" || !Number.isFinite(minConfidence) ||
-      minConfidence < 0 || minConfidence > 1) {
-    return { ok: false, reason: "bad_confidence" };
-  }
-  const schedule = r.schedule;
-  if (typeof schedule !== "object" || schedule === null) {
+export function checkSchedule(raw: unknown): ScheduleCheck {
+  if (typeof raw !== "object" || raw === null) {
     return { ok: false, reason: "bad_time_zone" };
   }
-  const s = schedule as Record<string, unknown>;
+  const s = raw as Record<string, unknown>;
   if (typeof s.timeZone !== "string") {
     return { ok: false, reason: "bad_time_zone" };
   }
@@ -189,6 +164,49 @@ export function checkRule(rule: unknown): RuleCheck {
         return back.getUTCFullYear() !== year || back.getUTCMonth() !== month - 1 || back.getUTCDate() !== day;
       })) {
     return { ok: false, reason: "bad_closed_date" };
+  }
+  return { ok: true, schedule: { timeZone: s.timeZone, weekly: weekly as OpenInterval[][], closedDates: closedDates as string[] } };
+}
+
+/**
+ * Validate a rule before it is saved. First failure wins, in this order:
+ *
+ * 1. id: non-empty string: "bad_id".
+ * 2. cameraIds: a non-empty array of non-empty strings: "no_cameras".
+ * 3. kinds: a non-empty array, each "person", "vehicle" or "plate": "bad_kinds".
+ * 4. minConfidence: finite, 0..1: "bad_confidence".
+ * 5. schedule: checkSchedule(rule.schedule) not ok: its own reason.
+ * 6. zones: an array; each zone has at least 3 points, each point two finite
+ *    numbers in 0..1: "bad_zone".
+ * 7. cooldownSeconds: an integer, 0..86400: "bad_cooldown".
+ * 8. Otherwise { ok: true }.
+ */
+export function checkRule(rule: unknown): RuleCheck {
+  if (typeof rule !== "object" || rule === null) {
+    return { ok: false, reason: "bad_id" };
+  }
+  const r = rule as Record<string, unknown>;
+  if (typeof r.id !== "string" || r.id === "") {
+    return { ok: false, reason: "bad_id" };
+  }
+  const cameraIds = r.cameraIds;
+  if (!Array.isArray(cameraIds) || cameraIds.length === 0 ||
+      cameraIds.some((c) => typeof c !== "string" || c === "")) {
+    return { ok: false, reason: "no_cameras" };
+  }
+  const kinds = r.kinds;
+  if (!Array.isArray(kinds) || kinds.length === 0 ||
+      kinds.some((k) => typeof k !== "string" || !(EVENT_KINDS as readonly string[]).includes(k))) {
+    return { ok: false, reason: "bad_kinds" };
+  }
+  const minConfidence = r.minConfidence;
+  if (typeof minConfidence !== "number" || !Number.isFinite(minConfidence) ||
+      minConfidence < 0 || minConfidence > 1) {
+    return { ok: false, reason: "bad_confidence" };
+  }
+  const scheduleCheck = checkSchedule(r.schedule);
+  if (!scheduleCheck.ok) {
+    return { ok: false, reason: scheduleCheck.reason };
   }
   const zones = r.zones;
   if (!Array.isArray(zones) ||

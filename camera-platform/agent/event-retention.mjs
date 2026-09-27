@@ -129,3 +129,86 @@ export async function runEventRetention({
     return { ...empty, deleted, cameras, busyCameras, error: String(err?.message ?? err) };
   }
 }
+
+/**
+ * Manager rules' own retention (MANAGER-RULES-SPEC.md section 2/5): occupancy
+ * transitions and rule firings live exactly as long as the video they
+ * describe, "with the same horizon and margin" as events — this is a SEPARATE
+ * pass from `runEventRetention` above (never folded into it: `deleted`,
+ * `cameras` and `busyCameras` there mean events, and this file is not the
+ * place to teach every existing reader of that shape two new meanings) that
+ * reuses the exact same `planEventRetention` decision this file already
+ * trusts for events, once per source, over the union of every camera either
+ * source actually has rows for.
+ *
+ * `occupancyDb` (agent/occupancy-db.mjs) and `rulesDb` (agent/rules-db.mjs)
+ * are each already-open handles, or null when that source has never been
+ * opened at all (the managerRules switch has always been off, or this site
+ * has no rules yet) — nothing is opened or created here, the same "this
+ * function opens neither and closes neither" discipline runEventRetention
+ * keeps for events.db and the index.
+ */
+export async function runManagerRulesRetention({
+  occupancyDb,
+  rulesDb,
+  index,
+  now = () => new Date(),
+  batch = EVENT_RETENTION_BATCH,
+}) {
+  const atUtc = now().toISOString();
+  const empty = { atUtc, marginMs: EVENT_RETENTION_MARGIN_MS, occupancyDeleted: 0, firingsDeleted: 0, cameras: [], kept: [], error: null };
+  if ((occupancyDb === null || occupancyDb === undefined) && (rulesDb === null || rulesDb === undefined)) {
+    return empty;
+  }
+  try {
+    const occCounts = occupancyDb ? occupancyDb.cameraRowCounts() : [];
+    const firingCounts = rulesDb ? rulesDb.cameraRowCounts() : [];
+    const allCameraIds = new Set([...occCounts.map((c) => c.cameraId), ...firingCounts.map((c) => c.cameraId)]);
+    if (allCameraIds.size === 0) return empty;
+
+    // Index unreadable is refused whole (rule 10), the same as runEventRetention.
+    const footageFromMs = new Map();
+    for (const cameraId of allCameraIds) {
+      const iso = index.earliestFor(cameraId);
+      const ms = iso === null ? null : Date.parse(iso);
+      footageFromMs.set(cameraId, Number.isFinite(ms) ? ms : null);
+    }
+
+    const occPlan = planEventRetention({ cameras: occCounts, footageFromMs });
+    const firingPlan = planEventRetention({ cameras: firingCounts, footageFromMs });
+
+    let occupancyDeleted = 0;
+    for (const { cameraId, beforeMs } of occPlan.prune) {
+      for (;;) {
+        const n = occupancyDb.deleteEndedBefore(cameraId, beforeMs, batch);
+        // null: detect-service held the write lock at this instant (the same
+        // lock-miss shape events.db's own deleteEndedBefore answers) — stop
+        // this camera for this pass, the next tick picks up where this left off.
+        if (n === null) break;
+        occupancyDeleted += n;
+        if (n < batch) break;
+        await yieldToEventLoop();
+      }
+    }
+
+    let firingsDeleted = 0;
+    for (const { cameraId, beforeMs } of firingPlan.prune) {
+      for (;;) {
+        const n = rulesDb.deleteEndedBefore(cameraId, beforeMs, batch);
+        if (n === null) break;
+        firingsDeleted += n;
+        if (n < batch) break;
+        await yieldToEventLoop();
+      }
+    }
+
+    const prunedCameraIds = new Set([...occPlan.prune.map((p) => p.cameraId), ...firingPlan.prune.map((p) => p.cameraId)]);
+    const cameras = [...prunedCameraIds].map((cameraId) => ({ cameraId, footageFromUtc: toIso(footageFromMs.get(cameraId) ?? null) }));
+    const keptByCameraId = new Map([...occPlan.keep, ...firingPlan.keep].map((k) => [k.cameraId, k]));
+    const kept = [...keptByCameraId.values()];
+
+    return { atUtc, marginMs: EVENT_RETENTION_MARGIN_MS, occupancyDeleted, firingsDeleted, cameras, kept, error: null };
+  } catch (err) {
+    return { ...empty, error: String(err?.message ?? err) };
+  }
+}

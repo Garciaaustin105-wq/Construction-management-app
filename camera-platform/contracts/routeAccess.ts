@@ -42,6 +42,13 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // a display never carries (contracts/access.ts), matching the spec's own
   // words ("A display never sees it").
   "/activity-page": { kind: "page", permission: "events.view" },
+  // The Rules and Reports pages (MANAGER-RULES-SPEC.md section 5). Rules is
+  // manager and installer only (rules.manage, contracts/access.ts's own
+  // MANAGER_PERMISSIONS plus the installer's ALL_PERMISSIONS); Reports is
+  // manager, installer AND store (events.view — the same permission /events
+  // and /activity-page already use, which every role but a display carries).
+  "/rules-page": { kind: "page", permission: "rules.manage" },
+  "/reports-page": { kind: "page", permission: "events.view" },
 
   // Page scripts carry no data and are already public source; they still sit
   // behind a sign-in so an unauthenticated scan learns nothing about the box.
@@ -69,6 +76,12 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // the page cannot fetch its script either.
   "/ui/activity-client.js": { kind: "api", permission: "events.view" },
   "/ui/activity-charts.mjs": { kind: "api", permission: "events.view" },
+  // The Rules and Reports pages' own clients — same reach as their pages.
+  "/ui/rules-client.js": { kind: "api", permission: "rules.manage" },
+  "/ui/reports-client.js": { kind: "api", permission: "events.view" },
+  // The Areas panel on the Cameras page (MANAGER-RULES-SPEC.md section 1):
+  // installer's own drawing surface, same reach as camera-ai-client.js.
+  "/ui/areas-client.js": { kind: "api", permission: "camera.manage" },
   "/ui/wall-client.js": { kind: "api", permission: "live.view" },
   // The Live page's saved-layout controls (SITE-SETTINGS-SPEC.md section 3)
   // and a paired display's own layout poll -- same reach as the page and
@@ -158,6 +171,27 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // "installer reading someone else's display" version of this route to
   // permit.
   "/display-layout": { kind: "api", permission: "live.view" },
+
+  // Manager rules (MANAGER-RULES-SPEC.md). Areas: the installer's own drawing
+  // surface, same reach as /camera-ai-settings and the rest of the Cameras
+  // page — camera.manage.
+  "/areas": { kind: "api", permission: "camera.manage" },
+  // The manager's own reduced view when building a rule: names and which
+  // camera each area belongs to, never the polygon itself — rules.manage, not
+  // camera.manage, because a manager may read this without ever being able to
+  // draw or edit an area (contracts/access.ts's own MANAGER_PERMISSIONS).
+  "/areas/list": { kind: "api", permission: "rules.manage" },
+  "/rules": { kind: "api", permission: "rules.manage" },
+  "/rule-templates": { kind: "api", permission: "rules.manage" },
+  // The daily report (MANAGER-RULES-SPEC.md section 5): same reach as /events
+  // and /activity — events.view, so a store account (which has it) can read
+  // its own site's report even though it cannot build rules.
+  "/reports": { kind: "api", permission: "events.view" },
+  // The store's open hours: "edited in the Site section by the installer OR a
+  // manager" — hours.manage, which contracts/access.ts hands to both roles
+  // (the installer via ALL_PERMISSIONS, the manager explicitly), and to
+  // nobody else.
+  "/open-hours": { kind: "api", permission: "hours.manage" },
 });
 
 const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
@@ -185,6 +219,11 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   "/site-settings": { kind: "api", permission: "system.manage" },
   "/layouts": { kind: "api", permission: "layout.edit" },
   "/display-layouts": { kind: "api", permission: "account.manage" },
+  // Manager rules (MANAGER-RULES-SPEC.md) — same permissions as their GET
+  // siblings above.
+  "/areas": { kind: "api", permission: "camera.manage" },
+  "/rules": { kind: "api", permission: "rules.manage" },
+  "/open-hours": { kind: "api", permission: "hours.manage" },
 });
 
 /**
@@ -201,6 +240,9 @@ const PREFIXED: ReadonlyArray<{ method: string; prefix: string; suffix: string; 
   { method: "DELETE", prefix: "/cameras/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
   // POST /camera-ai-settings/<cameraId>: saves one camera's AI settings.
   { method: "POST", prefix: "/camera-ai-settings/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
+  // DELETE /areas/<areaId>: removes one area — installer only, same reach as
+  // drawing one (MANAGER-RULES-SPEC.md section 5: "draw, name, and delete").
+  { method: "DELETE", prefix: "/areas/", suffix: "", rule: { kind: "api", permission: "camera.manage" } },
 ]);
 
 /** The rule for a request, or null when the server has no such route. */

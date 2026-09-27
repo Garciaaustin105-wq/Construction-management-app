@@ -186,6 +186,19 @@ await check("the store account runs the day and cannot manage the box", async ()
   }
 });
 
+await check("MANAGER-RULES-SPEC.md section 4: the installer creates a manager account the same way, on the same page", async () => {
+  const made = await call(A.base, "POST", "/accounts", { body: { username: "regional", role: "manager", password: STORE_PW }, cookie: installer });
+  eq(made.status, 200, "installer creates a manager account");
+  eq(made.json.account, { username: "regional", role: "manager" });
+  const list = await call(A.base, "GET", "/accounts", { cookie: installer });
+  const regional = list.json.accounts.find((a) => a.username === "regional");
+  eq(regional.role, "manager");
+  same(regional.permissions.sort(), ["events.view", "hours.manage", "layout.edit", "live.view", "playback.view", "rules.manage"].sort());
+  const managerCookie = (await call(A.base, "POST", "/auth/login", { body: { username: "regional", password: STORE_PW } })).jar;
+  eq((await call(A.base, "GET", "/accounts", { cookie: managerCookie })).status, 403, "a manager cannot manage accounts");
+  await call(A.base, "DELETE", "/accounts/regional", { cookie: installer });
+});
+
 await check("the last installer cannot be removed; a removed account is signed out at once", async () => {
   const last = await call(A.base, "DELETE", "/accounts/tech", { cookie: installer });
   eq(last.status, 409, "last installer");

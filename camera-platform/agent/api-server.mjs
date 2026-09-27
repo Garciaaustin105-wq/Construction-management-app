@@ -20,7 +20,7 @@ import { openIndex } from './segindex.mjs';
 import { readHealth, alertsResponse } from './alerts-run.mjs';
 import { gatherHealthFacts, cameraFacts } from './healthfacts.mjs';
 import { indexPathFor, DEFAULT_PATHS, assignCamerasToDrives } from './config.mjs';
-import { runEventRetention, EVENT_RETENTION_INTERVAL_MS } from './event-retention.mjs';
+import { runEventRetention, runManagerRulesRetention, EVENT_RETENTION_INTERVAL_MS } from './event-retention.mjs';
 import { startNetworkFacts } from './network-facts.mjs';
 import { startHealthHistory } from './health-history.mjs';
 import { buildActivityResponse } from './activity-run.mjs';
@@ -48,6 +48,11 @@ import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createCameraAiSettings } from './camera-ai-settings.mjs';
 import { createSiteSettings } from './site-settings.mjs';
+import { createAreas } from './areas.mjs';
+import { createManagerRules } from './manager-rules.mjs';
+import { openOccupancyDb, OCCUPANCY_DB_FILE } from './occupancy-db.mjs';
+import { openRulesDb, RULES_DB_FILE } from './rules-db.mjs';
+import { evaluateManagerRule, reportDayRange, wholeCameraAreaId } from '../dist/managerRules.js';
 import { createSavedLayouts } from './saved-layouts.mjs';
 import { createRecordingSettings } from './recording-settings.mjs';
 import { createClipLibrary, LIBRARY_FILE } from './clip-library.mjs';
@@ -76,6 +81,9 @@ try {
 
 const log = (level, msg, extra) =>
   console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, ...extra }));
+
+/** MANAGER-RULES-SPEC.md section 3: "reading occupancy.db every 5 s plus a timer". */
+const MANAGER_RULES_EVALUATOR_INTERVAL_MS = 5_000;
 
 const isRefusal = (r) => r !== null && typeof r === 'object' && r.ok === false;
 
@@ -206,11 +214,21 @@ const UI_FILES = {
   '/activity-page': 'activity.html',
   '/ui/activity-client.js': 'activity-client.mjs',
   '/ui/activity-charts.mjs': 'activity-charts.mjs',
+  // The Rules and Reports pages (MANAGER-RULES-SPEC.md section 5): their own
+  // page shells and clients, gated below (feature_off) the same way
+  // /activity-page already is.
+  '/rules-page': 'rules.html',
+  '/ui/rules-client.js': 'rules-client.mjs',
+  '/reports-page': 'reports.html',
+  '/ui/reports-client.js': 'reports-client.mjs',
   '/ui/cameras-client.js': 'cameras-client.mjs',
   // The Cameras page's "AI settings" panel (CAMERA-AI-SETTINGS-SPEC.md): its
   // own client, separate from cameras-client.mjs (one owner per file) --
   // both load on /cameras-page.
   '/ui/camera-ai-client.js': 'camera-ai-client.mjs',
+  // The Areas panel, also on /cameras-page (MANAGER-RULES-SPEC.md section 1)
+  // -- its own file, one owner, same pattern as camera-ai-client.mjs above.
+  '/ui/areas-client.js': 'areas-client.mjs',
   '/ui/recording-client.js': 'recording-client.mjs',
   '/ui/network-client.js': 'network-client.mjs',
   '/ui/session.js': 'session-bar.mjs',
@@ -654,6 +672,13 @@ export function createApiServer({
   // deployment gets the real EVENT_RETENTION_INTERVAL_MS (5 minutes);
   // nothing in this file ever passes anything else outside a test.
   eventRetentionIntervalMs = EVENT_RETENTION_INTERVAL_MS,
+  // Injectable so a harness can prove the manager-rules evaluator's TIMER
+  // wiring itself (idle when the switch is off, runs once at start, ticks on
+  // its own schedule, stops on closeManagerRulesEvaluator) in bounded time —
+  // same reasoning as eventRetentionIntervalMs just above. Every real
+  // deployment gets the real MANAGER_RULES_EVALUATOR_INTERVAL_MS (5 s, per
+  // MANAGER-RULES-SPEC.md section 3: "reading occupancy.db every 5 s").
+  managerRulesIntervalMs = MANAGER_RULES_EVALUATOR_INTERVAL_MS,
   // The Network page (NETWORK-PAGE-SPEC.md) starts real samplers the instant
   // it is constructed — a DNS lookup, TCP connects to 1.1.1.1/8.8.8.8 and to
   // every configured camera's host. THIS FILE IS BUILT BY createApiServer()
@@ -718,6 +743,17 @@ export function createApiServer({
   });
   const recordingSettings = createRecordingSettings({ stateDir, index, now, audit: auth.audit, log });
 
+  // Manager rules (MANAGER-RULES-SPEC.md): areas (the installer's drawing
+  // surface) and rules (built from templates or from scratch) both live
+  // alongside the settings above; the evaluator that turns occupancy into
+  // firings is this file's own timer, further down.
+  const areasStore = createAreas({ stateDir, config, audit: auth.audit, log });
+  const managerRulesStore = createManagerRules({
+    stateDir, config, audit: auth.audit, log,
+    areasNow: areasStore.listAreas,
+    openHoursNow: siteSettings.openHoursNow,
+  });
+
   // The Network page's own samplers (NETWORK-PAGE-SPEC.md): interface
   // counters, camera RTSP-port probes, and gateway/DNS/internet/clock checks.
   // Started here, unref()'d inside startNetworkFacts, and stopped by
@@ -768,6 +804,43 @@ export function createApiServer({
    * that cannot tell them apart teaches an operator to trust an empty timeline
    * on a box where detection was never switched on.
    */
+  /**
+   * occupancy.db (MANAGER-RULES-SPEC.md section 2): detect-service.mjs's own
+   * transition log, this process only ever READS. Opened lazily and only if
+   * the file already exists — never created here: a site that has never
+   * turned managerRules on (or turned it on and never had a frame yet) must
+   * not have this process conjure the file into existence, the same
+   * "opened lazily on the first write" discipline detect-service keeps for
+   * its own occupancyDbHandle().
+   */
+  let occupancyDb = null;
+  const occupancyFile = join(stateDir, OCCUPANCY_DB_FILE);
+  const openOccupancyForRead = () => {
+    if (occupancyDb === null) {
+      if (!existsSync(occupancyFile)) return null;
+      occupancyDb = openOccupancyDb(occupancyFile);
+    }
+    return occupancyDb;
+  };
+
+  /**
+   * rules.db (MANAGER-RULES-SPEC.md section 3): manager-rule firings. This
+   * process is the ONLY writer (the evaluator, further down) as well as the
+   * only reader (/reports). `forWrite` creates the file on first use (the
+   * evaluator's own first firing); a read-only caller (GET /reports) never
+   * creates it — an empty report for a rule that has never fired is not the
+   * same thing as a reason to leave a file behind.
+   */
+  let rulesDb = null;
+  const rulesDbFile = join(stateDir, RULES_DB_FILE);
+  const openRules = (forWrite) => {
+    if (rulesDb === null) {
+      if (!forWrite && !existsSync(rulesDbFile)) return null;
+      rulesDb = openRulesDb(rulesDbFile);
+    }
+    return rulesDb;
+  };
+
   let eventsDb = null;
   const eventsFile = join(stateDir, 'events.db');
   const openEvents = () => {
@@ -904,6 +977,22 @@ export function createApiServer({
           deleted: result.deleted, deletedSinceStart: eventRetentionDeletedSinceStart,
         });
       }
+
+      // Manager rules' own retention (MANAGER-RULES-SPEC.md: "the same
+      // horizon and margin" as events), on the SAME tick -- never creates
+      // occupancy.db or rules.db (openOccupancyForRead/openRules(false) are
+      // both existence-gated), so a site that has never used this feature at
+      // all runs this block as a no-op every five minutes forever.
+      const rulesResult = await runManagerRulesRetention({
+        occupancyDb: openOccupancyForRead(), rulesDb: openRules(false), index, now,
+      });
+      if (rulesResult.error) {
+        log('error', 'manager rules retention failed', { error: rulesResult.error });
+      } else if (rulesResult.occupancyDeleted > 0 || rulesResult.firingsDeleted > 0) {
+        log('info', 'manager rules retention deleted occupancy transitions and firings whose video is gone', {
+          occupancyDeleted: rulesResult.occupancyDeleted, firingsDeleted: rulesResult.firingsDeleted,
+        });
+      }
     } catch (err) {
       // runEventRetention refuses (a value, not a throw) for anything it can
       // anticipate; this is the last-resort net for anything it cannot, so a
@@ -916,6 +1005,60 @@ export function createApiServer({
   runEventRetentionPass().catch(() => {});
   const eventRetentionTimer = setInterval(() => { runEventRetentionPass().catch(() => {}); }, eventRetentionIntervalMs);
   eventRetentionTimer.unref?.();
+
+  /**
+   * Manager rules' evaluator (MANAGER-RULES-SPEC.md section 3): every 5 s,
+   * turn each enabled rule's own occupancy transitions into firings, written
+   * to rules.db. Idle whenever managerRules is off (no read of occupancy.db,
+   * no rules.db write at all) — the same "the evaluator does not run" the
+   * spec asks for (section 4), checked fresh on every tick, never cached
+   * from when this timer started.
+   *
+   * `rule.areaId === null` ("whole camera", MANAGER-RULES-SPEC.md section 1)
+   * reads occupancy.db under `wholeCameraAreaId(rule.cameraId)` instead of a
+   * drawn area's own id — the same synthetic key detect-service.mjs's own
+   * whole-camera tracker writes its transitions under, so the two can never
+   * drift apart on what "no area" means.
+   */
+  let managerRulesEvaluatorRunning = false;
+  async function runManagerRulesEvaluatorPass() {
+    if (managerRulesEvaluatorRunning) return;
+    managerRulesEvaluatorRunning = true;
+    try {
+      if (!(await siteSettings.isFeatureEnabledNow('managerRules'))) return;
+      const occ = openOccupancyForRead();
+      if (occ === null) return; // detect-service has not written a single transition yet
+      const { rules, openHours, timeZone } = await managerRulesStore.listEnabled();
+      if (rules.length === 0) return;
+      const rdb = openRules(true);
+      const nowMs = now().getTime();
+      for (const rule of rules) {
+        const areaIdForOccupancy = rule.areaId === null ? wholeCameraAreaId(rule.cameraId) : rule.areaId;
+        const transitions = occ.transitionsFor(areaIdForOccupancy, rule.kind);
+        if (transitions.length === 0) continue;
+        let firings;
+        try {
+          firings = evaluateManagerRule(rule, transitions, nowMs, openHours, timeZone, rdb.lastFiredAtMs(rule.id));
+        } catch (err) {
+          // Belt only: managerRulesStore.listEnabled() already refuses (never
+          // returns) a rule needing hours that are unset at read time, using
+          // the SAME openHours this call is about to use — this should be
+          // unreachable, and is logged plainly rather than silently skipped
+          // if it somehow is.
+          log('error', 'manager rules evaluator: a rule could not be evaluated', { id: rule.id, error: err?.message ?? String(err) });
+          continue;
+        }
+        for (const f of firings) rdb.insert(f);
+      }
+    } catch (err) {
+      log('error', 'manager rules evaluator: unexpected error', { error: err?.message ?? String(err) });
+    } finally {
+      managerRulesEvaluatorRunning = false;
+    }
+  }
+  runManagerRulesEvaluatorPass().catch(() => {});
+  const managerRulesTimer = setInterval(() => { runManagerRulesEvaluatorPass().catch(() => {}); }, managerRulesIntervalMs);
+  managerRulesTimer.unref?.();
 
   const STILLS_MAX_CONCURRENT = 2;
   const STILLS_MAX_QUEUE = 32;
@@ -1025,6 +1168,55 @@ export function createApiServer({
       // COULD see this feature ever learns whether it is switched off.
       if ((pathname === '/activity' || pathname === '/activity-page') && !(await siteSettings.isFeatureEnabledNow('activity'))) {
         sendError(res, 404, 'feature_off', 'the activity feature is off for this site');
+        return;
+      }
+
+      // ---------- the Manager Rules feature switch ----------
+      // MANAGER-RULES-SPEC.md section 4: "Off means ... their routes answer
+      // 404 feature_off". /open-hours is deliberately NOT gated here: it is
+      // plain site data (site.json), useful (and settable) whether or not
+      // this feature happens to be on right now.
+      const MANAGER_RULES_ROUTE = pathname === '/areas' || pathname === '/areas/list'
+        || pathname === '/rules' || pathname === '/rule-templates' || pathname === '/reports'
+        || pathname === '/rules-page' || pathname === '/reports-page'
+        || (method === 'DELETE' && pathname.startsWith('/areas/'));
+      if (MANAGER_RULES_ROUTE && !(await siteSettings.isFeatureEnabledNow('managerRules'))) {
+        sendError(res, 404, 'feature_off', 'the manager rules feature is off for this site');
+        return;
+      }
+
+      if (await areasStore.handle(req, res, pathname, method, principal)) return;
+      if (await managerRulesStore.handle(req, res, pathname, method, principal)) return;
+
+      // ---------- GET /reports ----------
+      // The daily report (MANAGER-RULES-SPEC.md section 5): every reportWanted
+      // firing whose startMs falls in local day `day`, in the site's own time
+      // zone (reportDayRange, contracts/managerRules.ts), grouped by rule.
+      if (method === 'GET' && pathname === '/reports') {
+        const { timeZone } = await siteSettings.openHoursNow();
+        const range = reportDayRange(timeZone, parsedUrl.searchParams.get('day') ?? '');
+        if (!range.ok) {
+          sendError(res, 400, 'bad_day', range.reason === 'bad_time_zone'
+            ? 'the site time zone is invalid'
+            : 'day must be YYYY-MM-DD and name a real date');
+          return;
+        }
+        const rdb = openRules(false);
+        const firings = rdb === null ? [] : rdb.firingsInRange(range.startMs, range.endMs).filter((f) => f.reportWanted);
+        const groups = new Map();
+        for (const f of firings) {
+          if (!groups.has(f.ruleId)) groups.set(f.ruleId, { ruleId: f.ruleId, ruleName: f.ruleName, firings: [] });
+          const group = groups.get(f.ruleId);
+          group.ruleName = f.ruleName; // chronological order: the latest firing's own name labels the group
+          group.firings.push(f);
+        }
+        const footageStarts = config.cameras
+          .map((c) => index.earliestFor(c.cameraId))
+          .map((iso) => (iso === null ? null : Date.parse(iso)))
+          .filter((ms) => Number.isFinite(ms));
+        const oldestFootageUtc = footageStarts.length === 0 ? null : new Date(Math.min(...footageStarts)).toISOString();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ ok: true, day: parsedUrl.searchParams.get('day'), timeZone, groups: [...groups.values()], oldestFootageUtc }));
         return;
       }
 
@@ -1807,6 +1999,26 @@ export function createApiServer({
     clearInterval(eventRetentionTimer);
   };
 
+  // Same reasoning again: the manager-rules evaluator is this server's own
+  // timer, and occupancy.db/rules.db are this server's own read/write
+  // handles onto files another process (occupancy.db) or nobody else
+  // (rules.db) also touches.
+  server.closeManagerRulesEvaluator = () => {
+    clearInterval(managerRulesTimer);
+  };
+  server.closeOccupancy = () => {
+    if (occupancyDb !== null) {
+      occupancyDb.close();
+      occupancyDb = null;
+    }
+  };
+  server.closeRules = () => {
+    if (rulesDb !== null) {
+      rulesDb.close();
+      rulesDb = null;
+    }
+  };
+
   // Same reasoning again: the Network page's counter/probe/connection-check
   // timers are this server's own. Cleared on shutdown so nothing keeps
   // polling a config or index this process has let go of.
@@ -1879,8 +2091,11 @@ if (process.argv[1] && process.argv[1].endsWith('api-server.mjs')) {
         // it reads: no in-between tick can slip in either way (there is no
         // await between these two lines), but this keeps the order honest.
         server.closeEventRetention();
+        server.closeManagerRulesEvaluator();
         index.close();
         server.closeEvents();
+        server.closeOccupancy();
+        server.closeRules();
         server.closeEventCrops();
         server.closeStillsCleanup();
         server.closeNetworkFacts();

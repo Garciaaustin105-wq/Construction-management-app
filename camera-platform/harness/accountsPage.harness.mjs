@@ -156,4 +156,91 @@ check("accounts-client.mjs never uses innerHTML", async () => {
   eq(code.includes("innerHTML"), false);
 });
 
+/* ------------------------------------------------------------------ */
+/* Gap 3 (MANAGER-RULES-SPEC.md section 4): the Accounts page can      */
+/* create a manager account -- the role picker offers it, matching the */
+/* client's own ROLE_DESCRIPTIONS, and submitting the form sends       */
+/* role: "manager".                                                    */
+/* ------------------------------------------------------------------ */
+
+await check("the role picker offers Manager, with the same description accounts-client.mjs's own ROLE_DESCRIPTIONS uses", async () => {
+  const html = await readFile(join(root, "agent/ui/accounts.html"), "utf8");
+  const m = /<option value="manager">([^<]*)<\/option>/.exec(html);
+  if (m === null) throw new Error("accounts.html has no <option value=\"manager\"> in its role picker");
+  const code = `
+    globalThis.document = { getElementById: () => ({}) };
+    const client = await import(${JSON.stringify(pathToFileURL(join(root, "agent/ui/accounts-client.mjs")).href)} + "?roles");
+    console.log(JSON.stringify(client.ROLE_DESCRIPTIONS));
+    process.exit(0);
+  `;
+  const descriptions = runChild(code);
+  eq(m[1].includes(descriptions.manager), true, `option text ${JSON.stringify(m[1])} does not carry ROLE_DESCRIPTIONS.manager ${JSON.stringify(descriptions.manager)}`);
+});
+
+await check("creating an account with role Manager selected sends POST /accounts with role: \"manager\"", () => {
+  const code = `
+    const realEls = {};
+    function realEl(id) {
+      if (!realEls[id]) {
+        realEls[id] = {
+          value: "", disabled: false, hidden: false, textContent: "", className: "",
+          _listeners: {},
+          addEventListener(type, fn) { this._listeners[type] = fn; },
+          reset() { this.value = ""; },
+          append() {}, focus() {}, select() {}, setSelectionRange() {},
+        };
+      }
+      return realEls[id];
+    }
+    const handler = {
+      get(t, k) {
+        if (k === Symbol.toPrimitive) return () => "";
+        if (k === "then") return undefined;
+        if (k === "value" || k === "textContent" || k === "className") return "";
+        if (k === "length") return 0;
+        if (k === Symbol.iterator) return function* () {};
+        return fake;
+      },
+      apply() { return fake; },
+      set() { return true; },
+    };
+    const fake = new Proxy(function () {}, handler);
+    globalThis.document = {
+      getElementById: (id) => realEl(id),
+      createElement: () => fake, createElementNS: () => fake,
+      createTextNode: () => fake, querySelector: () => fake, querySelectorAll: () => [],
+      addEventListener() {}, body: fake, documentElement: fake,
+    };
+    globalThis.window = { location: { assign() {}, replace() {}, origin: "https://nvr.local" }, addEventListener() {}, confirm: () => true, prompt: () => null };
+    globalThis.location = globalThis.window.location;
+
+    const posts = [];
+    globalThis.fetch = (url, init) => {
+      if (String(url) === "/accounts" && init && init.method === "POST") {
+        posts.push(JSON.parse(init.body));
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        ok: true, principal: { kind: "user", username: "root", role: "installer" },
+        accounts: [], displays: [], cameras: [], displays_map: {},
+      }) });
+    };
+    await import(${JSON.stringify(pathToFileURL(join(root, "agent/ui/accounts-client.mjs")).href)} + "?submit");
+    await new Promise((r) => setTimeout(r, 150));
+
+    realEls.addUsername.value = "site-manager";
+    realEls.addRole.value = "manager";
+    realEls.addPassword.value = "at-least-12-chars";
+    realEls.addConfirm.value = "at-least-12-chars";
+    realEls.addAccountForm._listeners.submit({ preventDefault() {} });
+    await new Promise((r) => setTimeout(r, 150));
+
+    console.log(JSON.stringify(posts));
+    process.exit(0);
+  `;
+  const posts = runChild(code);
+  eq(posts.length, 1, `expected exactly one POST /accounts, got ${JSON.stringify(posts)}`);
+  eq(posts[0].role, "manager", `expected role "manager", got ${JSON.stringify(posts[0])}`);
+  eq(posts[0].username, "site-manager");
+});
+
 report("accounts page");

@@ -44,6 +44,18 @@ export const GRID_SHAPES = [
   { id: "6x6", cells: 36 },
 ];
 
+// Mirrored from agent/ui/accounts.html's own <option> text for #addRole
+// (MANAGER-RULES-SPEC.md section 4: the new `manager` role, "can make
+// rules and see reports; cannot change cameras, storage or accounts").
+// harness/accountsPage.harness.mjs checks the picker's own option text
+// against this, so the two can never drift apart into two different
+// descriptions of what a manager account can do.
+export const ROLE_DESCRIPTIONS = {
+  store: "watch, review, export",
+  manager: "can make rules and see reports; cannot change cameras, storage or accounts",
+  installer: "everything",
+};
+
 let cameraOptions = []; // [{id, name}], from GET /camera-settings
 let displayLayoutsData = {}; // displayId -> { layout, cells } (raw, unresolved)
 let editingDisplayId = null;
@@ -156,6 +168,14 @@ function renderAccounts(accounts) {
     role.className = "dim";
     role.textContent = account.role;
     row.append(role);
+
+    const roleDescription = ROLE_DESCRIPTIONS[account.role];
+    if (roleDescription) {
+      const description = document.createElement("span");
+      description.className = "dim";
+      description.textContent = `(${roleDescription})`;
+      row.append(description);
+    }
 
     const created = document.createElement("span");
     created.className = "dim";

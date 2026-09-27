@@ -81,7 +81,7 @@ try {
     eq(r.status, 200);
     noSecrets(r.text, "GET /site-settings");
     eq(r.json.ok, true);
-    eq(r.json.settings, { displayName: null, timeZone: null, siteType: null, features: { activity: true } });
+    eq(r.json.settings, { displayName: null, timeZone: null, siteType: null, features: { activity: true, managerRules: false }, openHours: null });
     eq(r.json.problem, null);
     eq(typeof r.json.systemTimeZone, "string");
     eq(r.json.effectiveTimeZone, r.json.systemTimeZone, "no site zone set yet: effective falls back to the system zone");
@@ -95,7 +95,7 @@ try {
   await check("GET /site on a fresh box matches: null display name, the system zone, activity on", async () => {
     const r = await send("GET", "/site");
     eq(r.status, 200);
-    eq(r.json, { ok: true, displayName: null, timeZone: (await send("GET", "/site-settings")).json.systemTimeZone, features: { activity: true } });
+    eq(r.json, { ok: true, displayName: null, timeZone: (await send("GET", "/site-settings")).json.systemTimeZone, features: { activity: true, managerRules: false } });
   });
 
   await check("the version and trust anchor read real files, and NEVER a PEM", async () => {
@@ -143,7 +143,7 @@ try {
   await check("choosing a site type for the first time applies its preset (home: activity off)", async () => {
     const r = await send("POST", "/site-settings", { displayName: "Pflugerville Car Wash", timeZone: "America/Chicago", siteType: "home" });
     eq(r.status, 200);
-    eq(r.json.settings, { displayName: "Pflugerville Car Wash", timeZone: "America/Chicago", siteType: "home", features: { activity: false } });
+    eq(r.json.settings, { displayName: "Pflugerville Car Wash", timeZone: "America/Chicago", siteType: "home", features: { activity: false, managerRules: false }, openHours: null });
     const view = await send("GET", "/site-settings");
     eq(view.json.settings, r.json.settings, "GET reflects the save at once");
     eq(view.json.effectiveTimeZone, "America/Chicago", "the site's own zone is now effective");
@@ -157,13 +157,13 @@ try {
   await check("REQUIRED: the operator flips the preset's own switch back on by hand, in the same site type -- it takes", async () => {
     const r = await send("POST", "/site-settings", { displayName: "Pflugerville Car Wash", timeZone: "America/Chicago", siteType: "home", features: { activity: true } });
     eq(r.status, 200);
-    eq(r.json.settings.features, { activity: true });
+    eq(r.json.settings.features, { activity: true, managerRules: false });
   });
 
   await check("REQUIRED: a preset never applies again while the site type is unchanged -- resaving the SAME type never stamps back over the operator's own switch", async () => {
     const r = await send("POST", "/site-settings", { displayName: "Pflugerville Car Wash - Front", timeZone: "America/Chicago", siteType: "home", features: { activity: true } });
     eq(r.status, 200);
-    eq(r.json.settings.features, { activity: true }, "still on -- home's own preset (off) never silently reapplied");
+    eq(r.json.settings.features, { activity: true, managerRules: false }, "still on -- home's own preset (off) never silently reapplied");
     eq(r.json.settings.displayName, "Pflugerville Car Wash - Front", "the field that WAS meant to change, did");
   });
 
@@ -171,7 +171,7 @@ try {
     const r = await send("POST", "/site-settings", { displayName: "Pflugerville Car Wash - Front", timeZone: "America/Chicago", siteType: "retail" });
     eq(r.status, 200);
     eq(r.json.settings.siteType, "retail");
-    eq(r.json.settings.features, { activity: true }, "retail's own preset (on) -- happens to already be on, but this IS the preset taking effect, not a carry-over: the prior save's home preset had it off before the operator's own override");
+    eq(r.json.settings.features, { activity: true, managerRules: true }, "retail's own preset (on) -- happens to already be on for activity, but managerRules flips true here, proving the preset actually took effect on this real type change");
   });
 
   await check("FEARED: every save writes an audit line naming who and which FIELDS changed -- never a value, never a credential", async () => {

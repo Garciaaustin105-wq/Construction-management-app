@@ -56,6 +56,27 @@ function bar(principal, fetchFn, features) {
     }
   }
 
+  // Rules and Reports (MANAGER-RULES-SPEC.md section 5): "hidden unless the
+  // permission AND the managerRules switch are there." The switch is checked
+  // right here (feats.managerRules !== false), same shape as the Activity
+  // link above; the PERMISSION half is never checked here at all -- every
+  // signed-in user gets both links built, and hideRefusedLinks (called after
+  // bar() returns, at the bottom of this file) removes whichever one this
+  // account's own permissions do not cover. A store account keeps Reports
+  // (events.view) and loses Rules (rules.manage); a manager keeps both but
+  // never sees Cameras/Recording/Accounts below, which stay behind their own
+  // installer-only block.
+  if (feats.managerRules !== false) {
+    for (const [href, text] of [["/rules-page", "Rules"], ["/reports-page", "Reports"]]) {
+      if (location.pathname === href) continue;
+      const link = document.createElement("a");
+      link.href = href;
+      link.textContent = text;
+      link.style.cssText = "color:#8ab4f8";
+      el.append(link);
+    }
+  }
+
   if (principal.role === "installer") {
     for (const [href, text] of [["/cameras-page", "Cameras"], ["/recording-page", "Recording"], ["/accounts-page", "Accounts"]]) {
       if (location.pathname === href) continue;
@@ -101,6 +122,10 @@ export const PAGE_NEEDS = {
   "/cameras-page": "camera.manage",
   "/recording-page": "storage.manage",
   "/network-page": "network.view",
+  // MANAGER-RULES-SPEC.md section 5 -- same permissions as routeAccess.ts's
+  // own GET_EXACT entries for these two pages.
+  "/rules-page": "rules.manage",
+  "/reports-page": "events.view",
 };
 
 /**
@@ -131,7 +156,15 @@ export function hideRefusedLinks(doc, permissions) {
 // GET /site (every signed-in kind, a display included) is where the answer
 // comes from -- not routeAccess.ts/PAGE_NEEDS above, which only ever answers
 // "may this ROLE reach this page", never "is this feature on for this site".
-export const FEATURE_LINKS = { "/activity-page": "activity" };
+export const FEATURE_LINKS = {
+  "/activity-page": "activity",
+  // MANAGER-RULES-SPEC.md section 4: "Off means the Rules and Reports nav
+  // links are hidden" -- the switch half of "hidden unless the permission
+  // AND the managerRules switch are there"; the permission half is
+  // PAGE_NEEDS/hideRefusedLinks above.
+  "/rules-page": "managerRules",
+  "/reports-page": "managerRules",
+};
 
 /**
  * `features` is GET /site's own `features` map. A feature this map does not

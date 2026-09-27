@@ -52,6 +52,18 @@ input.bad, select.bad { border-color:#ffb4b4; }
 .ai-errors ul { margin:4px 0 0; padding-left:18px; }
 fieldset { border:1px solid #2c2f36; border-radius:6px; padding:8px 12px; margin:0; max-width:100%; }
 legend { padding:0 4px; color:#9aa0a6; }
+/* Areas panel: same phone-width, 16px-gutter discipline as the AI settings panel. */
+.areas-panel { padding:16px; box-sizing:border-box; max-width:100%; overflow-x:hidden; }
+.areas-panel summary { cursor:pointer; }
+.areas-body { margin-top:12px; display:flex; flex-direction:column; gap:12px; max-width:100%; }
+.areas-still-wrap { position:relative; width:100%; max-width:480px; touch-action:none; background:#0b0c0e; border-radius:6px; overflow:hidden; }
+.areas-still { display:block; width:100%; height:auto; max-width:100%; }
+.areas-overlay { position:absolute; inset:0; width:100%; height:100%; }
+.areas-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px; }
+.areas-list li { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.areas-name { min-width:0; flex:1 1 200px; }
+.areas-errors:empty { display:none; }
+.areas-errors ul { margin:4px 0 0; padding-left:18px; }
 </style>
 </head>
 <body>
@@ -128,6 +140,14 @@ legend { padding:0 4px; color:#9aa0a6; }
   <div id="aiSettingsList"></div>
 </section>
 
+<section class="panel error" id="areasNotice" hidden></section>
+
+<section class="panel">
+  <h2>Areas</h2>
+  <p class="dim">Named areas for manager rules — "Manager's desk", "Back door" — up to 12 per camera.</p>
+  <div id="areasList"></div>
+</section>
+
 <section class="panel">
   <h2>Camera login</h2>
   <p class="dim" id="loginStatus"></p>
@@ -142,5 +162,6 @@ legend { padding:0 4px; color:#9aa0a6; }
 
 <script type="module" src="/ui/cameras-client.js"></script>
 <script type="module" src="/ui/camera-ai-client.js"></script>
+<script type="module" src="/ui/areas-client.js"></script>
 </body>
 </html>

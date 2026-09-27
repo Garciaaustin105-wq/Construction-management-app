@@ -23,8 +23,12 @@ import { matchKnown, noteMatch, lapseKnownObjects, learnKnownObjects, LEARN_WIND
 import {
   checkCameraAiSettingsFile, settingsForCamera, judgeDetection, scheduleOpen, CAMERA_AI_SETTINGS_VERSION,
 } from "../dist/cameraAiSettings.js";
+import { checkAreasFile, boxInsideArea, AREAS_VERSION } from "../dist/areas.js";
+import { advanceOccupancy, INITIAL_OCCUPANCY_STATE } from "../dist/zoneOccupancy.js";
+import { wholeCameraAreaId } from "../dist/managerRules.js";
 import { loadConfig, resolveCameraUrl } from "./recorder-service.mjs";
 import { openEventsDb } from "./events-db.mjs";
+import { openOccupancyDb, OCCUPANCY_DB_FILE } from "./occupancy-db.mjs";
 import { createKnownObjectsStore, cameraFingerprint } from "./known-objects.mjs";
 import { DEFAULT_PATHS } from "./config.mjs";
 
@@ -64,6 +68,38 @@ const CAMERA_AI_SETTINGS_FILE = "camera-ai.json";
 const AI_SETTINGS_RELOAD_MS = 30_000;
 function emptyAiSettingsFile() {
   return { version: CAMERA_AI_SETTINGS_VERSION, cameras: {} };
+}
+
+/**
+ * Manager rules' occupancy (MANAGER-RULES-SPEC.md section 2): areas.json
+ * (the installer-drawn polygons) and the `managerRules` feature switch, both
+ * re-read every `occupancyReloadMs`, same "keep the last good copy"
+ * discipline camera-ai.json already gets above. The switch lives in
+ * site.json (contracts/siteSettings.ts) - a SEPARATE file with a separate
+ * owner (agent/site-settings.mjs). This service reads it with its OWN small
+ * reader (loadManagerRulesSwitchNow, below) - never `createSiteSettings`
+ * (which wants an `audit` function and a whole HTTP route this service has
+ * no business running), and never contracts/siteSettings.ts's own
+ * `checkSiteSettingsFile`/`isFeatureEnabled` either: `managerRules` is not in
+ * that file's FEATURE_REGISTRY yet in this build (a later build adds the
+ * Rules/Reports pages and registers it there), and `checkSiteSettingsFile`
+ * REFUSES THE WHOLE FILE over any feature key its registry does not list
+ * ("an unknown feature key ... gets 400") - so a real site.json naming this
+ * switch would fail that validator entirely and fall back to the last good
+ * reading, never the switch's own value, however carefully this service
+ * "kept the last good copy" around that call. This service's job is only
+ * ever "is this one boolean true", so it reads exactly that from the raw
+ * JSON and ignores every other field - "a small shared reader", the
+ * alternative this service's own job description names.
+ */
+const AREAS_FILE = "areas.json";
+const SITE_SETTINGS_FILE = "site.json";
+const OCCUPANCY_RELOAD_MS = 30_000;
+const MANAGER_RULES_FEATURE_KEY = "managerRules";
+/** contracts/zoneOccupancy.ts's own OccupancyKind - the two kinds areas are judged on. */
+const OCCUPANCY_KINDS = ["person", "vehicle"];
+function emptyAreasFile() {
+  return { version: AREAS_VERSION, areas: [] };
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -174,6 +210,13 @@ export async function startDetect(opts = {}) {
     // lets a harness trigger a re-read on demand, the same way knownPass and
     // knownFlush already do for known objects.
     aiSettingsReloadMs = AI_SETTINGS_RELOAD_MS,
+    // Manager rules' occupancy (MANAGER-RULES-SPEC.md section 2): how often
+    // areas.json and the managerRules feature switch (site.json) are
+    // re-read. A harness passes something small so a check does not have to
+    // wait a real 30 s; svc.reloadOccupancyConfig() (below) also lets a
+    // harness trigger a re-read on demand, same as reloadAiSettings does for
+    // camera-ai.json.
+    occupancyReloadMs = OCCUPANCY_RELOAD_MS,
     // Teach list, piece 1: how often the once-a-day sweep of old gate-window
     // files runs. A day in production; a harness passes something small so a
     // check does not have to wait a real day to see it happen again.
@@ -399,6 +442,262 @@ export async function startDetect(opts = {}) {
       cam.aiScheduleState = { open, sinceUtc: nowUtc };
     }
     return cam.aiScheduleState;
+  }
+
+  // ---------------------------------------------------------------- manager rules' occupancy
+  //
+  // MANAGER-RULES-SPEC.md section 2. Fed from the SAME raw frames the fold
+  // above sees (never from events.db - a parked car hidden behind a known
+  // object must still show `present` in its spot, because occupancy never
+  // asks known objects anything), gated by the SAME camera-ai settings
+  // judgement (`judgeDetection`) storeEvent already applies - "the same
+  // 'counts' decision the camera's settings make" (the spec's own words).
+  //
+  // The switch is OFF unless site.json's `managerRules` feature is on: see
+  // this constant's own comment above for why that is `false` in this build
+  // regardless of what site.json says, until a later build registers the
+  // key at all.
+
+  /** The last GOOD areas.json, or the empty file if there never was one (or
+   *  it does not exist yet - most sites, most of the time). */
+  let areasFile = emptyAreasFile();
+  /** The last GOOD reading of site.json's `managerRules` switch. Starts
+   *  `false` (the registry default) - a site that has never touched
+   *  site.json, or whose site.json this service has not read yet, samples
+   *  no occupancy, same as "never configured" everywhere else in this file. */
+  let managerRulesEnabled = false;
+
+  function areasForCamera(cameraId) {
+    return areasFile.areas.filter((a) => a.cameraId === cameraId);
+  }
+
+  /** Re-read areas.json now. Never throws: a bad or missing file keeps the
+   *  last good areas and logs once while it lasts (same logOnce dedupe every
+   *  other file-reload problem in this service uses). */
+  async function loadAreasFileNow() {
+    let raw;
+    try {
+      raw = await readFile(path.join(stateDir, AREAS_FILE), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        // Never configured: no areas anywhere, on any camera - not a problem
+        // to log, same as camera-ai.json's own ENOENT above.
+        if (logged.has("areas-file")) logged.delete("areas-file");
+        areasFile = emptyAreasFile();
+        return;
+      }
+      logOnce("areas-file", "warn", "areas file could not be read; the last good areas are kept", { error: scrub(err.message) });
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logOnce("areas-file", "warn", "areas file is not valid JSON; the last good areas are kept", { error: scrub(err.message) });
+      return;
+    }
+    const checked = checkAreasFile(parsed);
+    if (!checked.ok) {
+      logOnce("areas-file", "warn", "areas file failed validation; the last good areas are kept", {
+        errors: checked.errors.slice(0, 3).map((e) => `${e.index}: ${e.field}: ${e.reason}`),
+      }, `bad:${checked.errors.length}`);
+      return;
+    }
+    if (logged.has("areas-file")) {
+      logged.delete("areas-file");
+      log("info", "areas file can be read again", {});
+    }
+    areasFile = checked.file;
+  }
+
+  /**
+   * Re-read site.json's `managerRules` switch now - deliberately NOT through
+   * contracts/siteSettings.ts's own checkSiteSettingsFile/siteSettingsView
+   * (see this section's header comment for why: that validator refuses the
+   * WHOLE file over a feature key its registry does not list yet, which
+   * `managerRules` is not, in this build). This reads exactly one thing -
+   * `parsed.features.managerRules`, a plain boolean - and ignores every
+   * other field of site.json entirely; it is not a second, competing
+   * validator for the rest of that file, only a narrow, single-purpose
+   * lookup. `false` (the switch's eventual registry default) whenever the
+   * field is missing or not really a boolean, same as "a feature not
+   * mentioned reads at its default" everywhere else this codebase reads a
+   * feature switch. Never throws: a bad or missing file keeps the last good
+   * reading of the switch, exactly like camera-ai.json's own reload above.
+   */
+  async function loadManagerRulesSwitchNow() {
+    let raw;
+    try {
+      raw = await readFile(path.join(stateDir, SITE_SETTINGS_FILE), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        if (logged.has("site-settings-occupancy")) logged.delete("site-settings-occupancy");
+        managerRulesEnabled = false;
+        return;
+      }
+      logOnce("site-settings-occupancy", "warn", "site settings could not be read; the last good managerRules switch is kept", { error: scrub(err.message) });
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      logOnce("site-settings-occupancy", "warn", "site.json is not valid JSON; the last good managerRules switch is kept", { error: scrub(err.message) });
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      logOnce("site-settings-occupancy", "warn", "site.json is not an object; the last good managerRules switch is kept", {});
+      return;
+    }
+    if (logged.has("site-settings-occupancy")) {
+      logged.delete("site-settings-occupancy");
+      log("info", "site settings can be read again", {});
+    }
+    const features = parsed.features;
+    const isFeaturesRecord = typeof features === "object" && features !== null && !Array.isArray(features);
+    const flag = isFeaturesRecord ? features[MANAGER_RULES_FEATURE_KEY] : undefined;
+    managerRulesEnabled = typeof flag === "boolean" ? flag : false;
+  }
+
+  async function loadOccupancyConfigNow() {
+    await loadAreasFileNow();
+    await loadManagerRulesSwitchNow();
+  }
+
+  /** One (area, kind) tracker's state, keyed by area id (globally unique -
+   *  checkAreasFile refuses a duplicate anywhere) plus kind, so an id never
+   *  has to be paired with its cameraId to be looked up. */
+  const occupancyTrackers = new Map();
+  function occupancyTrackerKey(areaId, kind) {
+    return `${areaId}\u0000${kind}`;
+  }
+
+  /** occupancy.db, opened on the first transition this service ever has to
+   *  write - never at start, so a site with the switch off (most of them,
+   *  most of the time) never creates the file at all. Opened at most once;
+   *  a failure to open it is logged once and every later write is silently
+   *  skipped (occupancyDbHandle keeps answering null) rather than retried
+   *  every frame. */
+  let occupancyDb = null;
+  let occupancyDbOpenFailed = false;
+  function occupancyDbHandle() {
+    if (occupancyDb !== null) return occupancyDb;
+    if (occupancyDbOpenFailed) return null;
+    try {
+      occupancyDb = openOccupancyDb(path.join(stateDir, OCCUPANCY_DB_FILE));
+      return occupancyDb;
+    } catch (err) {
+      occupancyDbOpenFailed = true;
+      logOnce("occupancy-db-open", "warn", "occupancy.db could not be opened; occupancy transitions are not being recorded", { error: scrub(err.message) });
+      return null;
+    }
+  }
+
+  /** Write one transition - never thrown into the frame path: a failure to
+   *  open or write occupancy.db is logged once and detection keeps running
+   *  (MANAGER-RULES-SPEC.md section 2: "a failure is logged, never thrown
+   *  into the frame path"). */
+  function writeOccupancyTransition(areaId, cameraId, kind, transition) {
+    const db = occupancyDbHandle();
+    if (db === null) return;
+    try {
+      db.insert({ areaId, cameraId, kind, state: transition.state, atMs: transition.atMs });
+    } catch (err) {
+      logOnce("occupancy-db-write", "warn", "an occupancy transition could not be saved; detection keeps running", { error: scrub(err.message) });
+    }
+  }
+
+  /** Advance one (area, kind) tracker by one piece of evidence, and write
+   *  the transition (if any) to occupancy.db. The only place this service
+   *  touches an occupancy tracker's state - every caller below hands in
+   *  evidence, never a state, per contracts/zoneOccupancy.ts's own pure
+   *  `advanceOccupancy`. */
+  function feedOccupancy(area, cameraId, kind, evidence) {
+    const key = occupancyTrackerKey(area.id, kind);
+    const state = occupancyTrackers.get(key) ?? INITIAL_OCCUPANCY_STATE;
+    const step = advanceOccupancy(state, evidence, kind);
+    occupancyTrackers.set(key, step.state);
+    if (step.transition !== null) {
+      writeOccupancyTransition(area.id, cameraId, kind, step.transition);
+    }
+  }
+
+  /**
+   * One frame, schedule OPEN: for every area on this camera and every kind,
+   * presence evidence when at least one kept detection of that kind is
+   * VISIBLE (judgeDetection's `store && hiddenBy === null` - "the same
+   * 'counts' decision the camera's settings make", so a settings-hidden
+   * detection, or one below this camera's own floor, is never evidence) and
+   * lies inside the area (boxInsideArea: ground point, or 40% coverage on
+   * the 5x5 grid, for a seated person the desk hides); absence evidence
+   * otherwise. `kept` is the SAME site-floor-filtered detections the fold
+   * above sees - occupancy applies the camera's own settings on top, exactly
+   * as storeEvent does for events.
+   *
+   * Also feeds a synthetic "whole camera" tracker per kind, keyed
+   * `wholeCameraAreaId(cameraId)` (MANAGER-RULES-SPEC.md section 1: "a rule
+   * may also use whole camera"; build gap: "whole-camera rules never
+   * fire"). Its own "inside" is simpler than a drawn area's - any VISIBLE
+   * detection of that kind anywhere in frame, no polygon to test against -
+   * but it is the same evidence, the same hysteresis (advanceOccupancy does
+   * not know or care which kind of area fed it), and the same gap/
+   * schedule-closed ticks below, so a whole-camera rule is never a second,
+   * looser measurement than an area rule. Run unconditionally (never gated
+   * on `areas.length > 0`): a site with the switch on but no areas drawn yet
+   * must still be able to fire "Person after hours".
+   */
+  function processOccupancyFrame(cameraId, settings, kept, atMs) {
+    const areas = areasForCamera(cameraId);
+    for (const kind of OCCUPANCY_KINDS) {
+      const visibleBoxes = [];
+      for (const d of kept) {
+        if (d.kind !== kind) continue;
+        const judged = judgeDetection(settings, { kind: d.kind, bestConfidence: d.confidence, bestBox: d.box }, minConfidence, atMs);
+        if (!judged.store || judged.hiddenBy !== null) continue;
+        visibleBoxes.push(d.box);
+      }
+      for (const area of areas) {
+        const inside = visibleBoxes.some((box) => boxInsideArea(box, area.points));
+        feedOccupancy(area, cameraId, kind, { type: inside ? "presence" : "absence", atMs });
+      }
+      const wholeInside = visibleBoxes.length > 0;
+      feedOccupancy({ id: wholeCameraAreaId(cameraId) }, cameraId, kind, { type: wholeInside ? "presence" : "absence", atMs });
+    }
+  }
+
+  /** The schedule closed: not_watching at once, every area and kind on this
+   *  camera, plus the whole-camera tracker - MANAGER-RULES-SPEC.md: "The
+   *  camera's AI schedule closed: not_watching straight away." Safe to call
+   *  every tick while closed: advanceOccupancy's scheduleClosed evidence is
+   *  idempotent once already not_watching (no further transition, nothing
+   *  written twice). */
+  function occupancyScheduleClosed(cameraId, atMs) {
+    for (const area of areasForCamera(cameraId)) {
+      for (const kind of OCCUPANCY_KINDS) {
+        feedOccupancy(area, cameraId, kind, { type: "scheduleClosed", atMs });
+      }
+    }
+    for (const kind of OCCUPANCY_KINDS) {
+      feedOccupancy({ id: wholeCameraAreaId(cameraId) }, cameraId, kind, { type: "scheduleClosed", atMs });
+    }
+  }
+
+  /** "Check now whether the camera has gone quiet" - fed from the existing
+   *  1 s tick, schedule OPEN. A no-op for a tracker that has not yet seen a
+   *  real frame, or has not gone 120 s since its last one (advanceOccupancy's
+   *  own gapTick rule); safe to call every tick regardless. Covers the
+   *  whole-camera tracker too, so a whole-camera-only site (no areas drawn)
+   *  still gets `not_watching` after a real gap, never silence read as
+   *  presence or absence. */
+  function occupancyGapTick(cameraId, atMs) {
+    for (const area of areasForCamera(cameraId)) {
+      for (const kind of OCCUPANCY_KINDS) {
+        feedOccupancy(area, cameraId, kind, { type: "gapTick", atMs });
+      }
+    }
+    for (const kind of OCCUPANCY_KINDS) {
+      feedOccupancy({ id: wholeCameraAreaId(cameraId) }, cameraId, kind, { type: "gapTick", atMs });
+    }
   }
 
   // ---------------------------------------------------------------- known objects
@@ -939,9 +1238,24 @@ export async function startDetect(opts = {}) {
           // instant it depicts. Round 1 does not stop the worker (the gate
           // above and timeSource counting just ran regardless) - only the
           // fold and the event store are skipped while closed.
-          const aiSchedule = refreshAiSchedule(cam, aiSettingsFor(cameraId), parsed.atUtc);
+          const settings = aiSettingsFor(cameraId);
+          const aiSchedule = refreshAiSchedule(cam, settings, parsed.atUtc);
+          const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
+          // Manager rules' occupancy (MANAGER-RULES-SPEC.md section 2): fed
+          // from this SAME frame, right beside advanceFold - "in the frame
+          // handler... right where kept is formed". Only when the site's
+          // managerRules switch is on; the schedule gate applies here too
+          // (closed: not_watching at once, never a folded frame's worth of
+          // presence/absence), independent of whether the fold below runs.
+          if (managerRulesEnabled) {
+            const frameAtMs = Date.parse(parsed.atUtc);
+            if (aiSchedule.open) {
+              processOccupancyFrame(cameraId, settings, kept, frameAtMs);
+            } else {
+              occupancyScheduleClosed(cameraId, frameAtMs);
+            }
+          }
           if (aiSchedule.open) {
-            const kept = parsed.detections.filter((d) => d.confidence >= minConfidence);
             const step = advanceFold(cam.fold, kept, now().toISOString());
             cam.fold = step.state;
             // update.event / finished.event already carry species when
@@ -1055,6 +1369,11 @@ export async function startDetect(opts = {}) {
   // instant it takes this to read the file. loadAiSettingsNow never throws.
   await loadAiSettingsNow();
 
+  // Manager rules' occupancy (MANAGER-RULES-SPEC.md section 2): read areas.json
+  // and the managerRules switch once before the first worker starts, same
+  // reasoning as camera AI settings above. loadOccupancyConfigNow never throws.
+  await loadOccupancyConfigNow();
+
   // Teach list, piece 1: drop this directory's own files older than 7 days
   // before the first new one can be written, same as the known-objects read
   // above - once at start, and the timer below repeats it once a day.
@@ -1067,16 +1386,39 @@ export async function startDetect(opts = {}) {
     spawnWorker(assignment);
   }
 
-  // Tick timer: advance folds with no detections
-  const tickTimer = setInterval(() => {
+  /**
+   * Advance every camera's fold with no new detections (finishing events a
+   * missed frame would otherwise leave open forever), and, when manager
+   * rules' occupancy is switched on, feed this same tick's gap-tick or
+   * schedule-closed evidence to every area on that camera - "feed frame-gap
+   * and schedule-closed ticks from the existing 1 s tick" (this service's
+   * own job description). One function so the real timer below and the
+   * harness's `tick()` (returned at the bottom) can never drift apart into
+   * two different answers for "what does a tick do".
+   */
+  function runTick() {
+    const nowIso = now().toISOString();
+    const nowMs = Date.parse(nowIso);
     for (const cam of cameras.values()) {
-      const step = advanceFold(cam.fold, [], now().toISOString());
+      const step = advanceFold(cam.fold, [], nowIso);
       cam.fold = step.state;
       for (const finished of step.finished) {
         storeEvent(finished, true);
       }
+      if (managerRulesEnabled) {
+        const aiSchedule = refreshAiSchedule(cam, aiSettingsFor(cam.cameraId), nowIso);
+        if (aiSchedule.open) {
+          occupancyGapTick(cam.cameraId, nowMs);
+        } else {
+          occupancyScheduleClosed(cam.cameraId, nowMs);
+        }
+      }
     }
-  }, tickMs);
+  }
+
+  // Tick timer: advance folds with no detections, and (when switched on)
+  // manager rules' occupancy gap/schedule ticks.
+  const tickTimer = setInterval(runTick, tickMs);
 
   // Health timer
   const healthTimer = setInterval(() => {
@@ -1098,6 +1440,13 @@ export async function startDetect(opts = {}) {
   const aiSettingsTimer = setInterval(() => {
     if (!stopping) loadAiSettingsNow();
   }, aiSettingsReloadMs);
+
+  // Manager rules' occupancy: re-read areas.json and the managerRules switch
+  // every occupancyReloadMs ("every 30 s", MANAGER-RULES-SPEC.md section 2).
+  // loadOccupancyConfigNow never throws.
+  const occupancyReloadTimer = setInterval(() => {
+    if (!stopping) loadOccupancyConfigNow();
+  }, occupancyReloadMs);
 
   // Teach list, piece 1: the once-a-day sweep. pruneGateWindows never throws
   // (its own failures are logged and swallowed), so nothing here needs to
@@ -1190,6 +1539,7 @@ export async function startDetect(opts = {}) {
     clearInterval(knownPassTimer);
     clearInterval(knownFlushTimer);
     clearInterval(aiSettingsTimer);
+    clearInterval(occupancyReloadTimer);
     clearInterval(gateRetentionTimer);
     if (timeSourceWindowTimer) clearInterval(timeSourceWindowTimer);
 
@@ -1239,20 +1589,15 @@ export async function startDetect(opts = {}) {
     await syncKnown({ learn: false });
 
     eventsDb.close();
+    if (occupancyDb !== null) occupancyDb.close();
   }
 
   return {
     stop,
     cameras: getCameras,
-    tick: () => {
-      for (const cam of cameras.values()) {
-        const step = advanceFold(cam.fold, [], now().toISOString());
-        cam.fold = step.state;
-        for (const finished of step.finished) {
-          storeEvent(finished, true);
-        }
-      }
-    },
+    // For a harness, as knownPass/knownFlush are: run what the real tick
+    // timer runs (fold advance, and manager rules' gap/schedule ticks), now.
+    tick: () => runTick(),
     writeHealth,
     // For a harness, as tick is: run what the timers run, now.
     knownPass: () => syncKnown({ learn: true }),
@@ -1262,6 +1607,9 @@ export async function startDetect(opts = {}) {
     // For a harness, as knownPass/knownFlush are: re-read camera-ai.json now,
     // rather than waiting aiSettingsReloadMs.
     reloadAiSettings: () => loadAiSettingsNow(),
+    // For a harness, as reloadAiSettings is: re-read areas.json and the
+    // managerRules switch now, rather than waiting occupancyReloadMs.
+    reloadOccupancyConfig: () => loadOccupancyConfigNow(),
     // For a harness, as tick/pruneGateWindows are: close every camera's
     // timeSource window now, exactly as the gate-off timer would, without a
     // real wait. Exposed unconditionally - closing a window by hand is always

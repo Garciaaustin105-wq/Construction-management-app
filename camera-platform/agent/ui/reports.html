@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!--
+  Reports page for the camera-NVR web UI (MANAGER-RULES-SPEC.md section 5):
+  the daily report per local day, newest first, grouped by rule, with a
+  Review deep link on each firing and "Reports go back to <date>, as far as
+  this NVR keeps video." All rendering is done by /ui/reports-client.js
+  (served from agent/ui/reports-client.mjs) -- this file only lays out the
+  page's own chrome.
+
+  Dark, pinned; phone width with a 16px gutter, matching every other page on
+  this NVR since 2026-09-26.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports</title>
+<style>
+  :root { color-scheme: dark; --page-bg:#111317; --surface:#1b1d22; --text-primary:#e8eaed;
+          --text-secondary:#c3c2b7; --muted:#9aa0a6; --border:rgba(255,255,255,0.10); --bad:#ffb4b4; --link:#8ab4f8; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; padding-bottom:56px; background:var(--page-bg); color:var(--text-primary);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; max-width:640px; overflow-x:hidden; }
+  h1 { margin:0 0 12px; font-size:20px; }
+  h3 { margin:14px 0 4px; font-size:14px; }
+  .dim { color: var(--text-secondary); }
+  .notice { padding:10px 14px; border-radius:8px; background:var(--surface); border:1px solid var(--border);
+            font-size:13px; color:var(--text-secondary); }
+  .notice.problem { color: var(--bad); border-color: var(--bad); }
+  .day-controls { display:flex; align-items:center; gap:10px; margin:8px 0 16px; }
+  .day-controls button { font:inherit; padding:8px 14px; border:1px solid var(--border); border-radius:6px;
+                          background:var(--surface); color:var(--text-primary); cursor:pointer; min-height:36px; }
+  #reportDayLabel { font-weight:600; }
+  .panel { padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+  .report-group { margin-bottom:16px; }
+  .report-group:last-child { margin-bottom:0; }
+  .report-firings { list-style:none; padding:0; margin:6px 0 0; display:flex; flex-direction:column; gap:6px; }
+  .report-firings li { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+                        flex-wrap:wrap; border-top:1px solid var(--border); padding-top:6px; }
+  .report-firings li:first-child { border-top:none; padding-top:0; }
+  .report-firings span { overflow-wrap:anywhere; }
+  a { color: var(--link); flex:0 0 auto; }
+  #reportCoverage { font-size:12px; margin-top:16px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+  <h1>Reports</h1>
+
+  <div class="day-controls" role="group" aria-label="Day">
+    <button id="reportPrevDay" type="button" aria-label="Previous day">&larr;</button>
+    <span id="reportDayLabel" class="dim"></span>
+    <button id="reportNextDay" type="button" aria-label="Next day">&rarr;</button>
+  </div>
+
+  <p id="reportError" class="notice problem" hidden></p>
+
+  <div id="reportBody" class="panel">
+    <p id="reportEmpty" class="dim" hidden>No rule firings for this day.</p>
+    <div id="reportGroups"></div>
+  </div>
+
+  <p id="reportCoverage" class="dim"></p>
+
+  <script type="module" src="/ui/reports-client.js"></script>
+  <script type="module" src="/ui/session.js"></script>
+</body>
+</html>

@@ -28,7 +28,7 @@ console.log("site settings");
 
 check("a missing site.json is the defaults: every field null, every feature at its registry default", () => {
   const d = defaultSiteSettings();
-  same(d, { displayName: null, timeZone: null, siteType: null, features: { activity: true } });
+  same(d, { displayName: null, timeZone: null, siteType: null, features: { activity: true, managerRules: false }, openHours: null });
 });
 
 check("an absent or null save payload validates as the same full defaults", () => {
@@ -39,8 +39,11 @@ check("an absent or null save payload validates as the same full defaults", () =
   same(checkSiteSettings({}).settings, defaultSiteSettings(), "an empty object: every field defaults, none becomes a zero/false");
 });
 
-check("the feature registry lists exactly activity today, with its own default", () => {
-  same(FEATURE_REGISTRY, [{ key: "activity", registryDefault: true }]);
+check("the feature registry lists exactly activity and managerRules today, with their own defaults", () => {
+  same(FEATURE_REGISTRY, [
+    { key: "activity", registryDefault: true },
+    { key: "managerRules", registryDefault: false },
+  ]);
 });
 
 check("isFeatureEnabled reads the registry default when a features map is absent, partial, or silent on that key", () => {
@@ -51,8 +54,17 @@ check("isFeatureEnabled reads the registry default when a features map is absent
 });
 
 check("isFeatureEnabled is always false for a key the registry has never heard of", () => {
-  eq(isFeatureEnabled({ managerRules: true }, "managerRules"), false);
-  eq(isFeatureEnabled(undefined, "managerRules"), false);
+  // appearanceOfDay (build 3) is still unregistered — the right stand-in for
+  // "a key this file has never heard of" now that managerRules is real.
+  eq(isFeatureEnabled({ appearanceOfDay: true }, "appearanceOfDay"), false);
+  eq(isFeatureEnabled(undefined, "appearanceOfDay"), false);
+});
+
+check("managerRules defaults off, and reads back what is actually stored", () => {
+  eq(isFeatureEnabled(undefined, "managerRules"), false, "a site that never touched site.json samples no occupancy");
+  eq(isFeatureEnabled({}, "managerRules"), false);
+  eq(isFeatureEnabled({ managerRules: true }, "managerRules"), true);
+  eq(isFeatureEnabled({ managerRules: false }, "managerRules"), false);
 });
 
 // ---------------------------------------------------------------- validation: every problem, not the first
@@ -60,7 +72,20 @@ check("isFeatureEnabled is always false for a key the registry has never heard o
 check("checkSiteSettings accepts good settings, trims a display name, and fills every registry feature", () => {
   const r = checkSiteSettings({ displayName: "  Pflugerville Car Wash  ", timeZone: "America/Chicago", siteType: "carwash", features: { activity: false } });
   eq(r.ok, true);
-  same(r.settings, { displayName: "Pflugerville Car Wash", timeZone: "America/Chicago", siteType: "carwash", features: { activity: false } });
+  same(r.settings, { displayName: "Pflugerville Car Wash", timeZone: "America/Chicago", siteType: "carwash", features: { activity: false, managerRules: false }, openHours: null });
+});
+
+check("checkSiteSettings accepts a real openHours schedule, and refuses a bad one with the rest of a bad save", () => {
+  const schedule = { timeZone: "America/Chicago", weekly: [[], [{ open: 540, close: 1080 }], [], [], [], [], []], closedDates: [] };
+  const ok = checkSiteSettings({ openHours: schedule });
+  eq(ok.ok, true);
+  same(ok.settings.openHours, schedule);
+  const bad = checkSiteSettings({ openHours: { timeZone: "Mars/Colony_One", weekly: [], closedDates: [] } });
+  eq(bad.ok, false);
+  same(bad.errors, [{ field: "openHours", reason: "bad_time_zone" }]);
+  // Absent or null: not set, never "always closed" (build rule 5).
+  eq(checkSiteSettings({}).settings.openHours, null);
+  eq(checkSiteSettings({ openHours: null }).settings.openHours, null);
 });
 
 check("a blank display name becomes null, not an empty string stored forever", () => {
@@ -82,9 +107,9 @@ check("every real IANA zone SITE_TYPES/Intl can name is accepted", () => {
 });
 
 check("REQUIRED: an unknown feature key gets 400, never silently dropped or silently stored", () => {
-  const r = checkSiteSettings({ features: { activity: true, managerRules: true } });
+  const r = checkSiteSettings({ features: { activity: true, appearanceOfDay: true } });
   eq(r.ok, false);
-  same(r.errors, [{ field: "features.managerRules", reason: "unknown_feature_key" }]);
+  same(r.errors, [{ field: "features.appearanceOfDay", reason: "unknown_feature_key" }]);
 });
 
 check("a non-boolean feature flag is refused by name", () => {
@@ -128,7 +153,8 @@ function storedFile(overrides = {}) {
     displayName: null,
     timeZone: null,
     siteType: null,
-    features: { activity: true },
+    features: { activity: true, managerRules: false },
+    openHours: null,
     updatedUtc: "2026-09-26T12:00:00.000Z",
     updatedBy: "tech",
     ...overrides,
@@ -136,9 +162,9 @@ function storedFile(overrides = {}) {
 }
 
 check("a well-formed stored file validates whole", () => {
-  const r = checkSiteSettingsFile(storedFile({ siteType: "retail", features: { activity: false } }));
+  const r = checkSiteSettingsFile(storedFile({ siteType: "retail", features: { activity: false, managerRules: false } }));
   eq(r.ok, true);
-  same(r.file, storedFile({ siteType: "retail", features: { activity: false } }));
+  same(r.file, storedFile({ siteType: "retail", features: { activity: false, managerRules: false } }));
 });
 
 check("REQUIRED: a bad stored file is refused with every problem listed, never half-read", () => {
@@ -163,29 +189,30 @@ check("siteSettingsView fills a registry feature a stored file predates, from it
   // shipped, cannot have every current registry key — reading it must never
   // treat the missing key as off.
   const file = storedFile({ features: {} });
-  same(siteSettingsView(file), { displayName: null, timeZone: null, siteType: null, features: { activity: true } });
+  same(siteSettingsView(file), { displayName: null, timeZone: null, siteType: null, features: { activity: true, managerRules: false }, openHours: null });
 });
 
 // ---------------------------------------------------------------- the audit diff: names, never values
 
 check("diffSiteSettings names only the fields that changed, never their values", () => {
   const before = defaultSiteSettings();
-  const after = { ...before, siteType: "retail", features: { activity: true } };
+  const after = { ...before, siteType: "retail", features: { ...before.features } };
   same(diffSiteSettings(before, after), ["siteType"], "features unchanged in VALUE (both true) is not a diff");
   same(diffSiteSettings(before, { ...before, displayName: "Front Desk" }), ["displayName"]);
-  same(diffSiteSettings(before, { ...before, features: { activity: false } }), ["features"]);
+  same(diffSiteSettings(before, { ...before, features: { ...before.features, activity: false } }), ["features"]);
+  same(diffSiteSettings(before, { ...before, openHours: { timeZone: "UTC", weekly: [[], [], [], [], [], [], []], closedDates: [] } }), ["openHours"]);
   same(diffSiteSettings(before, before), []);
 });
 
 // ---------------------------------------------------------------- presets: name the spec's own table exactly
 
-check("SITE_TYPE_PRESETS matches SITE-SETTINGS-SPEC.md's own table", () => {
+check("SITE_TYPE_PRESETS matches MANAGER-RULES-SPEC.md's own table (retail/storage/carwash on, home/other off)", () => {
   same(SITE_TYPE_PRESETS, {
-    retail: { activity: true },
-    storage: { activity: true },
-    carwash: { activity: true },
-    home: { activity: false },
-    other: { activity: true },
+    retail: { activity: true, managerRules: true },
+    storage: { activity: true, managerRules: true },
+    carwash: { activity: true, managerRules: true },
+    home: { activity: false, managerRules: false },
+    other: { activity: true, managerRules: false },
   });
   same(SITE_TYPES, ["retail", "storage", "carwash", "home", "other"]);
 });
@@ -229,12 +256,18 @@ check("clearing the site type back to null never touches a feature switch", () =
 
 check("REQUIRED: a preset never applies a feature the registry does not list, even when SITE_TYPE_PRESETS names one ahead of time", () => {
   // Simulates the day a preset is edited to start naming a future feature
-  // before FEATURE_REGISTRY lists it — applyPreset must still never leak
-  // that key into the stored settings.
-  const current = { displayName: null, timeZone: null, siteType: null, features: { activity: true } };
+  // (appearanceOfDay, build 3) before FEATURE_REGISTRY lists it — applyPreset
+  // must still never leak that key into the stored settings, whatever
+  // SITE_TYPE_PRESETS itself says. Every key applyPreset ever WRITES must be
+  // one FEATURE_REGISTRY actually lists — checked generically, so this stays
+  // true as the registry grows rather than pinning an exact key list.
+  const current = { displayName: null, timeZone: null, siteType: null, features: { activity: true, managerRules: false }, openHours: null };
   const next = applyPreset(current, "retail");
-  eq(Object.prototype.hasOwnProperty.call(next.features, "managerRules"), false, "SITE_TYPE_PRESETS in this build names only 'activity' — nothing else is ever copied in");
-  same(Object.keys(next.features), ["activity"]);
+  const registryKeys = new Set(FEATURE_REGISTRY.map((f) => f.key));
+  for (const key of Object.keys(next.features)) {
+    eq(registryKeys.has(key), true, `${key} is in FEATURE_REGISTRY`);
+  }
+  eq(Object.prototype.hasOwnProperty.call(next.features, "appearanceOfDay"), false, "a feature not yet in the registry never leaks in");
 });
 
 // ---------------------------------------------------------------- the effective time zone

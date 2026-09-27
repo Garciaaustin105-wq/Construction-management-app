@@ -38,7 +38,15 @@ export type Role =
   /** Commissioned the box. Full control, including the destructive parts. */
   | "installer"
   /** Uses the box. Everything needed daily, nothing that reconfigures it. */
-  | "store";
+  | "store"
+  /**
+   * MANAGER-RULES-SPEC.md section 4: stands in, on this box, for the cloud
+   * plan's regional and general managers. Builds and edits manager rules, may
+   * read reports and the day's activity, and may set the store's open hours
+   * — but not camera, storage, system, account, network, or areas: drawing an
+   * area is still installer-only, even though a manager reads area names.
+   */
+  | "manager";
 
 export type Permission =
   /** Watch the live streams. */
@@ -78,7 +86,22 @@ export type Permission =
    * site's neighbour table, and a wall display is not a person who could be
    * asked why it was looking.
    */
-  | "network.view";
+  | "network.view"
+  /**
+   * Build, edit and enable/disable manager rules (MANAGER-RULES-SPEC.md
+   * section 4). Separate from camera.manage: a manager reads area names and
+   * a still with the area outlined, but never draws or edits an area — that
+   * stays camera.manage, installer-only.
+   */
+  | "rules.manage"
+  /**
+   * Edit the store's open hours (site.json's `openHours`) without the rest of
+   * system.manage — "edited in the Site section by the installer OR a
+   * manager" (MANAGER-RULES-SPEC.md section 3). Everything else in the Site
+   * section (display name, time zone, site type, every other feature switch)
+   * stays system.manage, installer-only.
+   */
+  | "hours.manage";
 
 /**
  * Every permission, in one place, so a new one cannot be forgotten below.
@@ -98,6 +121,8 @@ export const ALL_PERMISSIONS: readonly Permission[] = Object.freeze([
   "audit.view",
   "events.view",
   "network.view",
+  "rules.manage",
+  "hours.manage",
 ]);
 
 const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([
@@ -107,6 +132,22 @@ const STORE_PERMISSIONS: readonly Permission[] = Object.freeze([
   "segment.hold",
   "layout.edit",
   "events.view",
+]);
+
+/**
+ * MANAGER-RULES-SPEC.md section 4: "Not: camera, storage, system, account,
+ * network, or areas." A manager gets exactly the permissions named there —
+ * rules.manage, events.view, live.view, playback.view, layout.edit, and
+ * hours.manage (editing the site's open hours) — nothing implied, nothing
+ * borrowed from store or installer.
+ */
+const MANAGER_PERMISSIONS: readonly Permission[] = Object.freeze([
+  "live.view",
+  "playback.view",
+  "layout.edit",
+  "events.view",
+  "rules.manage",
+  "hours.manage",
 ]);
 
 /**
@@ -161,6 +202,8 @@ export function permissionsFor(role: Role): Permission[] {
       return [...ALL_PERMISSIONS];
     case "store":
       return [...STORE_PERMISSIONS];
+    case "manager":
+      return [...MANAGER_PERMISSIONS];
     default: {
       // An unknown role is a bug or a tampered session, never a reason to
       // guess generously.

@@ -45,8 +45,21 @@ function fakeDocWithLinks(hrefs) {
   return { querySelectorAll: () => anchors, _anchors: anchors };
 }
 
-check("FEATURE_LINKS names the Activity page, and nothing this round did not add", () => {
-  eq(sessionBar.FEATURE_LINKS, { "/activity-page": "activity" });
+check("FEATURE_LINKS names the Activity, Rules and Reports pages, and nothing else", () => {
+  eq(sessionBar.FEATURE_LINKS, { "/activity-page": "activity", "/rules-page": "managerRules", "/reports-page": "managerRules" });
+});
+
+check("PAGE_NEEDS names rules.manage for Rules and events.view for Reports, matching routeAccess.ts", () => {
+  eq(sessionBar.PAGE_NEEDS["/rules-page"], "rules.manage");
+  eq(sessionBar.PAGE_NEEDS["/reports-page"], "events.view");
+});
+
+check("managerRules off hides both the Rules and the Reports link, not just Activity", () => {
+  const doc = fakeDocWithLinks(["/rules-page", "/reports-page", "/activity-page"]);
+  sessionBar.hideFeatureLinks(doc, { managerRules: false, activity: true });
+  eq(doc._anchors[0].hidden, true, "Rules");
+  eq(doc._anchors[1].hidden, true, "Reports");
+  eq(doc._anchors[2].hidden, false, "Activity is untouched by managerRules");
 });
 
 check("an explicit false hides the matching link", () => {
@@ -143,6 +156,92 @@ await check("a switched-off feature hides even a static <a> already in the page,
 await check("an switched-on feature leaves the same static link alone", () => {
   const out = runChild(true);
   eq(out.staticAnchorHidden, false);
+});
+
+/** Drives the real bar() (via the bottom bootstrap) for one principal/
+ *  feature combination, and returns the hrefs it actually built PLUS which
+ *  of them hideRefusedLinks then hid -- proving the two-permission,
+ *  two-switch combination end to end, not just each half in isolation. */
+function runBarChild(principal, permissions, managerRulesOn) {
+  const url = pathToFileURL(join(root, "agent/ui/session-bar.mjs")).href;
+  const code = `
+    const built = [];
+    function fakeAnchor() {
+      const a = { hidden: false, href: "", textContent: "",
+        getAttribute(n) { return n === "href" ? a.href : null; },
+        set style(v) {}, addEventListener() {} };
+      return a;
+    }
+    const handler = {
+      get(t, k) {
+        if (k === Symbol.toPrimitive) return () => "";
+        if (k === "then") return undefined;
+        if (k === "value" || k === "cssText") return "";
+        if (k === "length") return 0;
+        if (k === "hidden") return false;
+        return fake;
+      },
+      apply() { return fake; },
+      set() { return true; },
+    };
+    const fake = new Proxy(function () {}, handler);
+    globalThis.document = {
+      getElementById: () => fake,
+      createElement: (tag) => { if (tag === "a") { const a = fakeAnchor(); built.push(a); return a; } return fake; },
+      createElementNS: () => fake, createTextNode: () => fake,
+      querySelector: () => fake, querySelectorAll: () => built,
+      addEventListener() {}, body: fake, documentElement: fake, visibilityState: "visible",
+    };
+    globalThis.window = { location: { pathname: "/", replace() {} }, addEventListener() {}, fetch: undefined };
+    globalThis.location = globalThis.window.location;
+    globalThis.window.fetch = (u) => {
+      const uu = String(u);
+      if (uu.startsWith("/auth/state")) {
+        return Promise.resolve({ status: 200, json: async () => ({ ok: true, principal: ${JSON.stringify(principal)}, permissions: ${JSON.stringify(permissions)} }) });
+      }
+      if (uu.startsWith("/site")) {
+        return Promise.resolve({ status: 200, json: async () => ({ ok: true, displayName: null, timeZone: "UTC", features: { activity: true, managerRules: ${managerRulesOn} } }) });
+      }
+      return Promise.resolve({ status: 404, json: async () => ({ ok: false }) });
+    };
+    await import(${JSON.stringify(url)} + "?bar=" + Math.random());
+    await new Promise((r) => setTimeout(r, 150));
+    console.log(JSON.stringify(built.map((a) => ({ href: a.href, hidden: a.hidden }))));
+    process.exit(0);
+  `;
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", cwd: root, timeout: 20_000 });
+  if (r.status !== 0) throw new Error(`child failed: ${(r.stderr || "").slice(0, 800)}`);
+  const lines = (r.stdout || "").trim().split(/\r?\n/);
+  return JSON.parse(lines[lines.length - 1] || "[]");
+}
+
+await check("REQUIRED: a manager, managerRules on, sees Rules and Reports, neither hidden", () => {
+  const anchors = runBarChild({ kind: "user", username: "mgr", role: "manager" },
+    ["live.view", "playback.view", "layout.edit", "events.view", "rules.manage", "hours.manage"], true);
+  const rules = anchors.find((a) => a.href === "/rules-page");
+  const reports = anchors.find((a) => a.href === "/reports-page");
+  eq(rules !== undefined && rules.hidden, false, `Rules link visible: ${JSON.stringify(anchors)}`);
+  eq(reports !== undefined && reports.hidden, false, `Reports link visible: ${JSON.stringify(anchors)}`);
+});
+
+await check("REQUIRED: a store account, managerRules on, sees Reports but Rules is hidden (no rules.manage)", () => {
+  const anchors = runBarChild({ kind: "user", username: "clerk", role: "store" },
+    ["live.view", "playback.view", "export.create", "segment.hold", "layout.edit", "events.view"], true);
+  const rules = anchors.find((a) => a.href === "/rules-page");
+  const reports = anchors.find((a) => a.href === "/reports-page");
+  eq(rules === undefined || rules.hidden, true, `Rules link hidden for store: ${JSON.stringify(anchors)}`);
+  eq(reports !== undefined && reports.hidden, false, `Reports link visible for store: ${JSON.stringify(anchors)}`);
+});
+
+await check("REQUIRED: managerRules off hides both links even for an installer who holds every permission", () => {
+  const anchors = runBarChild({ kind: "user", username: "tech", role: "installer" },
+    ["live.view", "playback.view", "export.create", "segment.hold", "layout.edit", "camera.manage",
+      "storage.manage", "system.manage", "account.manage", "audit.view", "events.view", "network.view",
+      "rules.manage", "hours.manage"], false);
+  const rules = anchors.find((a) => a.href === "/rules-page");
+  const reports = anchors.find((a) => a.href === "/reports-page");
+  eq(rules === undefined, true, `Rules link never even built when managerRules is off: ${JSON.stringify(anchors)}`);
+  eq(reports === undefined, true, `Reports link never even built when managerRules is off: ${JSON.stringify(anchors)}`);
 });
 
 report("session bar feature");

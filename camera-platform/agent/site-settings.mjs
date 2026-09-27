@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { readJsonBody } from './camera-settings.mjs';
 import {
   checkSiteSettings, checkSiteSettingsFile, siteSettingsView, diffSiteSettings,
-  applyPreset, effectiveTimeZone, isFeatureEnabled,
+  applyPreset, effectiveTimeZone, isFeatureEnabled, checkOpenHoursField,
   FEATURE_REGISTRY, SITE_TYPES, SITE_SETTINGS_VERSION,
 } from '../dist/siteSettings.js';
 
@@ -190,10 +190,22 @@ export function createSiteSettings({
     return effectiveTimeZone(settings, systemTimeZone());
   }
 
-  /** The /activity and /activity-page 404 feature_off gate. */
+  /** The /activity and /activity-page 404 feature_off gate, reused for
+   *  /areas, /areas/list, /rules, /rule-templates and /reports (all gated on
+   *  managerRules — MANAGER-RULES-SPEC.md section 4). */
   async function isFeatureEnabledNow(key) {
     const { settings } = await currentView();
     return isFeatureEnabled(settings.features, key);
+  }
+
+  /** The manager-rules evaluator's own read (agent/api-server.mjs, every 5 s):
+   *  the site's current openHours (or null, "not set") and its effective
+   *  time zone, together and fresh, so a rule using open_hours/closed_hours
+   *  is judged against whatever is on file AT THIS INSTANT — never a cached
+   *  copy from when the evaluator's timer started. */
+  async function openHoursNow() {
+    const { settings } = await currentView();
+    return { openHours: settings.openHours, timeZone: effectiveTimeZone(settings, systemTimeZone()) };
   }
 
   async function handle(req, res, pathname, method, principal) {
@@ -251,6 +263,13 @@ export function createSiteSettings({
           timeZone: checked.settings.timeZone,
           siteType: checked.settings.siteType,
           features: checked.settings.siteType === before.siteType ? checked.settings.features : withPreset.features,
+          // openHours has its own route (POST /open-hours, MANAGER-RULES-SPEC.md
+          // section 3 — editable by the installer OR a manager, unlike the rest
+          // of this route's system.manage-only fields): this save NEVER touches
+          // it, whatever (if anything) the body said about it, so an installer
+          // saving the display name does not silently clear a manager's stored
+          // open hours.
+          openHours: before.openHours,
         };
         const nowUtc = now().toISOString();
         const actor = actorOf(principal);
@@ -263,6 +282,45 @@ export function createSiteSettings({
         audit('site.settings', req, { actor, fields: changed });
         log('info', 'site settings changed', { fields: changed });
         sendJson(res, 200, { ok: true, settings: nextSettings });
+      });
+      return true;
+    }
+
+    // GET/POST /open-hours (MANAGER-RULES-SPEC.md section 3): the store's
+    // open hours, in the site's own Schedule shape (contracts/alertRules.ts).
+    // Its own route rather than folded into GET/POST /site-settings above
+    // because it is reachable by a manager too (hours.manage, routeAccess.ts)
+    // -- system.manage stays installer-only for everything else in the Site
+    // section.
+    if (method === 'GET' && pathname === '/open-hours') {
+      const { settings } = await currentView();
+      sendJson(res, 200, { ok: true, openHours: settings.openHours });
+      return true;
+    }
+    if (method === 'POST' && pathname === '/open-hours') {
+      const body = await readJsonBody(req, res);
+      if (body === null) return true;
+      const checked = checkOpenHoursField(body.openHours);
+      if (!checked.ok) {
+        refuse(res, 400, 'invalid', 'open hours could not be saved', { errors: [{ field: 'openHours', reason: checked.reason }] });
+        return true;
+      }
+      await serialise(async () => {
+        const { file: beforeFile, problem: beforeProblem } = await load(file, readFileFn);
+        if (beforeProblem) {
+          refuse(res, 409, 'site_settings_unreadable', `the existing site.json cannot be trusted, so this save is refused rather than risk overwriting it with guessed values: ${beforeProblem}`);
+          return;
+        }
+        const before = siteSettingsView(beforeFile);
+        const nextSettings = { ...before, openHours: checked.openHours };
+        const nowUtc = now().toISOString();
+        const actor = actorOf(principal);
+        const nextFile = { version: SITE_SETTINGS_VERSION, ...nextSettings, updatedUtc: nowUtc, updatedBy: actor };
+        await persist(file, nextFile);
+        const changed = diffSiteSettings(before, nextSettings);
+        audit('site.open-hours', req, { actor, fields: changed });
+        log('info', 'site open hours changed', { fields: changed });
+        sendJson(res, 200, { ok: true, openHours: nextSettings.openHours });
       });
       return true;
     }
@@ -282,5 +340,5 @@ export function createSiteSettings({
     return false;
   }
 
-  return { handle, effectiveTimeZoneNow, isFeatureEnabledNow };
+  return { handle, effectiveTimeZoneNow, isFeatureEnabledNow, openHoursNow };
 }
