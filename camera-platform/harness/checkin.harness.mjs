@@ -339,6 +339,27 @@ await check("licensed (the default hook) sends normally -- the hook existing doe
   eq(result.outcome, "sent");
 });
 
+// Found live on the bench, 2026-09-28: the box sent the canonical payload as
+// the body with the signature in a header, but the cloud's documented wire
+// format (cloud/CLOUD-API-SPEC.md) is ONE JSON body { payload, signature }.
+// The cloud refused every real check-in with 400 while both sides' own
+// tests passed. This pins the box side to the cloud's format.
+await check("the request body is exactly { payload, signature }, and the signature verifies over the payload's canonical text", async () => {
+  const stateDir = await freshStateDir();
+  const calls = [];
+  const id = fakeIdentity("device-wire-1");
+  const result = await sendCheckin({ stateDir, url: "https://cloud.example.test/checkin", fetchFn: fakeFetch(200, { calls }), identity: id, appDir: stateDir, now });
+  eq(result.outcome, "sent");
+  eq(calls.length, 1);
+  let body = null;
+  try { body = JSON.parse(calls[0].opts.body); } catch { body = null; }
+  eq(body !== null && typeof body === "object", true, "the body is a JSON object");
+  same(Object.keys(body).sort(), ["payload", "signature"]);
+  eq(body.payload.deviceId, "device-wire-1");
+  eq(body.payload.seq, 1);
+  eq(verifyCheckin(body.payload, body.signature, id.publicKeyPem), true, "the cloud-side check: signature over canonicalJson(payload)");
+});
+
 await check("a corrupt checkin-state.json is refused, never silently reset to 0", async () => {
   const stateDir = await freshStateDir();
   await writeFile(join(stateDir, CHECKIN_STATE_FILE), "{ not json");

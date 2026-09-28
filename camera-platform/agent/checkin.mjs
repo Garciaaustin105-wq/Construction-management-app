@@ -542,14 +542,15 @@ export async function sendCheckin({
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let response;
       try {
+        // The cloud's documented wire format (cloud/CLOUD-API-SPEC.md): ONE
+        // JSON body { payload, signature }; the cloud re-canonicalises the
+        // payload and checks the signature over that text. The earlier
+        // body-is-the-payload + signature-header shape was refused 400 by the
+        // real cloud handler (found live on the bench, 2026-09-28).
         response = await fetchFn(url, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-camplat-device-id": composed.deviceId,
-            "x-camplat-signature": composed.signature,
-          },
-          body: composed.canonicalText,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ payload: composed.payload, signature: composed.signature }),
           signal: controller.signal,
         });
       } catch (err) {

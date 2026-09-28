@@ -35,6 +35,12 @@ import { createHash, generateKeyPairSync, randomBytes, sign as cryptoSign } from
 import { check, eq, same, report } from "../../harness/_assert.mjs";
 import { canonicalJson, buildCheckin, checkinDigest } from "../dist/contracts/deviceCheckin.js";
 import { startServer } from "../dev/server.mjs";
+// The box's REAL sender and enroller (not a hand-built envelope): the live
+// bench run on 2026-09-28 found the two sides disagreeing on the check-in
+// wire format while each side's own tests passed. These need the box's own
+// dist/ built too (tsc -p . from camera-platform).
+import { sendCheckin } from "../../agent/checkin.mjs";
+import { enroll as boxEnroll } from "../../agent/cloud-enroll.mjs";
 
 console.log("dev loop");
 
@@ -324,6 +330,43 @@ try {
     same(r.json, { ok: false, reason: "payload_too_large" });
     const after = await request({ method: "GET", requestPath: "/fleet", headers: { authorization: `Bearer ${server.token}` } });
     eq(after.statusCode, 200, "the server keeps serving afterwards");
+  });
+
+  await check("THE BOX'S OWN CODE end to end: agent/cloud-enroll.mjs enrols, a claim, then agent/checkin.mjs's real sendCheckin is ACCEPTED and /fleet shows it online", async () => {
+    // fetch-shaped adapter over https.request, trusting only this run's cert.
+    const httpsFetch = (url, opts = {}) => new Promise((resolve, reject) => {
+      const u = new URL(url);
+      const req = https.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: opts.method ?? "GET", headers: opts.headers ?? {}, ca: caCertPem }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, text: async () => text, json: async () => JSON.parse(text) });
+        });
+      });
+      req.on("error", reject);
+      if (opts.signal) opts.signal.addEventListener("abort", () => req.destroy(new Error("aborted")));
+      req.end(opts.body);
+    });
+    const kp = generateKeyPairSync("ed25519");
+    const boxDeviceId = deriveDeviceId(kp.publicKey.export({ type: "spki", format: "der" }));
+    const boxIdentity = {
+      loadOrCreateIdentity: async () => ({ deviceId: boxDeviceId, publicKeyPem: kp.publicKey.export({ type: "spki", format: "pem" }).toString(), createdAtUtc: new Date().toISOString() }),
+      signWithIdentity: async (_stateDir, message) => cryptoSign(null, Buffer.isBuffer(message) ? message : Buffer.from(message, "utf8"), kp.privateKey),
+    };
+    const boxState = await mkdtemp(path.join(tmpDir, "box-state-"));
+
+    const e = await boxEnroll({ stateDir: boxState, url: `${server.url}/enroll`, fetchFn: httpsFetch, identity: boxIdentity });
+    eq(e.outcome, "enrolled", `box enroll outcome ${JSON.stringify(e.outcome)}`);
+    const claim = await request({ method: "POST", requestPath: "/claim", headers: { authorization: `Bearer ${server.token}` }, body: { code: e.claimCode } });
+    eq(claim.statusCode, 200, "claim with the box-printed code");
+
+    const c = await sendCheckin({ stateDir: boxState, url: `${server.url}/checkin`, fetchFn: httpsFetch, identity: boxIdentity, appDir: boxState });
+    eq(c.outcome, "sent", `the real box check-in must be accepted, got ${JSON.stringify(c)}`);
+
+    const fleet = await request({ method: "GET", requestPath: "/fleet", headers: { authorization: `Bearer ${server.token}` } });
+    const row = fleet.json.rows.find((r) => r.deviceId === boxDeviceId);
+    eq(row && row.status, "online", "the box shows online after its own check-in");
   });
 } finally {
   if (server) {
