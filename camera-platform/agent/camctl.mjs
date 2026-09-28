@@ -18,7 +18,8 @@ import { runEventRetention } from "./event-retention.mjs";
 import { runScore } from "./score-clips.mjs";
 import { runGateCheck, DEFAULT_THREADS, MAX_HOURS, MAX_THREADS } from "./gate-check.mjs";
 import { loadOrCreateIdentity } from "./device-identity.mjs";
-import { composeCheckin, readCheckinState } from "./checkin.mjs";
+import { composeCheckin, readCheckinState, sendCheckin } from "./checkin.mjs";
+import { enroll } from "./cloud-enroll.mjs";
 import { fileURLToPath } from "node:url";
 import { writeFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -740,35 +741,77 @@ async function cmdIdentity() {
   console.log(identity.publicKeyPem.trim());
 }
 
-// B1 phase-1 brief, piece 4. --dry-run is the only mode this brief builds:
-// it prints exactly the payload sendCheckin() would send next, and its
-// signature, and sends nothing -- composeCheckin() itself does no network
-// I/O, so there is nothing here that could accidentally send for real.
+// B1 phase-1 brief, piece 4. --dry-run prints exactly the payload
+// sendCheckin() would send next, and its signature, and sends nothing --
+// composeCheckin() itself does no network I/O, so there is nothing in that
+// branch that could accidentally send for real. cloud/CLOUD-LOOP-SPEC.md
+// section C adds the other branch: --url sends a REAL signed check-in
+// through the existing sendCheckin(), unchanged itself by this addition.
 async function cmdCheckin() {
   const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
-  if (!args.includes("--dry-run")) {
+  const url = flag("url");
+  const dryRun = args.includes("--dry-run");
+  if (!dryRun && !url) {
     console.error("usage: camctl checkin --dry-run [--state-dir D]\n" +
-      "(only --dry-run is implemented here -- camctl never sends a check-in itself)");
+      "       camctl checkin --url U [--state-dir D]");
     process.exitCode = 2;
     return;
   }
-  const state = await readCheckinState(stateDir);
-  if (state.kind === "corrupt") {
-    console.log(`Refused: ${state.reason}`);
-    process.exitCode = 1;
+  if (dryRun) {
+    const state = await readCheckinState(stateDir);
+    if (state.kind === "corrupt") {
+      console.log(`Refused: ${state.reason}`);
+      process.exitCode = 1;
+      return;
+    }
+    const seq = state.seq + 1;
+    const composed = await composeCheckin({ stateDir, now: () => new Date(), seq });
+    console.log(`dry run -- nothing sent. This is exactly what sendCheckin() would POST next (seq ${seq}):`);
+    console.log();
+    console.log(composed.canonicalText);
+    console.log();
+    console.log(`signature (base64): ${composed.signature}`);
+    console.log(`deviceId:           ${composed.deviceId}`);
     return;
   }
-  const seq = state.seq + 1;
-  const composed = await composeCheckin({ stateDir, now: () => new Date(), seq });
-  console.log(`dry run -- nothing sent. This is exactly what sendCheckin() would POST next (seq ${seq}):`);
-  console.log();
-  console.log(composed.canonicalText);
-  console.log();
-  console.log(`signature (base64): ${composed.signature}`);
-  console.log(`deviceId:           ${composed.deviceId}`);
+  const result = await sendCheckin({ stateDir, url });
+  console.log(`checkin: ${result.outcome}` +
+    (typeof result.status === "number" ? ` (status ${result.status})` : "") +
+    (typeof result.seq === "number" ? `, seq ${result.seq}` : ""));
+  if (result.message) console.log(result.message);
+  if (result.outcome !== "sent") process.exitCode = 1;
 }
 
-const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects, identity: cmdIdentity, checkin: cmdCheckin, "events-retention": cmdEventsRetention };
+// cloud/CLOUD-LOOP-SPEC.md section C. The box introduces itself and gets
+// back a claim code (or learns it is already claimed). Never prints or
+// writes a key -- agent/cloud-enroll.mjs's enroll() is where that
+// discipline actually lives; this command only decides what to show on the
+// terminal from the outcome it returns.
+async function cmdEnroll() {
+  const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
+  const url = flag("url");
+  if (!url) {
+    console.error("usage: camctl enroll --url U [--state-dir D]");
+    process.exitCode = 2;
+    return;
+  }
+  const result = await enroll({ stateDir, url });
+  if (result.outcome === "enrolled") {
+    console.log(result.claimCode);
+    console.log(`expires ${result.expiresUtc}`);
+    console.log(`deviceId: ${result.deviceId}`);
+    return;
+  }
+  if (result.outcome === "already_claimed") {
+    console.log("already claimed");
+    console.log(`deviceId: ${result.deviceId}`);
+    return;
+  }
+  console.log(`Refused: ${result.message}`);
+  process.exitCode = 1;
+}
+
+const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects, identity: cmdIdentity, checkin: cmdCheckin, enroll: cmdEnroll, "events-retention": cmdEventsRetention };
 const handler = commands[command];
 if (!handler) {
   console.log(`camctl <command>
@@ -800,7 +843,9 @@ if (!handler) {
                 --reset --id ID               lapse one object by hand and show its events again
                 --camera ID --reset           lapse every active object of that camera
   identity [--state-dir D]      show this box's cloud check-in deviceId and public key (creating it on first use); never the private key
+  enroll --url U [--state-dir D]     introduce this box to the cloud and print its claim code (or "already claimed"); never a key
   checkin --dry-run [--state-dir D]  print the next signed check-in payload and its signature; sends nothing
+          --url U [--state-dir D]    send a real signed check-in to U
   events-retention [--state-dir D]  read-only: the dry-run plan for the next real pass, and the last one the server actually ran
 
 probe options:

@@ -66,8 +66,18 @@
  * only when there is no stored record for this `deviceId` at all, the shape
  * a first-ever `putDevice` (device provisioning) needs.
  *
+ * `ifCode` (optional) makes it a compare-and-swap on the claim code too: when
+ * present (anything but `undefined`), the write ALSO requires the stored
+ * record's current `code` to equal `ifCode` exactly (`null` matches only a
+ * stored `null`). A write that leaves `state` unchanged -- re-issuing a claim
+ * code keeps a device `"unclaimed"` -- can only be made race-safe this way:
+ * `ifState` alone would still match after a concurrent writer committed, and
+ * both callers would be told they won (reviewer's finding, 2026-09-27).
+ * A DynamoDB adapter does the same with a condition on both attributes.
+ *
  * @typedef {Object} PutDeviceOptions
  * @property {DeviceState|null} ifState
+ * @property {string|null} [ifCode]
  */
 
 /**

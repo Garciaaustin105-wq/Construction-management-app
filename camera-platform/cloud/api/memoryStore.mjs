@@ -96,15 +96,18 @@ export function createMemoryStore(seed = {}) {
     // one synchronous span with no `await` in it: the event loop serializes
     // such spans, so of two concurrent callers exactly one wins the race.
     async putDevice(device, opts = {}) {
-      const { ifState } = opts ?? {};
+      const { ifState, ifCode } = opts ?? {};
       const stored = devices.get(device.deviceId);
-      const matches =
+      const stateMatches =
         ifState === undefined
           ? true
           : ifState === null
             ? stored === undefined
             : stored !== undefined && stored.state === ifState;
-      if (!matches) {
+      // ifCode: compare-and-swap on the claim code too (store.mjs); absent
+      // means state alone decides.
+      const codeMatches = ifCode === undefined || (stored !== undefined && stored.code === ifCode);
+      if (!stateMatches || !codeMatches) {
         return false;
       }
       devices.set(device.deviceId, structuredClone(device));

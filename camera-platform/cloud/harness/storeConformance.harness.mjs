@@ -231,4 +231,27 @@ await check("a strictly higher seq is accepted even when atMs did not move forwa
   eq(latest.atMs, NOW_MS - 5000, "atMs is recorded as given, never adjusted");
 });
 
+// ---- Added 2026-09-27: ifCode, a compare-and-swap on the claim code. A code
+// re-issue leaves state "unclaimed", so ifState alone let two racing re-issues
+// BOTH win while the store kept only one code.
+
+await check("putDevice ifCode: two re-issues racing from the same code -- exactly one wins, and its code is what is stored", async () => {
+  const store = createMemoryStore({ devices: [device("dev-cas", { code: "OLD0-OLD0-0" })] });
+  const [a, b] = await Promise.all([
+    store.putDevice(device("dev-cas", { code: "AAAA-AAAA-A" }), { ifState: "unclaimed", ifCode: "OLD0-OLD0-0" }),
+    store.putDevice(device("dev-cas", { code: "BBBB-BBBB-B" }), { ifState: "unclaimed", ifCode: "OLD0-OLD0-0" }),
+  ]);
+  same([a, b].sort(), [false, true]);
+  eq((await store.getDevice("dev-cas")).code, a ? "AAAA-AAAA-A" : "BBBB-BBBB-B", "the stored code is the winner's");
+});
+
+await check("putDevice ifCode: a stale code is refused, null matches only null, and omitting ifCode keeps the old behaviour", async () => {
+  const store = createMemoryStore({ devices: [device("dev-c1", { code: "CUR0-CUR0-0" }), device("dev-c2")] });
+  eq(await store.putDevice(device("dev-c1", { code: "NEW0-NEW0-0" }), { ifState: "unclaimed", ifCode: "OLD0-OLD0-0" }), false, "stale code");
+  eq((await store.getDevice("dev-c1")).code, "CUR0-CUR0-0", "a refused write changes nothing");
+  eq(await store.putDevice(device("dev-c1", { code: "NEW0-NEW0-0" }), { ifState: "unclaimed", ifCode: null }), false, "null vs a stored code");
+  eq(await store.putDevice(device("dev-c2", { code: "NEW0-NEW0-0" }), { ifState: "unclaimed", ifCode: null }), true, "null vs a stored null");
+  eq(await store.putDevice(device("dev-c1", { code: "NEW1-NEW1-1" }), { ifState: "unclaimed" }), true, "no ifCode: state alone");
+});
+
 report("store conformance");
