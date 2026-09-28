@@ -19,6 +19,7 @@ import {
   resetKnownObject, answerKnownObject,
   KNOWN_IOU, KNOWN_MIN_EVENTS, KNOWN_MIN_SPAN_MS, MOVED_TRAVEL, KNOWN_LAPSE_MS, LEARN_WINDOW_MS,
   CONFIDENCE_CEILING, KNOWN_MAX_MEMBER_IDS, KNOWN_OBJECTS_VERSION,
+  KNOWN_CONTAIN, KNOWN_CONTAIN_MIN_AREA,
 } from "../dist/knownObjects.js";
 import { FIXTURE_MIN_SIGHTINGS, FIXTURE_MIN_SPAN_MS } from "../dist/fixtures.js";
 import { check, eq, close, throws, report } from "./_assert.mjs";
@@ -728,6 +729,73 @@ check("the notice states measurements, with ISO times, and never a verdict", () 
   }
   const vehicle = learn(stillDay({ kind: "vehicle" }), { nowMins: 200 }).learned[0];
   eq(knownObjectNotice(vehicle)[0].startsWith("Seen as a vehicle 10 times"), true, "a vehicle reads as a vehicle");
+});
+
+// --------------------------------------------- THE PARKED CAR SEEN IN PART
+// Austin approved 2026-09-28. On the bench the night of 2026-09-26, 107
+// "vehicle" events were one parked SUV boxed only at its roofline: fully
+// inside a learned car box, but IoU ~0.3, so belt 1 never matched.
+
+/** A learned parked car: 0.2 x 0.2 of the frame. */
+const car = { x: 0.20, y: 0.76, w: 0.20, h: 0.20 };
+const parkedCar = () => learn([0, 20, 40, 60, 80, 100, 120, 140, 160, 180].map((m) => ev(m, car, { kind: "vehicle" }))).learned[0];
+const veh = (bestBox, o = {}) => ({ cameraId: o.cameraId ?? "cam1", kind: o.kind ?? "vehicle", bestBox, bestConfidence: o.confidence ?? 0.6, travel: "travel" in o ? o.travel : 0.01 });
+/** The roofline: wholly inside the car, 0.34 of its area, IoU 0.34. */
+const roof = { x: 0.21, y: 0.765, w: 0.17, h: 0.08 };
+
+check("the contain constants are the approved values", () => {
+  eq(KNOWN_CONTAIN, 0.9);
+  eq(KNOWN_CONTAIN_MIN_AREA, 0.2);
+});
+
+check("THE ROOFLINE: a still vehicle box wholly inside a learned parked car is that car, and is hidden", () => {
+  const o = parkedCar();
+  eq(o.kind, "vehicle", "control: the car was learned");
+  eq(iou(roof, o.box) < KNOWN_IOU, true, "control: IoU alone would never match it");
+  eq(matchKnown(veh(roof), [o]), o.id);
+});
+
+check("THE FEARED ONE: a PERSON inside a learned object's box is never hidden by containment", () => {
+  const [umbrella] = learn(stillDay()).learned; // a person-kind object at `spot`
+  const inFront = { x: 0.61, y: 0.40, w: 0.07, h: 0.30 }; // wholly inside, 0.56 of its area
+  eq(matchKnown({ cameraId: "cam1", kind: "person", bestBox: inFront, bestConfidence: 0.6, travel: 0.01 }, [umbrella]), null);
+  const o = parkedCar();
+  eq(matchKnown(veh(roof, { kind: "person" }), [o]), null, "a person box inside a parked car's box is not the car either");
+});
+
+check("a vehicle that TRAVELLED through the parked car's box is shown, however well it fits", () => {
+  const o = parkedCar();
+  eq(matchKnown(veh(roof, { travel: 0.5 }), [o]), null);
+  eq(matchKnown(veh(roof, { travel: 2.4 }), [o]), null);
+  eq(matchKnown(veh(roof, { travel: null }), [o]), null, "unknown travel is never 'still'");
+});
+
+check("containment and size both have to hold, with margin either side", () => {
+  const o = parkedCar();
+  // 0.95 of the box inside (x 0.305-0.405 against the car's right edge 0.40), area 0.25 of the car
+  eq(matchKnown(veh({ x: 0.305, y: 0.80, w: 0.10, h: 0.10 }), [o]), o.id, "95% inside: hidden");
+  eq(matchKnown(veh({ x: 0.315, y: 0.80, w: 0.10, h: 0.10 }), [o]), null, "85% inside: shown");
+  eq(matchKnown(veh({ x: 0.25, y: 0.80, w: 0.10, h: 0.10 }), [o]), o.id, "0.25 of the car's area: hidden");
+  eq(matchKnown(veh({ x: 0.25, y: 0.80, w: 0.10, h: 0.06 }), [o]), null, "0.15 of the car's area: a small separate thing, shown");
+  eq(matchKnown(veh({ x: 0.35, y: 0.80, w: 0.10, h: 0.10 }), [o]), null, "half outside: shown");
+});
+
+check("every other belt still applies to a contained vehicle: ceiling, camera, lapse", () => {
+  const o = parkedCar();
+  eq(matchKnown(veh(roof, { confidence: 0.9 }), [o]), null, "above the confidence ceiling");
+  eq(matchKnown(veh(roof, { cameraId: "cam2" }), [o]), null, "another camera");
+  const [lapsed] = lapseKnownObjects([o], new Date(Date.parse(at(300)) + KNOWN_LAPSE_MS + 60000).toISOString(), FP);
+  eq(lapsed.state, "lapsed", "control: it lapsed");
+  eq(matchKnown(veh(roof), [lapsed]), null, "a lapsed object hides nothing");
+});
+
+check("an IoU match always wins over a containment match", () => {
+  const o = parkedCar();
+  // Learned at a later "now" so the two objects' ids (camera:kind:learnedMs) differ.
+  const [exact] = learn([5, 25, 45, 65, 85, 105, 125, 145, 165, 185].map((m) => ev(m, roof, { kind: "vehicle" })), { nowMins: 310 }).learned;
+  eq(exact.id === o.id, false, "control: two distinct objects");
+  eq(matchKnown(veh(roof), [o, exact]), exact.id, "the object the roofline itself was learned as");
+  eq(matchKnown(veh(roof), [exact, o]), exact.id, "whatever the order");
 });
 
 report("knownObjects");

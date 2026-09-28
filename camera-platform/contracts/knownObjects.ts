@@ -21,6 +21,10 @@
  * are required; none is a tuning knob:
  * 1. Tight geometry. A detection matches a known object only when its box
  *    overlaps the object's box by IoU >= KNOWN_IOU: a spot, not a region.
+ *    One exception, VEHICLES ONLY (Austin, 2026-09-28): a box lying almost
+ *    wholly inside a learned parked vehicle's box, and not tiny next to it,
+ *    is that vehicle seen in part (see KNOWN_CONTAIN and matchKnown). People
+ *    never match this way.
  * 2. Never learn, and never hide, a thing that TRAVELLED. An event's `travel`
  *    (contracts/detection.ts) is how far it got from where it was first seen,
  *    in its own box diagonals. A person arriving covers many; a static
@@ -52,6 +56,37 @@ import { groupFixtures, FIXTURE_IOU } from "./fixtures.js";
  * standing NEXT TO the umbrella overlaps it far less than this.
  */
 export const KNOWN_IOU = 0.8;
+
+/**
+ * Belt 1, the vehicle exception (Austin approved it 2026-09-28). A parked
+ * car is often detected only in part - its roofline, its rear - and a part is
+ * a much smaller box than the learned whole, so its IoU falls far below
+ * KNOWN_IOU and the car is announced again and again. MEASURED on the bench
+ * the night of 2026-09-26: 107 visible "vehicle" events between 21:00 and
+ * 23:30 were all the same parked SUV; every one sat 99.7-100% inside a learned
+ * vehicle box, at 25-82% of that box's area, with travel <= 0.34 and
+ * confidence <= 0.837.
+ *
+ * So a VEHICLE event (never a person, never a plate) that no object matches
+ * by IoU also matches an active vehicle object on the same camera when at
+ * least KNOWN_CONTAIN of the event box's own area lies inside the object's
+ * box AND the event box is at least KNOWN_CONTAIN_MIN_AREA of the object
+ * box's area (a part of the car, not a small separate thing inside its
+ * region). Every other belt still applies unchanged: travel, the confidence
+ * ceiling, the lapse, same camera and kind. Learning is untouched.
+ *
+ * CHECKED BEFORE SHIPPING (2026-09-28), replaying this rule over ~35 h of the
+ * bench's stored events: 0 of 188 visible person events newly hidden; 123 of
+ * 160 visible vehicle events newly hidden. Two independent judges looked at
+ * 18 of those (all 14 from daytime on 09-27, 4 from the night): 17 were the
+ * parked car itself. One was a person standing at the car whom the detector
+ * ALSO labelled "vehicle"; that same person had three person alerts shown at
+ * the same moment - person events are never hidden this way, so hiding the
+ * duplicate vehicle label lost nothing.
+ */
+export const KNOWN_CONTAIN = 0.9;
+/** See KNOWN_CONTAIN: the event box's area as a fraction of the object's. */
+export const KNOWN_CONTAIN_MIN_AREA = 0.2;
 
 /**
  * Belt 3: build rule 15's sample floor. Three sightings is the least that can
@@ -711,6 +746,13 @@ export function learnKnownObjects(args: LearnArgs): Learning {
  * - otherwise the best active object of the same camera and kind with IoU at
  *   least KNOWN_IOU; the higher IoU wins, a tie goes to the older object. A
  *   lapsed object never matches.
+ * - only if that finds nothing AND the kind is "vehicle": the best active
+ *   vehicle object on the same camera that contains at least KNOWN_CONTAIN of
+ *   the event box's own area, where the event box is at least
+ *   KNOWN_CONTAIN_MIN_AREA of that object's box area. Highest containment
+ *   wins, then the larger area fraction, then the older object. A person is
+ *   never matched this way (a real person standing in front of something
+ *   learned must always be shown).
  * An invalid confidenceCeiling option THROWS: that is a bug in the caller, not
  * data, and must not quietly switch a belt off.
  */
@@ -736,7 +778,51 @@ export function matchKnown(event: KnownMatchInput, objects: readonly KnownObject
     if (typeof c !== "number" || !Number.isFinite(c) || c > ceiling) return null;
   }
   if (!Array.isArray(objects)) return null;
-  return bestActive(bestBox as Box, cameraId, kind, objects)?.id ?? null;
+  const byIou = bestActive(bestBox as Box, cameraId, kind, objects);
+  if (byIou !== null) return byIou.id;
+  // The vehicle exception (KNOWN_CONTAIN): only after IoU found nothing, and
+  // never for a person.
+  if (kind !== "vehicle") return null;
+  return containingVehicle(bestBox as Box, cameraId, objects)?.id ?? null;
+}
+
+/**
+ * The active vehicle object on `cameraId` that holds `box` as a PART of
+ * itself (see KNOWN_CONTAIN): at least KNOWN_CONTAIN of the box's own area
+ * inside the object's box, and the box at least KNOWN_CONTAIN_MIN_AREA of the
+ * object's area. Highest containment wins, then the larger area fraction,
+ * then the older object. Used only by matchKnown -- never by learning.
+ */
+function containingVehicle(box: Box, cameraId: string, objects: readonly KnownObject[]): KnownObject | null {
+  const boxArea = box.w * box.h;
+  if (!(boxArea > 0)) return null;
+  let best: KnownObject | null = null;
+  let bestContain = -1;
+  let bestFrac = -1;
+  let bestLearned = Infinity;
+  for (const o of objects) {
+    if (!isRecord(o) || o.state !== "active") continue;
+    if (o.cameraId !== cameraId || o.kind !== "vehicle") continue;
+    if (boxProblem(o.box) !== null) continue;
+    const objArea = o.box.w * o.box.h;
+    if (!(objArea > 0)) continue;
+    const ix = Math.max(0, Math.min(box.x + box.w, o.box.x + o.box.w) - Math.max(box.x, o.box.x));
+    const iy = Math.max(0, Math.min(box.y + box.h, o.box.y + o.box.h) - Math.max(box.y, o.box.y));
+    const contain = (ix * iy) / boxArea;
+    const frac = boxArea / objArea;
+    if (contain < KNOWN_CONTAIN || frac < KNOWN_CONTAIN_MIN_AREA) continue;
+    const learned = parseMs(o.learnedAtUtc) ?? Infinity;
+    if (
+      contain > bestContain ||
+      (contain === bestContain && (frac > bestFrac || (frac === bestFrac && learned < bestLearned)))
+    ) {
+      best = o;
+      bestContain = contain;
+      bestFrac = frac;
+      bestLearned = learned;
+    }
+  }
+  return best;
 }
 
 /**
