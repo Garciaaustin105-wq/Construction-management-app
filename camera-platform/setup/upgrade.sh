@@ -18,6 +18,7 @@ set -euo pipefail
 
 APP_DIR="${CAMPLAT_APP_DIR:-/opt/camplat}"
 STATE_DIR="${CAMPLAT_STATE_DIR:-/var/lib/camplat}"
+RUN_USER="${CAMPLAT_USER:-camplat}"
 RELEASE="${1:-}"
 
 [[ $EUID -eq 0 ]] || { echo "run as root (sudo)"; exit 1; }
@@ -63,6 +64,38 @@ rm -rf "$APP_DIR.old"
 mv "$APP_DIR" "$APP_DIR.old"
 mv "$APP_DIR.new" "$APP_DIR"
 
+# CLOUD-LINK-SPEC.md section C: unlike every other unit (install.sh's job
+# only, per this script's own top comment), the cloud check-in timer is
+# written and enabled here too -- a box already in the field only ever gets a
+# NEW unit through an upgrade, never a fresh install. Same shape as
+# install.sh's camplat-alerts.service/.timer; written the same way on every
+# run, so repeating this is always safe.
+NODE_BIN="$(command -v node)"
+cat > /etc/systemd/system/camplat-checkin.service <<UNIT
+[Unit]
+Description=camplat cloud check-in (reads cloud.json, sends a signed check-in when enabled)
+ConditionPathExists=$STATE_DIR/config.json
+
+[Service]
+Type=oneshot
+User=$RUN_USER
+WorkingDirectory=$APP_DIR
+Environment=CAMPLAT_STATE_DIR=$STATE_DIR
+ExecStart=$NODE_BIN $APP_DIR/agent/camctl.mjs checkin
+UNIT
+cat > /etc/systemd/system/camplat-checkin.timer <<UNIT
+[Unit]
+Description=camplat cloud check-in every 60 s
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 # A changed unit file is not picked up by a plain restart -- systemd keeps
 # running against the copy it already loaded until something reloads it.
 # Found today: a unit file install.sh had rewritten was not applied on an
@@ -71,6 +104,11 @@ mv "$APP_DIR.new" "$APP_DIR"
 # known to have.
 systemctl daemon-reload
 systemctl restart camplat-recorder camplat-api
+# Enabled with --now (install.sh's own enable line never uses --now): this
+# box is already running and, per install.sh's own "Never sleep" section, may
+# not reboot for a long time -- enable alone would leave the timer dormant
+# (OnBootSec counts from boot) until it did.
+systemctl enable --now camplat-checkin.timer
 sleep 3
 systemctl --no-pager --lines=0 status camplat-recorder camplat-api | grep -E "^\S|Active:" || true
 

@@ -172,6 +172,11 @@ const GET_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // Installer only, like /camera-settings and /network -- a store account
   // has no reason to reconfigure the box.
   "/site-settings": { kind: "api", permission: "system.manage" },
+  // Cloud link (CLOUD-LINK-SPEC.md section B): the box's cloud address, its
+  // enabled switch, and its enrolment/check-in status. Installer only, same
+  // reach as /site-settings — a store account has no reason to point this
+  // box at a cloud or read its claim code.
+  "/cloud-link": { kind: "api", permission: "system.manage" },
   // The site's own public facts (name, effective zone, which features are
   // on): every signed-in kind reaches this, including a wall display -- the
   // same reach as "/", live.view -- because every page, a wall included,
@@ -266,6 +271,10 @@ const POST_EXACT: Readonly<Record<string, RouteRule>> = Object.freeze({
   // agent/api-server.mjs, not by this policy table.
   "/network/discover": { kind: "api", permission: "network.view" },
   "/site-settings": { kind: "api", permission: "system.manage" },
+  // Cloud link (CLOUD-LINK-SPEC.md section B) — same reach as its GET
+  // sibling above.
+  "/cloud-link": { kind: "api", permission: "system.manage" },
+  "/cloud-link/enroll": { kind: "api", permission: "system.manage" },
   "/layouts": { kind: "api", permission: "layout.edit" },
   "/display-layouts": { kind: "api", permission: "account.manage" },
   // Manager rules (MANAGER-RULES-SPEC.md) — same permissions as their GET

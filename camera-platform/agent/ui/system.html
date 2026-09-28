@@ -133,10 +133,34 @@
   #siteSectionRoot .error { color:#ffb4b4; }
   #siteSectionRoot .good { color:#7ddc9a; }
 
+  /* Cloud section (CLOUD-LINK-SPEC.md section D): installer-only form --
+     address, On/Off switch, state in words, last check-in, device id, and
+     "Get a claim code". Same shape as the Site section's own rules above;
+     kept as its own block (not merged into the #siteSectionRoot selectors)
+     because the two sections are two different files (one owner per file,
+     AGENTS.md build rule 3) and each block should be removable on its own. */
+  #cloudSectionRoot h3 { margin:18px 0 6px; font-size:13px; color:#9aa0a6;
+                          text-transform:uppercase; letter-spacing:0.5px; }
+  #cloudSectionRoot .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  #cloudSectionRoot label { display:flex; align-items:center; gap:8px; min-width:140px; }
+  #cloudSectionRoot input[type="text"] {
+    font:inherit; color:inherit; background:#14161a; border:1px solid #2c2f36;
+    border-radius:6px; padding:7px 10px; min-width:0; max-width:100%; flex:1 1 320px; }
+  #cloudSectionRoot button { font:inherit; padding:8px 14px; border:0; border-radius:6px;
+                              background:#4c8bf5; color:#fff; cursor:pointer; }
+  #cloudSectionRoot button:disabled { opacity:0.6; cursor:default; }
+  #cloudSectionRoot .error { color:#ffb4b4; }
+  #cloudSectionRoot .good { color:#7ddc9a; }
+  #cloudSectionRoot .warn { color:#f1e3a0; }
+  #cloudSectionRoot .dim { color:#9aa0a6; }
+  #cloudSectionRoot #cloudState { font-weight:600; }
+
   /* Phone in a car park: stack the camera table, never scroll sideways. */
   @media (max-width: 699px) {
     #siteSectionRoot label { min-width:0; width:100%; }
     #siteSectionRoot input[type="text"], #siteSectionRoot input[type="number"], #siteSectionRoot select { flex:1 1 auto; width:100%; }
+    #cloudSectionRoot label { min-width:0; width:100%; }
+    #cloudSectionRoot input[type="text"] { flex:1 1 auto; width:100%; }
     #totals { gap:8px 18px; }
     .cameras-table thead { display:none; }
     .cameras-table, .cameras-table tbody, .cameras-table tr,
@@ -199,8 +223,11 @@
 
   <div id="siteSectionRoot"></div>
 
+  <div id="cloudSectionRoot"></div>
+
   <script type="module" src="/ui/system-client.js"></script>
 <script type="module" src="/ui/site-client.js"></script>
+<script type="module" src="/ui/cloud-client.js"></script>
 <script type="module" src="/ui/session.js"></script>
 </body>
 </html>

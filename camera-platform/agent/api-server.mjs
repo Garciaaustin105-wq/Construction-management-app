@@ -48,6 +48,7 @@ import { createAuth } from './auth.mjs';
 import { createCameraSettings } from './camera-settings.mjs';
 import { createCameraAiSettings } from './camera-ai-settings.mjs';
 import { createSiteSettings } from './site-settings.mjs';
+import { createCloudLink } from './cloud-link.mjs';
 import { createAreas } from './areas.mjs';
 import { createManagerRules } from './manager-rules.mjs';
 import { openOccupancyDb, OCCUPANCY_DB_FILE } from './occupancy-db.mjs';
@@ -753,6 +754,13 @@ export function createApiServer({
   // the same way spawnFn above lets a harness prove live.mjs without a real
   // ffmpeg. Every real deployment leaves this undefined.
   siteSettingsAppDir = undefined,
+  // Cloud link (CLOUD-LINK-SPEC.md section B): POST /cloud-link/enroll's own
+  // call into agent/cloud-enroll.mjs's enroll() defaults to the real global
+  // fetch and the real device identity in every deployment -- same
+  // reasoning as pushFetchFn above. A harness passes fakes of both so that
+  // route never touches the network or writes a real device-identity.json.
+  cloudLinkFetchFn = undefined,
+  cloudLinkIdentity = undefined,
 }) {
   // No auth, no server. A default here would be an open recorder the first
   // time someone forgot to pass one.
@@ -778,6 +786,15 @@ export function createApiServer({
   const siteSettings = createSiteSettings({
     stateDir, audit: auth.audit, now, log,
     ...(siteSettingsAppDir !== undefined ? { appDir: siteSettingsAppDir } : {}),
+  });
+  // Cloud link (CLOUD-LINK-SPEC.md section B): GET/POST /cloud-link and
+  // POST /cloud-link/enroll. Constructed alongside siteSettings above --
+  // both are installer-only, system.manage settings routes with their own
+  // state file, and neither depends on the other.
+  const cloudLink = createCloudLink({
+    stateDir, audit: auth.audit, now, log,
+    ...(cloudLinkFetchFn !== undefined ? { fetchFn: cloudLinkFetchFn } : {}),
+    ...(cloudLinkIdentity !== undefined ? { identity: cloudLinkIdentity } : {}),
   });
   // Saved wall layouts (SITE-SETTINGS-SPEC.md section 3): per-account and
   // per-display.
@@ -1249,6 +1266,7 @@ export function createApiServer({
       if (await cameraSettings.handle(req, res, pathname, method, principal)) return;
       if (await cameraAiSettings.handle(req, res, pathname, method, principal)) return;
       if (await siteSettings.handle(req, res, pathname, method, principal)) return;
+      if (await cloudLink.handle(req, res, pathname, method, principal)) return;
       if (await savedLayouts.handle(req, res, pathname, method, principal)) return;
       if (await recordingSettings.handle(req, res, pathname, method, principal)) return;
       if (await clipLibrary.handle(req, res, pathname, method, principal)) return;

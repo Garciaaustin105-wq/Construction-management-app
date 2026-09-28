@@ -20,8 +20,9 @@ import { runGateCheck, DEFAULT_THREADS, MAX_HOURS, MAX_THREADS } from "./gate-ch
 import { loadOrCreateIdentity } from "./device-identity.mjs";
 import { composeCheckin, readCheckinState, sendCheckin } from "./checkin.mjs";
 import { enroll } from "./cloud-enroll.mjs";
-import { fileURLToPath } from "node:url";
-import { writeFile, readFile } from "node:fs/promises";
+import { checkCloudSettings, DEFAULT_CLOUD_SETTINGS, checkinUrlOf } from "../dist/cloudLink.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { writeFile, readFile, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { openEventsDb } from "./events-db.mjs";
@@ -741,22 +742,122 @@ async function cmdIdentity() {
   console.log(identity.publicKeyPem.trim());
 }
 
+// CLOUD-LINK-SPEC.md section C. cloud.json in the state dir --
+// { url: string|null, enabled: boolean } -- validated on every read through
+// the SAME contract (contracts/cloudLink.ts, compiled to dist/cloudLink.js)
+// POST /cloud-link validates a save through, so a box and its own web UI can
+// never disagree about what counts as a valid cloud address. A missing file
+// reads as DEFAULT_CLOUD_SETTINGS (off, no address) -- the box before an
+// installer has ever touched the Cloud section -- never an error.
+const CLOUD_SETTINGS_FILE = "cloud.json";
+// CLOUD-LINK-SPEC.md section C: this box's own record of the last check-in
+// ATTEMPT, for the System page's status view (cloudStatusView's own
+// CloudCheckinRecord). Atomic, and -- like cloud-enrollment.json -- never
+// holds the payload or the signature.
+const CHECKIN_LAST_FILE = "checkin-last.json";
+
+/**
+ * Reads and validates cloud.json, through the exact same checkCloudSettings
+ * POST /cloud-link validates a save through -- a hand-edited or half-written
+ * file is refused here too, never guessed past (build rule 10). `kind: "ok"`
+ * with DEFAULT_CLOUD_SETTINGS covers "the file does not exist yet" (ENOENT);
+ * every other read failure, and anything the contract itself refuses, is
+ * `kind: "corrupt"` -- this function itself never throws.
+ */
+export async function readCloudSettings(stateDir) {
+  let text;
+  try {
+    text = await readFile(path.join(stateDir, CLOUD_SETTINGS_FILE), "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return { kind: "ok", settings: DEFAULT_CLOUD_SETTINGS };
+    return { kind: "corrupt", reason: `${CLOUD_SETTINGS_FILE} could not be read (${err.code ?? "error"})` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { kind: "corrupt", reason: `${CLOUD_SETTINGS_FILE} is not valid JSON` };
+  }
+  const checked = checkCloudSettings(parsed);
+  if (!checked.ok) {
+    return { kind: "corrupt", reason: `${CLOUD_SETTINGS_FILE} is invalid: ${checked.reason}` };
+  }
+  return { kind: "ok", settings: checked.settings };
+}
+
+/** Atomic write of CHECKIN_LAST_FILE (tmp + rename) -- the same idiom every
+ *  other state file in agent/ uses (agent/checkin.mjs's writeCheckinState,
+ *  agent/cloud-enroll.mjs's writeEnrollmentRecord): a half-written record
+ *  must never be what a crash leaves the System page reading. */
+async function writeCheckinLast(stateDir, record) {
+  const file = path.join(stateDir, CHECKIN_LAST_FILE);
+  const tmp = `${file}.${process.pid}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(record)}\n`);
+  await rename(tmp, file);
+}
+
+/**
+ * `camplat-checkin.timer`'s own entry point (CLOUD-LINK-SPEC.md section C):
+ * exactly what `camctl checkin` does with NO `--url` and no `--dry-run` --
+ * reads cloud.json through the contract and decides for itself, rather than
+ * the systemd unit (or a human) having to know the box's own cloud settings
+ * first. A disabled or unconfigured cloud link is the box's normal, default
+ * state, not a failure: those paths print one quiet line and leave
+ * process.exitCode untouched (exit 0) -- a oneshot unit that "failed" every
+ * 60 s on every box that has never turned cloud on would bury the one
+ * systemd log line that matters.
+ *
+ * `fetchFn` and `now` are both injectable, exactly like sendCheckin() itself
+ * -- harness/cloudTimer.harness.mjs fakes fetch and never touches the
+ * network; the device identity is left to sendCheckin()'s own real default
+ * (agent/device-identity.mjs), scoped to whatever temp stateDir the caller
+ * passes, the same as a real box's first-ever check-in would create it.
+ */
+export async function runTimerCheckin({ stateDir, fetchFn, now = () => new Date() }) {
+  const read = await readCloudSettings(stateDir);
+  if (read.kind === "corrupt") {
+    console.log(`Refused: ${read.reason}`);
+    process.exitCode = 1;
+    return;
+  }
+  const { settings } = read;
+  if (!settings.enabled) {
+    console.log("checkin: cloud link is off; nothing sent");
+    return;
+  }
+  // checkCloudSettings never returns ok:true with enabled:true and url:null
+  // (that combination is its own bad_url refusal) -- settings.url is a real,
+  // credential-free https address by the time we reach here.
+  const url = checkinUrlOf(settings.url);
+  const result = await sendCheckin({ stateDir, url, fetchFn, now });
+  console.log(`checkin: ${result.outcome}` +
+    (typeof result.status === "number" ? ` (status ${result.status})` : "") +
+    (typeof result.seq === "number" ? `, seq ${result.seq}` : ""));
+  if (result.message) console.log(result.message);
+  // Only a real attempt (one that got as far as persisting a seq) is worth a
+  // status-view record; the handful of outcomes that never do (the licence
+  // check throwing, the cross-process lock timing out) leave the PREVIOUS
+  // record in place rather than overwrite real history with a blank one
+  // (build rule 5: a blank is not a zero).
+  if (typeof result.seq === "number") {
+    await writeCheckinLast(stateDir, { seq: result.seq, lastOutcome: result.outcome, lastAtUtc: now().toISOString() });
+  }
+  if (result.outcome !== "sent") process.exitCode = 1;
+}
+
 // B1 phase-1 brief, piece 4. --dry-run prints exactly the payload
 // sendCheckin() would send next, and its signature, and sends nothing --
 // composeCheckin() itself does no network I/O, so there is nothing in that
 // branch that could accidentally send for real. cloud/CLOUD-LOOP-SPEC.md
 // section C adds the other branch: --url sends a REAL signed check-in
 // through the existing sendCheckin(), unchanged itself by this addition.
+// CLOUD-LINK-SPEC.md section C adds the third: no --dry-run and no --url is
+// what camplat-checkin.timer runs, unattended, every 60 s -- see
+// runTimerCheckin() above.
 async function cmdCheckin() {
   const stateDir = flag("state-dir") ?? process.env.CAMPLAT_STATE_DIR ?? DEFAULT_PATHS.stateDir;
   const url = flag("url");
   const dryRun = args.includes("--dry-run");
-  if (!dryRun && !url) {
-    console.error("usage: camctl checkin --dry-run [--state-dir D]\n" +
-      "       camctl checkin --url U [--state-dir D]");
-    process.exitCode = 2;
-    return;
-  }
   if (dryRun) {
     const state = await readCheckinState(stateDir);
     if (state.kind === "corrupt") {
@@ -774,12 +875,17 @@ async function cmdCheckin() {
     console.log(`deviceId:           ${composed.deviceId}`);
     return;
   }
-  const result = await sendCheckin({ stateDir, url });
-  console.log(`checkin: ${result.outcome}` +
-    (typeof result.status === "number" ? ` (status ${result.status})` : "") +
-    (typeof result.seq === "number" ? `, seq ${result.seq}` : ""));
-  if (result.message) console.log(result.message);
-  if (result.outcome !== "sent") process.exitCode = 1;
+  if (url) {
+    const result = await sendCheckin({ stateDir, url });
+    console.log(`checkin: ${result.outcome}` +
+      (typeof result.status === "number" ? ` (status ${result.status})` : "") +
+      (typeof result.seq === "number" ? `, seq ${result.seq}` : ""));
+    if (result.message) console.log(result.message);
+    if (result.outcome !== "sent") process.exitCode = 1;
+    return;
+  }
+  // No --dry-run, no --url: camplat-checkin.timer's own invocation.
+  await runTimerCheckin({ stateDir });
 }
 
 // cloud/CLOUD-LOOP-SPEC.md section C. The box introduces itself and gets
@@ -812,9 +918,15 @@ async function cmdEnroll() {
 }
 
 const commands = { score: cmdScore, "gate-check": cmdGateCheck,"clean-empty": cmdCleanEmpty, alerts: cmdAlerts, preflight: cmdPreflight, audit: cmdAudit, bench: cmdBench, load: cmdLoad, discover: cmdDiscover, probe: cmdProbe, size: cmdSize, budget: cmdBudget, "known-objects": cmdKnownObjects, identity: cmdIdentity, checkin: cmdCheckin, enroll: cmdEnroll, "events-retention": cmdEventsRetention };
-const handler = commands[command];
-if (!handler) {
-  console.log(`camctl <command>
+
+// The whole CLI dispatch, wrapped so it can be skipped on import (see the
+// isMain guard at the bottom of this file) -- harness/cloudTimer.harness.mjs
+// imports readCloudSettings/runTimerCheckin directly, with a fake fetch, and
+// must never trigger this.
+function runCli() {
+  const handler = commands[command];
+  if (!handler) {
+    console.log(`camctl <command>
 
   preflight                     check ffmpeg/ffprobe and permissions
   audit [--state-dir D]         what recovery would do now; read-only (or CAMPLAT_STATE_DIR)
@@ -846,6 +958,7 @@ if (!handler) {
   enroll --url U [--state-dir D]     introduce this box to the cloud and print its claim code (or "already claimed"); never a key
   checkin --dry-run [--state-dir D]  print the next signed check-in payload and its signature; sends nothing
           --url U [--state-dir D]    send a real signed check-in to U
+          [--state-dir D]            (no flags) read cloud.json and send only if enabled with a URL -- what camplat-checkin.timer runs
   events-retention [--state-dir D]  read-only: the dry-run plan for the next real pass, and the last one the server actually ran
 
 probe options:
@@ -879,6 +992,19 @@ example:
   node agent/camctl.mjs size --cameras 16 --kbps 3000,4000,6000
   node agent/camctl.mjs discover 192.168.1.0/24 --raw-dir ./sadp-raw
   node agent/camctl.mjs probe 192.168.1.64 --user admin --pass '...' --cameras 23 --disk-tb 16`);
-  process.exit(command ? 2 : 0);
+    process.exit(command ? 2 : 0);
+  }
+  handler().catch((err) => { console.error(redactRtspUrl(String(err?.stack ?? err))); process.exit(1); });
 }
-handler().catch((err) => { console.error(redactRtspUrl(String(err?.stack ?? err))); process.exit(1); });
+
+// pathToFileURL, not a bare `file://${process.argv[1]}` join, because that
+// does not match import.meta.url on Windows (backslashes, a drive letter
+// with no leading slash). Run as `node agent/camctl.mjs <command>` -- every
+// real invocation, including every systemd unit's ExecStart -- this is
+// always true, so nothing about running camctl itself changes; imported by a
+// harness instead, process.argv[1] is the HARNESS's own path, this is false,
+// and runCli() (which would otherwise call process.exit() on the harness's
+// own process) never runs.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runCli();
+}

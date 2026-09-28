@@ -235,6 +235,35 @@ AccuracySec=5s
 [Install]
 WantedBy=timers.target
 UNIT
+# CLOUD-LINK-SPEC.md section C. `camctl checkin` with no --url reads
+# cloud.json and does nothing unless the installer has turned the cloud link
+# on with a valid address -- same shape as camplat-alerts.service/.timer
+# above. OnUnitActiveSec must agree with the cloud's own CHECKIN_INTERVAL_MS
+# (cloud/api/fleet.mjs).
+cat > /etc/systemd/system/camplat-checkin.service <<UNIT
+[Unit]
+Description=camplat cloud check-in (reads cloud.json, sends a signed check-in when enabled)
+ConditionPathExists=$STATE_DIR/config.json
+
+[Service]
+Type=oneshot
+User=$RUN_USER
+WorkingDirectory=$APP_DIR
+Environment=CAMPLAT_STATE_DIR=$STATE_DIR
+ExecStart=$NODE_BIN $APP_DIR/agent/camctl.mjs checkin
+UNIT
+cat > /etc/systemd/system/camplat-checkin.timer <<UNIT
+[Unit]
+Description=camplat cloud check-in every 60 s
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
 # Watchdog option A (HEALTH-ALERTS-DESIGN.md). The alerts check runs as
 # $RUN_USER and cannot restart the recorder, so it writes a request file and
 # this root path unit acts on it, once per request: the file is removed
@@ -259,8 +288,8 @@ ExecStart=/usr/bin/rm -f $STATE_DIR/restart-recorder.request
 ExecStart=/usr/bin/systemctl restart --no-block camplat-recorder.service
 UNIT
 systemctl daemon-reload
-systemctl enable camplat-recorder.service camplat-api.service camplat-alerts.timer camplat-recorder-restart.path
-echo "  camplat-recorder, camplat-api and the alerts timer enabled; they start at boot once $STATE_DIR/config.json exists"
+systemctl enable camplat-recorder.service camplat-api.service camplat-alerts.timer camplat-checkin.timer camplat-recorder-restart.path
+echo "  camplat-recorder, camplat-api, the alerts timer and the cloud check-in timer enabled; they start at boot once $STATE_DIR/config.json exists"
 
 say "Logs"
 # Uncapped, journald may take a tenth of the OS drive, which the index shares.

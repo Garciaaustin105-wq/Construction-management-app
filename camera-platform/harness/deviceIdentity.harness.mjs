@@ -328,11 +328,21 @@ await check("camctl checkin --dry-run: exit 0, prints a payload and signature, s
   eq(stateExists, false, "a dry run never writes checkin-state.json -- it has no side effects");
 });
 
-await check("camctl checkin without --dry-run: exit 2, usage message, nothing sent or written", async () => {
+// Superseded 2026-09-28 by CLOUD-LINK-SPEC.md section C: `camctl checkin`
+// with no flags is what the check-in timer runs, so it no longer prints a
+// usage error -- it reads cloud.json and, with the cloud link off (the
+// default), sends nothing and says so. The fear stays the same: nothing is
+// sent and no check-in state is written while the link is off.
+await check("camctl checkin with no flags and no cloud.json: exit 0, says the link is off, nothing sent or written", async () => {
   const dir = await freshStateDir();
   const r = runCamctl("checkin", dir, []);
-  eq(r.status, 2, "usage exit code");
-  eq(r.stderr.toLowerCase().includes("usage"), true, "prints usage");
+  eq(r.status, 0, "exit code");
+  eq(`${r.stdout}${r.stderr}`.includes("cloud link is off"), true, "says the cloud link is off");
+  for (const f of ["checkin-state.json", "checkin-last.json", "cloud-enrollment.json"]) {
+    let exists = true;
+    try { await stat(join(dir, f)); } catch { exists = false; }
+    eq(exists, false, `${f} is not written while the link is off`);
+  }
 });
 
 /* ============================ THE FEARED ONE (camctl) ================ */
