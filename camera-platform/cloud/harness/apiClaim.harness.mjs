@@ -185,6 +185,37 @@ await check("an expired code's log entry carries the real deviceId, unlike an un
   );
 });
 
+// ---- expiresAtS: a claim always clears the record's TTL guard rail
+// (cloud/CLOUD-LOGIN-SPEC.md section D, the owner's 2026-09-28 decision) ----
+
+await check("a successful claim clears expiresAtS to null", async () => {
+  const { deps } = baseDeps({
+    store: createMemoryStore({ devices: [unclaimedDevice("dev-1", { expiresAtS: Math.ceil((NOW_MS + 3600000) / 1000) })] }),
+  });
+  const r = await handler(eventFor(CODE), deps);
+  eq(r.statusCode, 200);
+  const stored = await deps.store.getDevice("dev-1");
+  eq(stored.expiresAtS, null, "a claimed device must never carry a TTL");
+});
+
+// ---- an ASYNC principalOf (one that returns a Promise) must work exactly
+// like a synchronous one, including one that resolves to null ----
+
+await check("claim works with an ASYNC principalOf that resolves to the installer principal", async () => {
+  const { deps } = baseDeps({ principalOf: async () => installerTech });
+  const r = await handler(eventFor(CODE), deps);
+  eq(r.statusCode, 200);
+  same(parseBody(r), { ok: true, deviceId: "dev-1" });
+});
+
+await check("claim gives 401 no_principal when an ASYNC principalOf resolves to null", async () => {
+  const { deps, logs } = baseDeps({ principalOf: async () => null });
+  const r = await handler(eventFor(CODE), deps);
+  eq(r.statusCode, 401);
+  same(parseBody(r), { ok: false, reason: "no_principal" });
+  same(logs, [{ reason: "no_principal", deviceId: null }]);
+});
+
 // ---- mutation guard: no log entry ever contains the claim code itself ----
 
 await check("no log entry, on any outcome, ever contains the claim code itself", async () => {

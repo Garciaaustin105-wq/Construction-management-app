@@ -41,6 +41,7 @@ import { handler as checkinHandler } from "../api/checkin.mjs";
 import { handler as claimHandler } from "../api/claim.mjs";
 import { handler as fleetHandler } from "../api/fleet.mjs";
 import { createMemoryStore } from "../api/memoryStore.mjs";
+import { loginHandler, logoutHandler, principalFromEvent } from "../api/login.mjs";
 
 /** Loopback only -- CLOUD-LOOP-SPEC.md section D: "Listens on 127.0.0.1; any
  *  --host other than 127.0.0.1 or ::1 is refused at start." */
@@ -128,6 +129,21 @@ function randomValues(n) {
  */
 function logLine(route, entry) {
   console.log(JSON.stringify({ route, reason: entry?.reason ?? null, deviceId: entry?.deviceId ?? null }));
+}
+
+/**
+ * The one log line for `/login` and `/logout` -- `loginHandler` already
+ * calls `deps.log` with its own `{ route, reason, userId }` shape
+ * (cloud/CLOUD-LOGIN-SPEC.md section C step 5: never a login name, a
+ * password, a token, or its hash); this only prints what it is handed,
+ * verbatim, the same promise `logLine` above keeps for every other route.
+ * `logoutHandler` never calls `deps.log` at all (it has nothing worth
+ * logging beyond what the HTTP status already says).
+ *
+ * @param {{route?: string, reason: string|null, userId?: string|null}} entry
+ */
+function authLogLine(entry) {
+  console.log(JSON.stringify({ route: entry?.route ?? "login", reason: entry?.reason ?? null, userId: entry?.userId ?? null }));
 }
 
 /**
@@ -288,9 +304,17 @@ function principalFor(req, token) {
  * - `close()`: async; shuts the listener down and resolves once every
  *   connection is gone -- a harness can call this between runs without a
  *   lingering socket keeping the process alive.
+ * - `store`: the SAME `Store` (cloud/api/store.mjs) every route handler
+ *   above shares, so a harness can run cloud/admin/admin.mjs's `runAdmin`
+ *   directly against it (CLOUD-LOGIN-SPEC.md, "F. Tests that matter", the
+ *   devLoop bullet: "seed an installer and a user through runAdmin") without
+ *   this server exposing any HTTP route that itself creates installers or
+ *   users -- the setup tool and the dev server end up looking at one and the
+ *   same in-memory store, exactly as a real installer's browser and a real
+ *   `runAdmin` run against production DynamoDB would.
  *
  * @param {{port?: number, host?: string, cert: string, key: string}} opts
- * @returns {Promise<{url: string, token: string, close: () => Promise<void>}>}
+ * @returns {Promise<{url: string, token: string, store: import("../api/store.mjs").Store, close: () => Promise<void>}>}
  */
 export async function startServer({ port = 0, host = "127.0.0.1", cert, key } = {}) {
   if (!LOOPBACK_HOSTS.has(host)) {
@@ -347,6 +371,17 @@ export async function startServer({ port = 0, host = "127.0.0.1", cert, key } = 
     verifySignature, // present for a uniform deps shape; fleet.mjs never calls it.
     log: (entry) => logLine("fleet", entry),
   };
+  // deps for /login, /logout and principalFromEvent (CLOUD-LOGIN-SPEC.md
+  // section C): deps.scryptParams is left undefined so this dev server
+  // hashes and verifies at the SAME cost production would -- a dev server
+  // standing in for the real thing should not cut a corner an installer's
+  // real login never gets.
+  const loginDeps = {
+    store,
+    nowMs,
+    randomBytes,
+    log: authLogLine,
+  };
 
   const server = createHttpsServer({ cert: certPem, key: keyPem }, async (req, res) => {
     let pathname;
@@ -372,19 +407,44 @@ export async function startServer({ port = 0, host = "127.0.0.1", cert, key } = 
         return;
       }
 
+      if (req.method === "POST" && pathname === "/login") {
+        const body = await readRequestBody(req);
+        const result = await loginHandler(
+          { body, headers: req.headers, sourceIp: req.socket.remoteAddress },
+          loginDeps,
+        );
+        sendHandlerResult(res, result);
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/logout") {
+        const result = await logoutHandler({ headers: req.headers }, loginDeps);
+        sendHandlerResult(res, result);
+        return;
+      }
+
       if (req.method === "POST" && pathname === "/claim") {
         const body = await readRequestBody(req);
-        const result = await claimHandler(
-          { body },
-          { ...claimDeps, principalOf: () => principalFor(req, token) },
-        );
-        if (result.statusCode === 200) {
-          // Dev-only glue (CLOUD-LOOP-SPEC.md section D): a real claim
-          // endpoint has no assign-to-site step yet, so this dev server
-          // supplies one -- place the freshly claimed device on site-dev,
+        // /claim accepts EITHER the dev bearer token OR a real installer
+        // session (CLOUD-LOGIN-SPEC.md section F) -- the dev token is tried
+        // first so every already-scripted dev workflow keeps working
+        // unchanged; `viaDevToken` is kept so the dev-only site placement
+        // glue below fires only for a dev-token claim.
+        const devPrincipal = principalFor(req, token);
+        const viaDevToken = devPrincipal !== null;
+        const principal = viaDevToken
+          ? devPrincipal
+          : await principalFromEvent({ headers: req.headers }, loginDeps);
+        const result = await claimHandler({ body }, { ...claimDeps, principalOf: () => principal });
+        if (result.statusCode === 200 && viaDevToken) {
+          // Dev-only glue (CLOUD-LOOP-SPEC.md section D), kept ONLY for a
+          // dev-token claim: place the freshly claimed device on site-dev,
           // in both the store record and the dev tenancy tree, so /fleet
           // (which cross-references both, cloud/api/fleet.mjs step 4) can
-          // find it.
+          // find it. A real installer session's claimed device is placed
+          // with the setup tool's own assign-device command instead
+          // (CLOUD-LOGIN-SPEC.md section E/F) -- this dev server no longer
+          // guesses a site for it.
           let claimedDeviceId = null;
           try {
             claimedDeviceId = JSON.parse(result.body)?.deviceId ?? null;
@@ -404,7 +464,12 @@ export async function startServer({ port = 0, host = "127.0.0.1", cert, key } = 
       }
 
       if (req.method === "GET" && pathname === "/fleet") {
-        const result = await fleetHandler({}, { ...fleetDeps, principalOf: () => principalFor(req, token) });
+        // Same dual-auth as /claim above: the dev bearer token first, then a
+        // real installer session.
+        const devPrincipal = principalFor(req, token);
+        const principal =
+          devPrincipal !== null ? devPrincipal : await principalFromEvent({ headers: req.headers }, loginDeps);
+        const result = await fleetHandler({}, { ...fleetDeps, principalOf: () => principal });
         sendHandlerResult(res, result);
         return;
       }
@@ -453,7 +518,7 @@ export async function startServer({ port = 0, host = "127.0.0.1", cert, key } = 
     });
   }
 
-  return { url, token, close };
+  return { url, token, store, close };
 }
 
 // ---- CLI entry point ----

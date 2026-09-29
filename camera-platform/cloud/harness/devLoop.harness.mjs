@@ -35,6 +35,7 @@ import { createHash, generateKeyPairSync, randomBytes, sign as cryptoSign } from
 import { check, eq, same, report } from "../../harness/_assert.mjs";
 import { canonicalJson, buildCheckin, checkinDigest } from "../dist/contracts/deviceCheckin.js";
 import { startServer } from "../dev/server.mjs";
+import { runAdmin } from "../admin/admin.mjs";
 // The box's REAL sender and enroller (not a hand-built envelope): the live
 // bench run on 2026-09-28 found the two sides disagreeing on the check-in
 // wire format while each side's own tests passed. These need the box's own
@@ -145,7 +146,10 @@ function httpsRequestJson({ baseUrl, method, requestPath, headers = {}, body, ca
           } catch {
             json = null;
           }
-          resolve({ statusCode: res.statusCode, text, json });
+          // `headers` is additive (every existing check here only reads
+          // statusCode/text/json) -- needed so the cookie-login checks below
+          // can read `set-cookie` off a real response.
+          resolve({ statusCode: res.statusCode, text, json, headers: res.headers });
         });
       },
     );
@@ -153,6 +157,55 @@ function httpsRequestJson({ baseUrl, method, requestPath, headers = {}, body, ca
     if (data) req.write(data);
     req.end();
   });
+}
+
+/** Pull the `camplat_session` token out of a `set-cookie` header, the same
+ *  shape `cloud/api/login.mjs`'s `loginHandler` writes it in -- `undefined`
+ *  when the header is missing or does not match (a failed login, for
+ *  instance, sets no cookie at all). */
+function sessionTokenFrom(headers) {
+  const raw = headers?.["set-cookie"];
+  const text = Array.isArray(raw) ? raw.join(";") : raw;
+  return /camplat_session=([A-Za-z0-9_-]{43});/.exec(text ?? "")?.[1];
+}
+
+/** A `fetch`-shaped adapter over `https.request`, trusting only this run's
+ *  throwaway cert -- the same shape `agent/cloud-enroll.mjs` and
+ *  `agent/checkin.mjs`'s own `fetchFn` dependency expect, and the same one
+ *  the "THE BOX'S OWN CODE end to end" check below builds inline. Hoisted
+ *  here (rather than duplicated a second time) so the cookie-login checks
+ *  further down can drive the box's own real `sendCheckin` too. */
+function httpsFetchWith(caCertPem) {
+  return (url, opts = {}) =>
+    new Promise((resolve, reject) => {
+      const u = new URL(url);
+      const req = https.request(
+        {
+          hostname: u.hostname,
+          port: u.port,
+          path: u.pathname + u.search,
+          method: opts.method ?? "GET",
+          headers: opts.headers ?? {},
+          ca: caCertPem,
+        },
+        (res) => {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            resolve({
+              status: res.statusCode,
+              ok: res.statusCode >= 200 && res.statusCode < 300,
+              text: async () => text,
+              json: async () => JSON.parse(text),
+            });
+          });
+        },
+      );
+      req.on("error", reject);
+      if (opts.signal) opts.signal.addEventListener("abort", () => req.destroy(new Error("aborted")));
+      req.end(opts.body);
+    });
 }
 
 // ---- fixed check-in facts for this harness's one test box -- shape only
@@ -368,6 +421,172 @@ try {
     const row = fleet.json.rows.find((r) => r.deviceId === boxDeviceId);
     eq(row && row.status, "online", "the box shows online after its own check-in");
   });
+
+  // ---- the setup tool plus a REAL installer login, end to end
+  // (CLOUD-LOGIN-SPEC.md section F, the devLoop bullet): seed through
+  // runAdmin, log in over this same real TLS listener, claim with the
+  // cookie the login handed back (never the dev bearer token), assign the
+  // device to its site through runAdmin, then a real signed check-in and
+  // /fleet -- all authenticated with that cookie alone. ----
+
+  const LOGIN_INSTALLER_ID = "inst-devloop";
+  const LOGIN_ORG_ID = "org-devloop";
+  const LOGIN_SITE_ID = "site-devloop";
+  const LOGIN_USER = "tech@devloop.example";
+  const LOGIN_PASSWORD = "correct horse battery devloop";
+
+  /** A scripted `runAdmin` run against the DEV SERVER'S OWN store
+   *  (`server.store`, CLOUD-LOGIN-SPEC.md's own devLoop bullet: "seed an
+   *  installer and a user through runAdmin") -- proves the setup tool and
+   *  this dev server agree on what "an installer's tenancy" is, the same
+   *  way a real `runAdmin` run against production DynamoDB and a real
+   *  installer's browser would. */
+  function scriptedAdmin(answers) {
+    const out = [];
+    const deps = {
+      store: server.store,
+      out: (line) => out.push(String(line)),
+      promptSecret: async () => {
+        if (answers.length === 0) {
+          throw new Error("devLoop harness: runAdmin asked for a password nobody scripted");
+        }
+        return answers.shift();
+      },
+      nowMs: () => Date.now(),
+      randomBytes,
+    };
+    return { run: (...argv) => runAdmin(argv, deps), out };
+  }
+
+  await check(
+    "runAdmin seeds an installer, a user, an org and a site against the dev server's own store",
+    async () => {
+      const admin = scriptedAdmin([LOGIN_PASSWORD, LOGIN_PASSWORD]);
+      eq(
+        await admin.run("create-installer", LOGIN_INSTALLER_ID, "DevLoop Installer"),
+        0,
+        `create-installer: ${admin.out.join(" | ")}`,
+      );
+      eq(await admin.run("create-user", LOGIN_USER, LOGIN_INSTALLER_ID), 0, `create-user: ${admin.out.join(" | ")}`);
+      eq(
+        await admin.run("create-org", LOGIN_INSTALLER_ID, LOGIN_ORG_ID, "DevLoop Org"),
+        0,
+        `create-org: ${admin.out.join(" | ")}`,
+      );
+      eq(
+        await admin.run("create-site", LOGIN_INSTALLER_ID, LOGIN_ORG_ID, LOGIN_SITE_ID, "DevLoop Site"),
+        0,
+        `create-site: ${admin.out.join(" | ")}`,
+      );
+    },
+  );
+
+  let sessionToken;
+  await check("POST /login over real HTTPS with the seeded user returns a session cookie", async () => {
+    const r = await request({
+      method: "POST",
+      requestPath: "/login",
+      body: { login: LOGIN_USER, password: LOGIN_PASSWORD },
+    });
+    eq(r.statusCode, 200, `login must succeed for the just-seeded user, got ${r.text}`);
+    sessionToken = sessionTokenFrom(r.headers);
+    eq(typeof sessionToken, "string", true);
+  });
+
+  const loginHttpsFetch = httpsFetchWith(caCertPem);
+  const loginKeyPair = generateKeyPairSync("ed25519");
+  const loginDeviceId = deriveDeviceId(loginKeyPair.publicKey.export({ type: "spki", format: "der" }));
+  const loginPublicKeyPem = loginKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString();
+  const loginBoxIdentity = {
+    loadOrCreateIdentity: async () => ({
+      deviceId: loginDeviceId,
+      publicKeyPem: loginPublicKeyPem,
+      createdAtUtc: new Date().toISOString(),
+    }),
+    signWithIdentity: async (_stateDir, message) =>
+      cryptoSign(null, Buffer.isBuffer(message) ? message : Buffer.from(message, "utf8"), loginKeyPair.privateKey),
+  };
+  const loginBoxState = await mkdtemp(path.join(tmpDir, "login-box-state-"));
+
+  await check(
+    "a fresh box identity enrols, and is claimed with the SESSION COOKIE alone -- no dev bearer token",
+    async () => {
+      const e = await boxEnroll({
+        stateDir: loginBoxState,
+        url: `${server.url}/enroll`,
+        fetchFn: loginHttpsFetch,
+        identity: loginBoxIdentity,
+      });
+      eq(e.outcome, "enrolled", `box enroll outcome ${JSON.stringify(e.outcome)}`);
+      const r = await request({
+        method: "POST",
+        requestPath: "/claim",
+        headers: { cookie: `camplat_session=${sessionToken}` },
+        body: { code: e.claimCode },
+      });
+      eq(r.statusCode, 200, `claim with the cookie must succeed, got ${r.text}`);
+      same(r.json, { ok: true, deviceId: loginDeviceId });
+    },
+  );
+
+  await check("runAdmin assign-device places the cookie-claimed device on the seeded site", async () => {
+    const admin = scriptedAdmin([]);
+    eq(
+      await admin.run("assign-device", LOGIN_INSTALLER_ID, loginDeviceId, LOGIN_SITE_ID),
+      0,
+      `assign-device: ${admin.out.join(" | ")}`,
+    );
+  });
+
+  await check("the box's own real sendCheckin is accepted for the cookie-claimed device", async () => {
+    const c = await sendCheckin({
+      stateDir: loginBoxState,
+      url: `${server.url}/checkin`,
+      fetchFn: loginHttpsFetch,
+      identity: loginBoxIdentity,
+      appDir: loginBoxState,
+    });
+    eq(c.outcome, "sent", `the real box check-in must be accepted, got ${JSON.stringify(c)}`);
+  });
+
+  await check('GET /fleet with the SESSION COOKIE alone shows the device "online"', async () => {
+    const r = await request({
+      method: "GET",
+      requestPath: "/fleet",
+      headers: { cookie: `camplat_session=${sessionToken}` },
+    });
+    eq(r.statusCode, 200, `fleet with the cookie must succeed, got ${r.text}`);
+    const row = (r.json?.rows ?? []).find((candidate) => candidate.deviceId === loginDeviceId);
+    if (row === undefined) {
+      throw new Error(`expected a fleet row for ${loginDeviceId}, got: ${JSON.stringify(r.json?.rows)}`);
+    }
+    eq(row.status, "online", `expected "online" right after a fresh check-in, got ${JSON.stringify(row)}`);
+  });
+
+  await check("POST /claim with neither a cookie nor the dev bearer token is refused with 401 no_principal", async () => {
+    const r = await request({ method: "POST", requestPath: "/claim", body: { code: "AAAA-BBBB-C" } });
+    eq(r.statusCode, 401);
+    same(r.json, { ok: false, reason: "no_principal" });
+  });
+
+  await check(
+    "POST /logout ends the session; GET /fleet with that same cookie afterward is refused with 401",
+    async () => {
+      const out = await request({
+        method: "POST",
+        requestPath: "/logout",
+        headers: { cookie: `camplat_session=${sessionToken}` },
+      });
+      eq(out.statusCode, 200, "logout always answers 200");
+      const after = await request({
+        method: "GET",
+        requestPath: "/fleet",
+        headers: { cookie: `camplat_session=${sessionToken}` },
+      });
+      eq(after.statusCode, 401);
+      same(after.json, { ok: false, reason: "no_principal" });
+    },
+  );
 } finally {
   if (server) {
     await server.close();

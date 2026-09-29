@@ -80,11 +80,18 @@ export interface EnrollCtx {
    *  that is still accepted -- exactly at this value is fine (the boundary
    *  is inclusive on both sides). */
   maxSkewMs: number;
-  /** Production enrolment needs the factory claim certificate, which does
-   *  not exist yet, so the correct default everywhere except a dev server is
-   *  to refuse (build rule 10: refuse rather than guess). Only a value of
-   *  exactly `true` opens enrolment; anything else (`false`, `undefined`,
-   *  a truthy non-`true` value) refuses with `"enrollment_closed"`. */
+  /** The owner's decision, 2026-09-28 (cloud/CLOUD-LOGIN-SPEC.md section D):
+   *  production runs with open enrolment (`allowOpenEnrollment: true`,
+   *  everywhere, not just a dev server) rather than waiting on a factory
+   *  claim certificate. This is safe because it relies on other guard rails
+   *  instead: a claim code expires in 24 h; an unclaimed record expires with
+   *  it (`expiresAtS`, a DynamoDB TTL -- cloud/api/store.mjs); `/enroll` is
+   *  throttled at API Gateway (the deploy spec); and a claim needs a
+   *  logged-in installer (cloud/api/claim.mjs). Only a value of exactly
+   *  `true` opens enrolment; anything else (`false`, `undefined`, a truthy
+   *  non-`true` value) refuses with `"enrollment_closed"` -- refuse rather
+   *  than guess (build rule 10) still applies to anything that is not
+   *  exactly `true`. */
   allowOpenEnrollment: boolean;
   /** Derives the deviceId a public key must produce -- the SAME derivation
    *  `agent/device-identity.mjs` uses on the box side (base32 of a sha256 of
@@ -122,7 +129,7 @@ export type EnrollVerifyResult =
  *
  * | # | Reason                | Fails when |
  * |---|------------------------|------------|
- * | 1 | `"enrollment_closed"`  | `ctx.allowOpenEnrollment !== true`. Checked FIRST, before the envelope is inspected at all -- production enrolment needs the factory claim certificate (CLOUD-B1-SPEC.md, "enrolment, claim cert, no typed keys"), which does not exist yet, so a malformed or even a perfectly well-formed envelope is refused exactly the same way while enrolment is closed. Only a dev server sets this `true`. |
+ * | 1 | `"enrollment_closed"`  | `ctx.allowOpenEnrollment !== true`. Checked FIRST, before the envelope is inspected at all. The owner's decision, 2026-09-28 (cloud/CLOUD-LOGIN-SPEC.md section D): production sets this `true` -- open enrolment, guarded instead by a 24 h claim-code expiry, an `expiresAtS` DynamoDB TTL on every unclaimed record, `/enroll` throttling at API Gateway, and a claim requiring a logged-in installer -- so this check now exists only to keep a malformed or even a perfectly well-formed envelope refused exactly the same way on any deployment that has not (yet, or deliberately) opened enrolment. |
  * | 2 | `"malformed"`          | `envelope` is not an object (including `null`, an array, a primitive); `envelope.signatureB64` is not a non-empty string; `envelope.payload` is not an object; any of `payload.deviceId`, `payload.publicKeyPem`, `payload.sentAtUtc`, `payload.nonce` is missing or not a string; `payload.nonce` does not match `NONCE_PATTERN` (16 to 64 characters of `[A-Za-z0-9_-]`); `payload.sentAtUtc` does not parse (`Number.isNaN(Date.parse(...))`). |
  * | 3 | `"bad_device_id"`      | `ctx.deviceIdOf(payload.publicKeyPem)` is `null` (an unparseable key) or does not exactly equal `payload.deviceId`. A box can never enrol under another box's id, and an unparseable key can never enrol at all. |
  * | 4 | `"clock_skew"`         | `Math.abs(ctx.nowMs - Date.parse(payload.sentAtUtc)) > ctx.maxSkewMs`. The boundary is INCLUSIVE: exactly `ctx.maxSkewMs` either way is accepted, only strictly more is refused. |
@@ -146,10 +153,15 @@ export type EnrollVerifyResult =
  * @param ctx See `EnrollCtx`.
  */
 export function verifyEnrollment(envelope: unknown, ctx: EnrollCtx): EnrollVerifyResult {
-  // (1) Enrolment is closed unless a dev server explicitly opens it. Checked
-  // FIRST, before the envelope is inspected at all: production enrolment
-  // needs the factory claim certificate, which does not exist yet, so a
-  // malformed envelope and a perfect one are refused exactly the same way.
+  // (1) Enrolment is closed unless the caller explicitly opens it. Checked
+  // FIRST, before the envelope is inspected at all: the owner's decision,
+  // 2026-09-28 (cloud/CLOUD-LOGIN-SPEC.md section D), is that production
+  // itself sets allowOpenEnrollment true -- there is no factory claim
+  // certificate, and none is coming; open enrolment is guarded instead by a
+  // 24 h claim-code expiry, an expiresAtS DynamoDB TTL on every unclaimed
+  // record, /enroll throttling at API Gateway, and a claim requiring a
+  // logged-in installer. Whenever this flag is NOT true, a malformed
+  // envelope and a perfect one are still refused exactly the same way.
   if (ctx.allowOpenEnrollment !== true) return { ok: false, reason: "enrollment_closed" };
 
   // (2) Shape. Every field is read off by name; nothing about the envelope

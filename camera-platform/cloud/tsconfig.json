@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["contracts/**/*.ts", "../contracts/deviceCheckin.ts"]
+  "include": ["contracts/**/*.ts", "../contracts/deviceCheckin.ts", "../contracts/access.ts"]
 }

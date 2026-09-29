@@ -151,11 +151,14 @@ export const CLAIM_CODE_TTL_MS = 24 * 60 * 60 * 1000;
  *    publicKeyPem }`. Look up `deps.store.getDevice(deviceId)`:
  *    - **`null` (no stored record at all)** -> generate a fresh code:
  *      `formatClaimCode(deps.randomValues(8))` (cloud/contracts/claimCode.ts),
- *      `codeExpiresMs = deps.nowMs() + CLAIM_CODE_TTL_MS`, then
- *      `deps.store.putDevice({ deviceId, state: "unclaimed", publicKeyPem,
- *      code, codeExpiresMs, installerId: null, siteId: null }, { ifState:
- *      null })`. A `false` result (another enrolment of the same box won a
- *      concurrent race) -> 409 `{ ok: false, reason: "wrong_state" }`, log
+ *      `codeExpiresMs = deps.nowMs() + CLAIM_CODE_TTL_MS`,
+ *      `expiresAtS = Math.ceil(codeExpiresMs / 1000)` (cloud/CLOUD-LOGIN-SPEC.md
+ *      section D -- store.mjs's DynamoDB TTL guard rail on every unclaimed
+ *      record), then `deps.store.putDevice({ deviceId, state: "unclaimed",
+ *      publicKeyPem, code, codeExpiresMs, expiresAtS, installerId: null,
+ *      siteId: null }, { ifState: null })`. A `false` result (another
+ *      enrolment of the same box won a concurrent race) -> 409
+ *      `{ ok: false, reason: "wrong_state" }`, log
  *      `{ reason: "wrong_state", deviceId }` -- the box is expected to
  *      retry, which lands it in the "same key, unclaimed" branch below.
  *    - **a stored record exists and its `publicKeyPem` differs from the
@@ -167,8 +170,10 @@ export const CLAIM_CODE_TTL_MS = 24 * 60 * 60 * 1000;
  *      codeExpiresMs: deps.nowMs() + CLAIM_CODE_TTL_MS })`
  *      (cloud/contracts/claimCode.ts) always succeeds from either state (its
  *      own contract), then `deps.store.putDevice({ ...device, ...step.device,
- *      siteId: null }, { ifState: <the state `device` was in when read
- *      above>, ifCode: <the code `device` held when read above> })`.
+ *      expiresAtS, siteId: null }, { ifState: <the state `device` was in when
+ *      read above>, ifCode: <the code `device` held when read above> })`,
+ *      where `expiresAtS` is recomputed from THIS reissue's own
+ *      `codeExpiresMs`, never carried over from the record's previous value.
  *      `siteId: null` because an unclaimed device never keeps a site
  *      (store.mjs). `ifCode` because a re-issue leaves the state
  *      `"unclaimed"`, so `ifState` alone would let two racing re-enrols both
@@ -278,7 +283,12 @@ export async function handler(event, deps) {
   if (device == null) {
     const code = await formatClaimCode(deps.randomValues(8));
     const codeExpiresMs = nowMs + CLAIM_CODE_TTL_MS;
-    const record = { deviceId, state: "unclaimed", publicKeyPem, code, codeExpiresMs, installerId: null, siteId: null };
+    // expiresAtS: the DynamoDB TTL guard rail on every unclaimed record
+    // (cloud/CLOUD-LOGIN-SPEC.md section D) -- epoch seconds, ceiling-rounded
+    // from codeExpiresMs so the TTL never fires a moment before the code
+    // itself actually expires.
+    const expiresAtS = Math.ceil(codeExpiresMs / 1000);
+    const record = { deviceId, state: "unclaimed", publicKeyPem, code, codeExpiresMs, expiresAtS, installerId: null, siteId: null };
     const stored = await deps.store.putDevice(record, { ifState: null });
     if (stored === false) {
       deps.log({ reason: "wrong_state", deviceId });
@@ -302,8 +312,11 @@ export async function handler(event, deps) {
     const ifState = device.state;
     const code = await formatClaimCode(deps.randomValues(8));
     const codeExpiresMs = nowMs + CLAIM_CODE_TTL_MS;
+    // Same TTL guard rail as a brand-new device's record: a reissue always
+    // recomputes expiresAtS from the NEW codeExpiresMs, never keeps the old one.
+    const expiresAtS = Math.ceil(codeExpiresMs / 1000);
     const step = await claimStep({ ...device }, { type: "reissue", code, codeExpiresMs });
-    const stored = await deps.store.putDevice({ ...device, ...step.device, siteId: null }, { ifState, ifCode: device.code });
+    const stored = await deps.store.putDevice({ ...device, ...step.device, expiresAtS, siteId: null }, { ifState, ifCode: device.code });
     if (stored === false) {
       deps.log({ reason: "wrong_state", deviceId });
       return respond(409, { ok: false, reason: "wrong_state" });

@@ -110,6 +110,26 @@ await check("no principal gives 401", async () => {
   same(logs, [{ reason: "no_principal", deviceId: null }]);
 });
 
+// ---- an ASYNC principalOf (one that returns a Promise) must work exactly
+// like a synchronous one, including one that resolves to null ----
+
+await check("fleet works with an ASYNC principalOf that resolves to a principal", async () => {
+  const { deps } = baseDeps({ principalOf: async () => installerTechPrincipal });
+  const r = await handler(EVENT, deps);
+  eq(r.statusCode, 200);
+  const body = parseBody(r);
+  const ids = body.rows.map((row) => row.deviceId).sort();
+  same(ids, ["dev-A1", "dev-B1"]);
+});
+
+await check("fleet gives 401 no_principal when an ASYNC principalOf resolves to null", async () => {
+  const { deps, logs } = baseDeps({ principalOf: async () => null });
+  const r = await handler(EVENT, deps);
+  eq(r.statusCode, 401);
+  same(parseBody(r), { ok: false, reason: "no_principal" });
+  same(logs, [{ reason: "no_principal", deviceId: null }]);
+});
+
 // ---- an installer sees only their own devices ----
 
 await check("an installer_tech sees every device under their installer, and no other installer's", async () => {

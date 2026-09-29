@@ -65,10 +65,12 @@
  * @property {(digestHex: string, signatureB64: string, publicKeyPem: string) => boolean} verifySignature
  *   Present for a uniform `deps` shape across every handler, but UNUSED
  *   here.
- * @property {(event: FleetEvent) => (ApiPrincipal|null)} principalOf
+ * @property {(event: FleetEvent) => (ApiPrincipal|null|Promise<ApiPrincipal|null>)} principalOf
  *   See the file-level "KNOWN SPEC/CONTRACT GAP" comment: returns an
  *   `ApiPrincipal` (a `Principal` plus `installerId`), or `null` when the
- *   request carries no valid session.
+ *   request carries no valid session. May be async (cloud/CLOUD-LOGIN-SPEC.md
+ *   section C: a real `principalFromEvent` reads the session from the store)
+ *   -- this handler always `await`s it.
  * @property {(entry: FleetLogEntry) => void} log
  *   Called exactly once per request, after the outcome is known.
  */
@@ -119,7 +121,9 @@ export const CHECKIN_INTERVAL_MS = 60000;
  * Handle one `GET /fleet`. Contract, in order (cloud/CLOUD-API-SPEC.md,
  * "Handlers"):
  *
- * 1. **Principal.** `principal === null` -> 401
+ * 1. **Principal.** `const principal = await deps.principalOf(event);` --
+ *    always awaited (`principalOf` may be async; a synchronous fake still
+ *    works). `principal === null` -> 401
  *    `{ ok: false, reason: "no_principal" }`, log
  *    `{ reason: "no_principal", deviceId: null }`, return.
  * 2. **`deps.store.getTenancy(principal.installerId)`.** `null` (no tenancy
@@ -179,7 +183,7 @@ export const CHECKIN_INTERVAL_MS = 60000;
  * @returns {Promise<FleetResponse>}
  */
 export async function handler(event, deps) {
-  const principal = deps.principalOf(event);
+  const principal = await deps.principalOf(event);
   if (principal == null) {
     deps.log({ reason: "no_principal", deviceId: null });
     return {

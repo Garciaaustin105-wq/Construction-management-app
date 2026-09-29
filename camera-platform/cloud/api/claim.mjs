@@ -29,9 +29,12 @@
  *   (cloud/CLOUD-API-SPEC.md, "Handlers"), but UNUSED here -- claiming is
  *   authenticated by the caller's logged-in principal (`deps.principalOf`),
  *   never by a device signature.
- * @property {(event: ClaimEvent) => (import("../contracts/scope.js").Principal|null)} principalOf
+ * @property {(event: ClaimEvent) => (import("../contracts/scope.js").Principal|null|Promise<import("../contracts/scope.js").Principal|null>)} principalOf
  *   The logged-in principal attempting the claim, or `null` when the
- *   request carries no valid session at all. Only an `installer_tech`
+ *   request carries no valid session at all. May be async (cloud/CLOUD-LOGIN-SPEC.md
+ *   section C: a real `principalFromEvent` reads the session from the
+ *   store) -- this handler always `await`s it, so a synchronous fake in a
+ *   test works exactly the same as a real async one. Only an `installer_tech`
  *   principal may claim a device (CLOUD-B1-SPEC.md section 7: claiming is
  *   an installer action). For an `installer_tech`, `principal.scope.kind`
  *   is always `"installer"` and `principal.scope.id` IS that installer's
@@ -68,7 +71,11 @@
  * Handle one `POST /claim`. Contract, in order (cloud/CLOUD-API-SPEC.md,
  * "Handlers"):
  *
- * 1. **Principal.** `const principal = deps.principalOf(event);`
+ * 1. **Principal.** `const principal = await deps.principalOf(event);` --
+ *    always awaited, since a real `principalOf` (cloud/CLOUD-LOGIN-SPEC.md
+ *    section C's `principalFromEvent`) reads the session from the store and
+ *    is therefore async; a synchronous fake still works, since `await` on a
+ *    non-promise value just resolves to it.
  *    - `principal === null` -> 401 `{ ok: false, reason: "no_principal" }`.
  *    - `principal.role !== "installer_tech"` -> 403
  *      `{ ok: false, reason: "installer_only" }` -- checked BEFORE parsing
@@ -106,12 +113,16 @@
  *    - any other refusal (`"wrong_state"`, `"code_mismatch"`, `"no_code"`,
  *      `"bad_action"`) -> 409 `{ ok: false, reason }` verbatim, log
  *      `{ reason, deviceId: device.deviceId }`.
- * 6. **`deps.store.putDevice({ ...device, ...claimStepResult.device }, {
- *    ifState: "unclaimed" })`.** `claimStep` returns only the four
- *    `ClaimDevice` fields (state, code, codeExpiresMs, installerId), so they
- *    are laid over the stored record; writing `claimStepResult.device` on
- *    its own would drop `deviceId`, `publicKeyPem` and `siteId`, and the
- *    conditional write could never match. `false` (lost a race: someone else's claim,
+ * 6. **`deps.store.putDevice({ ...device, ...claimStepResult.device,
+ *    expiresAtS: null }, { ifState: "unclaimed" })`.** `claimStep` returns
+ *    only the four `ClaimDevice` fields (state, code, codeExpiresMs,
+ *    installerId), so they are laid over the stored record; writing
+ *    `claimStepResult.device` on its own would drop `deviceId`,
+ *    `publicKeyPem` and `siteId`, and the conditional write could never
+ *    match. `expiresAtS: null` is this handler's own addition on top of
+ *    `claimStepResult.device` -- a claimed device never carries the
+ *    DynamoDB TTL guard rail an unclaimed one does (cloud/CLOUD-LOGIN-SPEC.md
+ *    section D). `false` (lost a race: someone else's claim,
  *    revoke or reissue landed first) -> 409
  *    `{ ok: false, reason: "wrong_state" }`, log
  *    `{ reason: "wrong_state", deviceId: device.deviceId }`. This is how
@@ -139,7 +150,7 @@ export async function handler(event, deps) {
     body: JSON.stringify(payload),
   });
 
-  const principal = deps.principalOf(event);
+  const principal = await deps.principalOf(event);
   if (principal === null) {
     deps.log({ reason: "no_principal", deviceId: null });
     return respond(401, { ok: false, reason: "no_principal" });
@@ -182,7 +193,10 @@ export async function handler(event, deps) {
     return respond(409, { ok: false, reason: step.reason });
   }
 
-  const written = await deps.store.putDevice({ ...device, ...step.device }, { ifState: "unclaimed" });
+  // expiresAtS: a claim always clears the record's TTL guard rail -- a
+  // claimed device must never expire out from under its owner
+  // (cloud/CLOUD-LOGIN-SPEC.md section D).
+  const written = await deps.store.putDevice({ ...device, ...step.device, expiresAtS: null }, { ifState: "unclaimed" });
   if (written === false) {
     deps.log({ reason: "wrong_state", deviceId: device.deviceId });
     return respond(409, { ok: false, reason: "wrong_state" });

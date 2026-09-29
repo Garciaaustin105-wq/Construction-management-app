@@ -317,6 +317,7 @@ await check("an already-claimed device gets claimed: true and no code, and is le
     publicKeyPem,
     code: null,
     codeExpiresMs: null,
+    expiresAtS: null, // a claimed device never carries a TTL (CLOUD-LOGIN-SPEC.md section D)
     installerId: "inst-1",
     siteId: "site-1",
   };
@@ -339,6 +340,7 @@ await check("a different key presented for a known deviceId gives 409 key_mismat
     publicKeyPem: "-----BEGIN PUBLIC KEY-----\nFABRICATED-FOR-THIS-TEST-ONLY\n-----END PUBLIC KEY-----\n",
     code: "PRE-EXST-X",
     codeExpiresMs: NOW_MS + 1000,
+    expiresAtS: Math.ceil((NOW_MS + 1000) / 1000),
     installerId: null,
     siteId: null,
   };
@@ -366,6 +368,52 @@ await check("two concurrent enrolments of a brand-new box give exactly one 200 a
   same(statusCodes, [200, 409], "exactly one concurrent identical enrolment must win");
   const loser = r1.statusCode === 409 ? r1 : r2;
   same(parseBody(loser), { ok: false, reason: "wrong_state" });
+});
+
+// ---- expiresAtS: the TTL guard rail every unclaimed record carries
+// (cloud/CLOUD-LOGIN-SPEC.md section D, the owner's 2026-09-28 decision) ----
+
+await check("a brand-new device's stored record carries expiresAtS = ceil(codeExpiresMs / 1000)", async () => {
+  const { deps } = baseDeps();
+  const r = await handler(eventFor(envelopeFor(makePayload())), deps);
+  eq(r.statusCode, 200);
+  const stored = await deps.store.getDevice(deviceId);
+  eq(stored.expiresAtS, Math.ceil((NOW_MS + CLAIM_CODE_TTL_MS) / 1000), "expiresAtS must be the ceiling of codeExpiresMs in seconds");
+  eq(stored.expiresAtS, Math.ceil(stored.codeExpiresMs / 1000));
+});
+
+await check("a reissue (same key, still unclaimed) updates expiresAtS to match the NEW codeExpiresMs", async () => {
+  const { deps, setNow } = baseDeps({
+    randomValues: makeRandomValues([1, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1]),
+  });
+  await handler(eventFor(envelopeFor(makePayload({ nonce: NONCE_A }))), deps);
+  setNow(NOW_MS + 3600000);
+  await handler(
+    eventFor(envelopeFor(makePayload({ nonce: NONCE_B, sentAtUtc: new Date(NOW_MS + 3600000).toISOString() }))),
+    deps,
+  );
+  const stored = await deps.store.getDevice(deviceId);
+  eq(stored.expiresAtS, Math.ceil((NOW_MS + 3600000 + CLAIM_CODE_TTL_MS) / 1000), "a reissue's expiresAtS must be recomputed from the new codeExpiresMs, not the original");
+});
+
+await check("re-enrolling a REVOKED device also sets expiresAtS from the freshly issued codeExpiresMs", async () => {
+  const revokedDevice = {
+    deviceId,
+    state: "revoked",
+    publicKeyPem,
+    code: null,
+    codeExpiresMs: null,
+    expiresAtS: null,
+    installerId: "inst-old",
+    siteId: "site-old",
+  };
+  const { deps } = baseDeps({
+    store: createMemoryStore({ devices: [revokedDevice] }),
+    randomValues: makeRandomValues([2, 2, 2, 2, 2, 2, 2, 2]),
+  });
+  await handler(eventFor(envelopeFor(makePayload())), deps);
+  const stored = await deps.store.getDevice(deviceId);
+  eq(stored.expiresAtS, Math.ceil(stored.codeExpiresMs / 1000), "a revoked device's reissue must also carry the fresh expiresAtS, never null");
 });
 
 // ---- the claim code is absent from every log entry, across every branch that ever produces one ----

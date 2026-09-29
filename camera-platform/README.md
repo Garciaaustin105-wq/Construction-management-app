@@ -45,9 +45,14 @@ dist/          emitted; gitignored
 
 ```bash
 cd camera-platform
-npx tsc -p tsconfig.json     # compiles standalone — `"types": []` proves purity
-node harness/run-all.mjs     # 125 checks
+npx --yes --package typescript -- tsc -p tsconfig.json   # compiles standalone — `"types": []` proves purity
+node harness/run-all.mjs
+(cd cloud && npx --yes --package typescript -- tsc -p tsconfig.json)
+node cloud/harness/run-all.mjs
 ```
+
+Not bare `npx tsc`: with no local TypeScript it runs the unrelated npm package
+`tsc`, which exits 0 and compiles nothing.
 
 `tsconfig.json` sets `"types": []` deliberately: if a contract ever reaches for
 `process` or `Buffer`, the build breaks. That is the point. The root

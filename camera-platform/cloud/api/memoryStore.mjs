@@ -29,6 +29,41 @@
  * changing it must update those three harnesses in the same change.
  */
 
+import { randomBytes as nodeRandomBytes } from "node:crypto";
+
+/**
+ * A `recordFailedLogin` id: `atMs` zero-padded to 15 digits, then `"#"`, then
+ * 16 further hex characters -- 8 from a per-store monotonic counter (`seq`,
+ * zero-padded), then 8 from real randomness. The counter, not the random
+ * half, is what decides the sort order between two attempts recorded at the
+ * IDENTICAL `atMs`: two calls can easily land in the same millisecond (that
+ * is exactly the burst this store exists to prove is handled correctly --
+ * cloud/harness/apiLogin.harness.mjs's "20 simultaneous wrong guesses"), and
+ * `cloud/api/login.mjs` counts "the entries that sort strictly before this
+ * request's own" to decide who is let through. Node is single-threaded, so
+ * concurrent `Promise.all` callers still each run their own synchronous
+ * record-then-yield span in a fixed order (CLOUD-LOGIN-SPEC.md section C
+ * step 2's "exactly the first ones through" only holds if same-millisecond
+ * ties break by that real order, not by a coin flip on random bytes -- a
+ * purely random tail would let a *later* caller's entry sort ahead of an
+ * *earlier* one about half the time, which turns a deterministic lockout
+ * boundary (5 real failures, then the 6th is locked) into a roughly 1-in-6
+ * chance of the 6th slipping through). The random half still guards
+ * distinctness on its own (so a counter overflow or reset is never the only
+ * thing standing between two attempts and a collision) and keeps the id from
+ * being a bare guessable sequence number.
+ *
+ * @param {number} atMs
+ * @param {number} seq
+ * @returns {string}
+ */
+function makeFailedLoginId(atMs, seq) {
+  const timePart = String(atMs).padStart(15, "0");
+  const seqPart = (seq >>> 0).toString(16).padStart(8, "0");
+  const randPart = nodeRandomBytes(4).toString("hex");
+  return `${timePart}#${seqPart}${randPart}`;
+}
+
 /**
  * @typedef {Object} MemoryStoreSeed
  * @property {import("./store.mjs").StoreDevice[]} [devices]
@@ -78,6 +113,23 @@ export function createMemoryStore(seed = {}) {
   const devices = new Map(); // deviceId -> stored StoreDevice
   const latest = new Map(); // deviceId -> latest accepted check-in record
   const tenancies = new Map(); // installerId -> stored Tenancy
+  const tenancyVersions = new Map(); // installerId -> version number (CLOUD-LOGIN-SPEC.md, "B. Store additions")
+  const users = new Map(); // login -> stored StoreUser
+  const failedLoginsByKey = new Map(); // "acct:<login>" | "src:<address>" -> Array<{ id, atMs }> (insertion order; sorted by id on read)
+  let failSeq = 0; // per-store monotonic counter feeding makeFailedLoginId's seq part
+  const sessions = new Map(); // tokenHash -> stored StoreSession
+
+  // A device record written before `expiresAtS` existed has no such key at
+  // all (not even `undefined`); every getter must hand that back as `null`,
+  // never as `undefined` and never as `0` (a blank is not a zero, build
+  // rule 5; store.mjs's StoreDevice doc).
+  function cloneDevice(stored) {
+    const cloned = structuredClone(stored);
+    if (cloned.expiresAtS === undefined) {
+      cloned.expiresAtS = null;
+    }
+    return cloned;
+  }
 
   for (const device of src.devices ?? []) {
     if (devices.has(device.deviceId)) {
@@ -89,6 +141,8 @@ export function createMemoryStore(seed = {}) {
   }
   for (const [installerId, tenancy] of Object.entries(src.tenancies ?? {})) {
     tenancies.set(installerId, structuredClone(tenancy));
+    // Seeded tenancies start at version 1 (CLOUD-LOGIN-SPEC.md, "B. Store additions").
+    tenancyVersions.set(installerId, 1);
   }
 
   return {
@@ -116,7 +170,7 @@ export function createMemoryStore(seed = {}) {
 
     async getDevice(deviceId) {
       const stored = devices.get(deviceId);
-      return stored === undefined ? null : structuredClone(stored);
+      return stored === undefined ? null : cloneDevice(stored);
     },
 
     async findDeviceByCode(code) {
@@ -125,7 +179,7 @@ export function createMemoryStore(seed = {}) {
       }
       for (const stored of devices.values()) {
         if (stored.code !== null && stored.code !== undefined && stored.code === code) {
-          return structuredClone(stored);
+          return cloneDevice(stored);
         }
       }
       return null;
@@ -164,6 +218,124 @@ export function createMemoryStore(seed = {}) {
     async getTenancy(installerId) {
       const stored = tenancies.get(installerId);
       return stored === undefined ? null : structuredClone(stored);
+    },
+
+    async getTenancyRecord(installerId) {
+      const stored = tenancies.get(installerId);
+      if (stored === undefined) {
+        return null;
+      }
+      return { tenancy: structuredClone(stored), version: tenancyVersions.get(installerId) };
+    },
+
+    async putTenancy(installerId, tenancy, opts) {
+      const { ifVersion } = opts ?? {};
+      if (ifVersion !== null && !(typeof ifVersion === "number" && Number.isFinite(ifVersion))) {
+        throw new Error("createMemoryStore.putTenancy: ifVersion must be null or a finite number");
+      }
+      const storedVersion = tenancyVersions.get(installerId);
+      // ifVersion === null: "must not exist yet" (no stored version at all).
+      // A number: must equal the CURRENTLY STORED version exactly -- the
+      // synchronous read-check-write below has no await in it, so of two
+      // concurrent callers at the same ifVersion exactly one observes a
+      // match (store.mjs's putTenancy contract, storeConformance's race).
+      const matches = ifVersion === null ? storedVersion === undefined : storedVersion === ifVersion;
+      if (!matches) {
+        return false;
+      }
+      tenancies.set(installerId, structuredClone(tenancy));
+      tenancyVersions.set(installerId, (ifVersion ?? 0) + 1);
+      return true;
+    },
+
+    async getUser(login) {
+      const stored = users.get(login);
+      return stored === undefined ? null : structuredClone(stored);
+    },
+
+    async putUser(user, opts) {
+      const { ifAbsent, ifEpoch } = opts ?? {};
+      const stored = users.get(user.login);
+      let matches;
+      if (ifAbsent === true && ifEpoch === undefined) {
+        matches = stored === undefined;
+      } else if (ifEpoch !== undefined && ifAbsent === undefined) {
+        matches = stored !== undefined && stored.sessionEpoch === ifEpoch;
+      } else {
+        throw new Error("createMemoryStore.putUser: options must give exactly one of ifAbsent or ifEpoch");
+      }
+      if (!matches) {
+        return false;
+      }
+      users.set(user.login, structuredClone(user));
+      return true;
+    },
+
+    async recordFailedLogin(key, atMs) {
+      const id = makeFailedLoginId(atMs, failSeq++);
+      const entry = { id, atMs };
+      const list = failedLoginsByKey.get(key);
+      if (list === undefined) {
+        failedLoginsByKey.set(key, [entry]);
+      } else {
+        list.push(entry);
+      }
+      return id;
+    },
+
+    async failedLogins(key, sinceMs) {
+      const list = failedLoginsByKey.get(key) ?? [];
+      // Sorted on the way out, never assumed sorted on the way in: callers
+      // may record failures out of order (a retried write, a clock step).
+      // Ascending by id (not by atMs alone -- two entries can share an atMs,
+      // and id is what breaks that tie; see makeFailedLoginId above).
+      return list
+        .filter((e) => e.atMs >= sinceMs)
+        .map((e) => ({ id: e.id, atMs: e.atMs }))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    },
+
+    async deleteFailedLogin(key, id) {
+      const list = failedLoginsByKey.get(key);
+      if (list === undefined) {
+        return false;
+      }
+      const idx = list.findIndex((e) => e.id === id);
+      if (idx === -1) {
+        return false;
+      }
+      list.splice(idx, 1);
+      return true;
+    },
+
+    async clearFailedLogins(key) {
+      failedLoginsByKey.delete(key);
+    },
+
+    async putSession(tokenHash, session) {
+      if (sessions.has(tokenHash)) {
+        return false;
+      }
+      sessions.set(tokenHash, structuredClone(session));
+      return true;
+    },
+
+    async getSession(tokenHash) {
+      const stored = sessions.get(tokenHash);
+      return stored === undefined ? null : structuredClone(stored);
+    },
+
+    async touchSession(tokenHash, lastSeenMs) {
+      const stored = sessions.get(tokenHash);
+      if (stored === undefined) {
+        return false;
+      }
+      stored.lastSeenMs = lastSeenMs;
+      return true;
+    },
+
+    async deleteSession(tokenHash) {
+      return sessions.delete(tokenHash);
     },
   };
 }
