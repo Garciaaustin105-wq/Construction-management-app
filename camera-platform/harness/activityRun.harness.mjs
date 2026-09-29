@@ -41,6 +41,31 @@ async function tmpDir(prefix) {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
+/**
+ * Teardown race, not a date dependency (verified 2026-09-29: reproduced the
+ * exact 'ENOTEMPTY: directory not empty, rmdir ...camplat-activity-secret-*'
+ * failure with the real, unshifted clock, at roughly the same rate as under
+ * a clock shift -- confirming the shift itself is not the cause). Every
+ * server this file creates via createApiServer runs event retention once,
+ * immediately, fire-and-forget (agent/api-server.mjs) -- it writes
+ * event-retention.json into `stateDir` (mkdir, then a .tmp write, then a
+ * rename) without the harness ever being handed a promise to await.
+ * server.closeEventRetention() only clears the *interval* for later ticks;
+ * it does not cancel or await that already-in-flight first pass. Under
+ * machine load that pass's rename can still be landing in `stateDir` at the
+ * exact moment this file's own teardown calls `rm(dir, { recursive: true
+ * })`, and a recursive delete that meets a file created after it listed the
+ * directory fails with ENOTEMPTY on Windows -- not because anything this
+ * suite checks is wrong, but because two independent writers touched the
+ * same directory at once. Retrying the removal (recursive delete meeting
+ * EBUSY/ENOTEMPTY/EPERM is exactly what fs.rm's own maxRetries/retryDelay
+ * are for) rides out that window without touching agent/api-server.mjs
+ * (not owned by this file) or loosening anything this suite asserts.
+ */
+async function rmDir(path) {
+  return rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 function makeConfig(stateDir, cameraIds) {
   return {
     siteId: 'test-site',
@@ -202,7 +227,7 @@ await mustAwait('REQUIRED: detecting is 1 within 120s of lastFrameUtc or a gate 
   db.close();
   await hh.close();
   index.close();
-  await rm(dir, { recursive: true, force: true });
+  await rmDir(dir);
 });
 
 await mustAwait('REQUIRED (CAMERA-AI-SETTINGS-SPEC.md): detecting is 0 whenever aiSchedule.open is false, however fresh the frame or gate window is; missing aiSchedule entirely (an older detect-health.json) is read as open, not as closed', async () => {
@@ -237,7 +262,7 @@ await mustAwait('REQUIRED (CAMERA-AI-SETTINGS-SPEC.md): detecting is 0 whenever 
   db.close();
   await hh.close();
   index.close();
-  await rm(dir, { recursive: true, force: true });
+  await rmDir(dir);
 });
 
 await mustAwait('REQUIRED: no detecting row for anyone when detect-health.json is missing, unreadable, or not shaped like the real file', async () => {
@@ -259,7 +284,7 @@ await mustAwait('REQUIRED: no detecting row for anyone when detect-health.json i
     db.close();
     await hh.close();
     index.close();
-    await rm(dir, { recursive: true, force: true });
+    await rmDir(dir);
   }
 });
 
@@ -290,7 +315,7 @@ check('watchedMinutesFor: null before the first sample ever written, a real 0..6
   eq(minutes[1], 1, 'one real 1-sample in this hour');
   await hh.close();
   index.close();
-  await rm(dir, { recursive: true, force: true });
+  await rmDir(dir);
 });
 
 await mustAwait(
@@ -330,7 +355,7 @@ await mustAwait(
     );
     await hh.close();
     index.close();
-    await rm(dir, { recursive: true, force: true });
+    await rmDir(dir);
   },
 );
 
@@ -515,7 +540,7 @@ await mustAwait('REQUIRED: available:false when there is no events.db at all, th
   server2.closeEventRetention();
   server2.close();
   index2.close();
-  await rm(dir2, { recursive: true, force: true });
+  await rmDir(dir2);
 });
 
 await mustAwait('REQUIRED, THE FEARED ONE: a camera configured with user:pass never reaches the /activity JSON', async () => {
@@ -533,7 +558,7 @@ await mustAwait('REQUIRED, THE FEARED ONE: a camera configured with user:pass ne
     server3.closeEvents();
     server3.close();
     index3.close();
-    await rm(dir3, { recursive: true, force: true });
+    await rmDir(dir3);
     return result;
   })();
   eq(json.ok, true, 'sanity: this really is the activity response');
@@ -543,7 +568,7 @@ await mustAwait('REQUIRED, THE FEARED ONE: a camera configured with user:pass ne
   eq(text.includes('cam-1'), true, 'the bare camera id is still there');
 });
 
-await rm(dir, { recursive: true, force: true });
+await rmDir(dir);
 
 check('THE FEARED ONE: a recorded, watched, quiet night is a real 0 - counts reach back to the OLDEST VIDEO, not the oldest sighting', () => {
   // Found 2026-09-26: keyed on the oldest sighting, the hours between the

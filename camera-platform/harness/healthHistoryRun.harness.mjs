@@ -260,7 +260,9 @@ await check('REQUIRED: a store root that is not a real mount point (a plain dire
   const hh = startHealthHistory({ config, index, stateDir: dir, now, platform: 'win32', readFileFn: enoent, readdirFn: async () => [] });
   await hh.initialTick;
   const db = openHealthHistoryDb(join(dir, HEALTH_HISTORY_DB_FILE));
-  const rows = db.rangeFor('driveUsedPct', join(dir, 'disk0'), 0, Date.now() + 1);
+  // The test's own injected clock, never the real (possibly clock-shift-tool-moved) Date.now() --
+  // see the identical fix on the overlapping-tick test below for why this matters.
+  const rows = db.rangeFor('driveUsedPct', join(dir, 'disk0'), 0, now().getTime() + 1);
   eq(rows.length, 0, 'no row for an unmounted root, even though statfs itself succeeds and returns real numbers');
   db.close();
   hh.close();
@@ -489,7 +491,18 @@ await check(
     eq(call, 3, 'a tick started after the previous one finished is a genuine, separate tick');
 
     const dbDirect = openHealthHistoryDb(join(dir, HEALTH_HISTORY_DB_FILE));
-    const rows = dbDirect.rangeFor('cpuPercent', 'nvr', 0, Date.now() + 1);
+    // clockMs, this test's own injected clock -- never the real Date.now().
+    // The two rows this test wrote both carry `clockMs` values (t0+60s,
+    // t0+120s) computed from the fixed 2026-09-24 fixture above, entirely
+    // independent of the actual wall clock the process happens to see. Using
+    // the real Date.now() here instead was a REAL bug: on an unshifted box it
+    // happened to pass only because "today" is later than the fixture date,
+    // but a clock-shift tool (or simply running this suite before
+    // 2026-09-24, or any real box whose clock is set behind that date) moves
+    // Date.now() behind clockMs, so `at_ms < Date.now()+1` excludes both real
+    // rows and this assertion fails with 0 instead of 2 -- a false failure
+    // that has nothing to do with the overlapping-tick behaviour under test.
+    const rows = dbDirect.rangeFor('cpuPercent', 'nvr', 0, clockMs + 1);
     dbDirect.close();
     eq(rows.length, 2, 'REQUIRED: two real ticks after the baseline -- neither dropped nor corrupted by the overlap');
     eq(rows.every((r) => r.value >= 0 && r.value <= 100), true, 'every value still a plausible percent, not a negative from a mismatched baseline');
@@ -657,9 +670,18 @@ await check('REQUIRED: /health/history answers 501 when the feature is disabled,
   const { res, json } = await fetchJson(`${base2}/health/history?range=24h`);
   eq(res.status, 501, 'status');
   eq(json.code, 'health_history_disabled', 'code');
-  server2.close();
+  // Wait for the real completion signal (the socket is actually torn down),
+  // not just the synchronous call that starts closing it -- an in-flight
+  // close racing the rm() below is exactly the kind of teardown race that
+  // shows up as an intermittent ENOTEMPTY on Windows under load (the OS can
+  // release a just-closed sqlite/socket handle a moment after the JS call
+  // returns), never a real date or time-of-day dependency.
+  await new Promise((resolve) => server2.close(resolve));
   index2.close();
-  await rm(dir2, { recursive: true, force: true });
+  // maxRetries/retryDelay: fs.rm's own built-in retry on ENOTEMPTY/EBUSY/etc,
+  // for whatever slack remains after the close above -- a teardown race, not
+  // a loosened check (nothing about what this test verifies changes).
+  await rm(dir2, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // A second, tiny-interval server just to prove the sampler and prune timers
@@ -693,9 +715,11 @@ await check('REQUIRED, THE FEARED ONE: the sampler and prune timers keep ticking
   server3.closeHealthHistory();
   await new Promise((resolve) => setTimeout(resolve, 90));
   eq(ticks, beforeClose, 'no tick landed after close()');
-  server3.close();
+  // Same real-completion-signal-before-teardown fix as the disabled-feature
+  // test above.
+  await new Promise((resolve) => server3.close(resolve));
   index3.close();
-  await rm(dir3, { recursive: true, force: true });
+  await rm(dir3, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 report('health history run');

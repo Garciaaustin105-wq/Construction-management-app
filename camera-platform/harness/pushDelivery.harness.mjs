@@ -297,8 +297,17 @@ const T0 = Date.parse("2026-09-28T14:00:00Z");
 async function makeHarness(tag, { isManagerRulesEnabled = () => true, pushStoreNow } = {}) {
   const stateDir = await freshStateDir(tag);
   const rdb = openRulesDb(join(stateDir, "rules.db"));
-  const pushStore = createPushSubscriptionStore(pushStoreNow ? { stateDir, now: pushStoreNow } : { stateDir });
   const clock = { ms: T0 };
+  // push-delivery.mjs's own no-flood filter compares a firing's startMs
+  // against Date.parse(subscription.createdUtc) -- so the subscription
+  // store must stamp createdUtc from the SAME injected clock every other
+  // component here is driven by. createPushSubscriptionStore's own default
+  // `now` is the REAL wall clock (agent/push-store.mjs); left unset, every
+  // subscription below gets created at real "today", which is already past
+  // the fixed T0 the REQUIRED cases insert their firings at -- the no-flood
+  // filter then discards them before delivery ever reaches the network.
+  // `pushStoreNow` still lets one case override with its own fixed instant.
+  const pushStore = createPushSubscriptionStore({ stateDir, now: pushStoreNow ?? (() => new Date(clock.ms)) });
   const audits = [];
   const fake = makeFetch();
   const delivery = createPushDelivery({

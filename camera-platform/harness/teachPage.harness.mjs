@@ -305,6 +305,33 @@ async function until(fn, what, limitMs = 3000) {
   }
 }
 
+/**
+ * Wait for a card's own save() (teach.html) to finish, not a fixed sleep --
+ * caught for real under load, unshifted (clock-shift not required): a plain
+ * `await settle()` (30ms) after firing an answer button raced the real
+ * fetch('/clip-library') POST across the loopback socket, so an assertion of
+ * `status.textContent === "Saved."` sometimes still read "Saving...".
+ *
+ * save() also fires a SECOND, un-awaited fetch on success -- refreshProgress()
+ * (GET /teach-moments) -- right after setting "Saved.". A fixed sleep can
+ * return before that second fetch lands, and it then shows up during a LATER
+ * check's own `fetchLog.slice(before)` window and inflates that check's
+ * count (caught for real: "3+ ...refused before any fetch" failed with
+ * "expected 6, got 7", the extra 1 being a previous check's own leftover
+ * refreshProgress()). So on a successful save this also drains that request
+ * before returning, leaving nothing in flight for the next check to trip
+ * over.
+ */
+async function waitForSaveOutcome(card, before) {
+  const status = findByClass(card, "cardStatus");
+  await until(() => status.textContent !== "" && status.textContent !== "Saving...",
+    "the card's save() to leave its Saving... state");
+  if (status.textContent === "Saved.") {
+    await until(() => fetchLog.slice(before).some((f) => f.url.startsWith("/teach-moments?")),
+      "save()'s own post-save refreshProgress() request to land");
+  }
+}
+
 const html = (await import("node:fs/promises").then((m) => m.readFile(join(import.meta.dirname, "..", "agent", "ui", "teach.html"), "utf8")))
   .replaceAll("\r\n", "\n");
 const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
@@ -382,7 +409,7 @@ await check("FEARED: a tap posts exactly the moment's span and counts", async ()
   const oneBtn = answers.children[1]; // Nobody, 1, 2, 3+, car, Skip
   eq(oneBtn.textContent, "1", "the second answer button");
   oneBtn.fire("click");
-  await settle();
+  await waitForSaveOutcome(card, before);
   const posts = fetchLog.slice(before).filter((f) => f.url === "/clip-library" && f.opts && f.opts.method === "POST");
   eq(posts.length, 1, "exactly one POST");
   const body = JSON.parse(posts[0].opts.body);
@@ -403,7 +430,7 @@ await check("the car toggle is read at the moment of the tap, and folds into sce
   carBox.checked = true;
   const nobodyBtn = answers.children[0];
   nobodyBtn.fire("click");
-  await settle();
+  await waitForSaveOutcome(card, before);
   const post = fetchLog.slice(before).find((f) => f.url === "/clip-library");
   const body = JSON.parse(post.opts.body);
   eq(body.people, 0);
@@ -426,15 +453,17 @@ await check('FEARED: "3+" only asks for the exact number -- it does not save by 
   const exactInput = exactRow.children[0];
   const exactSave = exactRow.children[1];
   exactInput.value = "2"; // below the "3+" floor
+  // teach.html's own refusal path is synchronous (no fetch, no await) --
+  // checked immediately, not after a sleep, so nothing async can land in
+  // that window and be mistaken for a fetch this tap caused.
   exactSave.fire("click");
-  await settle();
   eq(fetchLog.length, before, "an out-of-range number is refused before any fetch");
   const status = findByClass(card, "cardStatus");
   eq(status.textContent.includes("3 or more"), true, "says why, in words");
 
   exactInput.value = "7";
   exactSave.fire("click");
-  await settle();
+  await waitForSaveOutcome(card, before);
   const posts = fetchLog.slice(before).filter((f) => f.url === "/clip-library");
   eq(posts.length, 1, "exactly one POST, from the exact row's own Save");
   const body = JSON.parse(posts[0].opts.body);
@@ -447,8 +476,10 @@ await check("FEARED: Skip never posts -- it only removes the card from view", as
   const answers = findByClass(card, "answers");
   const skipBtn = answers.children[5];
   eq(skipBtn.textContent, "Skip");
+  // Skip's own handler is synchronous (no fetch, no await) -- checked
+  // immediately, not after a sleep, for the same reason as the "3+" refusal
+  // above.
   skipBtn.fire("click");
-  await settle();
   eq(card.hidden, true, "hidden, not removed -- the DOM node still exists for inspection");
   eq(fetchLog.filter((f) => f.url === "/clip-library").length - fetchLog.slice(0, before).filter((f) => f.url === "/clip-library").length, 0, "no POST at all");
 });
