@@ -1,25 +1,122 @@
 // cloud/harness/storeConformance.harness.mjs — cloud/api/store.mjs's `Store`
-// interface, proven against cloud/api/memoryStore.mjs's `createMemoryStore()`.
-// Any future DynamoDB adapter must pass this exact same suite, unmodified,
-// to be accepted as a drop-in replacement (cloud/CLOUD-API-SPEC.md, "The
-// store interface").
+// interface, proven against cloud/api/memoryStore.mjs's `createMemoryStore()`
+// ALWAYS, and against cloud/api/dynamoStore.mjs's `createDynamoStore()` too
+// when CAMPLAT_STORE=dynamo and CAMPLAT_DDB_TABLE=<name> are both set
+// (CLOUD-AWS-SPEC.md section D). Any store implementation must pass this
+// exact same suite, unmodified, to be accepted as a drop-in replacement
+// (cloud/CLOUD-API-SPEC.md, "The store interface").
 //
 // FEARED: a conditional write ("if the state is still X") that is not
 // actually atomic — two concurrent callers who each read "unclaimed" both
 // believing they alone get to write "claimed"; a getTenancy that leaks one
-// installer's tree into another's.
+// installer's tree into another's; a DynamoDB adapter that only LOOKS
+// correct because it was only ever run against the memory store.
 //
-// createMemoryStore() itself is a stub today ("createMemoryStore: not
-// built"), so every check below is expected to FAIL for that reason until
-// cloud/api/memoryStore.mjs is built. It is called INSIDE each check's own
-// body (never at module top level) so that stub throw is caught by `check`
-// as one failing check, not an uncaught crash of the whole harness.
+// Every check below calls `makeStore(seed)` rather than `createMemoryStore(seed)`
+// directly — see makeStore() just below the DynamoDB setup, which is the one
+// place that decides which real store implementation backs the whole run.
+// It is called INSIDE each check's own body (never at module top level) so a
+// setup failure is caught by `check` as one failing check, not an uncaught
+// crash of the whole harness.
 
 import { check, eq, same, report } from "../../harness/_assert.mjs";
 import { createMemoryStore } from "../api/memoryStore.mjs";
+import { createDynamoStore } from "../api/dynamoStore.mjs";
 import { buildCheckin } from "../dist/contracts/deviceCheckin.js";
+import { randomBytes } from "node:crypto";
 
 console.log("store conformance");
+
+// ---------------------------------------------------------------------------
+// DynamoDB mode (CLOUD-AWS-SPEC.md section D). Without BOTH env vars this
+// suite runs exactly as it always has, against the memory store only, and
+// says so below in one line. We cannot exercise the DynamoDB path ourselves
+// right now — no table exists yet; creating one needs the owner's approval
+// with its monthly cost (CLOUD-AWS-SPEC.md's own opening paragraph) — but it
+// must still load cleanly and fail with one clear message, never a raw stack
+// trace, when CAMPLAT_STORE=dynamo is set and the table cannot actually be
+// reached.
+// ---------------------------------------------------------------------------
+
+const DYNAMO_REQUESTED = process.env.CAMPLAT_STORE === "dynamo";
+const DYNAMO_TABLE = process.env.CAMPLAT_DDB_TABLE;
+
+/** Set once DynamoDB setup below succeeds:
+ *  `{ doc, tableName, runPrefix, ScanCommand, BatchWriteCommand }`. Stays
+ *  `null` in memory mode, which is what `makeStore` below branches on. */
+let dynamoCtx = null;
+
+if (!DYNAMO_REQUESTED) {
+  console.log(
+    "store conformance: DynamoDB conformance NOT run (set CAMPLAT_STORE=dynamo and CAMPLAT_DDB_TABLE=<name> to run it against a real table) -- running against the memory store only.",
+  );
+} else if (!DYNAMO_TABLE) {
+  console.error(
+    "store conformance: CAMPLAT_STORE=dynamo was set but CAMPLAT_DDB_TABLE was not -- refusing to guess a table name. DynamoDB conformance NOT run.",
+  );
+  process.exit(1);
+} else {
+  try {
+    const { DynamoDBClient, DescribeTableCommand } = await import("@aws-sdk/client-dynamodb");
+    const { DynamoDBDocumentClient, ScanCommand, BatchWriteCommand } = await import("@aws-sdk/lib-dynamodb");
+    const client = new DynamoDBClient({});
+    // Fail fast and clearly, before any check runs, rather than let the
+    // first real conditional write's error surface as an opaque failure
+    // buried in the middle of the suite (build rule 10: refuse rather than
+    // guess when we cannot yet tell "the table is fine" from "it is not").
+    await client.send(new DescribeTableCommand({ TableName: DYNAMO_TABLE }));
+    dynamoCtx = {
+      doc: DynamoDBDocumentClient.from(client),
+      tableName: DYNAMO_TABLE,
+      ScanCommand,
+      BatchWriteCommand,
+      runPrefix: `test-${randomBytes(8).toString("hex")}#`,
+    };
+    console.log(`store conformance: running against DynamoDB table ${DYNAMO_TABLE}, run prefix ${dynamoCtx.runPrefix}`);
+  } catch (err) {
+    console.error(
+      `store conformance: DynamoDB requested (CAMPLAT_STORE=dynamo, table=${DYNAMO_TABLE}) but the table is unreachable: ${err && err.message ? err.message : err} -- DynamoDB conformance NOT run.`,
+    );
+    process.exit(1);
+  }
+}
+
+/**
+ * Every check calls this instead of `createMemoryStore(seed)` directly, so
+ * the exact same suite runs against either store. In DynamoDB mode each
+ * call gets its own numbered sub-prefix nested under this run's own prefix
+ * (`dynamoCtx.runPrefix`), so two different checks that happen to reuse the
+ * same literal id (e.g. two checks both seeding an installer "inst-A") stay
+ * exactly as isolated from each other as two fresh `createMemoryStore()`
+ * calls would be — while every item the whole run writes still falls under
+ * ONE prefix for the cleanup scan at the bottom of this file. Seeds are
+ * written through the store's OWN methods here, never a memory-store-only
+ * `seed` shortcut (CLOUD-AWS-SPEC.md section D).
+ *
+ * @param {import("../api/memoryStore.mjs").MemoryStoreSeed} [seed]
+ */
+let dynamoStoreSeq = 0;
+async function makeStore(seed = {}) {
+  if (!dynamoCtx) {
+    return createMemoryStore(seed);
+  }
+  dynamoStoreSeq += 1;
+  const keyPrefix = `${dynamoCtx.runPrefix}${dynamoStoreSeq}#`;
+  const store = createDynamoStore({ tableName: dynamoCtx.tableName, doc: dynamoCtx.doc, keyPrefix });
+  for (const dev of seed.devices ?? []) {
+    const ok = await store.putDevice(dev, { ifState: null });
+    if (!ok) {
+      throw new Error(`makeStore: seed device ${dev.deviceId} could not be written under a fresh prefix -- unexpected`);
+    }
+  }
+  for (const [installerId, tenancy] of Object.entries(seed.tenancies ?? {})) {
+    const ok = await store.putTenancy(installerId, tenancy, { ifVersion: null });
+    if (!ok) {
+      throw new Error(`makeStore: seed tenancy ${installerId} could not be written under a fresh prefix -- unexpected`);
+    }
+  }
+  return store;
+}
 
 const NOW_MS = Date.parse("2026-09-27T00:00:00.000Z");
 
@@ -64,7 +161,7 @@ function tenancyFor(installerId, marker) {
 // ---- acceptCheckin: refuses an equal or lower seq ----
 
 await check("acceptCheckin refuses a seq equal to the stored lastSeq", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const first = await store.acceptCheckin("dev-1", 5, makePayload("dev-1", 5), NOW_MS);
   eq(first, "accepted", "the first ever seq for this device must be accepted");
   const again = await store.acceptCheckin("dev-1", 5, makePayload("dev-1", 5), NOW_MS + 1000);
@@ -72,7 +169,7 @@ await check("acceptCheckin refuses a seq equal to the stored lastSeq", async () 
 });
 
 await check("acceptCheckin refuses a seq lower than the stored lastSeq", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.acceptCheckin("dev-2", 10, makePayload("dev-2", 10), NOW_MS);
   const lower = await store.acceptCheckin("dev-2", 3, makePayload("dev-2", 3), NOW_MS + 1000);
   eq(lower, "stale", "a lower seq must be refused");
@@ -82,7 +179,7 @@ await check("acceptCheckin refuses a seq lower than the stored lastSeq", async (
 });
 
 await check("acceptCheckin accepts a strictly higher seq after a prior accept", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.acceptCheckin("dev-3", 1, makePayload("dev-3", 1), NOW_MS);
   const r = await store.acceptCheckin("dev-3", 2, makePayload("dev-3", 2), NOW_MS + 1000);
   eq(r, "accepted");
@@ -91,7 +188,7 @@ await check("acceptCheckin accepts a strictly higher seq after a prior accept", 
 // ---- acceptCheckin: races two concurrent accepts of the same seq ----
 
 await check("acceptCheckin races two concurrent accepts of the SAME seq: exactly one wins", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const payload = makePayload("dev-race", 1);
   const [r1, r2] = await Promise.all([
     store.acceptCheckin("dev-race", 1, payload, NOW_MS),
@@ -108,7 +205,7 @@ await check("acceptCheckin races two concurrent accepts of the SAME seq: exactly
 // clock step. The invariants that DO hold, in either commit order:
 await check("acceptCheckin races DIFFERENT seqs: the higher always wins and ends up stored, the lower never overwrites it", async () => {
   for (const order of [[1, 2], [2, 1]]) {
-    const store = createMemoryStore();
+    const store = await makeStore();
     const results = await Promise.all(
       order.map((seq) => store.acceptCheckin("dev-race-2", seq, makePayload("dev-race-2", seq), NOW_MS)),
     );
@@ -120,7 +217,7 @@ await check("acceptCheckin races DIFFERENT seqs: the higher always wins and ends
 });
 
 await check("a lower seq that arrives after a higher one is stale", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.acceptCheckin("dev-race-3", 2, makePayload("dev-race-3", 2), NOW_MS), "accepted");
   eq(await store.acceptCheckin("dev-race-3", 1, makePayload("dev-race-3", 1), NOW_MS + 1000), "stale");
 });
@@ -128,7 +225,7 @@ await check("a lower seq that arrives after a higher one is stale", async () => 
 // ---- lastSeqMap ----
 
 await check("lastSeqMap omits a device that has never accepted a check-in (a blank is not a zero)", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.acceptCheckin("dev-4", 7, makePayload("dev-4", 7), NOW_MS);
   const map = await store.lastSeqMap(["dev-4", "dev-never-seen"]);
   eq(map.get("dev-4"), 7);
@@ -138,7 +235,7 @@ await check("lastSeqMap omits a device that has never accepted a check-in (a bla
 // ---- putDevice's condition ----
 
 await check("putDevice(device, { ifState: null }) succeeds only when no record exists yet", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const first = await store.putDevice(device("dev-p1"), { ifState: null });
   eq(first, true, "no stored record yet: ifState null must match");
   const second = await store.putDevice(device("dev-p1"), { ifState: null });
@@ -146,7 +243,7 @@ await check("putDevice(device, { ifState: null }) succeeds only when no record e
 });
 
 await check("putDevice's condition checks the CURRENTLY STORED state, not the caller's belief", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.putDevice(device("dev-p2", { state: "unclaimed" }), { ifState: null });
   const wrongCondition = await store.putDevice(device("dev-p2", { state: "claimed" }), { ifState: "claimed" });
   eq(wrongCondition, false, "the stored state is unclaimed, not claimed: the write must be refused");
@@ -157,7 +254,7 @@ await check("putDevice's condition checks the CURRENTLY STORED state, not the ca
 });
 
 await check("putDevice races two concurrent conditional writes for the same device: exactly one succeeds", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.putDevice(device("dev-p3", { state: "unclaimed" }), { ifState: null });
   const [a, b] = await Promise.all([
     store.putDevice(device("dev-p3", { state: "claimed", installerId: "inst-a" }), { ifState: "unclaimed" }),
@@ -170,20 +267,20 @@ await check("putDevice races two concurrent conditional writes for the same devi
 // ---- getDevice / findDeviceByCode: never throw on "not found" ----
 
 await check("getDevice and findDeviceByCode return null, never throw, for an unknown id or code", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.getDevice("dev-nope"), null);
   eq(await store.findDeviceByCode("NOPE-CODE-1"), null);
 });
 
 await check("latestCheckin returns null for a device that has never checked in", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.latestCheckin("dev-never"), null);
 });
 
 // ---- getTenancy: never returns another installer's data ----
 
 await check("getTenancy returns exactly the seeded installer's own tenancy, never mixed with another's", async () => {
-  const store = createMemoryStore({
+  const store = await makeStore({
     tenancies: {
       "inst-A": tenancyFor("inst-A", "a"),
       "inst-B": tenancyFor("inst-B", "b"),
@@ -201,7 +298,7 @@ await check("getTenancy returns exactly the seeded installer's own tenancy, neve
 });
 
 await check("getTenancy returns null for an installerId with no seeded tenancy", async () => {
-  const store = createMemoryStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
+  const store = await makeStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
   eq(await store.getTenancy("inst-ghost"), null);
 });
 
@@ -210,7 +307,7 @@ await check("getTenancy returns null for an installerId with no seeded tenancy",
 // shape. Every adapter must return EXACTLY the interface's shape.
 
 await check("latestCheckin returns exactly { atMs, payload } -- the atMs passed to acceptCheckin, no other keys", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const payload = makePayload("dev-shape", 4);
   await store.acceptCheckin("dev-shape", 4, payload, NOW_MS + 1234);
   const latest = await store.latestCheckin("dev-shape");
@@ -222,7 +319,7 @@ await check("latestCheckin returns exactly { atMs, payload } -- the atMs passed 
 await check("a strictly higher seq is accepted even when atMs did not move forward (the cloud clock stepped back)", async () => {
   // The interface guards on seq alone. Refusing on receive time would drop
   // real check-ins after an NTP step, or two in the same millisecond.
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.acceptCheckin("dev-clock", 1, makePayload("dev-clock", 1), NOW_MS), "accepted");
   eq(await store.acceptCheckin("dev-clock", 2, makePayload("dev-clock", 2), NOW_MS), "accepted", "same millisecond");
   eq(await store.acceptCheckin("dev-clock", 3, makePayload("dev-clock", 3), NOW_MS - 5000), "accepted", "clock went backwards");
@@ -236,7 +333,7 @@ await check("a strictly higher seq is accepted even when atMs did not move forwa
 // BOTH win while the store kept only one code.
 
 await check("putDevice ifCode: two re-issues racing from the same code -- exactly one wins, and its code is what is stored", async () => {
-  const store = createMemoryStore({ devices: [device("dev-cas", { code: "OLD0-OLD0-0" })] });
+  const store = await makeStore({ devices: [device("dev-cas", { code: "OLD0-OLD0-0" })] });
   const [a, b] = await Promise.all([
     store.putDevice(device("dev-cas", { code: "AAAA-AAAA-A" }), { ifState: "unclaimed", ifCode: "OLD0-OLD0-0" }),
     store.putDevice(device("dev-cas", { code: "BBBB-BBBB-B" }), { ifState: "unclaimed", ifCode: "OLD0-OLD0-0" }),
@@ -246,7 +343,7 @@ await check("putDevice ifCode: two re-issues racing from the same code -- exactl
 });
 
 await check("putDevice ifCode: a stale code is refused, null matches only null, and omitting ifCode keeps the old behaviour", async () => {
-  const store = createMemoryStore({ devices: [device("dev-c1", { code: "CUR0-CUR0-0" }), device("dev-c2")] });
+  const store = await makeStore({ devices: [device("dev-c1", { code: "CUR0-CUR0-0" }), device("dev-c2")] });
   eq(await store.putDevice(device("dev-c1", { code: "NEW0-NEW0-0" }), { ifState: "unclaimed", ifCode: "OLD0-OLD0-0" }), false, "stale code");
   eq((await store.getDevice("dev-c1")).code, "CUR0-CUR0-0", "a refused write changes nothing");
   eq(await store.putDevice(device("dev-c1", { code: "NEW0-NEW0-0" }), { ifState: "unclaimed", ifCode: null }), false, "null vs a stored code");
@@ -257,7 +354,7 @@ await check("putDevice ifCode: a stale code is refused, null matches only null, 
 // ---- StoreDevice.expiresAtS (CLOUD-LOGIN-SPEC.md, "B. Store additions") ----
 
 await check("putDevice/getDevice round-trip expiresAtS", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.putDevice(device("dev-exp1", { expiresAtS: 1234567890 }), { ifState: null });
   eq((await store.getDevice("dev-exp1")).expiresAtS, 1234567890, "expiresAtS round-trips");
   await store.putDevice(device("dev-exp1", { state: "claimed", expiresAtS: null }), { ifState: "unclaimed" });
@@ -275,7 +372,7 @@ await check("a device record written before expiresAtS existed reads back as nul
     installerId: null,
     siteId: null,
   };
-  const store = createMemoryStore({ devices: [oldShapeDevice] });
+  const store = await makeStore({ devices: [oldShapeDevice] });
   const got = await store.getDevice("dev-old-shape");
   eq(got.expiresAtS, null, "missing expiresAtS reads back as null, not undefined");
   eq(Object.prototype.hasOwnProperty.call(got, "expiresAtS"), true, "the key is present, holding null");
@@ -301,12 +398,12 @@ function user(login, overrides = {}) {
 }
 
 await check("getUser returns null, never throws, for an unknown login", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.getUser("nobody@example.com"), null);
 });
 
 await check("putUser ifAbsent creates once; a second ifAbsent for the same login is refused", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.putUser(user("tech@example.com"), { ifAbsent: true }), true, "first create");
   eq(await store.putUser(user("tech@example.com", { userId: "usr_ffffffffffffffff" }), { ifAbsent: true }), false, "already exists");
   const got = await store.getUser("tech@example.com");
@@ -314,7 +411,7 @@ await check("putUser ifAbsent creates once; a second ifAbsent for the same login
 });
 
 await check("putUser ifEpoch succeeds only when the STORED sessionEpoch matches, and refuses a missing user", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.putUser(user("tech@example.com", { sessionEpoch: 0 }), { ifEpoch: 0 }), false, "no stored user yet: ifEpoch must refuse, not create");
   eq(await store.getUser("tech@example.com"), null, "still nothing stored");
   await store.putUser(user("tech@example.com", { sessionEpoch: 0 }), { ifAbsent: true });
@@ -325,7 +422,7 @@ await check("putUser ifEpoch succeeds only when the STORED sessionEpoch matches,
 });
 
 await check("mutating a returned user does not change the store", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.putUser(user("tech@example.com"), { ifAbsent: true });
   const got = await store.getUser("tech@example.com");
   got.disabled = true;
@@ -335,7 +432,7 @@ await check("mutating a returned user does not change the store", async () => {
 });
 
 await check("putUser races two concurrent ifAbsent creates for the SAME login: exactly one wins", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const [a, b] = await Promise.all([
     store.putUser(user("race@example.com", { userId: "usr_aaaaaaaaaaaaaaaa" }), { ifAbsent: true }),
     store.putUser(user("race@example.com", { userId: "usr_bbbbbbbbbbbbbbbb" }), { ifAbsent: true }),
@@ -349,7 +446,7 @@ await check("putUser races two concurrent ifAbsent creates for the SAME login: e
 // deleteFailedLogin/the concurrent-recording race are new.
 
 await check("recordFailedLogin/failedLogins: ascending order, filtered to sinceMs", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.recordFailedLogin("acct:tech@example.com", NOW_MS + 300);
   await store.recordFailedLogin("acct:tech@example.com", NOW_MS + 100);
   await store.recordFailedLogin("acct:tech@example.com", NOW_MS + 200);
@@ -366,7 +463,7 @@ await check("recordFailedLogin/failedLogins: ascending order, filtered to sinceM
 // property cloud/api/login.mjs's "record first, then count only the entries
 // ahead of your own" depends on.
 await check("recordFailedLogin ids sort in time order and are distinct for the same atMs", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const idEarly = await store.recordFailedLogin("acct:time-order", NOW_MS);
   const idLate = await store.recordFailedLogin("acct:time-order", NOW_MS + 1);
   eq(idEarly < idLate, true, "a later atMs must produce an id that sorts after an earlier one");
@@ -379,7 +476,7 @@ await check("recordFailedLogin ids sort in time order and are distinct for the s
 });
 
 await check("deleteFailedLogin removes exactly one entry, and returns false for an unknown id", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const idA = await store.recordFailedLogin("acct:del", NOW_MS);
   const idB = await store.recordFailedLogin("acct:del", NOW_MS + 1);
   eq(await store.deleteFailedLogin("acct:del", "not-a-real-id"), false, "unknown id under a real key");
@@ -391,7 +488,7 @@ await check("deleteFailedLogin removes exactly one entry, and returns false for 
 });
 
 await check("20 concurrent recordFailedLogin calls on one key (Promise.all) all land with distinct ids", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const ids = await Promise.all(Array.from({ length: 20 }, () => store.recordFailedLogin("acct:burst", NOW_MS)));
   eq(new Set(ids).size, 20, "all 20 concurrent calls produced distinct ids");
   const entries = await store.failedLogins("acct:burst", 0);
@@ -399,7 +496,7 @@ await check("20 concurrent recordFailedLogin calls on one key (Promise.all) all 
 });
 
 await check("clearFailedLogins clears one key and leaves another untouched", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.recordFailedLogin("acct:tech@example.com", NOW_MS);
   await store.recordFailedLogin("src:203.0.113.5", NOW_MS);
   await store.clearFailedLogins("acct:tech@example.com");
@@ -417,19 +514,19 @@ function session(overrides = {}) {
 }
 
 await check("getSession returns null, never throws, for an unknown hash", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.getSession(HASH_1), null);
 });
 
 await check("putSession is create-only: a second putSession for the same hash is refused", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.putSession(HASH_1, session()), true, "first create");
   eq(await store.putSession(HASH_1, session({ login: "someone.else" })), false, "hash already taken");
   eq((await store.getSession(HASH_1)).login, "tech@example.com", "the second write did not overwrite the first");
 });
 
 await check("putSession races two concurrent creates for the SAME hash: exactly one wins", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const [a, b] = await Promise.all([
     store.putSession(HASH_2, session({ login: "one" })),
     store.putSession(HASH_2, session({ login: "two" })),
@@ -438,7 +535,7 @@ await check("putSession races two concurrent creates for the SAME hash: exactly 
 });
 
 await check("touchSession updates lastSeenMs and reports false for a missing session", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.touchSession(HASH_1, NOW_MS + 1000), false, "no such session");
   await store.putSession(HASH_1, session());
   eq(await store.touchSession(HASH_1, NOW_MS + 5000), true, "touched");
@@ -446,14 +543,14 @@ await check("touchSession updates lastSeenMs and reports false for a missing ses
 });
 
 await check("deleteSession removes the session; deleting again is a no-op false", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.putSession(HASH_1, session());
   await store.deleteSession(HASH_1);
   eq(await store.getSession(HASH_1), null, "gone");
 });
 
 await check("mutating a returned session does not change the store", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   await store.putSession(HASH_1, session());
   const got = await store.getSession(HASH_1);
   got.login = "tampered";
@@ -463,7 +560,7 @@ await check("mutating a returned session does not change the store", async () =>
 // ---- Tenancy writes: getTenancyRecord / putTenancy ----
 
 await check("seeded tenancies start at version 1, and getTenancy keeps returning what putTenancy wrote", async () => {
-  const store = createMemoryStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
+  const store = await makeStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
   const rec = await store.getTenancyRecord("inst-A");
   eq(rec.version, 1, "seeded tenancies start at version 1");
   same(rec.tenancy, tenancyFor("inst-A", "a"), "the seeded tree comes back exactly");
@@ -475,12 +572,12 @@ await check("seeded tenancies start at version 1, and getTenancy keeps returning
 });
 
 await check("getTenancyRecord returns null for an installerId with no tenancy", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   eq(await store.getTenancyRecord("inst-ghost"), null);
 });
 
 await check("putTenancy(installerId, tenancy, { ifVersion: null }) creates once; refused when one already exists", async () => {
-  const store = createMemoryStore();
+  const store = await makeStore();
   const tree = tenancyFor("inst-new", "n");
   eq(await store.putTenancy("inst-new", tree, { ifVersion: null }), true, "first create");
   eq((await store.getTenancyRecord("inst-new")).version, 1, "a fresh create stores version (null ?? 0) + 1 = 1");
@@ -489,13 +586,13 @@ await check("putTenancy(installerId, tenancy, { ifVersion: null }) creates once;
 });
 
 await check("putTenancy refuses a stale ifVersion and leaves the store untouched", async () => {
-  const store = createMemoryStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
+  const store = await makeStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
   eq(await store.putTenancy("inst-A", tenancyFor("inst-A", "wrong"), { ifVersion: 99 }), false, "stale version");
   same(await store.getTenancy("inst-A"), tenancyFor("inst-A", "a"), "unchanged");
 });
 
 await check("putTenancy races two concurrent writes at the SAME ifVersion: exactly one wins", async () => {
-  const store = createMemoryStore({ tenancies: { "inst-race": tenancyFor("inst-race", "r") } });
+  const store = await makeStore({ tenancies: { "inst-race": tenancyFor("inst-race", "r") } });
   const [a, b] = await Promise.all([
     store.putTenancy("inst-race", tenancyFor("inst-race", "r-a"), { ifVersion: 1 }),
     store.putTenancy("inst-race", tenancyFor("inst-race", "r-b"), { ifVersion: 1 }),
@@ -505,10 +602,57 @@ await check("putTenancy races two concurrent writes at the SAME ifVersion: exact
 });
 
 await check("mutating a returned tenancy (via getTenancyRecord) does not change the store", async () => {
-  const store = createMemoryStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
+  const store = await makeStore({ tenancies: { "inst-A": tenancyFor("inst-A", "a") } });
   const rec = await store.getTenancyRecord("inst-A");
   rec.tenancy.installers[0].name = "tampered";
   same((await store.getTenancyRecord("inst-A")).tenancy, tenancyFor("inst-A", "a"), "the store's copy is untouched");
 });
+
+// ---------------------------------------------------------------------------
+// Cleanup: delete every item this run wrote to the real table, found by a
+// Scan for our own prefix (CLOUD-AWS-SPEC.md section D: "delete every item
+// it wrote, in a finally"). This is reached "in a finally" in spirit: every
+// check above is wrapped by `check()` (cloud/harness/_assert.mjs), which
+// already catches a failing check's error and reports it WITHOUT letting it
+// escape as an uncaught rejection — so nothing above this line can skip past
+// it. It runs exactly once, after every check has settled, whether every
+// check passed or not.
+// ---------------------------------------------------------------------------
+
+if (dynamoCtx) {
+  try {
+    const toDelete = [];
+    let ExclusiveStartKey;
+    do {
+      const res = await dynamoCtx.doc.send(
+        new dynamoCtx.ScanCommand({
+          TableName: dynamoCtx.tableName,
+          FilterExpression: "begins_with(#pk, :prefix)",
+          ExpressionAttributeNames: { "#pk": "pk" },
+          ExpressionAttributeValues: { ":prefix": dynamoCtx.runPrefix },
+          ExclusiveStartKey,
+        }),
+      );
+      for (const item of res.Items ?? []) toDelete.push({ pk: item.pk, sk: item.sk });
+      ExclusiveStartKey = res.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+
+    for (let i = 0; i < toDelete.length; i += 25) {
+      let requests = toDelete.slice(i, i + 25).map((Key) => ({ DeleteRequest: { Key } }));
+      while (requests.length > 0) {
+        const res = await dynamoCtx.doc.send(
+          new dynamoCtx.BatchWriteCommand({ RequestItems: { [dynamoCtx.tableName]: requests } }),
+        );
+        requests = res.UnprocessedItems?.[dynamoCtx.tableName] ?? [];
+      }
+    }
+    console.log(`store conformance: cleaned up ${toDelete.length} DynamoDB item(s) under prefix ${dynamoCtx.runPrefix}`);
+  } catch (err) {
+    console.error(
+      `store conformance: cleanup of DynamoDB test items FAILED (prefix ${dynamoCtx.runPrefix}) -- items may be left behind: ${err && err.message ? err.message : err}`,
+    );
+    process.exitCode = 1;
+  }
+}
 
 report("store conformance");

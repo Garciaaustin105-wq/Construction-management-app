@@ -1,0 +1,280 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Camera platform cloud (CLOUD-AWS-SPEC.md section C): one DynamoDB table,
+  one Lambda serving all six routes behind an HTTP API, and a $1 default
+  cost alarm. One stack per stage (camplat-<Stage>). The function's real
+  code is uploaded separately by deploy.ps1 after this stack exists; the
+  Code below is an inert placeholder so the stack can be created at all.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    Description: Deployment stage name, used in every resource's name.
+    AllowedPattern: "^[a-z][a-z0-9-]{0,15}$"
+    ConstraintDescription: >-
+      lowercase letters, digits and hyphens, starting with a letter, 16
+      characters or fewer.
+  BudgetEmail:
+    Type: String
+    Description: >-
+      Email notified by AWS Budgets when the WHOLE ACCOUNT's monthly cost
+      passes 80% (actual) or is forecast to pass 100% -- not just this stack,
+      so anything unexpected anywhere in the account is caught too.
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: must look like an email address, e.g. name@example.com.
+  BudgetLimitUsd:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: Monthly AWS Budgets COST limit, in US dollars.
+
+Resources:
+  # ---- A. the table (CLOUD-AWS-SPEC.md section A / C) ----
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "camplat-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: codeKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: byCode
+          KeySchema:
+            - AttributeName: codeKey
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+      TimeToLiveSpecification:
+        AttributeName: expiresAtS
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  # ---- B/C. the function's own log group, 14-day retention ----
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/camplat-${Stage}-router"
+      RetentionInDays: 14
+
+  # ---- least-privilege execution role: this table (+ its index) only, this
+  # log group only -- never a wildcard Resource for DynamoDB. ----
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: camplat-router-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DynamoAccess
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt Table.Arn
+                  - !Sub "${Table.Arn}/index/byCode"
+              - Sid: LogsAccess
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${FunctionLogGroup}:*"
+
+  # ---- the function: nodejs24.x / arm64 / 256 MB / 10s, one Lambda for all
+  # six routes (cloud/lambda/router.handler). Code is an inert placeholder --
+  # deploy.ps1 uploads the real zip right after this stack is created. ----
+  RouterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "camplat-${Stage}-router"
+      Runtime: nodejs24.x
+      Architectures:
+        - arm64
+      Handler: cloud/lambda/router.handler
+      MemorySize: 256
+      Timeout: 10
+      Role: !GetAtt ExecutionRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref Table
+      LoggingConfig:
+        LogFormat: JSON
+        SystemLogLevel: WARN
+        ApplicationLogLevel: INFO
+        LogGroup: !Ref FunctionLogGroup
+      Code:
+        ZipFile: |
+          exports.handler = async () => ({
+            statusCode: 503,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ok: false, reason: "placeholder_not_deployed" }),
+          });
+
+  # ---- the HTTP API: six routes (no catch-all), one AWS_PROXY integration,
+  # payload format 2.0, $default stage auto-deploy, no CORS. ----
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "camplat-${Stage}-api"
+      ProtocolType: HTTP
+
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !GetAtt RouterFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  RouteEnroll:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /enroll"
+      Target: !Sub "integrations/${LambdaIntegration}"
+
+  RouteCheckin:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /checkin"
+      Target: !Sub "integrations/${LambdaIntegration}"
+
+  RouteClaim:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /claim"
+      Target: !Sub "integrations/${LambdaIntegration}"
+
+  RouteFleet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /fleet"
+      Target: !Sub "integrations/${LambdaIntegration}"
+
+  RouteLogin:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /login"
+      Target: !Sub "integrations/${LambdaIntegration}"
+
+  RouteLogout:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /logout"
+      Target: !Sub "integrations/${LambdaIntegration}"
+
+  # Deliberately NO "$default" catch-all route: API Gateway answers every
+  # other path with its own 404 and the function never runs, so the bots
+  # probing random paths on any public address cost no Lambda invocation.
+  # The router keeps its own 404 branch as a second line of defence.
+
+  # RouteSettings names routes by key; the stage must wait for them to exist,
+  # or CloudFormation fails with "Unable to find Route by key".
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - RouteEnroll
+      - RouteCheckin
+      - RouteClaim
+      - RouteFleet
+      - RouteLogin
+      - RouteLogout
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: "$default"
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      RouteSettings:
+        "POST /enroll":
+          ThrottlingBurstLimit: 5
+          ThrottlingRateLimit: 1
+        "POST /login":
+          ThrottlingBurstLimit: 5
+          ThrottlingRateLimit: 2
+
+  # Scoped to only this HTTP API -- never a bare "*" SourceArn.
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RouterFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*"
+
+  # ---- the $1-by-default cost alarm (Austin's decision, CLOUD-AWS-SPEC.md
+  # opening paragraph): monthly COST budget, email at 80% ACTUAL and 100%
+  # FORECASTED. ----
+  Budget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "camplat-${Stage}-budget"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref BudgetLimitUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+
+Outputs:
+  ApiUrl:
+    Description: The HTTP API's own execute-api URL ($default stage, no domain).
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  TableName:
+    Description: The DynamoDB table's name.
+    Value: !Ref Table
+  FunctionName:
+    Description: The Lambda function's name (for `aws lambda update-function-code`).
+    Value: !Ref RouterFunction

@@ -1,0 +1,9 @@
+{
+  "name": "camplat-cloud",
+  "private": true,
+  "description": "Camera platform cloud: dev-only dependencies for testing the DynamoDB store adapter. Production Lambdas use the AWS SDK built into the Node.js runtime; nothing here is deployed.",
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "3.1142.0",
+    "@aws-sdk/lib-dynamodb": "3.1142.0"
+  }
+}
